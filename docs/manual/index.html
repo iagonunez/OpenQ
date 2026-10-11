@@ -7,7 +7,7 @@
 <title>OpenQ User Manual</title>
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Barlow+Condensed:wght@500;600;700&family=Inter:wght@400;500;600&family=JetBrains+Mono:wght@400;500&family=Material+Symbols+Rounded:opsz,wght,FILL@20..24,400,0&display=swap">
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Barlow+Condensed:wght@500;600;700&family=Inter:wght@400;500;600&family=JetBrains+Mono:wght@400;500&display=swap">
 <style>
 /* Layout: a sticky chapter rail on the left and a single reading column, like a console's
    help screen. The colours come from the app's own theme (theme.rs). */
@@ -111,10 +111,18 @@ kbd {
 pre { background: var(--code-bg); border: 1px solid var(--border); border-radius: 8px; padding: 12px 14px; overflow-x: auto; font: 13px/1.6 var(--mono); }
 pre code { background: none; border: 0; padding: 0; font-size: inherit; }
 
+/* Icons from the app's own Material Symbols subset, by codepoint, so they also work offline
+   (the copy opened from Help → User manual has the font in fonts/; the repo copy uses assets/). */
+@font-face {
+  font-family: "OpenQ Symbols";
+  src: url("fonts/MaterialSymbolsRounded.ttf") format("truetype"),
+       url("../../assets/fonts/MaterialSymbolsRounded.ttf") format("truetype");
+  font-display: block;
+}
 .ms {
-  font-family: "Material Symbols Rounded"; font-weight: normal; font-style: normal; font-size: 20px;
-  line-height: 1; letter-spacing: normal; text-transform: none; white-space: nowrap; direction: ltr;
-  -webkit-font-feature-settings: "liga"; font-feature-settings: "liga"; vertical-align: -4px; color: var(--dim);
+  font-family: "OpenQ Symbols"; font-weight: normal; font-style: normal; font-size: 20px;
+  line-height: 1; letter-spacing: normal; text-transform: none; white-space: nowrap;
+  vertical-align: -4px; color: var(--dim);
 }
 .menu { font-weight: 600; white-space: nowrap; }
 
@@ -218,6 +226,8 @@ footer { margin-top: 56px; padding-top: 18px; border-top: 1px solid var(--border
   <p>The Windows and macOS downloads include FFmpeg for video. To build from source on any system:</p>
 <pre><code>cargo run --release                  # start with an empty show
 cargo run --release -- show.openq    # open a saved show</code></pre>
+  <p>This manual is built into OpenQ: choose <span class="menu">Help → User manual</span> or press <kbd>F1</kbd>
+  to open it in your web browser. It works without an internet connection and always matches your version of OpenQ.</p>
   <h3>Your first show</h3>
   <ol class="steps">
     <li>Drag audio or video files from your file manager onto the window. Each file becomes a cue.
@@ -242,14 +252,14 @@ cargo run --release -- show.openq    # open a saved show</code></pre>
     <li><strong>Title bar:</strong> the show's name (a dot means unsaved changes) and the
     <strong>Edit / Show</strong> switch at the right.</li>
     <li><strong>Menus:</strong> File, Edit, Cue, Show, Video (stages and outputs), Remote, View
-    (geometry preview, engine log) and Help (about and licences).</li>
+    (geometry preview, engine log) and Help (this manual, about and licences).</li>
     <li><strong>GO</strong> fires the cue at the playhead. The <strong>standby</strong> card shows that cue,
     with its notes underneath so the operator can read them before pressing GO.</li>
-    <li><strong>Transport:</strong> <span class="ms">pause</span> pause all, <span class="ms">play_arrow</span> resume all,
-    <span class="ms">stop</span> stop all. Next to them, the output meters show each device channel in dB.</li>
+    <li><strong>Transport:</strong> <span class="ms" aria-hidden="true">&#xe034;</span> pause all, <span class="ms" aria-hidden="true">&#xe037;</span> resume all,
+    <span class="ms" aria-hidden="true">&#xe047;</span> stop all. Next to them, the output meters show each device channel in dB.</li>
     <li><strong>Cue list:</strong> number, name, target (file details or the target cue), pre-wait,
     action time, post-wait and the continue arrow. Running cues turn green, and their action column
-    counts down. A red <span class="ms" style="color:var(--red)">error</span> icon marks a missing file or target.</li>
+    counts down. A red <span class="ms" style="color:var(--red)" aria-hidden="true">&#xf8b6;</span> icon marks a missing file or target.</li>
     <li><strong>Active cues:</strong> every running cue with elapsed and remaining time, plus its own pause and stop buttons.</li>
     <li><strong>Inspector:</strong> the settings of the selected cue, in tabs.</li>
     <li><strong>Status bar:</strong> audio device, video status, OSC, remote connections and messages.
@@ -287,19 +297,19 @@ cargo run --release -- show.openq    # open a saved show</code></pre>
 <section id="cues">
   <h2><span class="n">04</span>Cue types</h2>
   <div class="types">
-    <div class="type"><b><span class="ms">volume_up</span>Audio</b><span class="d">Plays a sound file through the OpenQ mixer, with trims, loops, slices, EQ and routing.</span></div>
-    <div class="type"><b><span class="ms">movie</span>Video</b><span class="d">Plays a movie or still image on a stage; its soundtrack goes through the mixer.</span></div>
-    <div class="type"><b><span class="ms">text_fields</span>Text</b><span class="d">Shows text on a stage, such as titles, surtitles or cue lights for performers.</span></div>
-    <div class="type"><b><span class="ms">folder</span>Group</b><span class="d">Holds other cues and fires them in one of four ways.</span></div>
-    <div class="type"><b><span class="ms">hourglass_empty</span>Wait</b><span class="d">Takes a set time. Use it to space out an auto-follow chain.</span></div>
-    <div class="type"><b><span class="ms">sticky_note_2</span>Memo</b><span class="d">Does nothing. Holds notes and marks places in the show.</span></div>
-    <div class="type"><b><span class="ms">trending_down</span>Fade</b><span class="d">Changes another cue's level, opacity or geometry over time.</span></div>
-    <div class="type"><b><span class="ms">play_circle</span>Start</b><span class="d">Fires another cue.</span></div>
-    <div class="type"><b><span class="ms">stop_circle</span>Stop</b><span class="d">Stops another cue.</span></div>
-    <div class="type"><b><span class="ms">pause_circle</span>Pause</b><span class="d">Pauses another cue.</span></div>
-    <div class="type"><b><span class="ms">subdirectory_arrow_right</span>Go To</b><span class="d">Moves the playhead to another cue.</span></div>
-    <div class="type"><b><span class="ms">skip_next</span>Devamp</b><span class="d">Lets a looping audio slice finish its pass and play on.</span></div>
-    <div class="type"><b><span class="ms">lan</span>Network</b><span class="d">Sends an OSC message to other gear, such as a lighting desk.</span></div>
+    <div class="type"><b><span class="ms" aria-hidden="true">&#xe050;</span>Audio</b><span class="d">Plays a sound file through the OpenQ mixer, with trims, loops, slices, EQ and routing.</span></div>
+    <div class="type"><b><span class="ms" aria-hidden="true">&#xe404;</span>Video</b><span class="d">Plays a movie or still image on a stage; its soundtrack goes through the mixer.</span></div>
+    <div class="type"><b><span class="ms" aria-hidden="true">&#xe262;</span>Text</b><span class="d">Shows text on a stage, such as titles, surtitles or cue lights for performers.</span></div>
+    <div class="type"><b><span class="ms" aria-hidden="true">&#xe2c7;</span>Group</b><span class="d">Holds other cues and fires them in one of four ways.</span></div>
+    <div class="type"><b><span class="ms" aria-hidden="true">&#xe88b;</span>Wait</b><span class="d">Takes a set time. Use it to space out an auto-follow chain.</span></div>
+    <div class="type"><b><span class="ms" aria-hidden="true">&#xf1fc;</span>Memo</b><span class="d">Does nothing. Holds notes and marks places in the show.</span></div>
+    <div class="type"><b><span class="ms" aria-hidden="true">&#xe8e3;</span>Fade</b><span class="d">Changes another cue's level, opacity or geometry over time.</span></div>
+    <div class="type"><b><span class="ms" aria-hidden="true">&#xe1c4;</span>Start</b><span class="d">Fires another cue.</span></div>
+    <div class="type"><b><span class="ms" aria-hidden="true">&#xef71;</span>Stop</b><span class="d">Stops another cue.</span></div>
+    <div class="type"><b><span class="ms" aria-hidden="true">&#xe1a2;</span>Pause</b><span class="d">Pauses another cue.</span></div>
+    <div class="type"><b><span class="ms" aria-hidden="true">&#xe5da;</span>Go To</b><span class="d">Moves the playhead to another cue.</span></div>
+    <div class="type"><b><span class="ms" aria-hidden="true">&#xe044;</span>Devamp</b><span class="d">Lets a looping audio slice finish its pass and play on.</span></div>
+    <div class="type"><b><span class="ms" aria-hidden="true">&#xeb2f;</span>Network</b><span class="d">Sends an OSC message to other gear, such as a lighting desk.</span></div>
   </div>
   <p>Every cue has a <strong>number</strong> (free text, like <code>4.2</code>), a <strong>name</strong>, <strong>notes</strong>,
   a <strong>colour</strong> and an <strong>armed</strong> switch, all on the Basics tab. A disarmed cue is skipped by GO. Basics also
@@ -327,8 +337,8 @@ cargo run --release -- show.openq    # open a saved show</code></pre>
     <thead><tr><th>Continue mode</th><th>What happens next</th></tr></thead>
     <tbody>
       <tr><td>Do not continue</td><td>Nothing. The playhead moves to the next cue and waits for GO.</td></tr>
-      <tr><td>Auto-continue <span class="ms">arrow_downward</span></td><td>The next cue fires when this cue's post-wait has run out.</td></tr>
-      <tr><td>Auto-follow <span class="ms">keyboard_double_arrow_down</span></td><td>The next cue fires when this cue's action ends.</td></tr>
+      <tr><td>Auto-continue <span class="ms" aria-hidden="true">&#xe5db;</span></td><td>The next cue fires when this cue's post-wait has run out.</td></tr>
+      <tr><td>Auto-follow <span class="ms" aria-hidden="true">&#xead0;</span></td><td>The next cue fires when this cue's action ends.</td></tr>
     </tbody>
   </table></div>
   <p>Chained cues start on exact sample boundaries, so a sequence keeps its timing however long it runs.</p>
@@ -549,6 +559,7 @@ cargo run --release -- show.openq    # open a saved show</code></pre>
       <tr><td><kbd>Ctrl</kbd>+<kbd>D</kbd> · <kbd>Ctrl</kbd>+<kbd>G</kbd> · <kbd>Del</kbd></td><td>Duplicate · group selection · delete</td></tr>
       <tr><td><kbd>Ctrl</kbd>+<kbd>Z</kbd> · <kbd>Ctrl</kbd>+<kbd>Shift</kbd>+<kbd>Z</kbd></td><td>Undo · redo</td></tr>
       <tr><td><kbd>Ctrl</kbd>+<kbd>N</kbd> / <kbd>O</kbd> / <kbd>S</kbd> / <kbd>Shift</kbd>+<kbd>S</kbd></td><td>New / open / save / save as</td></tr>
+      <tr><td><kbd>F1</kbd></td><td>Open this user manual</td></tr>
       <tr><td><kbd>F11</kbd></td><td>Fullscreen, in a stage window</td></tr>
       <tr><td>Cue hotkey</td><td>Fires that cue directly (set on the Basics tab)</td></tr>
     </tbody>
@@ -562,7 +573,7 @@ cargo run --release -- show.openq    # open a saved show</code></pre>
     <tbody>
       <tr><td>No sound</td><td>Check the status bar. If it says <em>no audio</em>, pick another device in Settings → Audio.
       Check the master volume and the cue's level and routing.</td></tr>
-      <tr><td>A cue shows a red <span class="ms" style="color:var(--red)">error</span> icon</td><td>Its media file is missing or unreadable, or its target cue was deleted. If the file has moved, click <em>Browse…</em> on the cue's
+      <tr><td>A cue shows a red <span class="ms" style="color:var(--red)" aria-hidden="true">&#xf8b6;</span> icon</td><td>Its media file is missing or unreadable, or its target cue was deleted. If the file has moved, click <em>Browse…</em> on the cue's
       Time tab to find it again.</td></tr>
       <tr><td>A video doesn't appear</td><td>Open the stage window from the Video menu. Check the cue's stage, opacity
       and layer, and look in <span class="menu">View → Engine log</span> for decoder errors.</td></tr>

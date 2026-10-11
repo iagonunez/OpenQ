@@ -32,7 +32,7 @@ cargo test                              # engine + model tests
 cargo run --release --example smoke     # headless end-to-end check of real audio/video (muted)
 ```
 
-User manual: open `docs/manual/index.html` in a browser. API documentation: `cargo doc --no-deps --open`.
+User manual: **Help → User manual** (F1) in the app, or open `docs/manual/index.html` in a browser. API documentation: `cargo doc --no-deps --open`.
 
 Video uses the FFmpeg libraries (the system's on Linux; bundled in the Windows and macOS
 releases), plus clang at build time, so anything FFmpeg can play works, with no codec plugins to

@@ -23,6 +23,10 @@ Copy-Item assets/fonts/*.txt "$stage/Licenses/fonts/"
 Copy-Item "$FFmpeg/LICENSE.txt" "$stage/Licenses/ffmpeg/LICENSE.txt"
 Copy-Item packaging/FFMPEG.md "$stage/Licenses/ffmpeg/README.md"
 Copy-Item packaging/README-windows.txt "$stage/README.txt"
+# The manual is also built into the app (Help → User manual); a copy to read without it.
+New-Item -ItemType Directory -Force -Path "$stage/Manual/fonts" | Out-Null
+Copy-Item -Recurse docs/manual/* "$stage/Manual/"
+Copy-Item assets/fonts/MaterialSymbolsRounded.ttf "$stage/Manual/fonts/"
 # Record which FFmpeg build this is (BtbN folder name = version, git commit, variant).
 "FFmpeg build: $(Split-Path -Leaf $FFmpeg)`nSource: https://github.com/BtbN/FFmpeg-Builds (lgpl-shared)" |
   Set-Content "$stage/Licenses/ffmpeg/BUILD.txt"

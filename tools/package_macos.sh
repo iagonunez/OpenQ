@@ -44,6 +44,10 @@ cp assets/fonts/*.txt "$lic/fonts/"
 cp "$ff/src/COPYING.LGPLv2.1" "$ff/src/LICENSE.md" "$ff/src/configure-output.txt" "$lic/ffmpeg/"
 cp packaging/FFMPEG.md "$lic/ffmpeg/README.md"
 cp packaging/README-macos.txt "$stage/README.txt"
+# The manual is also built into the app (Help → User manual); a copy to read without it.
+mkdir -p "$stage/Manual/fonts"
+cp -R docs/manual/. "$stage/Manual/"
+cp assets/fonts/MaterialSymbolsRounded.ttf "$stage/Manual/fonts/"
 cp "$lic"/ffmpeg/* "$app/Contents/Resources/" 2>/dev/null || true
 
 # install_name_tool invalidates signatures: sign the whole bundle ad hoc (required on Apple

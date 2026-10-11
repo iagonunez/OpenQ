@@ -5,6 +5,7 @@ mod cue_list;
 mod eq;
 mod icons;
 mod inspector;
+mod manual;
 mod outputs;
 #[cfg(feature = "video")]
 mod preview;
@@ -172,6 +173,14 @@ impl App {
 
     fn primary(&self) -> Option<CueId> {
         self.selection.last().copied()
+    }
+
+    /// Open the bundled user manual in the default browser.
+    fn open_manual(&mut self) {
+        match manual::open() {
+            Ok(path) => self.notify(format!("Opened the user manual in your browser ({})", path.display())),
+            Err(e) => self.notify(format!("{e:#}")),
+        }
     }
 
     fn notify(&mut self, msg: impl Into<String>) {
@@ -367,6 +376,9 @@ impl App {
         }
         if ctx.input_mut(|i| i.consume_shortcut(&sc(cmd, Key::E))) {
             self.toggle_mode();
+        }
+        if ctx.input_mut(|i| i.consume_key(Modifiers::NONE, Key::F1)) {
+            self.open_manual();
         }
         if ctx.input_mut(|i| i.consume_shortcut(&sc(cmd, Key::S))) {
             self.deferred.push(Deferred::Save);
@@ -831,6 +843,10 @@ impl App {
                 ui.checkbox(&mut self.show_log, wi(I::RECEIPT_LONG, "Engine log"));
             });
             ui.menu_button("Help", |ui| {
+                if ui.add(egui::Button::new(wi(I::NOTES, "User manual")).shortcut_text("F1")).clicked() {
+                    self.open_manual();
+                }
+                ui.separator();
                 if ui.button(wi(I::INFO, "About OpenQ and licences…")).clicked() {
                     self.show_about = true;
                 }

@@ -11,6 +11,6 @@ and choose Open, then Open again. If macOS says the app "is damaged", run this o
 macOS asks for local network access the first time remote devices or OSC are used. Allow it if
 you use them.
 
-User manual: https://github.com/iagonunez/OpenQ (docs/manual)
+User manual: Help → User manual (F1) in OpenQ, or Manual/index.html in this folder.
 Licence: LICENSE.md (Apache 2.0). Third-party notices: NOTICE.md,
 THIRD_PARTY_LICENSES.md and the Licenses folder (fonts, FFmpeg).
