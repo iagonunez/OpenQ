@@ -125,7 +125,9 @@ The UI uses a dark theme (`src/ui/theme.rs`) with bundled fonts in `assets/fonts
 
 - [Material Symbols Rounded](https://fonts.google.com/icons) icons (Apache-2.0)
 - [Inter](https://fonts.google.com/specimen/Inter) for text and
-  [JetBrains Mono](https://fonts.google.com/specimen/JetBrains+Mono) for times (SIL OFL 1.1)
+  [JetBrains Mono](https://fonts.google.com/specimen/JetBrains+Mono) for times, and
+  [Barlow Condensed](https://fonts.google.com/specimen/Barlow+Condensed) for the OpenQ title
+  (SIL OFL 1.1)
 
 They are subset to the glyphs in use. To add an icon, put its name in `tools/icons.txt` and
 rebuild with `python3 -I tools/build_fonts.py <dir with the upstream font files>`, which also

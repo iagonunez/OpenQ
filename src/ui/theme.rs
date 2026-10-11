@@ -2,7 +2,10 @@
 //! Material Symbols Rounded for icons (Apache-2.0 / OFL fonts bundled in `assets/fonts`).
 
 use egui::epaint::text::{FontData, FontDefinitions, FontTweak};
-use egui::{Color32, CornerRadius, FontFamily, FontId, Margin, Response, RichText, Shadow, Stroke, TextStyle, Ui, vec2};
+use egui::{
+    Color32, CornerRadius, FontFamily, FontId, Margin, Response, RichText, Shadow, Stroke,
+    TextStyle, Ui, vec2,
+};
 use std::sync::Arc;
 
 // Palette.
@@ -29,6 +32,14 @@ pub fn accent_bg() -> Color32 {
 const SEMIBOLD: &str = "semibold";
 const ICONS: &str = "icons";
 const ICONS_FILLED: &str = "icons-filled";
+const TITLE: &str = "title";
+/// Downward shift (fraction of font size) for icons mixed into Inter text.
+const INLINE_ICON_OFFSET: f32 = 0.2;
+
+/// Condensed display face for the app title.
+pub fn title(size: f32) -> FontId {
+    FontId::new(size, FontFamily::Name(TITLE.into()))
+}
 
 pub fn semibold(size: f32) -> FontId {
     FontId::new(size, FontFamily::Name(SEMIBOLD.into()))
@@ -58,32 +69,101 @@ pub fn with_icon(glyph: &str, label: &str) -> String {
 
 /// A compact, frameless icon button with hover highlight.
 pub fn icon_button(ui: &mut Ui, glyph: &str, tooltip: &str) -> Response {
-    ui.add(egui::Button::new(icon(glyph, 20.0)).frame(false).min_size(vec2(30.0, 30.0))).on_hover_text(tooltip)
+    ui.add(
+        egui::Button::new(icon(glyph, 20.0))
+            .frame(false)
+            .min_size(vec2(30.0, 30.0)),
+    )
+    .on_hover_text(tooltip)
 }
 
 pub fn install(ctx: &egui::Context) {
     let mut fonts = FontDefinitions::default();
     let add = |fonts: &mut FontDefinitions, name: &str, bytes: &'static [u8], tweak: FontTweak| {
-        fonts.font_data.insert(name.to_owned(), Arc::new(FontData::from_static(bytes).tweak(tweak)));
+        fonts.font_data.insert(
+            name.to_owned(),
+            Arc::new(FontData::from_static(bytes).tweak(tweak)),
+        );
     };
-    add(&mut fonts, "Inter", include_bytes!("../../assets/fonts/Inter-Regular.ttf"), FontTweak::default());
-    add(&mut fonts, "Inter-SemiBold", include_bytes!("../../assets/fonts/Inter-SemiBold.ttf"), FontTweak::default());
-    add(&mut fonts, "JetBrainsMono", include_bytes!("../../assets/fonts/JetBrainsMono-Medium.ttf"), FontTweak::default());
-    // Icons sit a touch low against Inter's cap height; nudge them up and scale to match.
-    let icon_tweak = FontTweak { scale: 1.15, y_offset_factor: 0.12, ..Default::default() };
-    add(&mut fonts, "Symbols", include_bytes!("../../assets/fonts/MaterialSymbolsRounded.ttf"), icon_tweak.clone());
-    add(&mut fonts, "SymbolsFilled", include_bytes!("../../assets/fonts/MaterialSymbolsRounded-Filled.ttf"), icon_tweak);
+    add(
+        &mut fonts,
+        "Inter",
+        include_bytes!("../../assets/fonts/Inter-Regular.ttf"),
+        FontTweak::default(),
+    );
+    add(
+        &mut fonts,
+        "Inter-SemiBold",
+        include_bytes!("../../assets/fonts/Inter-SemiBold.ttf"),
+        FontTweak::default(),
+    );
+    add(
+        &mut fonts,
+        "JetBrainsMono",
+        include_bytes!("../../assets/fonts/JetBrainsMono-Medium.ttf"),
+        FontTweak::default(),
+    );
+    // Material Symbols glyphs are centred in their own line box, so standalone icons need no
+    // tweak. When an icon is mixed into Inter text it sits on Inter's baseline, where its centre
+    // is ~0.21 em above Inter's cap-height centre: shift those down to line up with the text.
+    let outlined: &'static [u8] = include_bytes!("../../assets/fonts/MaterialSymbolsRounded.ttf");
+    let filled: &'static [u8] =
+        include_bytes!("../../assets/fonts/MaterialSymbolsRounded-Filled.ttf");
+    let inline = FontTweak {
+        scale: 1.15,
+        y_offset_factor: INLINE_ICON_OFFSET,
+        ..Default::default()
+    };
+    add(&mut fonts, "SymbolsInline", outlined, inline);
+    add(&mut fonts, "Symbols", outlined, FontTweak::default());
+    add(&mut fonts, "SymbolsFilled", filled, FontTweak::default());
+    add(
+        &mut fonts,
+        "BarlowCondensed",
+        include_bytes!("../../assets/fonts/BarlowCondensed-SemiBold.ttf"),
+        FontTweak::default(),
+    );
 
-    let defaults_prop = fonts.families.get(&FontFamily::Proportional).cloned().unwrap_or_default();
-    let defaults_mono = fonts.families.get(&FontFamily::Monospace).cloned().unwrap_or_default();
+    let defaults_prop = fonts
+        .families
+        .get(&FontFamily::Proportional)
+        .cloned()
+        .unwrap_or_default();
+    let defaults_mono = fonts
+        .families
+        .get(&FontFamily::Monospace)
+        .cloned()
+        .unwrap_or_default();
     let chain = |first: &[&str], rest: &[String]| -> Vec<String> {
-        first.iter().map(|s| s.to_string()).chain(rest.iter().cloned()).collect()
+        first
+            .iter()
+            .map(|s| s.to_string())
+            .chain(rest.iter().cloned())
+            .collect()
     };
-    fonts.families.insert(FontFamily::Proportional, chain(&["Inter", "Symbols"], &defaults_prop));
-    fonts.families.insert(FontFamily::Monospace, chain(&["JetBrainsMono", "Symbols"], &defaults_mono));
-    fonts.families.insert(FontFamily::Name(SEMIBOLD.into()), chain(&["Inter-SemiBold", "Symbols"], &defaults_prop));
-    fonts.families.insert(FontFamily::Name(ICONS.into()), vec!["Symbols".into()]);
-    fonts.families.insert(FontFamily::Name(ICONS_FILLED.into()), vec!["SymbolsFilled".into()]);
+    fonts.families.insert(
+        FontFamily::Proportional,
+        chain(&["Inter", "SymbolsInline"], &defaults_prop),
+    );
+    fonts.families.insert(
+        FontFamily::Monospace,
+        chain(&["JetBrainsMono", "SymbolsInline"], &defaults_mono),
+    );
+    fonts.families.insert(
+        FontFamily::Name(SEMIBOLD.into()),
+        chain(&["Inter-SemiBold", "SymbolsInline"], &defaults_prop),
+    );
+    fonts.families.insert(
+        FontFamily::Name(TITLE.into()),
+        chain(&["BarlowCondensed"], &defaults_prop),
+    );
+    fonts
+        .families
+        .insert(FontFamily::Name(ICONS.into()), vec!["Symbols".into()]);
+    fonts.families.insert(
+        FontFamily::Name(ICONS_FILLED.into()),
+        vec!["SymbolsFilled".into()],
+    );
     ctx.set_fonts(fonts);
 
     ctx.set_theme(egui::Theme::Dark);
@@ -117,8 +197,18 @@ pub fn install(ctx: &egui::Context) {
         v.window_stroke = Stroke::new(1.0, BORDER);
         v.window_corner_radius = CornerRadius::same(10);
         v.menu_corner_radius = CornerRadius::same(8);
-        v.window_shadow = Shadow { offset: [0, 8], blur: 24, spread: 0, color: Color32::from_black_alpha(120) };
-        v.popup_shadow = Shadow { offset: [0, 6], blur: 16, spread: 0, color: Color32::from_black_alpha(110) };
+        v.window_shadow = Shadow {
+            offset: [0, 8],
+            blur: 24,
+            spread: 0,
+            color: Color32::from_black_alpha(120),
+        };
+        v.popup_shadow = Shadow {
+            offset: [0, 6],
+            blur: 16,
+            spread: 0,
+            color: Color32::from_black_alpha(110),
+        };
         v.selection.bg_fill = accent_bg();
         v.selection.stroke = Stroke::new(1.0, ACCENT);
         v.hyperlink_color = BLUE;
@@ -179,5 +269,7 @@ pub fn kind_icon(tag: crate::model::KindTag) -> &'static str {
 
 /// Section caption in small caps style ("STANDBY", "ACTIVE CUES").
 pub fn caption(text: &str) -> RichText {
-    RichText::new(text.to_uppercase()).font(semibold(10.5)).color(TEXT_FAINT)
+    RichText::new(text.to_uppercase())
+        .font(semibold(10.5))
+        .color(TEXT_FAINT)
 }
