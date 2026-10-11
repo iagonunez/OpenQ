@@ -1,10 +1,12 @@
 # OpenQ notices
 
-Required Notice: Copyright 2026 iagonunez — OpenQ (https://github.com/iagonunez/OpenQ)
+OpenQ
+Copyright 2026 iagonunez — OpenQ (https://github.com/iagonunez/OpenQ)
 
-OpenQ is licensed under the [Apache License 2.0](LICENSE.md). You may use, copy, modify, share
-and sell it for any purpose, as long as everyone you give a copy to also gets the licence terms
-and the notice line above.
+This product is licensed under the Apache License 2.0 (see `LICENSE.md`). You may use, copy,
+change, share and sell it for any purpose, including commercial productions such as paid live
+shows. Keep this notice, the copyright line and `LICENSE.md` with every copy, whether changed or
+not.
 
 The parts listed below belong to their authors and keep their own licences. OpenQ's own licence
 doesn't apply to them. When distributing OpenQ (source or binaries), include this file,
@@ -70,6 +72,6 @@ Notable cases:
 
 ## User manual
 
-`docs/manual` is part of OpenQ (Apache 2.0). Its screenshots show OpenQ itself. The web
+`docs/manual` is part of OpenQ and is under the same licence. Its screenshots show OpenQ itself. The web
 page loads Inter, JetBrains Mono, Barlow Condensed and Material Symbols from Google Fonts, under
 the licences above.

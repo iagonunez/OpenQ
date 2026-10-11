@@ -1,4 +1,4 @@
-Required Notice: Copyright 2026 iagonunez — OpenQ (https://github.com/iagonunez/OpenQ)
+Copyright 2026 iagonunez — OpenQ (https://github.com/iagonunez/OpenQ)
 
 Apache License
 Version 2.0, January 2004

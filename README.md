@@ -168,11 +168,13 @@ regenerates `src/ui/icons.rs`.
 
 ## Licence
 
-Required Notice: Copyright 2026 iagonunez — OpenQ (https://github.com/iagonunez/OpenQ)
+Copyright 2026 iagonunez. OpenQ is licensed under the **Apache License 2.0** ([LICENSE.md](LICENSE.md)):
 
-OpenQ is licensed under the [Apache License 2.0](LICENSE.md). You may use, copy, modify, share
-and sell it for any purpose, commercial included. Every copy you pass on must carry the licence
-and the notice line above.
+- **Allowed:** any use, including commercial productions. You may run paid shows, concerts,
+  events and installations, and be paid to program or operate them. You may copy, change and share
+  OpenQ, keeping the copyright notice, `LICENSE.md` and `NOTICE.md` with every copy.
+- **Also allowed:** selling copies or changed versions of OpenQ, and hosting, support or
+  consulting services built on it. Changed files must say that they were changed.
 
 Third-party fonts, crates and system libraries keep their own licences. They are listed in
 [NOTICE.md](NOTICE.md) and [THIRD_PARTY_LICENSES.md](THIRD_PARTY_LICENSES.md), and are also shown

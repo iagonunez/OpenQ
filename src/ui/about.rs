@@ -14,9 +14,9 @@ const FONT_LICENSES: [(&str, &str); 4] = [
     ("Material Symbols — Apache License 2.0", include_str!("../../assets/fonts/LICENSE-MaterialSymbols.txt")),
 ];
 
-/// The licence's Required Notice line.
-fn required_notice() -> &'static str {
-    LICENSE.lines().find(|l| l.starts_with("Required Notice:")).unwrap_or("")
+/// OpenQ's copyright line.
+fn copyright() -> &'static str {
+    LICENSE.lines().find(|l| l.starts_with("Copyright")).unwrap_or("")
 }
 
 /// Long text in a scroll area that only lays out the visible lines.
@@ -54,10 +54,11 @@ impl App {
                     ui.label("Show control and cue playback.");
                     ui.hyperlink(env!("CARGO_PKG_REPOSITORY"));
                     ui.add_space(6.0);
-                    ui.label(RichText::new(required_notice()).strong());
+                    ui.label(RichText::new(copyright()).strong());
                     ui.label(
-                        "Licensed under the Apache License 2.0: free to use, copy, change, share and sell \
-                         for any purpose, keeping this notice and the licence with every copy.",
+                        "Licensed under the Apache License 2.0. Use it for anything, \
+                         paid shows and productions included, and copy, change, share or sell it with this notice and \
+                         the licence.",
                     );
                     ui.add_space(8.0);
                     egui::CollapsingHeader::new("Licence").show(ui, |ui| long_text(ui, "lic", LICENSE));
@@ -80,9 +81,9 @@ impl App {
 mod tests {
     #[test]
     fn notices_are_bundled() {
-        assert!(super::required_notice().starts_with("Required Notice: Copyright"));
+        assert!(super::copyright().starts_with("Copyright 2026"));
         assert!(super::LICENSE.contains("Apache License"));
         assert!(super::THIRD_PARTY.contains("| symphonia |"));
-        assert!(super::NOTICE.contains(super::required_notice()));
+        assert!(super::NOTICE.contains(super::copyright()));
     }
 }
