@@ -188,6 +188,7 @@ footer { margin-top: 56px; padding-top: 18px; border-top: 1px solid var(--border
     <li><a href="#settings">Settings</a></li>
     <li><a href="#keys">Keyboard shortcuts</a></li>
     <li><a href="#trouble">Troubleshooting</a></li>
+    <li><a href="#licence">Licence and credits</a></li>
   </ol>
 </nav>
 
@@ -229,8 +230,8 @@ cargo run --release -- show.openq    # open a saved show</code></pre>
   <ul>
     <li><strong>Title bar:</strong> the show's name (a dot means unsaved changes) and the
     <strong>Edit / Show</strong> switch at the right.</li>
-    <li><strong>Menus:</strong> File, Edit, Cue, Show, Video (stages and outputs), Remote, and View
-    (geometry preview, engine log).</li>
+    <li><strong>Menus:</strong> File, Edit, Cue, Show, Video (stages and outputs), Remote, View
+    (geometry preview, engine log) and Help (about and licences).</li>
     <li><strong>GO</strong> fires the cue at the playhead. The <strong>standby</strong> card shows that cue,
     with its notes underneath so the operator can read them before pressing GO.</li>
     <li><strong>Transport:</strong> <span class="ms">pause</span> pause all, <span class="ms">play_arrow</span> resume all,
@@ -558,11 +559,27 @@ cargo run --release -- show.openq    # open a saved show</code></pre>
       come within double-GO protection.</td></tr>
       <tr><td>A remote device can't find the main device</td><td>Make sure remote access is on and both are on the
       same network, then type the address shown on the main device.</td></tr>
-      <tr><td>"Pair this device again"</td><td>The device was removed on the main device, or its key was forgotten. Open
+      <tr><td>"Pair this device again" (remote)</td><td>The device was removed on the main device, or its key was forgotten. Open
       pairing on the main device and enter the new code.</td></tr>
     </tbody>
   </table></div>
-  <footer>OpenQ is open-source software. Fonts: Inter, JetBrains Mono, Barlow Condensed (SIL OFL) and Material Symbols (Apache 2.0).</footer>
+
+</section>
+
+<section id="licence">
+  <h2><span class="n">15</span>Licence and credits</h2>
+  <p>OpenQ is licensed under the <a href="https://www.apache.org/licenses/LICENSE-2.0">Apache License 2.0</a>.
+  You may use, copy, change, share and sell it for any purpose. Every copy you pass on must carry the licence and this
+  notice:</p>
+  <pre><code>Required Notice: Copyright 2026 iagonunez — OpenQ (https://github.com/iagonunez/OpenQ)</code></pre>
+  <p><span class="menu">Help → About OpenQ and licences</span> shows the version, the licence and every third-party
+  notice. These are the fonts (Inter, JetBrains Mono and Barlow Condensed under the SIL Open Font License; Material Symbols
+  under Apache 2.0; the fonts built into egui) and the open-source Rust libraries OpenQ is built from, each under its
+  own licence. The same texts are in <code>NOTICE.md</code> and <code>THIRD_PARTY_LICENSES.md</code> next to the program.</p>
+  <div class="note"><span class="label">Video and FFmpeg</span><p>OpenQ plays video with the FFmpeg libraries installed on
+  the computer. FFmpeg has its own licence. If you pass OpenQ on to others as a ready-built program, build it against an
+  FFmpeg configured without GPL parts. See <code>NOTICE.md</code>.</p></div>
+  <footer>OpenQ · Apache 2.0. Fonts: Inter, JetBrains Mono, Barlow Condensed (SIL OFL 1.1) and Material Symbols (Apache 2.0).</footer>
 </section>
 </main>
 </div>

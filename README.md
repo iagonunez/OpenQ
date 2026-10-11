@@ -165,3 +165,23 @@ They are subset to the glyphs in use. To add an icon, put its name in `tools/ico
 rebuild with `python3 -I tools/build_fonts.py <dir with the upstream font files>`, which also
 regenerates `src/ui/icons.rs`.
 
+
+## Licence
+
+Required Notice: Copyright 2026 iagonunez — OpenQ (https://github.com/iagonunez/OpenQ)
+
+OpenQ is licensed under the [Apache License 2.0](LICENSE.md). You may use, copy, modify, share
+and sell it for any purpose, commercial included. Every copy you pass on must carry the licence
+and the notice line above.
+
+Third-party fonts, crates and system libraries keep their own licences. They are listed in
+[NOTICE.md](NOTICE.md) and [THIRD_PARTY_LICENSES.md](THIRD_PARTY_LICENSES.md), and are also shown
+in the app under **Help → About OpenQ and licences**. Two points to note when distributing binaries:
+
+- Ship `LICENSE.md`, `NOTICE.md`, `THIRD_PARTY_LICENSES.md` and `assets/fonts/*.txt` with them.
+  The app also contains these texts.
+- Build against an **LGPL-only FFmpeg**, or use `--no-default-features`. A GPL build of FFmpeg
+  (`--enable-gpl`, as many Linux distributions ship it) puts a distributed binary as a whole
+  under GPL 3, with its complete source.
+
+After changing dependencies, run `python3 -I tools/third_party_licenses.py`.

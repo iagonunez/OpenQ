@@ -1,5 +1,6 @@
 //! egui front end.
 
+mod about;
 mod cue_list;
 mod eq;
 mod icons;
@@ -81,6 +82,7 @@ pub struct App {
     #[cfg(feature = "video")]
     stage_monitor: std::collections::HashMap<StageId, Option<usize>>,
     show_preview: bool,
+    show_about: bool,
     remote: remote::RemoteUi,
     #[cfg(feature = "video")]
     posters: Arc<media::Posters>,
@@ -133,6 +135,7 @@ impl App {
             #[cfg(feature = "video")]
             stage_monitor: Default::default(),
             show_preview: false,
+            show_about: false,
             remote: Default::default(),
             #[cfg(feature = "video")]
             posters: media::Posters::new(),
@@ -826,6 +829,11 @@ impl App {
                 #[cfg(feature = "video")]
                 ui.checkbox(&mut self.show_preview, wi(I::PREVIEW, "Geometry preview"));
                 ui.checkbox(&mut self.show_log, wi(I::RECEIPT_LONG, "Engine log"));
+            });
+            ui.menu_button("Help", |ui| {
+                if ui.button(wi(I::INFO, "About OpenQ and licences…")).clicked() {
+                    self.show_about = true;
+                }
             });
         });
     }
@@ -1931,6 +1939,9 @@ impl App {
                 self.remote.window = true;
                 self.remote.tab = if t == "connect" { remote::RemoteTab::Connect } else { remote::RemoteTab::Share };
             }
+            if std::env::var_os("OPENQ_SCREENSHOT_ABOUT").is_some() {
+                self.show_about = true;
+            }
             if std::env::var_os("OPENQ_SCREENSHOT_PREVIEW").is_some() {
                 self.show_preview = true;
             }
@@ -2102,6 +2113,7 @@ impl eframe::App for App {
             #[cfg(feature = "video")]
             self.geometry_preview(&ctx, show);
             self.remote_window(&ctx, show);
+            self.about_window(&ctx);
             self.track_undo(&ctx, show);
             self.sync_osc(&ctx, show);
 
