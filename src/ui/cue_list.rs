@@ -1,5 +1,6 @@
 //! The cue list: a table with playhead, live status, progress bars and drag & drop.
 
+use crate::control::{Command, CueAction};
 use super::{App, Mode, icons, theme};
 use super::widgets::{AMBER, BLUE, GREEN, RED, fmt_time, parse_time};
 use crate::media::effective_duration;
@@ -393,16 +394,13 @@ impl App {
     }
 
     fn run_row_action(&mut self, show: &mut Show, id: CueId, action: RowAction) {
-        let now = Instant::now();
         match action {
             RowAction::SetPlayhead => self.select(show, Some(id)),
             RowAction::Start => {
-                let Show { ws, engine, media, .. } = show;
-                engine.start_cue(ws, media, id, now);
+                self.control(show, Command::Cue(id, CueAction::Start));
             }
             RowAction::Stop => {
-                let Show { ws, engine, media, .. } = show;
-                engine.stop_cue(ws, media, id);
+                self.control(show, Command::Cue(id, CueAction::Stop));
             }
             RowAction::Duplicate => {
                 if !self.selection.contains(&id) {

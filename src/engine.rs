@@ -104,6 +104,26 @@ impl Instance {
     }
 }
 
+/// A running cue as seen from outside the engine (what remote replicas are sent).
+#[derive(serde::Serialize, serde::Deserialize, Clone, Debug, PartialEq)]
+pub struct InstanceSnapshot {
+    pub id: CueId,
+    pub kind: KindTag,
+    pub pre_wait: f64,
+    pub pre_wait_elapsed: f64,
+    pub action_elapsed: f64,
+    pub paused: bool,
+    pub started: bool,
+    pub action_done: bool,
+    pub action_duration: Option<f64>,
+    pub continue_done: bool,
+    pub parent: Option<CueId>,
+}
+
+fn before(t: Instant, secs: f64) -> Instant {
+    t.checked_sub(Duration::from_secs_f64(secs.max(0.0))).unwrap_or(t)
+}
+
 /// Seconds from `now` until `t` (negative if `t` is in the past).
 fn secs_between(now: Instant, t: Instant) -> f64 {
     if t >= now { (t - now).as_secs_f64() } else { -(now - t).as_secs_f64() }
@@ -134,6 +154,62 @@ impl Engine {
 
     pub fn is_panicking(&self) -> bool {
         self.panic.is_some()
+    }
+
+    /// Running cues for remote replicas; `media_elapsed` gives the exact media position where
+    /// known.
+    pub fn snapshot(&self, now: Instant, media_elapsed: impl Fn(CueId) -> Option<f64>) -> Vec<InstanceSnapshot> {
+        let mut v: Vec<InstanceSnapshot> = self
+            .instances
+            .iter()
+            .map(|(id, i)| InstanceSnapshot {
+                id: *id,
+                kind: i.kind,
+                pre_wait: i.pre_wait,
+                pre_wait_elapsed: i.pre_wait_elapsed(now),
+                action_elapsed: if i.in_pre_wait(now) { 0.0 } else { media_elapsed(*id).unwrap_or_else(|| i.action_elapsed(now)) },
+                paused: i.is_paused(),
+                started: i.started,
+                action_done: i.action_done,
+                action_duration: i.action_duration,
+                continue_done: i.continue_done,
+                parent: i.parent,
+            })
+            .collect();
+        v.sort_by_key(|s| s.id);
+        v
+    }
+
+    /// Make this engine a display-only mirror of a remote one. Times are rebuilt against
+    /// `now`, so progress keeps moving smoothly between updates. Never tick a mirrored engine.
+    pub fn mirror(&mut self, playhead: Option<CueId>, panicking: bool, instances: &[InstanceSnapshot], log: Vec<String>, now: Instant) {
+        self.playhead = playhead;
+        self.panic = panicking.then(|| (now, Vec::new()));
+        self.log = log;
+        self.instances = instances
+            .iter()
+            .map(|s| {
+                let action_at = if s.started && s.pre_wait_elapsed >= s.pre_wait {
+                    before(now, s.action_elapsed)
+                } else {
+                    after(now, s.pre_wait - s.pre_wait_elapsed)
+                };
+                let inst = Instance {
+                    kind: s.kind,
+                    fired_at: before(action_at, s.pre_wait),
+                    action_at,
+                    pre_wait: s.pre_wait,
+                    paused_at: s.paused.then_some(now),
+                    started: s.started,
+                    action_done: s.action_done,
+                    action_duration: s.action_duration,
+                    continue_done: s.continue_done,
+                    parent: s.parent,
+                    fade: None,
+                };
+                (s.id, inst)
+            })
+            .collect();
     }
 
     pub fn set_playhead(&mut self, id: Option<CueId>) {

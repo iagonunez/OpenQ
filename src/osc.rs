@@ -70,61 +70,40 @@ fn flatten(p: rosc::OscPacket, out: &mut Vec<rosc::OscMessage>) {
 
 /// Apply one OSC address to the show.
 pub fn handle(show: &SharedShow, addr: &str) -> Result<(), String> {
-    use crate::show::Show;
+    use crate::control::{Command, CueAction};
     let mut guard = show.lock();
-    let now = Instant::now();
     let parts: Vec<&str> = addr.trim_matches('/').split('/').collect();
-    let find = |s: &Show, number: &str| {
-        s.ws.cue_list
+    let find = |number: &str| {
+        guard
+            .ws
+            .cue_list
             .iter_all()
             .iter()
             .find(|c| c.number == number)
             .map(|c| c.id)
             .ok_or_else(|| format!("no cue numbered {number}"))
     };
-    let target = match parts.as_slice() {
-        ["playhead", n] if *n != "next" && *n != "previous" => Some(find(&guard, n)?),
-        ["cue", n, _] => Some(find(&guard, n)?),
-        _ => None,
-    };
-    let Show { ws, engine, media, .. } = &mut *guard;
-    match parts.as_slice() {
-        ["go"] => engine.go(ws, media, now),
-        ["stop"] => engine.stop_all(media, now, ws.settings.panic_fade),
-        ["panic"] => engine.stop_all(media, now, 0.0),
-        ["pause"] => engine.pause_all(media, now),
-        ["resume"] => engine.resume_all(media, now),
-        ["playhead", dir @ ("next" | "previous")] => {
-            let rows = ws.cue_list.visible_rows(&|_| false);
-            let i = engine.playhead.and_then(|p| rows.iter().position(|r| r.1 == p));
-            let next = match (*dir, i) {
-                ("next", Some(i)) => rows.get(i + 1),
-                ("previous", Some(i)) if i > 0 => rows.get(i - 1),
-                (_, Some(_)) => None,
-                _ => rows.first(),
-            };
-            if let Some(r) = next {
-                engine.set_playhead(Some(r.1));
-            }
-        }
-        ["playhead", _] => engine.set_playhead(target),
-        ["cue", _, action] => {
-            let id = target.expect("resolved above");
-            match *action {
-                "start" | "go" => engine.start_cue(ws, media, id, now),
-                "stop" => engine.stop_cue(ws, media, id),
-                "pause" => engine.pause_cue(ws, media, id, now),
-                "resume" => engine.resume_cue(ws, media, id, now),
-                "devamp" => {
-                    use crate::engine::Backend;
-                    if !media.devamp(id) {
-                        return Err("cue is not playing".into());
-                    }
-                }
+    let cmd = match parts.as_slice() {
+        ["go"] => Command::Go,
+        ["stop"] => Command::Stop,
+        ["panic"] => Command::Panic,
+        ["pause"] => Command::PauseAll,
+        ["resume"] => Command::ResumeAll,
+        ["playhead", "next"] => Command::PlayheadNext,
+        ["playhead", "previous"] => Command::PlayheadPrevious,
+        ["playhead", n] => Command::SetPlayhead(Some(find(n)?)),
+        ["cue", n, action] => {
+            let action = match *action {
+                "start" | "go" => CueAction::Start,
+                "stop" => CueAction::Stop,
+                "pause" => CueAction::Pause,
+                "resume" => CueAction::Resume,
+                "devamp" => CueAction::Devamp,
                 other => return Err(format!("unknown cue action {other}")),
-            }
+            };
+            Command::Cue(find(n)?, action)
         }
         _ => return Err("unknown address".into()),
-    }
-    Ok(())
+    };
+    crate::control::apply(&mut guard, cmd, Instant::now())
 }

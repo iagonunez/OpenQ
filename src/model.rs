@@ -647,7 +647,7 @@ pub enum CueKind {
     Text(TextCue),
 }
 
-#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+#[derive(Serialize, Deserialize, Clone, Copy, PartialEq, Eq, Debug)]
 pub enum KindTag {
     Audio,
     Video,

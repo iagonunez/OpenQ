@@ -26,7 +26,7 @@ pub struct DecodeParams {
 }
 
 /// Peak overview of a file for waveform display.
-#[derive(Debug, Default)]
+#[derive(Clone, Debug, Default, PartialEq, serde::Serialize, serde::Deserialize)]
 pub struct Waveform {
     /// (min, max) of the mixed-down signal per bucket.
     pub peaks: Vec<[f32; 2]>,

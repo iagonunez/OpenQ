@@ -16,7 +16,7 @@ use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::time::Instant;
 
-#[derive(Clone, Debug, Default)]
+#[derive(Clone, Debug, Default, serde::Serialize, serde::Deserialize)]
 pub struct MediaInfo {
     /// File duration in seconds.
     pub duration: Option<f64>,
@@ -32,6 +32,8 @@ pub struct MediaInfo {
 pub struct Prober {
     cache: Mutex<HashMap<PathBuf, Option<Result<MediaInfo, String>>>>,
     tx: Mutex<std::sync::mpsc::Sender<PathBuf>>,
+    /// Replica mode: the main device pushes media info, nothing is probed locally.
+    remote: std::sync::atomic::AtomicBool,
 }
 
 fn is_video_path(p: &Path) -> bool {
@@ -63,15 +65,20 @@ pub fn is_video_file(p: &Path) -> bool {
 /// Background waveform builder with a cache (decoding a whole file can take a while).
 type WaveformResult = Result<Arc<decoder::Waveform>, String>;
 
+/// Where a cache gets results from when this instance is a remote replica: the files live on
+/// the main device, so requests go over the link instead of to a local decoder.
+pub type RemoteFetch = Box<dyn Fn(PathBuf) + Send + Sync>;
+
 pub struct Waveforms {
     cache: Mutex<HashMap<PathBuf, Option<WaveformResult>>>,
     tx: Mutex<std::sync::mpsc::Sender<PathBuf>>,
+    remote: Mutex<Option<RemoteFetch>>,
 }
 
 impl Waveforms {
     pub fn new() -> Arc<Self> {
         let (tx, rx) = std::sync::mpsc::channel::<PathBuf>();
-        let w = Arc::new(Self { cache: Mutex::new(HashMap::new()), tx: Mutex::new(tx) });
+        let w = Arc::new(Self { cache: Mutex::new(HashMap::new()), tx: Mutex::new(tx), remote: Mutex::new(None) });
         let weak = Arc::downgrade(&w);
         std::thread::Builder::new()
             .name("openq-waveform".into())
@@ -96,10 +103,26 @@ impl Waveforms {
             Some(r) => r.clone(),
             None => {
                 c.insert(path.to_path_buf(), None);
-                let _ = self.tx.lock().send(path.to_path_buf());
+                match &*self.remote.lock() {
+                    Some(fetch) => fetch(path.to_path_buf()),
+                    None => {
+                        let _ = self.tx.lock().send(path.to_path_buf());
+                    }
+                }
                 None
             }
         }
+    }
+
+    pub fn insert(&self, path: PathBuf, result: WaveformResult) {
+        self.cache.lock().insert(path, Some(result));
+    }
+
+    /// Switch between local decoding (`None`) and fetching from a remote main device. Clears
+    /// the cache either way.
+    pub fn set_remote(&self, fetch: Option<RemoteFetch>) {
+        *self.remote.lock() = fetch;
+        self.cache.lock().clear();
     }
 }
 
@@ -221,7 +244,7 @@ fn probe_now(path: &Path) -> Result<MediaInfo, String> {
 impl Prober {
     pub fn new() -> Arc<Self> {
         let (tx, rx) = std::sync::mpsc::channel::<PathBuf>();
-        let p = Arc::new(Self { cache: Mutex::new(HashMap::new()), tx: Mutex::new(tx) });
+        let p = Arc::new(Self { cache: Mutex::new(HashMap::new()), tx: Mutex::new(tx), remote: Default::default() });
         let weak = Arc::downgrade(&p);
         std::thread::Builder::new()
             .name("openq-probe".into())
@@ -249,10 +272,22 @@ impl Prober {
             Some(r) => r.clone(),
             None => {
                 c.insert(path.to_path_buf(), None);
-                let _ = self.tx.lock().send(path.to_path_buf());
+                if !self.remote.load(std::sync::atomic::Ordering::Relaxed) {
+                    let _ = self.tx.lock().send(path.to_path_buf());
+                }
                 None
             }
         }
+    }
+
+    pub fn insert(&self, path: PathBuf, result: Result<MediaInfo, String>) {
+        self.cache.lock().insert(path, Some(result));
+    }
+
+    /// Replica mode on/off; clears the cache.
+    pub fn set_remote(&self, remote: bool) {
+        self.remote.store(remote, std::sync::atomic::Ordering::Relaxed);
+        self.cache.lock().clear();
     }
 
     /// Like `get` but probes synchronously when unknown (used for audio at start time).
@@ -427,8 +462,8 @@ impl Media {
         }
     }
 
-    pub fn take_meters(&self) -> Vec<f32> {
-        self.audio.as_ref().map(|a| a.take_meters()).unwrap_or_default()
+    pub fn take_meters(&self, reader: audio::MeterReader) -> Vec<f32> {
+        self.audio.as_ref().map(|a| a.take_meters(reader)).unwrap_or_default()
     }
 }
 

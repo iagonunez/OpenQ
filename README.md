@@ -79,6 +79,29 @@ Turn on **OSC** in Settings → General (UDP port 53000 by default):
 A **Network cue** sends one OSC message (host, port, address, arguments) to other gear, such as a
 lighting desk.
 
+## Remote devices
+
+Another OpenQ on the same network (a stage manager's laptop, a tablet at the tech table) can
+connect to the one running the show, mirror it live and control it.
+
+1. On the main device: **Remote → Share this OpenQ**, tick *Let paired devices connect*, then
+   **Pair a new device…**. A code such as `C9XR-E9HJ` appears.
+2. On the other device: **Remote → Connect to another OpenQ**, search the network (or type the
+   address), enter the code and connect. Later connections need no code.
+
+The replica shows the main device's cue list, playhead, running cues and meters. GO, stop,
+pause and the playhead act on the main device, which does all the playback. Each paired device
+has a role on the main device: *View only*, *Control*, or *Control & edit*. Edits made on a
+replica with the edit role are saved on the main device. **Remove** revokes a device at once.
+The replica's own show comes back when it disconnects.
+
+Security: the pairing code is checked with SPAKE2 (a password-authenticated key exchange), so a
+code can't be cracked offline from captured traffic. A code is valid for 5 minutes and 5 tries.
+Pairing gives the device its own random 256-bit key, and both sides prove they hold it on every
+connection. All traffic is encrypted and authenticated with ChaCha20-Poly1305. Addresses that keep
+failing are blocked for 5 minutes. Keys are stored in `~/.config/openq/remote.json` (mode 0600),
+never in show files. Remote access uses TCP port 53200, and discovery uses UDP 53201.
+
 ## Keys
 
 | Key | Action |
@@ -111,6 +134,9 @@ src/media/decoder.rs  per-voice symphonia decode → trim/loop → rubato resamp
 src/media/video.rs  FFmpeg decode threads / still images → RGBA frames + soundtrack to the mixer
 src/show.rs         shared state + 1 kHz engine thread
 src/osc.rs          OSC remote-control listener
+src/control.rs      show-control commands shared by UI, OSC and remote devices
+src/remote/         paired remote devices: SPAKE2 handshake + encrypted link, server, replica
+                    client, LAN discovery
 src/ui/             egui front end (cue list, inspector tabs, waveform, EQ, stages + mapping)
 ```
 

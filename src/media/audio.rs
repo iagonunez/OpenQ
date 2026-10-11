@@ -20,6 +20,15 @@ use std::sync::atomic::{AtomicBool, AtomicU32, AtomicU64, Ordering};
 use std::time::{Duration, Instant};
 
 const MAX_METER_CHANNELS: usize = MAX_OUT_CHANNELS;
+
+/// Peak-hold slots written by the audio callback, one per reader.
+type Meters = Arc<[[AtomicU32; MAX_METER_CHANNELS]; 2]>;
+
+#[derive(Clone, Copy, Debug)]
+pub enum MeterReader {
+    Local = 0,
+    Remote = 1,
+}
 /// Fade applied on stop to avoid clicks.
 const DECLICK_SECS: f64 = 0.008;
 /// Seconds of decoded audio buffered per voice.
@@ -207,7 +216,7 @@ struct Mixer {
     frame: u64,
     master: f32,
     clock: Arc<Clock>,
-    meters: Arc<[AtomicU32; MAX_METER_CHANNELS]>,
+    meters: Meters,
     scratch: Vec<f32>,
 }
 
@@ -333,10 +342,12 @@ impl Mixer {
                 }
             }
         }
-        for (c, p) in peaks.iter().enumerate().take(ch.min(MAX_METER_CHANNELS)) {
-            let prev = f32::from_bits(self.meters[c].load(Ordering::Relaxed));
-            if *p > prev {
-                self.meters[c].store(p.to_bits(), Ordering::Relaxed);
+        for set in self.meters.iter() {
+            for (c, p) in peaks.iter().enumerate().take(ch.min(MAX_METER_CHANNELS)) {
+                let prev = f32::from_bits(set[c].load(Ordering::Relaxed));
+                if *p > prev {
+                    set[c].store(p.to_bits(), Ordering::Relaxed);
+                }
             }
         }
         self.frame += frames as u64;
@@ -455,7 +466,7 @@ pub struct AudioOutput {
     cmd: rtrb::Producer<Cmd>,
     garbage: rtrb::Consumer<Garbage>,
     clock: Arc<Clock>,
-    meters: Arc<[AtomicU32; MAX_METER_CHANNELS]>,
+    meters: Meters,
     shutdown: Arc<AtomicBool>,
     pub rate: u32,
     pub channels: usize,
@@ -481,7 +492,7 @@ impl AudioOutput {
     pub fn open(device_id: Option<&str>) -> anyhow::Result<Self> {
         let (cmd_tx, cmd_rx) = rtrb::RingBuffer::<Cmd>::new(2048);
         let (gb_tx, gb_rx) = rtrb::RingBuffer::<Garbage>::new(2048);
-        let meters: Arc<[AtomicU32; MAX_METER_CHANNELS]> = Arc::new(Default::default());
+        let meters: Meters = Arc::new(Default::default());
         let shutdown = Arc::new(AtomicBool::new(false));
         type Setup = anyhow::Result<(u32, usize, String, Arc<Clock>)>;
         let (setup_tx, setup_rx) = std::sync::mpsc::channel::<Setup>();
@@ -792,10 +803,12 @@ impl AudioOutput {
         out
     }
 
-    /// Peak per output channel since the last call (linear 0..1).
-    pub fn take_meters(&self) -> Vec<f32> {
+    /// Peak per output channel since the last call (linear 0..1). Each reader (the local
+    /// meters, remote replicas) has its own set so they don't steal each other's peaks.
+    pub fn take_meters(&self, reader: MeterReader) -> Vec<f32> {
+        let set = &self.meters[reader as usize];
         (0..self.channels.min(MAX_METER_CHANNELS))
-            .map(|c| f32::from_bits(self.meters[c].swap(0, Ordering::Relaxed)))
+            .map(|c| f32::from_bits(set[c].swap(0, Ordering::Relaxed)))
             .collect()
     }
 

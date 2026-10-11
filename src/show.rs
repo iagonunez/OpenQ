@@ -20,17 +20,19 @@ pub struct Show {
     pub shut_down: bool,
     /// Bumped on every edit (drives undo snapshots).
     pub edit_gen: u64,
+    /// This instance mirrors a remote main device: the engine is display-only and never ticks.
+    pub replica: bool,
 }
 
 pub type SharedShow = Arc<Mutex<Show>>;
 
 impl Show {
     pub fn new(prober: Arc<Prober>) -> Self {
-        Self { ws: Workspace::default(), engine: Engine::new(), media: Media::new(prober), path: None, dirty: false, shut_down: false, edit_gen: 0 }
+        Self { ws: Workspace::default(), engine: Engine::new(), media: Media::new(prober), path: None, dirty: false, shut_down: false, edit_gen: 0, replica: false }
     }
 
     pub fn tick(&mut self, now: Instant) {
-        if self.shut_down {
+        if self.shut_down || self.replica {
             return;
         }
         let Show { ws, engine, media, .. } = self;
@@ -56,6 +58,25 @@ impl Show {
         self.dirty = true;
         self.edit_gen += 1;
         self.engine.workspace_changed();
+    }
+
+    /// Take a workspace edited on a remote device. Machine-specific settings (audio device,
+    /// OSC) stay as they are here.
+    pub fn apply_remote_edit(&mut self, mut ws: Workspace) {
+        let mine = &self.ws.settings;
+        ws.settings.audio_device = mine.audio_device.clone();
+        ws.settings.osc_enabled = mine.osc_enabled;
+        ws.settings.osc_port = mine.osc_port;
+        if ws.settings.master_volume_db != mine.master_volume_db
+            && let Some(a) = &mut self.media.audio
+        {
+            a.set_master(ws.settings.master_volume_db);
+        }
+        self.ws = ws;
+        if self.engine.playhead.is_some_and(|p| self.ws.cue_list.find(p).is_none()) {
+            self.engine.set_playhead(None);
+        }
+        self.edited();
     }
 
     pub fn replace_workspace(&mut self, ws: Workspace, path: Option<PathBuf>) {

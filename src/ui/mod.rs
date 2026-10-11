@@ -7,6 +7,7 @@ mod inspector;
 mod outputs;
 #[cfg(feature = "video")]
 mod preview;
+mod remote;
 #[cfg(feature = "video")]
 mod stage;
 mod theme;
@@ -18,6 +19,7 @@ use crate::media::{self, Prober, Waveforms};
 use crate::model::{
     AudioCue, Cue, CueId, CueKind, GroupMode, KindTag, Stage, StageId, VideoCue, Workspace,
 };
+use crate::control::{Command, CueAction};
 use crate::show::{SharedShow, Show};
 use egui::{Color32, Key, KeyboardShortcut, Modifiers, RichText};
 use parking_lot::Mutex;
@@ -78,6 +80,7 @@ pub struct App {
     #[cfg(feature = "video")]
     stage_monitor: std::collections::HashMap<StageId, Option<usize>>,
     show_preview: bool,
+    remote: remote::RemoteUi,
     #[cfg(feature = "video")]
     posters: Arc<media::Posters>,
     #[cfg(feature = "video")]
@@ -128,6 +131,7 @@ impl App {
             #[cfg(feature = "video")]
             stage_monitor: Default::default(),
             show_preview: false,
+            remote: Default::default(),
             #[cfg(feature = "video")]
             posters: media::Posters::new(),
             #[cfg(feature = "video")]
@@ -346,7 +350,6 @@ impl App {
 
     fn handle_keys(&mut self, ctx: &egui::Context, show: &mut Show) {
         let typing = ctx.egui_wants_keyboard_input();
-        let now = Instant::now();
         let sc = |m: Modifiers, k: Key| KeyboardShortcut::new(m, k);
         let cmd = Modifiers::COMMAND;
         let editing = self.mode == Mode::Edit;
@@ -355,9 +358,7 @@ impl App {
         if ctx.input_mut(|i| i.consume_key(Modifiers::NONE, Key::Escape))
             && self.inline.take().is_none()
         {
-            let fade = show.ws.settings.panic_fade;
-            let Show { engine, media, .. } = show;
-            engine.stop_all(media, now, fade);
+            self.control(show, Command::Stop);
         }
         if ctx.input_mut(|i| i.consume_shortcut(&sc(cmd, Key::E))) {
             self.toggle_mode();
@@ -378,15 +379,13 @@ impl App {
             return;
         }
         if ctx.input_mut(|i| i.consume_key(Modifiers::NONE, Key::Space)) {
-            show.go();
+            self.control(show, Command::Go);
         }
         if ctx.input_mut(|i| i.consume_key(Modifiers::NONE, Key::P)) {
-            let Show { engine, media, .. } = show;
-            engine.pause_all(media, now);
+            self.control(show, Command::PauseAll);
         }
         if ctx.input_mut(|i| i.consume_key(Modifiers::NONE, Key::R)) {
-            let Show { engine, media, .. } = show;
-            engine.resume_all(media, now);
+            self.control(show, Command::ResumeAll);
         }
 
         // Per-cue hotkeys (plain key presses, no modifiers).
@@ -399,10 +398,7 @@ impl App {
             .collect();
         for (k, id) in hotkeys {
             if ctx.input_mut(|i| i.consume_key(Modifiers::NONE, k)) {
-                let Show {
-                    ws, engine, media, ..
-                } = show;
-                engine.start_cue(ws, media, id, now);
+                self.control(show, Command::Cue(id, CueAction::Start));
             }
         }
 
@@ -489,6 +485,10 @@ impl App {
     }
 
     fn toggle_mode(&mut self) {
+        if self.mode == Mode::Show && !self.can_edit_show() {
+            self.notify("This device can only run the show: editing needs the Control & edit role");
+            return;
+        }
         self.mode = match self.mode {
             Mode::Edit => Mode::Show,
             Mode::Show => Mode::Edit,
@@ -586,11 +586,8 @@ impl App {
 
     /// Start/stop/restart the OSC listener to match the settings.
     fn sync_osc(&mut self, ctx: &egui::Context, show: &Show) {
-        let want = show
-            .ws
-            .settings
-            .osc_enabled
-            .then_some(show.ws.settings.osc_port);
+        // A replica's OSC would drive the main device's settings here: leave it to the main one.
+        let want = (show.ws.settings.osc_enabled && !show.replica).then_some(show.ws.settings.osc_port);
         if self.osc.as_ref().map(|o| o.port) == want && self.osc_error.is_none() {
             return;
         }
@@ -623,6 +620,10 @@ impl App {
         });
         if self.mode == Mode::Show && !files.is_empty() {
             self.notify("Switch to edit mode (Ctrl+E) to add cues");
+            return;
+        }
+        if self.remote.is_replica() && !files.is_empty() {
+            self.notify("Media files live on the main device: add them there");
             return;
         }
         for f in files {
@@ -731,34 +732,29 @@ impl App {
                 }
             });
             ui.menu_button("Show", |ui| {
-                let now = Instant::now();
                 if ui
                     .add(egui::Button::new(wi(I::PLAY_ARROW, "GO")).shortcut_text("Space"))
                     .clicked()
                 {
-                    show.go();
+                    self.control(show, Command::Go);
                 }
                 if ui
                     .add(egui::Button::new(wi(I::STOP, "Stop all")).shortcut_text("Esc"))
                     .clicked()
                 {
-                    let fade = show.ws.settings.panic_fade;
-                    let Show { engine, media, .. } = show;
-                    engine.stop_all(media, now, fade);
+                    self.control(show, Command::Stop);
                 }
                 if ui
                     .add(egui::Button::new(wi(I::PAUSE, "Pause all")).shortcut_text("P"))
                     .clicked()
                 {
-                    let Show { engine, media, .. } = show;
-                    engine.pause_all(media, now);
+                    self.control(show, Command::PauseAll);
                 }
                 if ui
                     .add(egui::Button::new(wi(I::PLAY_ARROW, "Resume all")).shortcut_text("R"))
                     .clicked()
                 {
-                    let Show { engine, media, .. } = show;
-                    engine.resume_all(media, now);
+                    self.control(show, Command::ResumeAll);
                 }
                 ui.separator();
                 let label = if self.mode == Mode::Edit {
@@ -811,6 +807,19 @@ impl App {
                     ui.close();
                 }
             });
+            ui.menu_button("Remote", |ui| {
+                if ui.button(wi(I::LAN, "Share this OpenQ…")).clicked() {
+                    self.remote.window = true;
+                    self.remote.tab = remote::RemoteTab::Share;
+                }
+                if ui.button(wi(I::CABLE, "Connect to another OpenQ…")).clicked() {
+                    self.remote.window = true;
+                    self.remote.tab = remote::RemoteTab::Connect;
+                }
+                if self.remote.is_replica() && ui.button(wi(I::CLOSE, "Disconnect")).clicked() {
+                    self.disconnect(show);
+                }
+            });
             ui.menu_button("View", |ui| {
                 #[cfg(feature = "video")]
                 ui.checkbox(&mut self.show_preview, wi(I::PREVIEW, "Geometry preview"));
@@ -822,7 +831,6 @@ impl App {
     /// The top of the workspace: GO, standby, transport, mode and meters.
     fn header(&mut self, ui: &mut egui::Ui, show: &mut Show) {
         use egui::{Align2, CornerRadius, Margin, Sense, Stroke, vec2};
-        let now = Instant::now();
         ui.horizontal(|ui| {
             ui.spacing_mut().item_spacing.x = 14.0;
             // GO.
@@ -869,7 +877,7 @@ impl App {
                 .clicked()
                 && enabled
             {
-                show.go();
+                self.control(show, Command::Go);
             }
 
             // Standby card.
@@ -971,23 +979,19 @@ impl App {
                 })
                 .clicked()
                 {
-                    let fade = show.ws.settings.panic_fade;
-                    let Show { engine, media, .. } = show;
-                    engine.stop_all(media, now, fade);
+                    self.control(show, Command::Stop);
                 }
                 if round_button(ui, icons::PLAY_ARROW, theme::BG_HOVER, 40.0)
                     .on_hover_text("Resume all (R)")
                     .clicked()
                 {
-                    let Show { engine, media, .. } = show;
-                    engine.resume_all(media, now);
+                    self.control(show, Command::ResumeAll);
                 }
                 if round_button(ui, icons::PAUSE, theme::BG_HOVER, 40.0)
                     .on_hover_text("Pause all (P)")
                     .clicked()
                 {
-                    let Show { engine, media, .. } = show;
-                    engine.pause_all(media, now);
+                    self.control(show, Command::PauseAll);
                 }
             });
         });
@@ -1089,7 +1093,8 @@ impl App {
             .and_then(|p| p.file_stem())
             .map(|s| s.to_string_lossy().into_owned())
             .unwrap_or_else(|| "Untitled".into());
-        let label = format!("{name}{}", if show.dirty { "  •" } else { "" });
+        let (name, dirty) = self.remote.title().unwrap_or((name, show.dirty));
+        let label = format!("{name}{}", if dirty { "  •" } else { "" });
         ui.painter().text(rect.center(), egui::Align2::CENTER_CENTER, label, egui::FontId::proportional(14.0), theme::TEXT_DIM);
         let toggle = egui::Rect::from_min_size(
             egui::pos2(rect.right() - 168.0, rect.center().y - 13.0),
@@ -1296,10 +1301,7 @@ impl App {
                                         if theme::icon_button(ui, icons::STOP, "Stop this cue")
                                             .clicked()
                                         {
-                                            let Show {
-                                                ws, engine, media, ..
-                                            } = show;
-                                            engine.stop_cue(ws, media, id);
+                                            self.control(show, Command::Cue(id, CueAction::Stop));
                                         }
                                         let (g, tip) = if paused {
                                             (icons::PLAY_ARROW, "Resume")
@@ -1307,14 +1309,7 @@ impl App {
                                             (icons::PAUSE, "Pause")
                                         };
                                         if theme::icon_button(ui, g, tip).clicked() {
-                                            let Show {
-                                                ws, engine, media, ..
-                                            } = show;
-                                            if paused {
-                                                engine.resume_cue(ws, media, id, now);
-                                            } else {
-                                                engine.pause_cue(ws, media, id, now);
-                                            }
+                                            self.control(show, Command::Cue(id, if paused { CueAction::Resume } else { CueAction::Pause }));
                                         }
                                     },
                                 );
@@ -1349,19 +1344,26 @@ impl App {
         };
         ui.horizontal(|ui| {
             ui.spacing_mut().item_spacing.x = 5.0;
-            let file = show
+            let file = if let Some((t, _)) = self.remote.title() {
+                t
+            } else {
+                show
                 .path
                 .as_ref()
                 .and_then(|p| p.file_name())
                 .map(|p| p.to_string_lossy().into_owned())
-                .unwrap_or_else(|| "Untitled".into());
+                .unwrap_or_else(|| "Untitled".into())
+            };
+            let replica = self.remote.is_replica();
             item(ui, icons::FOLDER, file, theme::TEXT_DIM);
-            if show.dirty {
+            if show.dirty && !replica {
                 ui.label(RichText::new("●").small().color(AMBER))
                     .on_hover_text("Unsaved changes");
             }
             ui.add_space(10.0);
             match (&show.media.audio, &show.media.audio_error) {
+                // A replica plays nothing itself.
+                _ if replica => {}
                 (Some(a), _) => item(
                     ui,
                     icons::SPEAKER,
@@ -1382,6 +1384,7 @@ impl App {
             }
             ui.add_space(10.0);
             match &show.media.video_error {
+                _ if replica => {}
                 None => item(ui, icons::VIDEOCAM, "video ready".into(), theme::TEXT_DIM),
                 Some(e) => item(ui, icons::VIDEOCAM, format!("video: {e}"), AMBER),
             }
@@ -1395,6 +1398,11 @@ impl App {
                 ),
                 (None, Some(_)) => item(ui, icons::SETTINGS_REMOTE, "OSC error".into(), RED),
                 _ => {}
+            }
+            if let Some((text, replica)) = self.remote.status() {
+                ui.add_space(10.0);
+                let glyph = if replica { icons::CABLE } else { icons::LAN };
+                item(ui, glyph, text, if replica { theme::BLUE } else { theme::GREEN });
             }
             ui.add_space(10.0);
             item(
@@ -1502,6 +1510,10 @@ impl App {
     }
 
     fn settings_audio(&mut self, ui: &mut egui::Ui, show: &mut Show) {
+        if self.remote.is_replica() {
+            ui.label(RichText::new("Audio output is set up on the main device.").weak());
+            return;
+        }
         if self.devices.is_none() {
             self.devices = Some(media::audio::list_output_devices());
         }
@@ -1756,6 +1768,17 @@ impl App {
 
     fn run_deferred(&mut self) {
         for d in std::mem::take(&mut self.deferred) {
+            if self.remote.is_replica() {
+                let why = match d {
+                    Deferred::New | Deferred::Open => Some("Disconnect from the main device first (Remote → Disconnect)"),
+                    Deferred::PickMedia(_) | Deferred::AddMediaCues => Some("Media files live on the main device: add them there"),
+                    _ => None,
+                };
+                if let Some(why) = why {
+                    self.notify(why);
+                    continue;
+                }
+            }
             match d {
                 Deferred::New => {
                     if self.confirm_discard() {
@@ -1895,6 +1918,16 @@ impl App {
                 self.mapping_edit.insert(st.id);
                 self.stage_open.insert(st.id);
             }
+            if let Ok(addr) = std::env::var("OPENQ_SCREENSHOT_CONNECT") {
+                self.connect(ctx, show, addr, crate::remote::client::Auth::Token);
+            }
+            if std::env::var_os("OPENQ_SCREENSHOT_PAIR").is_some() {
+                self.remote_debug_pair();
+            }
+            if let Ok(t) = std::env::var("OPENQ_SCREENSHOT_REMOTE") {
+                self.remote.window = true;
+                self.remote.tab = if t == "connect" { remote::RemoteTab::Connect } else { remote::RemoteTab::Share };
+            }
             if std::env::var_os("OPENQ_SCREENSHOT_PREVIEW").is_some() {
                 self.show_preview = true;
             }
@@ -1917,7 +1950,7 @@ impl App {
         let elapsed = t0.elapsed().as_secs_f64();
         let gos_due = ((elapsed / 0.4) as u64).min(gos);
         while self.debug_gos < gos_due {
-            show.go();
+            self.control(show, Command::Go);
             self.debug_gos += 1;
         }
         if std::env::var_os("OPENQ_SCREENSHOT_STAGE").is_some() {
@@ -1987,12 +2020,16 @@ impl eframe::App for App {
             let mut guard = show_arc.lock();
 
             let show: &mut Show = &mut guard;
+            self.remote_tick(&ctx, show);
             self.sync_playhead(show);
             self.handle_keys(&ctx, show);
             self.handle_dropped_files(&ctx, show);
             self.debug_screenshot(&ctx, show);
 
-            let fresh = show.media.take_meters();
+            let fresh = match self.remote.meters() {
+                Some(m) => m.to_vec(),
+                None => show.media.take_meters(media::audio::MeterReader::Local),
+            };
             if self.meters.len() != fresh.len() {
                 self.meters = fresh.clone();
             }
@@ -2061,6 +2098,7 @@ impl eframe::App for App {
             }
             #[cfg(feature = "video")]
             self.geometry_preview(&ctx, show);
+            self.remote_window(&ctx, show);
             self.track_undo(&ctx, show);
             self.sync_osc(&ctx, show);
 
