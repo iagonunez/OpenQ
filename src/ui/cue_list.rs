@@ -87,7 +87,7 @@ impl App {
     /// Cue-type palette (toolbox): icon tiles grouped by kind, plus edit actions.
     pub(super) fn toolbar(&mut self, ui: &mut Ui, show: &mut Show) {
         use KindTag::*;
-        let groups: [&[KindTag]; 4] = [&[Audio, Video], &[Group, Wait, Memo], &[Fade, Start, Stop, Pause, Goto, Devamp], &[Network]];
+        let groups: [&[KindTag]; 4] = [&[Audio, Video, Text], &[Group, Wait, Memo], &[Fade, Start, Stop, Pause, Goto, Devamp], &[Network]];
         ui.horizontal(|ui| {
             ui.spacing_mut().item_spacing.x = 2.0;
             for (gi, group) in groups.iter().enumerate() {
@@ -544,6 +544,7 @@ impl App {
                 None => "…".into(),
             },
             CueKind::Network(n) => format!("{}:{} {}", n.host, n.port, n.address),
+            CueKind::Text(t) => format!("“{}”", t.text.lines().next().unwrap_or("")),
             k => match k.target() {
                 Some(t) => match show.ws.cue_list.find(t) {
                     Some(tc) => format!("{} {}", tc.number, tc.display_name()),

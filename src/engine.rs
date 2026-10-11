@@ -258,7 +258,7 @@ impl Engine {
     pub fn stop_cue(&mut self, ws: &Workspace, be: &mut dyn Backend, id: CueId) {
         for k in self.instance_subtree(ws, id) {
             if let Some(inst) = self.instances.remove(&k)
-                && matches!(inst.kind, KindTag::Audio | KindTag::Video)
+                && inst.kind.is_media()
             {
                 be.stop(k);
             }
@@ -269,7 +269,7 @@ impl Engine {
         let ids: Vec<CueId> = self.instances.keys().copied().filter(|k| !keep.contains(k)).collect();
         for k in ids {
             if let Some(inst) = self.instances.remove(&k)
-                && matches!(inst.kind, KindTag::Audio | KindTag::Video)
+                && inst.kind.is_media()
             {
                 be.stop(k);
             }
@@ -289,7 +289,7 @@ impl Engine {
         for k in ids {
             let inst = self.instances.get_mut(&k).unwrap();
             inst.continue_done = true;
-            let is_media = matches!(inst.kind, KindTag::Audio | KindTag::Video);
+            let is_media = inst.kind.is_media();
             if is_media && inst.started && !inst.action_done {
                 media.push(k);
             } else {
@@ -354,7 +354,7 @@ impl Engine {
             return;
         }
         inst.paused_at = Some(now);
-        if inst.started && matches!(inst.kind, KindTag::Audio | KindTag::Video) {
+        if inst.started && inst.kind.is_media() {
             be.pause(id);
         }
         if inst.started
@@ -376,7 +376,7 @@ impl Engine {
         let fading = inst.started && !inst.action_done && p >= inst.action_at;
         inst.fired_at += shift;
         inst.action_at += shift;
-        if inst.started && matches!(inst.kind, KindTag::Audio | KindTag::Video) {
+        if inst.started && inst.kind.is_media() {
             be.resume(id, now);
         }
         // Continue a paused fade from where its targets were frozen, over the remaining time.
@@ -443,7 +443,7 @@ impl Engine {
             let Some(cue) = ws.cue_list.find(id) else {
                 // Cue deleted while running.
                 let inst = self.instances.remove(&id).unwrap();
-                if matches!(inst.kind, KindTag::Audio | KindTag::Video) {
+                if inst.kind.is_media() {
                     be.stop(id);
                 }
                 return true;
@@ -465,7 +465,7 @@ impl Engine {
             if !inst.action_done {
                 let done = match inst.kind {
                     _ if !cue.armed => true,
-                    KindTag::Audio | KindTag::Video => be.is_finished(id),
+                    k if k.is_media() => be.is_finished(id),
                     KindTag::Group => {
                         inst.action_at <= now && !self.instances.values().any(|i| i.parent == Some(id))
                     }
@@ -514,7 +514,7 @@ impl Engine {
             let inst = &self.instances[&id];
             if inst.action_done && inst.continue_done {
                 let inst = self.instances.remove(&id).unwrap();
-                if matches!(inst.kind, KindTag::Audio | KindTag::Video) {
+                if inst.kind.is_media() {
                     // Release the finished player/voice.
                     be.stop(id);
                 }
@@ -537,7 +537,7 @@ impl Engine {
             return Some(0.0);
         }
         match &cue.kind {
-            CueKind::Audio(_) | CueKind::Video(_) => match be.start(cue, at) {
+            CueKind::Audio(_) | CueKind::Video(_) | CueKind::Text(_) => match be.start(cue, at) {
                 Ok(()) => be.duration(cue),
                 Err(e) => {
                     self.log(format!("Cue {} '{}': {e}", cue.number, cue.display_name()));
@@ -564,7 +564,7 @@ impl Engine {
                     .filter(|k| {
                         self.instances
                             .get(k)
-                            .is_some_and(|i| matches!(i.kind, KindTag::Audio | KindTag::Video))
+                            .is_some_and(|i| i.kind.is_media())
                     })
                     .collect();
                 if targets.is_empty() {

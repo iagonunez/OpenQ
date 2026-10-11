@@ -264,6 +264,7 @@ pub fn kind_icon(tag: crate::model::KindTag) -> &'static str {
         Goto => I::SUBDIRECTORY_ARROW_RIGHT,
         Devamp => I::SKIP_NEXT,
         Network => I::LAN,
+        Text => I::TEXT_FIELDS,
     }
 }
 

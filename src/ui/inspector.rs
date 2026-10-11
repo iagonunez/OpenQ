@@ -40,6 +40,7 @@ fn tabs_for(kind: &CueKind) -> &'static [(Tab, &'static str)] {
             (Tab::Levels, "Audio"),
         ],
         CueKind::Memo => &[(Tab::Basics, "Basics")],
+        CueKind::Text(_) => &[(Tab::Basics, "Basics"), (Tab::Settings, "Text"), (Tab::Geometry, "Geometry")],
         _ => &[(Tab::Basics, "Basics"), (Tab::Settings, "Settings")],
     }
 }
@@ -153,11 +154,25 @@ impl App {
                     eq_editor(ui, ui.id().with(("eq", id)), &mut a.eq);
                 }
             }
-            Tab::Geometry => {
-                if let CueKind::Video(v) = &mut cue.kind {
-                    video_geometry(ui, v, &ctx);
+            Tab::Geometry => match &mut cue.kind {
+                CueKind::Video(v) => video_geometry(ui, v, &ctx),
+                CueKind::Text(t) => {
+                    egui::Grid::new("tgeo").num_columns(2).spacing([10.0, 6.0]).show(ui, |ui| {
+                        ui.label("Stage");
+                        stage_combo(ui, "tstage", &mut t.stage, ctx.stages);
+                        ui.end_row();
+                        ui.label("Layer");
+                        ui.add(DragValue::new(&mut t.layer).range(-100..=100)).on_hover_text("Higher layers draw on top");
+                        ui.end_row();
+                        ui.label("Opacity");
+                        ui.add(Slider::new(&mut t.opacity, 0.0..=1.0));
+                        ui.end_row();
+                    });
+                    ui.add_space(6.0);
+                    geometry_editor(ui, "tgeom", &mut t.geometry);
                 }
-            }
+                _ => {}
+            },
         });
 
         if pick_media {
@@ -733,6 +748,35 @@ fn settings_tab(ui: &mut Ui, cue: &mut Cue, ctx: &Ctx) {
             ui.label(
                 RichText::new("Lets the target's looping slice finish its current pass, then play on to the next slice.").weak(),
             );
+        }
+        CueKind::Text(t) => {
+            ui.add(TextEdit::multiline(&mut t.text).desired_rows(3).desired_width(f32::INFINITY).hint_text("Text to show"));
+            egui::Grid::new("text").num_columns(2).spacing([10.0, 6.0]).show(ui, |ui| {
+                ui.label("Size");
+                ui.add(DragValue::new(&mut t.size).range(4.0..=1000.0).speed(1.0).suffix(" px"));
+                ui.end_row();
+                ui.label("Colour");
+                let mut c = egui::Color32::from_rgba_unmultiplied(t.color[0], t.color[1], t.color[2], t.color[3]);
+                if egui::color_picker::color_edit_button_srgba(ui, &mut c, egui::color_picker::Alpha::OnlyBlend).changed() {
+                    t.color = c.to_srgba_unmultiplied();
+                }
+                ui.end_row();
+                ui.label("Style");
+                ui.horizontal(|ui| {
+                    ui.checkbox(&mut t.bold, "Bold");
+                    for a in [crate::model::TextAlign::Left, crate::model::TextAlign::Center, crate::model::TextAlign::Right] {
+                        ui.selectable_value(&mut t.align, a, format!("{a:?}"));
+                    }
+                });
+                ui.end_row();
+                ui.label("Show for");
+                ui.horizontal(|ui| {
+                    time_edit(ui, &mut t.duration);
+                    ui.label(RichText::new(if t.duration <= 0.0 { "until stopped" } else { "" }).weak());
+                });
+                ui.end_row();
+            });
+            ui.label(RichText::new("Text appears on the stage like a video layer: use the Geometry tab and Fade cues to move and fade it.").weak());
         }
         CueKind::Network(n) => {
             egui::Grid::new("net").num_columns(2).spacing([10.0, 6.0]).show(ui, |ui| {

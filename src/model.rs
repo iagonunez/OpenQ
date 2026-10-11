@@ -167,16 +167,19 @@ pub enum VideoFit {
     Fit,
     Fill,
     Stretch,
+    /// Pixel-for-pixel on the stage canvas (used by text cues).
+    Native,
 }
 
 impl VideoFit {
-    pub const ALL: [VideoFit; 3] = [VideoFit::Fit, VideoFit::Fill, VideoFit::Stretch];
+    pub const ALL: [VideoFit; 4] = [VideoFit::Fit, VideoFit::Fill, VideoFit::Stretch, VideoFit::Native];
 
     pub fn label(self) -> &'static str {
         match self {
             VideoFit::Fit => "Fit (letterbox)",
             VideoFit::Fill => "Fill (crop)",
             VideoFit::Stretch => "Stretch",
+            VideoFit::Native => "Native size",
         }
     }
 }
@@ -314,13 +317,36 @@ pub struct Stage {
     /// Window-normalised positions of the canvas corners: top-left, top-right, bottom-right,
     /// bottom-left.
     pub corners: [[f32; 2]; 4],
+    /// Show the content of another stage (a wider "surface") instead of its own cues. Used with
+    /// `crop` to split one picture across several projectors.
+    pub span_of: Option<StageId>,
+    /// Part of the source canvas this output shows: x0, y0, x1, y1 (normalised).
+    pub crop: [f32; 4],
+    /// Soft-edge blend widths as a fraction of this output: left, top, right, bottom.
+    pub blend: [f32; 4],
+    /// Projector gamma used to shape the blend so overlapping light adds up evenly.
+    pub blend_gamma: f32,
+}
+
+impl Stage {
+    pub const FULL_CROP: [f32; 4] = [0.0, 0.0, 1.0, 1.0];
 }
 
 impl Stage {
     pub const IDENTITY: [[f32; 2]; 4] = [[0.0, 0.0], [1.0, 0.0], [1.0, 1.0], [0.0, 1.0]];
 
     pub fn new(name: &str) -> Self {
-        Self { id: Uuid::new_v4(), name: name.into(), width: 1920, height: 1080, corners: Self::IDENTITY }
+        Self {
+            id: Uuid::new_v4(),
+            name: name.into(),
+            width: 1920,
+            height: 1080,
+            corners: Self::IDENTITY,
+            span_of: None,
+            crop: Self::FULL_CROP,
+            blend: [0.0; 4],
+            blend_gamma: 2.2,
+        }
     }
 }
 
@@ -531,6 +557,49 @@ impl Default for FadeCue {
     }
 }
 
+#[derive(Serialize, Deserialize, Clone, Copy, PartialEq, Eq, Debug, Default)]
+pub enum TextAlign {
+    Left,
+    #[default]
+    Center,
+    Right,
+}
+
+/// Text shown on a stage like a video layer.
+#[derive(Serialize, Deserialize, Clone, PartialEq, Debug)]
+#[serde(default)]
+pub struct TextCue {
+    pub text: String,
+    /// Glyph size in stage-canvas pixels.
+    pub size: f32,
+    pub color: [u8; 4],
+    pub bold: bool,
+    pub align: TextAlign,
+    pub stage: Option<StageId>,
+    pub geometry: Geometry,
+    pub layer: i32,
+    pub opacity: f32,
+    /// Seconds to show (0 = until stopped).
+    pub duration: f64,
+}
+
+impl Default for TextCue {
+    fn default() -> Self {
+        Self {
+            text: "Text".into(),
+            size: 96.0,
+            color: [255, 255, 255, 255],
+            bold: true,
+            align: TextAlign::Center,
+            stage: None,
+            geometry: Geometry::default(),
+            layer: 10,
+            opacity: 1.0,
+            duration: 0.0,
+        }
+    }
+}
+
 /// Sends one OSC message over UDP.
 #[derive(Serialize, Deserialize, Clone, PartialEq, Debug)]
 #[serde(default)]
@@ -568,6 +637,7 @@ pub enum CueKind {
     /// Make the target audio cue leave its looping slice and carry on.
     Devamp { target: Option<CueId> },
     Network(NetworkCue),
+    Text(TextCue),
 }
 
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
@@ -584,10 +654,16 @@ pub enum KindTag {
     Goto,
     Devamp,
     Network,
+    Text,
 }
 
 impl KindTag {
-    pub const ALL: [KindTag; 12] = [
+    /// Cues whose action is media playback handled by the media backend.
+    pub fn is_media(self) -> bool {
+        matches!(self, KindTag::Audio | KindTag::Video | KindTag::Text)
+    }
+
+    pub const ALL: [KindTag; 13] = [
         KindTag::Audio,
         KindTag::Video,
         KindTag::Group,
@@ -600,6 +676,7 @@ impl KindTag {
         KindTag::Goto,
         KindTag::Devamp,
         KindTag::Network,
+        KindTag::Text,
     ];
 
     pub fn label(self) -> &'static str {
@@ -616,6 +693,7 @@ impl KindTag {
             KindTag::Goto => "Go To",
             KindTag::Devamp => "Devamp",
             KindTag::Network => "Network",
+            KindTag::Text => "Text",
         }
     }
 
@@ -633,6 +711,7 @@ impl KindTag {
             KindTag::Goto => CueKind::Goto { target: None },
             KindTag::Devamp => CueKind::Devamp { target: None },
             KindTag::Network => CueKind::Network(NetworkCue::default()),
+            KindTag::Text => CueKind::Text(TextCue::default()),
         }
     }
 }
@@ -652,6 +731,7 @@ impl CueKind {
             CueKind::Goto { .. } => KindTag::Goto,
             CueKind::Devamp { .. } => KindTag::Devamp,
             CueKind::Network(_) => KindTag::Network,
+            CueKind::Text(_) => KindTag::Text,
         }
     }
 

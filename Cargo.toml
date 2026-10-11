@@ -4,6 +4,7 @@ version = "0.1.0"
 edition = "2024"
 
 [dependencies]
+ab_glyph = "0.2.32"
 anyhow = "1.0.104"
 cpal = "0.18.2"
 eframe = "0.35.0"
@@ -13,6 +14,7 @@ fastrand = "2.5.0"
 ffmpeg-next = { version = "9", optional = true }
 image = { version = "0.25", default-features = false, features = ["png", "jpeg", "bmp", "gif", "webp", "tiff"] }
 log = "0.4.34"
+midir = "0.11.1"
 parking_lot = "0.12.5"
 rfd = "0.17.2"
 rosc = "0.11.4"
@@ -20,6 +22,7 @@ rtrb = "0.4.0"
 rubato = "5.0.1"
 serde = { version = "1.0.229", features = ["derive"] }
 serde_json = "1.0.152"
+serialport = "4.10.1"
 symphonia = { version = "0.6.1", features = ["all"] }
 uuid = { version = "1.28.0", features = ["v4", "serde"] }
 

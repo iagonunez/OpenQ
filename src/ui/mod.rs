@@ -1040,39 +1040,21 @@ impl App {
     /// Branding strip above the menu bar.
     fn title_bar(&mut self, ui: &mut egui::Ui, show: &Show) {
         use egui::text::{LayoutJob, TextFormat};
-        ui.horizontal(|ui| {
-            let mut job = LayoutJob::default();
-            job.append(
-                "Open",
-                0.0,
-                TextFormat::simple(theme::title(26.0), theme::TEXT),
-            );
-            job.append(
-                "Q",
-                0.0,
-                TextFormat::simple(theme::title(26.0), theme::GREEN),
-            );
-            ui.label(job);
-            ui.add_space(6.0);
-            ui.label(
-                RichText::new("SHOW  CONTROL")
-                    .font(theme::title(13.0))
-                    .color(theme::TEXT_FAINT),
-            );
-            ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                let name = show
-                    .path
-                    .as_ref()
-                    .and_then(|p| p.file_stem())
-                    .map(|s| s.to_string_lossy().into_owned())
-                    .unwrap_or_else(|| "Untitled".into());
-                ui.label(
-                    RichText::new(format!("{name}{}", if show.dirty { " •" } else { "" }))
-                        .font(theme::title(16.0))
-                        .color(theme::TEXT_DIM),
-                );
-            });
-        });
+        let (rect, _) = ui.allocate_exact_size(egui::vec2(ui.available_width(), 30.0), egui::Sense::hover());
+        let mut job = LayoutJob::default();
+        job.append("Open", 0.0, TextFormat::simple(theme::title(26.0), theme::TEXT));
+        job.append("Q", 0.0, TextFormat::simple(theme::title(26.0), theme::GREEN));
+        let logo = ui.painter().layout_job(job);
+        ui.painter().galley(egui::pos2(rect.left(), rect.center().y - logo.size().y / 2.0), logo, theme::TEXT);
+        // Workspace name, centred in the window.
+        let name = show
+            .path
+            .as_ref()
+            .and_then(|p| p.file_stem())
+            .map(|s| s.to_string_lossy().into_owned())
+            .unwrap_or_else(|| "Untitled".into());
+        let label = format!("{name}{}", if show.dirty { "  •" } else { "" });
+        ui.painter().text(rect.center(), egui::Align2::CENTER_CENTER, label, egui::FontId::proportional(14.0), theme::TEXT_DIM);
     }
 
     /// Output level meter with a dB scale (one bar per device channel, up to 8).

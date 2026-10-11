@@ -2,6 +2,7 @@
 
 pub mod audio;
 pub mod decoder;
+pub mod text;
 #[cfg(feature = "video")]
 pub mod video;
 
@@ -329,6 +330,12 @@ impl Media {
                 }
             }
             #[cfg(feature = "video")]
+            CueKind::Text(t) => {
+                if let Some(v) = &mut self.video {
+                    v.update_text(cue.id, t);
+                }
+            }
+            #[cfg(feature = "video")]
             CueKind::Video(p) => {
                 if let Some(a) = &mut self.audio {
                     a.update_live(cue.id, &audio::MixParams::from(p));
@@ -434,8 +441,16 @@ impl Backend for Media {
                 }
                 Ok(())
             }
+            #[cfg(feature = "video")]
+            CueKind::Text(t) => match &mut self.video {
+                Some(v) => {
+                    v.start_text(cue.id, t, at);
+                    Ok(())
+                }
+                None => Err("video output unavailable".into()),
+            },
             #[cfg(not(feature = "video"))]
-            CueKind::Video(_) => Err("built without video support".into()),
+            CueKind::Video(_) | CueKind::Text(_) => Err("built without video support".into()),
             _ => Ok(()),
         }
     }
@@ -525,6 +540,7 @@ impl Backend for Media {
         let file = match &cue.kind {
             CueKind::Audio(a) => self.prober.get_blocking(&a.path).ok()?.duration,
             CueKind::Video(v) if is_image_path(&v.path) => None,
+            CueKind::Text(t) => return (t.duration > 0.0).then_some(t.duration),
             CueKind::Video(v) => self.prober.get(&v.path)?.ok()?.duration,
             _ => return None,
         };

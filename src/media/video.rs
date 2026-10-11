@@ -8,7 +8,7 @@
 
 use super::audio::VoiceShared;
 use crate::engine::FadeRequest;
-use crate::model::{CueId, FadeCurve, Geometry, StageId, VideoCue, VideoFit};
+use crate::model::{CueId, FadeCurve, Geometry, MIN_DB, StageId, TextCue, VideoCue, VideoFit};
 use anyhow::{Context, anyhow};
 use ffmpeg_next as ff;
 use parking_lot::{Condvar, Mutex};
@@ -516,7 +516,50 @@ fn load_still(path: &Path, slot: &FrameSlot) -> anyhow::Result<()> {
     Ok(())
 }
 
+/// The video-layer settings a Text cue plays with.
+pub fn text_layer_params(t: &TextCue) -> VideoCue {
+    VideoCue {
+        volume_db: MIN_DB,
+        opacity: t.opacity,
+        layer: t.layer,
+        fit: VideoFit::Native,
+        stage: t.stage,
+        geometry: t.geometry,
+        still_duration: t.duration,
+        ..Default::default()
+    }
+}
+
+fn text_frame(t: &TextCue) -> FrameSlot {
+    let (w, h, data) = super::text::render(t);
+    Arc::new(Mutex::new(Frame { width: w, height: h, data, generation: 1 }))
+}
+
 impl Player {
+    /// A still layer from an already-rendered frame (Text cues).
+    fn from_frame(params: VideoCue, order: u64, frame: FrameSlot) -> Self {
+        Self {
+            source: Source::Still,
+            frame,
+            opacity: params.opacity.clamp(0.0, 1.0),
+            op_ramp: None,
+            geometry: params.geometry,
+            geo_ramp: None,
+            params,
+            play_at: None,
+            playing: false,
+            started_at: None,
+            paused_at: None,
+            finished: false,
+            error: None,
+            error_reported: false,
+            order,
+            tap: None,
+            audio_feed: Arc::new(Mutex::new(None)),
+            audio_state: Arc::new(Mutex::new(None)),
+        }
+    }
+
     fn new(params: &VideoCue, order: u64, tap: Option<AudioTap>) -> anyhow::Result<Self> {
         let frame: FrameSlot = Arc::new(Mutex::new(Frame::default()));
         let audio_feed: AudioFeed = Arc::new(Mutex::new(None));
@@ -654,13 +697,15 @@ impl Player {
 pub struct VideoOutput {
     players: HashMap<CueId, Player>,
     preloaded: HashMap<CueId, Player>,
+    /// Text cues currently showing (to detect content edits).
+    texts: HashMap<CueId, TextCue>,
     order: u64,
 }
 
 impl VideoOutput {
     pub fn new() -> anyhow::Result<Self> {
         init()?;
-        Ok(Self { players: HashMap::new(), preloaded: HashMap::new(), order: 0 })
+        Ok(Self { players: HashMap::new(), preloaded: HashMap::new(), texts: HashMap::new(), order: 0 })
     }
 
     pub fn set_preloaded(&mut self, cues: &[(CueId, &VideoCue, Option<AudioTap>)]) {
@@ -700,6 +745,33 @@ impl VideoOutput {
 
     pub fn stop(&mut self, cue: CueId) {
         self.players.remove(&cue);
+    }
+
+    pub fn start_text(&mut self, cue: CueId, t: &TextCue, at: Instant) {
+        self.order += 1;
+        let mut p = Player::from_frame(text_layer_params(t), self.order, text_frame(t));
+        p.play_at = Some(at);
+        p.update(Instant::now());
+        self.players.insert(cue, p);
+        self.texts.insert(cue, t.clone());
+    }
+
+    /// Live edits to a showing Text cue: re-render if the text itself changed.
+    pub fn update_text(&mut self, cue: CueId, t: &TextCue) {
+        let Some(old) = self.texts.get(&cue).cloned() else { return };
+        let looks = |x: &TextCue| (x.text.clone(), x.size.to_bits(), x.color, x.bold, x.align);
+        if looks(&old) != looks(t)
+            && let Some(p) = self.players.get_mut(&cue)
+        {
+            let (w, h, data) = super::text::render(t);
+            let mut f = p.frame.lock();
+            f.width = w;
+            f.height = h;
+            f.data = data;
+            f.generation = f.generation.wrapping_add(1);
+        }
+        self.texts.insert(cue, t.clone());
+        self.update_live(cue, &text_layer_params(t));
     }
 
     /// Connect a started cue's soundtrack to its mixer voice.

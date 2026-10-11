@@ -71,6 +71,7 @@ pub fn layer_quad(canvas: [f32; 2], image: [f32; 2], fit: VideoFit, g: &Geometry
     let [iw, ih] = [image[0].max(1.0), image[1].max(1.0)];
     let (bw, bh, uv) = match fit {
         VideoFit::Stretch => (cw, ch, [0.0, 0.0, 1.0, 1.0]),
+        VideoFit::Native => (iw, ih, [0.0, 0.0, 1.0, 1.0]),
         VideoFit::Fit => {
             let s = (cw / iw).min(ch / ih);
             (iw * s, ih * s, [0.0, 0.0, 1.0, 1.0])
@@ -93,12 +94,42 @@ pub fn layer_quad(canvas: [f32; 2], image: [f32; 2], fit: VideoFit, g: &Geometry
     LayerQuad { corners, uv }
 }
 
+/// Map a point in source-canvas coordinates into an output that shows `crop` of that canvas.
+pub fn to_crop(p: [f32; 2], crop: [f32; 4]) -> [f32; 2] {
+    let w = (crop[2] - crop[0]).max(1e-6);
+    let h = (crop[3] - crop[1]).max(1e-6);
+    [(p[0] - crop[0]) / w, (p[1] - crop[1]) / h]
+}
+
+/// Brightness multiplier inside a soft-edge blend zone. `t` runs 0 at the outer edge to 1 at
+/// the inner edge. The S-curve satisfies f(t) + f(1 - t) = 1, so two overlapping projectors sum
+/// to full light once each projector's gamma is undone.
+pub fn blend_gain(t: f32, gamma: f32) -> f32 {
+    let t = t.clamp(0.0, 1.0);
+    let s = if t < 0.5 { 2.0 * t * t } else { 1.0 - 2.0 * (1.0 - t) * (1.0 - t) };
+    s.powf(1.0 / gamma.max(0.1))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
 
     fn close(a: [f32; 2], b: [f32; 2]) -> bool {
         (a[0] - b[0]).abs() < 1e-4 && (a[1] - b[1]).abs() < 1e-4
+    }
+
+    #[test]
+    fn blend_curves_sum_to_full_light() {
+        for i in 0..=10 {
+            let t = i as f32 / 10.0;
+            let g = 2.2;
+            // Light output ∝ value^gamma; two projectors overlapping must add to 1.
+            let light = blend_gain(t, g).powf(g) + blend_gain(1.0 - t, g).powf(g);
+            assert!((light - 1.0).abs() < 1e-4, "{t}: {light}");
+        }
+        assert_eq!(blend_gain(0.0, 2.2), 0.0);
+        assert!((blend_gain(1.0, 2.2) - 1.0).abs() < 1e-6);
+        assert_eq!(to_crop([0.5, 0.5], [0.5, 0.0, 1.0, 1.0]), [0.0, 0.5]);
     }
 
     #[test]
