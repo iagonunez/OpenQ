@@ -7,27 +7,41 @@ use crate::show::Show;
 use serde::{Deserialize, Serialize};
 use std::time::Instant;
 
+/// What to do to a single cue.
 #[derive(Serialize, Deserialize, Clone, Copy, PartialEq, Eq, Debug)]
 pub enum CueAction {
+    /// Fire the cue (pre-wait, action, continue), as if GO were pressed on it.
     Start,
+    /// Stop the cue and anything it started.
     Stop,
+    /// Pause the cue, freezing its time, media and fades.
     Pause,
+    /// Resume a paused cue.
     Resume,
+    /// Release a vamping slice so playback carries on past it.
     Devamp,
 }
 
+/// A transport or playhead action, independent of where it came from.
 #[derive(Serialize, Deserialize, Clone, Copy, PartialEq, Eq, Debug)]
 pub enum Command {
+    /// Fire the cue at the playhead and advance the playhead.
     Go,
     /// Stop all with the workspace's panic fade (a second Stop while fading stops at once).
     Stop,
     /// Stop all instantly.
     Panic,
+    /// Pause everything that is running.
     PauseAll,
+    /// Resume everything that is paused.
     ResumeAll,
+    /// Move the playhead to the next cue in the list.
     PlayheadNext,
+    /// Move the playhead to the previous cue in the list.
     PlayheadPrevious,
+    /// Put the playhead on a cue (or clear it).
     SetPlayhead(Option<CueId>),
+    /// Act on one cue.
     Cue(CueId, CueAction),
 }
 

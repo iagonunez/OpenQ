@@ -24,9 +24,12 @@ const MAX_METER_CHANNELS: usize = MAX_OUT_CHANNELS;
 /// Peak-hold slots written by the audio callback, one per reader.
 type Meters = Arc<[[AtomicU32; MAX_METER_CHANNELS]; 2]>;
 
+/// Who is reading the meters; each has its own peak-hold slot.
 #[derive(Clone, Copy, Debug)]
 pub enum MeterReader {
+    /// The local UI.
     Local = 0,
+    /// Remote replicas.
     Remote = 1,
 }
 /// Fade applied on stop to avoid clicks.
@@ -97,6 +100,7 @@ impl Clock {
 /// State shared between a voice, its decoder thread and the control side.
 #[derive(Default)]
 pub struct VoiceShared {
+    /// Frames this voice has produced so far.
     pub frames_played: AtomicU64,
     /// Voice is gone from the mixer (ended, stopped or errored).
     pub finished: AtomicBool,
@@ -108,6 +112,7 @@ pub struct VoiceShared {
     pub ready: AtomicBool,
     /// Leave the current looping slice after this pass.
     pub devamp: AtomicBool,
+    /// Decoder failure, if any.
     pub error: parking_lot::Mutex<Option<String>>,
 }
 
@@ -131,6 +136,7 @@ struct Ramp {
     started: bool,
 }
 
+/// One playing sound inside the mixer (owned by the audio thread).
 pub struct Voice {
     id: u64,
     rx: rtrb::Consumer<f32>,
@@ -172,9 +178,13 @@ fn pan_gains(pan: f32) -> [f32; 2] {
 /// The live-adjustable mix settings of a voice (audio cue or video soundtrack).
 #[derive(Clone, PartialEq, Debug, Default)]
 pub struct MixParams {
+    /// Level in dB.
     pub volume_db: f32,
+    /// Stereo pan −1..1 (stereo outputs without a routing matrix).
     pub pan: f32,
+    /// Per-voice equaliser.
     pub eq: Eq,
+    /// Gain matrix `[source][output]`; None = default routing.
     pub routing: Option<Vec<Vec<f32>>>,
 }
 
@@ -445,7 +455,9 @@ struct VoiceHandle {
 /// An output device the user can pick.
 #[derive(Clone, Debug)]
 pub struct DeviceEntry {
+    /// cpal device id.
     pub id: String,
+    /// Human-readable device name.
     pub name: String,
 }
 
@@ -468,8 +480,11 @@ pub struct AudioOutput {
     clock: Arc<Clock>,
     meters: Meters,
     shutdown: Arc<AtomicBool>,
+    /// Output sample rate.
     pub rate: u32,
+    /// Output channel count.
     pub channels: usize,
+    /// Name of the opened device.
     pub device_name: String,
     /// The id this output was opened with (None = system default).
     pub device_id: Option<String>,
@@ -693,6 +708,7 @@ impl AudioOutput {
         }
     }
 
+    /// Start an audio cue so its first sample plays at `at` (sample-accurate).
     pub fn start(&mut self, cue: CueId, params: &AudioCue, src_channels: usize, at: Instant) -> Result<(), String> {
         if params.path.as_os_str().is_empty() {
             return Err("no audio file".into());
@@ -719,18 +735,21 @@ impl AudioOutput {
         Ok(())
     }
 
+    /// Stop a cue's voice at once.
     pub fn stop(&mut self, cue: CueId) {
         if let Some(h) = self.voices.remove(&cue) {
             self.send(Cmd::Stop(h.id));
         }
     }
 
+    /// Pause a cue's voice.
     pub fn pause(&mut self, cue: CueId) {
         if let Some(id) = self.voices.get(&cue).map(|h| h.id) {
             self.send(Cmd::Pause(id));
         }
     }
 
+    /// Resume a paused voice at `at`.
     pub fn resume(&mut self, cue: CueId, at: Instant) {
         if let Some(id) = self.voices.get(&cue).map(|h| h.id) {
             let at = self.clock.frame_at(at);
@@ -738,6 +757,7 @@ impl AudioOutput {
         }
     }
 
+    /// Ramp a voice to `to_db` over `secs`.
     pub fn fade(&mut self, cue: CueId, to_db: f32, secs: f64, curve: FadeCurve, at: Instant) {
         if let Some(id) = self.voices.get(&cue).map(|h| h.id) {
             let frames = (secs.max(0.0) * self.rate as f64) as u64;
@@ -769,10 +789,12 @@ impl AudioOutput {
         }
     }
 
+    /// Set the master level in dB.
     pub fn set_master(&mut self, db: f32) {
         self.send(Cmd::Master(db_to_gain(db)));
     }
 
+    /// True if the cue has a voice in the mixer.
     pub fn has(&self, cue: CueId) -> bool {
         self.voices.contains_key(&cue)
     }

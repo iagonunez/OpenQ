@@ -17,12 +17,18 @@ pub const LOOKAHEAD: Duration = Duration::from_millis(25);
 const MAX_PRELOAD: usize = 16;
 const MAX_LOG: usize = 200;
 
+/// What a Fade cue asks the backend to do to one running media cue.
 #[derive(Clone, Debug, PartialEq)]
 pub struct FadeRequest {
+    /// Target level in dB (None = leave the level alone).
     pub volume_db: Option<f32>,
+    /// Target opacity 0..1 for video/text layers.
     pub opacity: Option<f32>,
+    /// Target position/scale/rotation/crop for video/text layers.
     pub geometry: Option<crate::model::Geometry>,
+    /// Fade length in seconds.
     pub duration: f64,
+    /// Shape of the fade.
     pub curve: FadeCurve,
 }
 
@@ -32,9 +38,13 @@ pub trait Backend {
     fn set_preloaded(&mut self, cues: &[&Cue]);
     /// Start a media cue so that it is heard/seen at `at` (which may be slightly in the future).
     fn start(&mut self, cue: &Cue, at: Instant) -> Result<(), String>;
+    /// Stop a media cue at once.
     fn stop(&mut self, id: CueId);
+    /// Freeze a media cue where it is.
     fn pause(&mut self, id: CueId);
+    /// Continue a paused media cue so it is heard/seen again at `at`.
     fn resume(&mut self, id: CueId, at: Instant);
+    /// Ramp a running media cue's level/opacity/geometry.
     fn fade(&mut self, id: CueId, fade: &FadeRequest, at: Instant);
     /// True once a started media cue reached its end on its own (or failed).
     fn is_finished(&self, id: CueId) -> bool;
@@ -58,18 +68,26 @@ pub trait Backend {
     }
 }
 
+/// A running (fired) cue.
 #[derive(Clone, Debug)]
 pub struct Instance {
+    /// Type of the cue, for display.
     pub kind: KindTag,
+    /// When GO fired it.
     pub fired_at: Instant,
     /// When the action starts (fired_at + pre-wait), shifted forward by pauses.
     pub action_at: Instant,
+    /// Pre-wait length in seconds.
     pub pre_wait: f64,
+    /// Set while paused.
     pub paused_at: Option<Instant>,
+    /// The action (media start, wait, fade...) has begun.
     pub started: bool,
+    /// The action has finished.
     pub action_done: bool,
     /// Known action length in seconds (None = until media/children report completion).
     pub action_duration: Option<f64>,
+    /// The auto-continue/follow has been handled.
     pub continue_done: bool,
     /// Group instance that launched this cue.
     pub parent: Option<CueId>,
@@ -95,10 +113,12 @@ impl Instance {
         if now <= self.action_at { 0.0 } else { (now - self.action_at).as_secs_f64() }
     }
 
+    /// Still waiting out the pre-wait.
     pub fn in_pre_wait(&self, now: Instant) -> bool {
         !self.started || self.effective_now(now) < self.action_at
     }
 
+    /// Paused by the user.
     pub fn is_paused(&self) -> bool {
         self.paused_at.is_some()
     }
@@ -107,16 +127,27 @@ impl Instance {
 /// A running cue as seen from outside the engine (what remote replicas are sent).
 #[derive(serde::Serialize, serde::Deserialize, Clone, Debug, PartialEq)]
 pub struct InstanceSnapshot {
+    /// Cue id.
     pub id: CueId,
+    /// Type of the cue.
     pub kind: KindTag,
+    /// Pre-wait length in seconds.
     pub pre_wait: f64,
+    /// Seconds of pre-wait already elapsed.
     pub pre_wait_elapsed: f64,
+    /// Seconds since the action started.
     pub action_elapsed: f64,
+    /// Paused.
     pub paused: bool,
+    /// Action started.
     pub started: bool,
+    /// Action finished.
     pub action_done: bool,
+    /// Known action length in seconds.
     pub action_duration: Option<f64>,
+    /// Auto-continue handled.
     pub continue_done: bool,
+    /// Group that launched it.
     pub parent: Option<CueId>,
 }
 
@@ -133,10 +164,14 @@ fn after(t: Instant, secs: f64) -> Instant {
     t + Duration::from_secs_f64(secs.max(0.0))
 }
 
+/// The cue playback state machine. Pure logic: all media work goes through a [`Backend`].
 #[derive(Default)]
 pub struct Engine {
+    /// Cue that GO fires next.
     pub playhead: Option<CueId>,
+    /// Running cues by id.
     pub instances: HashMap<CueId, Instance>,
+    /// Recent warnings and errors, oldest first.
     pub log: Vec<String>,
     last_go: Option<Instant>,
     preload_dirty: bool,
@@ -144,14 +179,17 @@ pub struct Engine {
 }
 
 impl Engine {
+    /// An idle engine.
     pub fn new() -> Self {
         Self { preload_dirty: true, ..Default::default() }
     }
 
+    /// True while any cue is running.
     pub fn is_active(&self) -> bool {
         !self.instances.is_empty()
     }
 
+    /// True while a Stop-all fade is in progress (a second Stop stops at once).
     pub fn is_panicking(&self) -> bool {
         self.panic.is_some()
     }
@@ -212,6 +250,7 @@ impl Engine {
             .collect();
     }
 
+    /// Move the playhead (re-evaluating what to preload).
     pub fn set_playhead(&mut self, id: Option<CueId>) {
         if self.playhead != id {
             self.playhead = id;
@@ -331,6 +370,7 @@ impl Engine {
         out
     }
 
+    /// Stop one cue, its children and anything it is fading.
     pub fn stop_cue(&mut self, ws: &Workspace, be: &mut dyn Backend, id: CueId) {
         for k in self.instance_subtree(ws, id) {
             if let Some(inst) = self.instances.remove(&k)
@@ -398,18 +438,21 @@ impl Engine {
         self.panic = Some((after(now, fade), media));
     }
 
+    /// Pause one running cue.
     pub fn pause_cue(&mut self, ws: &Workspace, be: &mut dyn Backend, id: CueId, now: Instant) {
         for k in self.instance_subtree(ws, id) {
             self.pause_instance(be, k, now);
         }
     }
 
+    /// Resume one paused cue.
     pub fn resume_cue(&mut self, ws: &Workspace, be: &mut dyn Backend, id: CueId, now: Instant) {
         for k in self.instance_subtree(ws, id) {
             self.resume_instance(be, k, now);
         }
     }
 
+    /// Pause every running cue.
     pub fn pause_all(&mut self, be: &mut dyn Backend, now: Instant) {
         let ids: Vec<CueId> = self.instances.keys().copied().collect();
         for k in ids {
@@ -417,6 +460,7 @@ impl Engine {
         }
     }
 
+    /// Resume every paused cue.
     pub fn resume_all(&mut self, be: &mut dyn Backend, now: Instant) {
         let ids: Vec<CueId> = self.instances.keys().copied().collect();
         for k in ids {
@@ -467,6 +511,7 @@ impl Engine {
 
     // ---------------------------------------------------------------- tick
 
+    /// Advance time: end pre-waits, start actions, finish fades and waits, handle continues.
     pub fn tick(&mut self, ws: &Workspace, be: &mut dyn Backend, now: Instant) {
         be.update(now);
         for e in be.drain_errors() {

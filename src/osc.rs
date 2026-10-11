@@ -19,6 +19,7 @@ use std::time::{Duration, Instant};
 
 /// A running OSC listener; stops when dropped.
 pub struct OscServer {
+    /// UDP port being listened on.
     pub port: u16,
     stop: Arc<AtomicBool>,
 }
@@ -30,6 +31,7 @@ impl Drop for OscServer {
 }
 
 impl OscServer {
+    /// Listen on `port` on all interfaces; `repaint` is called after each handled message.
     pub fn start(port: u16, show: SharedShow, repaint: impl Fn() + Send + 'static) -> std::io::Result<Self> {
         let sock = UdpSocket::bind(("0.0.0.0", port))?;
         sock.set_read_timeout(Some(Duration::from_millis(200)))?;

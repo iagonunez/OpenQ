@@ -4,21 +4,26 @@ use serde::{Deserialize, Serialize};
 use std::path::{Path, PathBuf};
 use uuid::Uuid;
 
+/// Unique id of a cue (stable across saves).
 pub type CueId = Uuid;
 
 /// Lowest level (in dB) we treat as audible; anything at or below is silence.
 pub const MIN_DB: f32 = -60.0;
 
+/// Decibels to linear gain (`MIN_DB` and below = silence).
 pub fn db_to_gain(db: f32) -> f32 {
     if db <= MIN_DB { 0.0 } else { 10f32.powf(db / 20.0) }
 }
 
+/// Linear gain to decibels (silence = `MIN_DB`).
 pub fn gain_to_db(gain: f32) -> f32 {
     if gain <= 0.0 { MIN_DB } else { (20.0 * gain.log10()).max(MIN_DB) }
 }
 
+/// What happens after a cue fires.
 #[derive(Serialize, Deserialize, Clone, Copy, PartialEq, Eq, Debug, Default)]
 pub enum ContinueMode {
+    /// Wait for the next GO.
     #[default]
     DoNotContinue,
     /// Fire the next cue once this cue's post-wait has elapsed.
@@ -28,9 +33,11 @@ pub enum ContinueMode {
 }
 
 impl ContinueMode {
+    /// Every mode, for menus.
     pub const ALL: [ContinueMode; 3] =
         [ContinueMode::DoNotContinue, ContinueMode::AutoContinue, ContinueMode::AutoFollow];
 
+    /// Name shown in the UI.
     pub fn label(self) -> &'static str {
         match self {
             ContinueMode::DoNotContinue => "Do not continue",
@@ -40,6 +47,7 @@ impl ContinueMode {
     }
 }
 
+/// How a Group cue plays its children.
 #[derive(Serialize, Deserialize, Clone, Copy, PartialEq, Eq, Debug, Default)]
 pub enum GroupMode {
     /// GO fires the first child and moves the playhead into the group.
@@ -54,6 +62,7 @@ pub enum GroupMode {
 }
 
 impl GroupMode {
+    /// Every mode, for menus.
     pub const ALL: [GroupMode; 4] = [
         GroupMode::StartFirstAndEnter,
         GroupMode::StartFirst,
@@ -61,6 +70,7 @@ impl GroupMode {
         GroupMode::StartRandom,
     ];
 
+    /// Name shown in the UI.
     pub fn label(self) -> &'static str {
         match self {
             GroupMode::StartFirstAndEnter => "Start first child and enter group",
@@ -71,9 +81,12 @@ impl GroupMode {
     }
 }
 
+/// Shape of a fade over time.
 #[derive(Serialize, Deserialize, Clone, Copy, PartialEq, Eq, Debug, Default)]
 pub enum FadeCurve {
+    /// Constant rate.
     Linear,
+    /// Slow start and end.
     #[default]
     SCurve,
     /// Linear in dB (perceptually even).
@@ -81,8 +94,10 @@ pub enum FadeCurve {
 }
 
 impl FadeCurve {
+    /// Every curve, for menus.
     pub const ALL: [FadeCurve; 3] = [FadeCurve::Linear, FadeCurve::SCurve, FadeCurve::Logarithmic];
 
+    /// Name shown in the UI.
     pub fn label(self) -> &'static str {
         match self {
             FadeCurve::Linear => "Linear",
@@ -113,19 +128,28 @@ impl FadeCurve {
     }
 }
 
+/// Colour tag of a cue row.
 #[derive(Serialize, Deserialize, Clone, Copy, PartialEq, Eq, Debug, Default)]
 pub enum CueColor {
+    /// No colour.
     #[default]
     None,
+    /// Red.
     Red,
+    /// Orange.
     Orange,
+    /// Yellow.
     Yellow,
+    /// Green.
     Green,
+    /// Blue.
     Blue,
+    /// Purple.
     Purple,
 }
 
 impl CueColor {
+    /// Every colour, for menus.
     pub const ALL: [CueColor; 7] = [
         CueColor::None,
         CueColor::Red,
@@ -136,6 +160,7 @@ impl CueColor {
         CueColor::Purple,
     ];
 
+    /// Name shown in the UI.
     pub fn label(self) -> &'static str {
         match self {
             CueColor::None => "None",
@@ -148,6 +173,7 @@ impl CueColor {
         }
     }
 
+    /// Display colour (None for no colour).
     pub fn rgb(self) -> Option<[u8; 3]> {
         match self {
             CueColor::None => None,
@@ -161,19 +187,25 @@ impl CueColor {
     }
 }
 
+/// How a picture fits its stage.
 #[derive(Serialize, Deserialize, Clone, Copy, PartialEq, Eq, Debug, Default)]
 pub enum VideoFit {
+    /// Whole picture visible, letterboxed.
     #[default]
     Fit,
+    /// Cover the stage, cropping the overflow.
     Fill,
+    /// Fill the stage exactly, distorting if needed.
     Stretch,
     /// Pixel-for-pixel on the stage canvas (used by text cues).
     Native,
 }
 
 impl VideoFit {
+    /// Every fit, for menus.
     pub const ALL: [VideoFit; 4] = [VideoFit::Fit, VideoFit::Fill, VideoFit::Stretch, VideoFit::Native];
 
+    /// Name shown in the UI.
     pub fn label(self) -> &'static str {
         match self {
             VideoFit::Fit => "Fit (letterbox)",
@@ -188,20 +220,29 @@ impl VideoFit {
 pub const MAX_SRC_CHANNELS: usize = 8;
 /// Most output channels a cue's routing matrix handles.
 pub const MAX_OUT_CHANNELS: usize = 16;
+/// Most EQ bands per cue.
 pub const MAX_EQ_BANDS: usize = 8;
 
+/// Filter type of an EQ band.
 #[derive(Serialize, Deserialize, Clone, Copy, PartialEq, Eq, Debug)]
 pub enum EqKind {
+    /// Remove lows below the frequency.
     HighPass,
+    /// Boost/cut everything below the frequency.
     LowShelf,
+    /// Boost/cut around the frequency.
     Peak,
+    /// Boost/cut everything above the frequency.
     HighShelf,
+    /// Remove highs above the frequency.
     LowPass,
 }
 
 impl EqKind {
+    /// Every type, for menus.
     pub const ALL: [EqKind; 5] = [EqKind::HighPass, EqKind::LowShelf, EqKind::Peak, EqKind::HighShelf, EqKind::LowPass];
 
+    /// Name shown in the UI.
     pub fn label(self) -> &'static str {
         match self {
             EqKind::HighPass => "High-pass",
@@ -212,24 +253,34 @@ impl EqKind {
         }
     }
 
+    /// True if the gain setting applies to this type.
     pub fn has_gain(self) -> bool {
         matches!(self, EqKind::LowShelf | EqKind::Peak | EqKind::HighShelf)
     }
 }
 
+/// One equaliser band.
 #[derive(Serialize, Deserialize, Clone, Copy, PartialEq, Debug)]
 pub struct EqBand {
+    /// Band is active.
     pub enabled: bool,
+    /// Filter type.
     pub kind: EqKind,
+    /// Frequency in Hz.
     pub freq: f32,
+    /// Gain in dB (peak and shelf types).
     pub gain_db: f32,
+    /// Bandwidth / resonance.
     pub q: f32,
 }
 
+/// A cue's equaliser.
 #[derive(Serialize, Deserialize, Clone, PartialEq, Debug)]
 #[serde(default)]
 pub struct Eq {
+    /// EQ is active (off = bypassed).
     pub enabled: bool,
+    /// Bands, applied in order.
     pub bands: Vec<EqBand>,
 }
 
@@ -278,7 +329,9 @@ pub struct Geometry {
     pub x: f32,
     /// Offset as a fraction of the stage height (positive = down).
     pub y: f32,
+    /// Horizontal scale (1 = fit size).
     pub scale_x: f32,
+    /// Vertical scale (1 = fit size).
     pub scale_y: f32,
     /// Degrees clockwise.
     pub rotation: f32,
@@ -294,6 +347,7 @@ impl Default for Geometry {
 }
 
 impl Geometry {
+    /// Interpolate towards `to` (t = 0..1), as fades do.
     pub fn lerp(&self, to: &Geometry, t: f32) -> Geometry {
         let l = |a: f32, b: f32| a + (b - a) * t;
         Geometry {
@@ -307,6 +361,7 @@ impl Geometry {
     }
 }
 
+/// Unique id of a stage.
 pub type StageId = Uuid;
 
 /// A video output (projector/screen). Its canvas is warped onto the window with four corner
@@ -314,9 +369,13 @@ pub type StageId = Uuid;
 #[derive(Serialize, Deserialize, Clone, PartialEq, Debug)]
 #[serde(default)]
 pub struct Stage {
+    /// Stage id.
     pub id: StageId,
+    /// Name shown in menus and the window title.
     pub name: String,
+    /// Canvas width in pixels.
     pub width: u32,
+    /// Canvas height in pixels.
     pub height: u32,
     /// Window-normalised positions of the canvas corners: top-left, top-right, bottom-right,
     /// bottom-left.
@@ -335,12 +394,15 @@ pub struct Stage {
 }
 
 impl Stage {
+    /// Crop that shows the whole source canvas.
     pub const FULL_CROP: [f32; 4] = [0.0, 0.0, 1.0, 1.0];
 }
 
 impl Stage {
+    /// Corner pins with no warping.
     pub const IDENTITY: [[f32; 2]; 4] = [[0.0, 0.0], [1.0, 0.0], [1.0, 1.0], [0.0, 1.0]];
 
+    /// A 1920×1080 stage with no mapping.
     pub fn new(name: &str) -> Self {
         Self {
             id: Uuid::new_v4(),
@@ -366,13 +428,16 @@ impl Default for Stage {
 /// A slice marker: the slice *ending* at `time` plays `plays` times (0 = until devamped).
 #[derive(Serialize, Deserialize, Clone, Copy, PartialEq, Debug)]
 pub struct SliceMarker {
+    /// Position in the file, in seconds.
     pub time: f64,
+    /// Times the slice plays (0 = until devamped).
     pub plays: u32,
 }
 
 /// One playable section of an audio file.
 #[derive(Clone, Copy, PartialEq, Debug)]
 pub struct Segment {
+    /// Start in the file, in seconds.
     pub start: f64,
     /// None = end of file.
     pub end: Option<f64>,
@@ -380,10 +445,13 @@ pub struct Segment {
     pub plays: Option<u32>,
 }
 
+/// Plays a sound file through the mixer.
 #[derive(Serialize, Deserialize, Clone, PartialEq, Debug)]
 #[serde(default)]
 pub struct AudioCue {
+    /// Media file.
     pub path: PathBuf,
+    /// Level in dB.
     pub volume_db: f32,
     /// -1 (left) .. 1 (right).
     pub pan: f32,
@@ -391,10 +459,13 @@ pub struct AudioCue {
     pub start_time: f64,
     /// Seconds into the file to stop at (None = end of file).
     pub end_time: Option<f64>,
+    /// Times the start–end region plays.
     pub play_count: u32,
+    /// Loop the region until stopped.
     pub infinite_loop: bool,
     /// Playback speed (varispeed: pitch follows). 1 = normal.
     pub rate: f32,
+    /// Equaliser.
     pub eq: Eq,
     /// Custom routing in dB, `[source channel][output channel]`; None = automatic.
     pub routing: Option<Vec<Vec<f32>>>,
@@ -488,25 +559,33 @@ impl Default for AudioCue {
     }
 }
 
+/// Plays a movie or still image on a stage (soundtrack through the mixer).
 #[derive(Serialize, Deserialize, Clone, PartialEq, Debug)]
 #[serde(default)]
 pub struct VideoCue {
+    /// Media file.
     pub path: PathBuf,
+    /// Soundtrack level in dB.
     pub volume_db: f32,
     /// 0..1
     pub opacity: f32,
     /// Higher layers draw on top.
     pub layer: i32,
+    /// How the picture fits the stage.
     pub fit: VideoFit,
+    /// Start point in the file, in seconds.
     pub start_time: f64,
     /// Seconds into the file to stop at (None = end of file).
     pub end_time: Option<f64>,
+    /// Times the start–end region plays.
     pub play_count: u32,
+    /// Loop until stopped.
     pub infinite_loop: bool,
     /// Keep showing the last frame when playback ends instead of clearing.
     pub hold_last_frame: bool,
     /// Output stage (None = the first stage).
     pub stage: Option<StageId>,
+    /// Position, scale, rotation and crop on the stage.
     pub geometry: Geometry,
     /// For still images: seconds to show (0 = until stopped).
     pub still_duration: f64,
@@ -535,11 +614,15 @@ impl Default for VideoCue {
     }
 }
 
+/// Fades a running audio/video/text cue's level, opacity or geometry.
 #[derive(Serialize, Deserialize, Clone, PartialEq, Debug)]
 #[serde(default)]
 pub struct FadeCue {
+    /// Cue to fade (None = not set).
     pub target: Option<CueId>,
+    /// Fade length in seconds.
     pub duration: f64,
+    /// Shape of the fade.
     pub curve: FadeCurve,
     /// Fade audio level to this value (None = leave level alone).
     pub volume_db: Option<f32>,
@@ -547,6 +630,7 @@ pub struct FadeCue {
     pub opacity: Option<f32>,
     /// Fade video geometry to this value (None = leave geometry alone).
     pub geometry: Option<Geometry>,
+    /// Stop the target when the fade ends (fade-outs).
     pub stop_target_when_done: bool,
 }
 
@@ -564,11 +648,15 @@ impl Default for FadeCue {
     }
 }
 
+/// Horizontal text alignment.
 #[derive(Serialize, Deserialize, Clone, Copy, PartialEq, Eq, Debug, Default)]
 pub enum TextAlign {
+    /// Left-aligned.
     Left,
+    /// Centred.
     #[default]
     Center,
+    /// Right-aligned.
     Right,
 }
 
@@ -576,15 +664,23 @@ pub enum TextAlign {
 #[derive(Serialize, Deserialize, Clone, PartialEq, Debug)]
 #[serde(default)]
 pub struct TextCue {
+    /// The text (may span lines).
     pub text: String,
     /// Glyph size in stage-canvas pixels.
     pub size: f32,
+    /// RGBA colour.
     pub color: [u8; 4],
+    /// Bold weight.
     pub bold: bool,
+    /// Line alignment.
     pub align: TextAlign,
+    /// Stage it shows on (None = first stage).
     pub stage: Option<StageId>,
+    /// Position, scale, rotation and crop on the stage.
     pub geometry: Geometry,
+    /// Stacking layer: higher draws on top.
     pub layer: i32,
+    /// Opacity 0..1.
     pub opacity: f32,
     /// Seconds to show (0 = until stopped).
     pub duration: f64,
@@ -611,8 +707,11 @@ impl Default for TextCue {
 #[derive(Serialize, Deserialize, Clone, PartialEq, Debug)]
 #[serde(default)]
 pub struct NetworkCue {
+    /// Destination host name or IP.
     pub host: String,
+    /// Destination UDP port.
     pub port: u16,
+    /// OSC address, e.g. `/cue/1/go`.
     pub address: String,
     /// Space-separated arguments; integers and decimals are sent as numbers, the rest as strings
     /// ("quoted text" keeps spaces).
@@ -625,42 +724,93 @@ impl Default for NetworkCue {
     }
 }
 
+/// What a cue does.
 #[derive(Serialize, Deserialize, Clone, PartialEq, Debug)]
 pub enum CueKind {
+    /// Play a sound file.
     Audio(AudioCue),
+    /// Play a movie or image.
     Video(VideoCue),
-    Group { mode: GroupMode, children: Vec<Cue> },
-    Wait { duration: f64 },
+    /// Contain other cues.
+    Group {
+        /// How the children play.
+        mode: GroupMode,
+        /// The contained cues.
+        children: Vec<Cue>,
+    },
+    /// Wait for a time (e.g. to time an auto-follow).
+    Wait {
+        /// Seconds.
+        duration: f64,
+    },
+    /// Do nothing (notes / markers).
     Memo,
+    /// Fade another cue.
     Fade(FadeCue),
     /// Start the target cue.
-    Start { target: Option<CueId> },
+    /// Fire another cue.
+    Start {
+        /// Cue acted on.
+        target: Option<CueId>,
+    },
     /// Stop the target cue (None = stop everything else).
-    Stop { target: Option<CueId> },
+    /// Stop another cue.
+    Stop {
+        /// Cue acted on.
+        target: Option<CueId>,
+    },
     /// Pause the target cue (None = pause everything else).
-    Pause { target: Option<CueId> },
+    /// Pause another cue.
+    Pause {
+        /// Cue acted on.
+        target: Option<CueId>,
+    },
     /// Move the playhead to the target cue.
-    Goto { target: Option<CueId> },
+    /// Move the playhead to another cue.
+    Goto {
+        /// Cue acted on.
+        target: Option<CueId>,
+    },
     /// Make the target audio cue leave its looping slice and carry on.
-    Devamp { target: Option<CueId> },
+    /// Release a vamping slice in another cue.
+    Devamp {
+        /// Cue acted on.
+        target: Option<CueId>,
+    },
+    /// Send an OSC message.
     Network(NetworkCue),
+    /// Show text on a stage.
     Text(TextCue),
 }
 
+/// The type of a cue without its settings (for menus, icons and display).
 #[derive(Serialize, Deserialize, Clone, Copy, PartialEq, Eq, Debug)]
 pub enum KindTag {
+    /// Audio cue.
     Audio,
+    /// Video cue.
     Video,
+    /// Group cue.
     Group,
+    /// Wait cue.
     Wait,
+    /// Memo cue.
     Memo,
+    /// Fade cue.
     Fade,
+    /// Start cue.
     Start,
+    /// Stop cue.
     Stop,
+    /// Pause cue.
     Pause,
+    /// Goto cue.
     Goto,
+    /// Devamp cue.
     Devamp,
+    /// Network cue.
     Network,
+    /// Text cue.
     Text,
 }
 
@@ -670,6 +820,7 @@ impl KindTag {
         matches!(self, KindTag::Audio | KindTag::Video | KindTag::Text)
     }
 
+    /// Every type, in toolbox order.
     pub const ALL: [KindTag; 13] = [
         KindTag::Audio,
         KindTag::Video,
@@ -686,6 +837,7 @@ impl KindTag {
         KindTag::Text,
     ];
 
+    /// Name shown in the UI.
     pub fn label(self) -> &'static str {
         match self {
             KindTag::Audio => "Audio",
@@ -704,6 +856,7 @@ impl KindTag {
         }
     }
 
+    /// A new cue of this type with default settings.
     pub fn default_kind(self) -> CueKind {
         match self {
             KindTag::Audio => CueKind::Audio(AudioCue::default()),
@@ -724,6 +877,7 @@ impl KindTag {
 }
 
 impl CueKind {
+    /// The type of this cue.
     pub fn tag(&self) -> KindTag {
         match self {
             CueKind::Audio(_) => KindTag::Audio,
@@ -755,6 +909,7 @@ impl CueKind {
         }
     }
 
+    /// The target of Fade/Start/Stop/Pause/Goto/Devamp cues.
     pub fn target_mut(&mut self) -> Option<&mut Option<CueId>> {
         match self {
             CueKind::Fade(f) => Some(&mut f.target),
@@ -767,6 +922,7 @@ impl CueKind {
         }
     }
 
+    /// The media file of Audio/Video cues.
     pub fn media_path(&self) -> Option<&Path> {
         match self {
             CueKind::Audio(a) => Some(&a.path),
@@ -776,28 +932,39 @@ impl CueKind {
     }
 }
 
+/// One entry in the cue list.
 #[derive(Serialize, Deserialize, Clone, PartialEq, Debug)]
 pub struct Cue {
+    /// Unique id.
     pub id: CueId,
+    /// Cue number as typed (e.g. "1", "4.2"); may be empty.
     #[serde(default)]
     pub number: String,
+    /// Name (empty = derived from the media file or type).
     #[serde(default)]
     pub name: String,
+    /// Free notes, shown in the standby card.
     #[serde(default)]
     pub notes: String,
+    /// Row colour.
     #[serde(default)]
     pub color: CueColor,
+    /// Disarmed cues are skipped by GO.
     #[serde(default = "default_true")]
     pub armed: bool,
+    /// Seconds between GO and the action.
     #[serde(default)]
     pub pre_wait: f64,
+    /// Seconds after the action starts before an auto-continue fires.
     #[serde(default)]
     pub post_wait: f64,
+    /// What happens next.
     #[serde(default)]
     pub continue_mode: ContinueMode,
     /// Keyboard key that fires this cue in show mode (e.g. "F1", "A").
     #[serde(default)]
     pub hotkey: Option<String>,
+    /// Type and type-specific settings.
     pub kind: CueKind,
 }
 
@@ -806,6 +973,7 @@ fn default_true() -> bool {
 }
 
 impl Cue {
+    /// A new cue with a fresh id and default timing.
     pub fn new(kind: CueKind) -> Self {
         Self {
             id: Uuid::new_v4(),
@@ -822,10 +990,12 @@ impl Cue {
         }
     }
 
+    /// True for Group cues.
     pub fn is_group(&self) -> bool {
         matches!(self.kind, CueKind::Group { .. })
     }
 
+    /// Children of a Group (empty otherwise).
     pub fn children(&self) -> &[Cue] {
         match &self.kind {
             CueKind::Group { children, .. } => children,
@@ -833,6 +1003,7 @@ impl Cue {
         }
     }
 
+    /// Mutable children of a Group.
     pub fn children_mut(&mut self) -> Option<&mut Vec<Cue>> {
         match &mut self.kind {
             CueKind::Group { children, .. } => Some(children),
@@ -877,17 +1048,21 @@ impl Cue {
 /// Where a cue lives in the tree.
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub struct Location {
+    /// Containing group (None = top level).
     pub parent: Option<CueId>,
+    /// Position among its siblings.
     pub index: usize,
 }
 
 /// The cue tree. Top-level list plus nested groups.
 #[derive(Serialize, Deserialize, Clone, Default, Debug, PartialEq)]
 pub struct CueList {
+    /// Top-level cues in order (groups hold their own children).
     pub cues: Vec<Cue>,
 }
 
 impl CueList {
+    /// Find a cue anywhere in the tree.
     pub fn find(&self, id: CueId) -> Option<&Cue> {
         fn rec(list: &[Cue], id: CueId) -> Option<&Cue> {
             for c in list {
@@ -903,6 +1078,7 @@ impl CueList {
         rec(&self.cues, id)
     }
 
+    /// Find a cue anywhere in the tree, mutably.
     pub fn find_mut(&mut self, id: CueId) -> Option<&mut Cue> {
         fn rec(list: &mut [Cue], id: CueId) -> Option<&mut Cue> {
             for c in list {
@@ -920,6 +1096,7 @@ impl CueList {
         rec(&mut self.cues, id)
     }
 
+    /// Where a cue sits in the tree.
     pub fn location(&self, id: CueId) -> Option<Location> {
         fn rec(list: &[Cue], parent: Option<CueId>, id: CueId) -> Option<Location> {
             for (i, c) in list.iter().enumerate() {
@@ -935,6 +1112,7 @@ impl CueList {
         rec(&self.cues, None, id)
     }
 
+    /// Group containing a cue.
     pub fn parent_of(&self, id: CueId) -> Option<CueId> {
         self.location(id).and_then(|l| l.parent)
     }
@@ -954,6 +1132,7 @@ impl CueList {
         }
     }
 
+    /// The cue after this one at the same level.
     pub fn next_sibling(&self, id: CueId) -> Option<CueId> {
         let loc = self.location(id)?;
         self.list(loc.parent).get(loc.index + 1).map(|c| c.id)
@@ -971,6 +1150,7 @@ impl CueList {
         false
     }
 
+    /// Take a cue out of the tree.
     pub fn remove(&mut self, id: CueId) -> Option<Cue> {
         let loc = self.location(id)?;
         let list = self.list_mut(loc.parent)?;
@@ -1045,6 +1225,7 @@ impl CueList {
         format!("{}", max.floor() as i64 + 1)
     }
 
+    /// First cue in the list.
     pub fn first(&self) -> Option<CueId> {
         self.cues.first().map(|c| c.id)
     }
@@ -1056,6 +1237,7 @@ impl CueList {
         rows.get(i + 1).map(|r| r.1)
     }
 
+    /// The row above `id` as displayed, skipping collapsed groups' children.
     pub fn prev_in_display(&self, id: CueId, collapsed: &dyn Fn(CueId) -> bool) -> Option<CueId> {
         let rows = self.visible_rows(collapsed);
         let i = rows.iter().position(|(_, c)| *c == id)?;
@@ -1078,11 +1260,13 @@ impl CueList {
     }
 }
 
+/// Workspace-wide settings.
 #[derive(Serialize, Deserialize, Clone, Debug, PartialEq)]
 #[serde(default)]
 pub struct Settings {
     /// Fade time used by "Stop all" (panic). Pressing it twice stops immediately.
     pub panic_fade: f64,
+    /// Master output level in dB.
     pub master_volume_db: f32,
     /// Ignore a second GO within this many seconds (double-GO protection).
     pub double_go_protection: f64,
@@ -1090,6 +1274,7 @@ pub struct Settings {
     pub audio_device: Option<String>,
     /// Listen for OSC remote control on UDP `osc_port`.
     pub osc_enabled: bool,
+    /// UDP port for OSC input.
     pub osc_port: u16,
 }
 
@@ -1102,12 +1287,17 @@ impl Default for Settings {
     }
 }
 
+/// A show file: cue list, settings and stages.
 #[derive(Serialize, Deserialize, Clone, Debug, PartialEq)]
 #[serde(default)]
 pub struct Workspace {
+    /// File format version.
     pub format_version: u32,
+    /// The cues.
     pub cue_list: CueList,
+    /// Settings.
     pub settings: Settings,
+    /// Video outputs.
     pub stages: Vec<Stage>,
 }
 
@@ -1128,9 +1318,12 @@ impl Workspace {
         stage.and_then(|id| self.stages.iter().find(|s| s.id == id)).or(self.stages.first())
     }
 
+    /// Current file format version.
     pub const FORMAT_VERSION: u32 = 1;
+    /// File extension of workspaces.
     pub const EXTENSION: &'static str = "openq";
 
+    /// Read a workspace, resolving relative media paths against the file's folder.
     pub fn load(path: &Path) -> anyhow::Result<Self> {
         let s = std::fs::read_to_string(path)?;
         let mut ws: Workspace = serde_json::from_str(&s)?;
@@ -1148,6 +1341,7 @@ impl Workspace {
         Ok(ws)
     }
 
+    /// Write a workspace, storing media paths relative to the file's folder.
     pub fn save(&self, path: &Path) -> anyhow::Result<()> {
         let mut ws = self.clone();
         ws.format_version = Self::FORMAT_VERSION;

@@ -16,6 +16,7 @@ use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::time::Instant;
 
+/// What the prober learned about a media file.
 #[derive(Clone, Debug, Default, serde::Serialize, serde::Deserialize)]
 pub struct MediaInfo {
     /// File duration in seconds.
@@ -43,6 +44,7 @@ fn is_video_path(p: &Path) -> bool {
     )
 }
 
+/// Extension looks like an audio-only file.
 pub fn is_audio_path(p: &Path) -> bool {
     matches!(
         p.extension().and_then(|e| e.to_str()).map(|e| e.to_ascii_lowercase()).as_deref(),
@@ -50,6 +52,7 @@ pub fn is_audio_path(p: &Path) -> bool {
     )
 }
 
+/// Extension looks like a still image.
 pub fn is_image_path(p: &Path) -> bool {
     matches!(
         p.extension().and_then(|e| e.to_str()).map(|e| e.to_ascii_lowercase()).as_deref(),
@@ -69,6 +72,7 @@ type WaveformResult = Result<Arc<decoder::Waveform>, String>;
 /// the main device, so requests go over the link instead of to a local decoder.
 pub type RemoteFetch = Box<dyn Fn(PathBuf) + Send + Sync>;
 
+/// Background waveform builder with a cache (decoding a whole file can take a while).
 pub struct Waveforms {
     cache: Mutex<HashMap<PathBuf, Option<WaveformResult>>>,
     tx: Mutex<std::sync::mpsc::Sender<PathBuf>>,
@@ -76,6 +80,7 @@ pub struct Waveforms {
 }
 
 impl Waveforms {
+    /// Start the builder thread.
     pub fn new() -> Arc<Self> {
         let (tx, rx) = std::sync::mpsc::channel::<PathBuf>();
         let w = Arc::new(Self { cache: Mutex::new(HashMap::new()), tx: Mutex::new(tx), remote: Mutex::new(None) });
@@ -114,6 +119,7 @@ impl Waveforms {
         }
     }
 
+    /// Store a waveform (e.g. one received from a main device).
     pub fn insert(&self, path: PathBuf, result: WaveformResult) {
         self.cache.lock().insert(path, Some(result));
     }
@@ -129,8 +135,11 @@ impl Waveforms {
 /// A still preview of a video or image file: RGBA plus its size.
 #[derive(Clone)]
 pub struct Poster {
+    /// Width of `rgba` in pixels.
     pub width: u32,
+    /// Height of `rgba` in pixels.
     pub height: u32,
+    /// Tightly packed RGBA pixels.
     pub rgba: Arc<Vec<u8>>,
     /// Full size of the source picture (the poster itself may be scaled down).
     pub source_size: [u32; 2],
@@ -146,8 +155,10 @@ pub struct Posters {
 }
 
 impl Posters {
+    /// Longest side of a poster in pixels.
     pub const MAX_SIDE: u32 = 640;
 
+    /// Start the loader thread.
     pub fn new() -> Arc<Self> {
         let (tx, rx) = std::sync::mpsc::channel::<PosterKey>();
         let p = Arc::new(Self { cache: Mutex::new(HashMap::new()), tx: Mutex::new(tx) });
@@ -242,6 +253,7 @@ fn probe_now(path: &Path) -> Result<MediaInfo, String> {
 }
 
 impl Prober {
+    /// Start the probe thread.
     pub fn new() -> Arc<Self> {
         let (tx, rx) = std::sync::mpsc::channel::<PathBuf>();
         let p = Arc::new(Self { cache: Mutex::new(HashMap::new()), tx: Mutex::new(tx), remote: Default::default() });
@@ -280,6 +292,7 @@ impl Prober {
         }
     }
 
+    /// Store media info (e.g. received from a main device).
     pub fn insert(&self, path: PathBuf, result: Result<MediaInfo, String>) {
         self.cache.lock().insert(path, Some(result));
     }
@@ -326,17 +339,24 @@ pub fn effective_duration(cue: &Cue, file_duration: Option<f64>) -> Option<f64> 
     }
 }
 
+/// The real media backends behind the engine's [`crate::engine::Backend`] trait.
 pub struct Media {
+    /// Audio mixer, if the device opened.
     pub audio: Option<audio::AudioOutput>,
+    /// Why audio isn't available.
     pub audio_error: Option<String>,
+    /// Video layers, if FFmpeg initialised.
     #[cfg(feature = "video")]
     pub video: Option<video::VideoOutput>,
+    /// Why video isn't available.
     pub video_error: Option<String>,
+    /// Media-info cache.
     pub prober: Arc<Prober>,
     net: Option<std::net::UdpSocket>,
 }
 
 impl Media {
+    /// Open the default audio device and the video system.
     pub fn new(prober: Arc<Prober>) -> Self {
         let (audio, audio_error) = match audio::AudioOutput::open(None) {
             Ok(a) => (Some(a), None),
@@ -382,6 +402,7 @@ impl Media {
         None
     }
 
+    /// Layers currently on stages, for the stage windows.
     #[cfg(feature = "video")]
     pub fn stage_layers(&self) -> Vec<video::StageLayer> {
         self.video.as_ref().map(|v| v.stage_layers()).unwrap_or_default()
@@ -462,6 +483,7 @@ impl Media {
         }
     }
 
+    /// Output peaks since the last call by this `reader`.
     pub fn take_meters(&self, reader: audio::MeterReader) -> Vec<f32> {
         self.audio.as_ref().map(|a| a.take_meters(reader)).unwrap_or_default()
     }

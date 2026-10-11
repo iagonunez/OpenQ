@@ -16,6 +16,7 @@ use uuid::Uuid;
 
 /// How long a pairing code stays valid, and how many wrong tries close it.
 pub const PAIRING_TTL: Duration = Duration::from_secs(300);
+/// Wrong codes allowed before pairing closes.
 pub const PAIRING_ATTEMPTS: u32 = 5;
 /// Failed logins from one address before it is blocked, and for how long.
 const MAX_FAILURES: u32 = 10;
@@ -27,18 +28,28 @@ const HEARTBEAT: Duration = Duration::from_secs(1);
 /// A replica that sends nothing (not even a ping) for this long is dropped.
 const IDLE_TIMEOUT: Duration = Duration::from_secs(10);
 
+/// An open pairing window.
 pub struct Pairing {
+    /// Code to enter on the new device.
     pub code: String,
+    /// When the code stops working.
     pub expires: Instant,
+    /// Tries left.
     pub attempts_left: u32,
 }
 
+/// A device connected right now.
 #[derive(Clone, Debug)]
 pub struct Connected {
+    /// Connection number.
     pub conn: u64,
+    /// Device id.
     pub device: Uuid,
+    /// Device name.
     pub name: String,
+    /// Its address.
     pub addr: SocketAddr,
+    /// Connected since.
     pub since: Instant,
 }
 
@@ -47,7 +58,7 @@ struct Failures {
     last: Instant,
 }
 
-pub struct Shared {
+struct Shared {
     show: SharedShow,
     config: Arc<Mutex<RemoteConfig>>,
     pairing: Mutex<Option<Pairing>>,
@@ -59,7 +70,7 @@ pub struct Shared {
     /// Meter peaks shared by all replicas (each read of the mixer resets it).
     meters: Mutex<(Instant, Vec<f32>)>,
     repaint: Box<dyn Fn() + Send + Sync>,
-    pub port: u16,
+    port: u16,
 }
 
 impl Shared {
@@ -110,6 +121,7 @@ pub struct Server {
 }
 
 impl Server {
+    /// Listen on the configured port and answer discovery queries.
     pub fn start(show: SharedShow, config: Arc<Mutex<RemoteConfig>>, repaint: impl Fn() + Send + Sync + 'static) -> anyhow::Result<Self> {
         let (port, id) = {
             let c = config.lock();
@@ -142,6 +154,7 @@ impl Server {
         Ok(Self { shared })
     }
 
+    /// Port being listened on.
     pub fn port(&self) -> u16 {
         self.shared.port
     }
@@ -155,6 +168,7 @@ impl Server {
         code
     }
 
+    /// Withdraw the pairing code.
     pub fn close_pairing(&self) {
         if self.shared.pairing.lock().take().is_some() {
             self.shared.event("Pairing closed".into());
@@ -170,10 +184,12 @@ impl Server {
         p.as_ref().map(|p| (p.code.clone(), p.expires.saturating_duration_since(Instant::now()), p.attempts_left))
     }
 
+    /// Devices connected right now.
     pub fn connected(&self) -> Vec<Connected> {
         self.shared.clients.lock().clone()
     }
 
+    /// Recent security/activity events, oldest first.
     pub fn events(&self) -> Vec<String> {
         self.shared.events.lock().iter().cloned().collect()
     }

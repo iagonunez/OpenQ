@@ -21,7 +21,9 @@ use std::time::{Duration, Instant};
 /// Where a video's soundtrack goes: into the OpenQ mixer at this rate/channel count.
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub struct AudioTap {
+    /// Mixer sample rate.
     pub rate: u32,
+    /// Mixer channel count.
     pub channels: usize,
 }
 
@@ -39,9 +41,12 @@ pub fn init() -> anyhow::Result<()> {
     .map_err(|e| anyhow!("FFmpeg init failed: {e}"))
 }
 
+/// The latest decoded picture of a layer.
 #[derive(Default)]
 pub struct Frame {
+    /// Width in pixels.
     pub width: u32,
+    /// Height in pixels.
     pub height: u32,
     /// Tightly packed RGBA.
     pub data: Vec<u8>,
@@ -49,18 +54,27 @@ pub struct Frame {
     pub generation: u64,
 }
 
+/// A frame shared between a decode thread and the stage windows.
 pub type FrameSlot = Arc<Mutex<Frame>>;
 
 /// What a stage window needs to draw one running video.
 #[derive(Clone)]
 pub struct StageLayer {
+    /// Cue playing this layer.
     pub id: CueId,
+    /// Stage it shows on (None = first stage).
     pub stage: Option<StageId>,
+    /// Current picture.
     pub frame: FrameSlot,
+    /// Opacity 0..1 (including fades).
     pub opacity: f32,
+    /// Placement on the stage (including fades).
     pub geometry: Geometry,
+    /// Stacking layer: higher draws on top.
     pub layer: i32,
+    /// How the picture fits the stage.
     pub fit: VideoFit,
+    /// Start order, to stack equal layers by age.
     pub order: u64,
 }
 
@@ -694,6 +708,7 @@ impl Player {
     }
 }
 
+/// All playing video, image and text layers.
 pub struct VideoOutput {
     players: HashMap<CueId, Player>,
     preloaded: HashMap<CueId, Player>,
@@ -703,11 +718,13 @@ pub struct VideoOutput {
 }
 
 impl VideoOutput {
+    /// Initialise FFmpeg.
     pub fn new() -> anyhow::Result<Self> {
         init()?;
         Ok(Self { players: HashMap::new(), preloaded: HashMap::new(), texts: HashMap::new(), order: 0 })
     }
 
+    /// Open these cues ahead of time so they start without delay.
     pub fn set_preloaded(&mut self, cues: &[(CueId, &VideoCue, Option<AudioTap>)]) {
         self.preloaded.retain(|id, p| cues.iter().any(|(c, v, t)| c == id && **v == p.params && *t == p.tap));
         for (id, v, tap) in cues {
@@ -723,6 +740,7 @@ impl VideoOutput {
         }
     }
 
+    /// Start a movie or image so it appears at `at`; `tap` routes its soundtrack into the mixer.
     pub fn start(&mut self, cue: CueId, params: &VideoCue, at: Instant, tap: Option<AudioTap>) -> Result<(), String> {
         if params.path.as_os_str().is_empty() {
             return Err("no video file".into());
@@ -743,10 +761,12 @@ impl VideoOutput {
         Ok(())
     }
 
+    /// Remove a layer.
     pub fn stop(&mut self, cue: CueId) {
         self.players.remove(&cue);
     }
 
+    /// Show a Text cue as a layer.
     pub fn start_text(&mut self, cue: CueId, t: &TextCue, at: Instant) {
         self.order += 1;
         let mut p = Player::from_frame(text_layer_params(t), self.order, text_frame(t));
@@ -794,12 +814,14 @@ impl VideoOutput {
         }
     }
 
+    /// Freeze a layer (and its soundtrack).
     pub fn pause(&mut self, cue: CueId) {
         if let Some(p) = self.players.get_mut(&cue) {
             p.pause(Instant::now());
         }
     }
 
+    /// Continue a paused layer at `at`.
     pub fn resume(&mut self, cue: CueId, at: Instant) {
         if let Some(p) = self.players.get_mut(&cue) {
             p.resume(at);
@@ -832,26 +854,31 @@ impl VideoOutput {
         }
     }
 
+    /// True if the cue has a layer.
     pub fn has(&self, cue: CueId) -> bool {
         self.players.contains_key(&cue)
     }
 
+    /// True once a movie ended on its own (or failed).
     pub fn is_finished(&self, cue: CueId) -> bool {
         self.players
             .get(&cue)
             .is_none_or(|p| p.finished && (p.error.is_some() || p.error_reported || !p.params.hold_last_frame))
     }
 
+    /// Seconds of media played.
     pub fn elapsed(&self, cue: CueId) -> Option<f64> {
         self.players.get(&cue)?.position()
     }
 
+    /// Advance fades.
     pub fn update(&mut self, now: Instant) {
         for p in self.players.values_mut() {
             p.update(now);
         }
     }
 
+    /// Errors from decode threads since the last call.
     pub fn drain_errors(&mut self) -> Vec<String> {
         let mut out = Vec::new();
         for p in self.players.values_mut() {
@@ -863,6 +890,7 @@ impl VideoOutput {
         out
     }
 
+    /// Layers to draw, bottom to top.
     pub fn stage_layers(&self) -> Vec<StageLayer> {
         let mut v: Vec<StageLayer> = self
             .players
@@ -884,16 +912,24 @@ impl VideoOutput {
     }
 }
 
+/// What FFmpeg reports about a media file.
 #[derive(Clone, Debug, Default)]
 pub struct VideoInfo {
+    /// Duration in seconds, if known.
     pub duration: Option<f64>,
+    /// Picture width (0 = no video stream).
     pub width: u32,
+    /// Picture height.
     pub height: u32,
+    /// Has a soundtrack.
     pub has_audio: bool,
+    /// Soundtrack channel count.
     pub audio_channels: usize,
+    /// Video codec name.
     pub codec: String,
 }
 
+/// Read a file's streams with FFmpeg.
 pub fn probe(path: &Path) -> anyhow::Result<VideoInfo> {
     init()?;
     let ictx = ff::format::input(&path).with_context(|| format!("cannot open {}", path.display()))?;

@@ -23,9 +23,13 @@ struct Announce {
 /// An instance that answered.
 #[derive(Clone, Debug, PartialEq)]
 pub struct Found {
+    /// Its instance id.
     pub id: Uuid,
+    /// Its name.
     pub name: String,
+    /// Where to connect.
     pub address: SocketAddr,
+    /// Its protocol version.
     pub protocol: u32,
 }
 

@@ -10,11 +10,18 @@ use std::time::{Duration, Instant};
 
 const TICK: Duration = Duration::from_millis(1);
 
+/// The whole running show: workspace, engine and media backends, shared by UI, engine thread,
+/// OSC and remote connections behind a mutex.
 pub struct Show {
+    /// The cue list, stages and settings being played.
     pub ws: Workspace,
+    /// Cue state machine.
     pub engine: Engine,
+    /// Audio/video/network backends.
     pub media: Media,
+    /// File the workspace was loaded from / saved to.
     pub path: Option<PathBuf>,
+    /// Unsaved changes.
     pub dirty: bool,
     /// Set once media has been torn down; the engine stops ticking.
     pub shut_down: bool,
@@ -24,13 +31,16 @@ pub struct Show {
     pub replica: bool,
 }
 
+/// The show as shared between threads.
 pub type SharedShow = Arc<Mutex<Show>>;
 
 impl Show {
+    /// An empty show with the default audio device opened.
     pub fn new(prober: Arc<Prober>) -> Self {
         Self { ws: Workspace::default(), engine: Engine::new(), media: Media::new(prober), path: None, dirty: false, shut_down: false, edit_gen: 0, replica: false }
     }
 
+    /// Advance the engine to `now` (called at ~1 kHz by the engine thread).
     pub fn tick(&mut self, now: Instant) {
         if self.shut_down || self.replica {
             return;
@@ -39,6 +49,7 @@ impl Show {
         engine.tick(ws, media, now);
     }
 
+    /// GO: fire the cue at the playhead.
     pub fn go(&mut self) {
         let Show { ws, engine, media, .. } = self;
         engine.go(ws, media, Instant::now());
@@ -79,6 +90,7 @@ impl Show {
         self.edited();
     }
 
+    /// Swap in another workspace: stops everything, reopens audio with its settings.
     pub fn replace_workspace(&mut self, ws: Workspace, path: Option<PathBuf>) {
         let now = Instant::now();
         self.engine.stop_all(&mut self.media, now, 0.0);

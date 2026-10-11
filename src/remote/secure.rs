@@ -68,6 +68,7 @@ pub struct Sender {
 }
 
 impl Sender {
+    /// Encrypt and send one message.
     pub fn send<T: Serialize>(&mut self, msg: &T) -> anyhow::Result<()> {
         let plain = serde_json::to_vec(msg)?;
         let sealed = self.cipher.encrypt(&nonce(self.counter), plain.as_slice()).map_err(|_| anyhow!("encryption failed"))?;
@@ -90,6 +91,7 @@ pub struct Receiver {
 }
 
 impl Receiver {
+    /// Receive and decrypt one message; fails on any tampering, replay or reordering.
     pub fn recv<T: DeserializeOwned>(&mut self) -> anyhow::Result<T> {
         let sealed = read_frame(&mut self.stream, MAX_FRAME)?;
         let plain = self
@@ -100,15 +102,20 @@ impl Receiver {
         Ok(serde_json::from_slice(&plain)?)
     }
 
+    /// Read timeout for `recv`.
     pub fn set_timeout(&self, t: Option<std::time::Duration>) {
         let _ = self.stream.get_ref().set_read_timeout(t);
     }
 }
 
+/// First message of a handshake.
 #[derive(Serialize, Deserialize, Clone, Debug)]
 pub struct Hello {
+    /// Protocol version of the client.
     pub protocol: u32,
+    /// Client instance id.
     pub client_id: Uuid,
+    /// Client display name.
     pub client_name: String,
     /// Authenticate with a pairing code rather than a device token.
     pub pairing: bool,
@@ -126,17 +133,22 @@ enum Verdict {
     Refused(String),
 }
 
+/// Who the main device is.
 pub struct ServerInfo {
+    /// Instance id.
     pub id: Uuid,
+    /// Display name.
     pub name: String,
 }
 
+/// Why a handshake failed.
 #[derive(Debug)]
 pub enum HandshakeError {
     /// The peer didn't know the secret (counts towards lockouts).
     Auth(String),
     /// Refused before authenticating (unknown device, pairing closed...).
     Refused(String),
+    /// Network or protocol error.
     Io(anyhow::Error),
 }
 

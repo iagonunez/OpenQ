@@ -18,11 +18,25 @@ pub enum Auth {
     Pair(String),
 }
 
+/// Where a link is.
 #[derive(Clone, Debug, PartialEq)]
 pub enum LinkState {
+    /// Handshake in progress.
     Connecting,
-    Connected { server: String, role: Role },
-    Closed { reason: String, needs_pairing: bool },
+    /// Authenticated and syncing.
+    Connected {
+        /// Main device name.
+        server: String,
+        /// What we may do there.
+        role: Role,
+    },
+    /// Ended; `needs_pairing` when the main device rejected our credentials.
+    Closed {
+        /// Why it ended, for the user.
+        reason: String,
+        /// Credentials were rejected: a pairing code is needed.
+        needs_pairing: bool,
+    },
 }
 
 struct Shared {
@@ -38,6 +52,7 @@ struct Shared {
 pub struct Link {
     shared: Arc<Shared>,
     tx: std::sync::mpsc::Sender<ClientMsg>,
+    /// What the user asked to connect to.
     pub address: String,
 }
 
@@ -51,6 +66,7 @@ fn resolve(address: &str) -> anyhow::Result<SocketAddr> {
 }
 
 impl Link {
+    /// Start connecting in the background; `repaint` is called whenever something arrives.
     pub fn connect(address: &str, auth: Auth, config: Arc<Mutex<RemoteConfig>>, repaint: impl Fn() + Send + Sync + 'static) -> Self {
         let shared = Arc::new(Shared {
             state: Mutex::new(LinkState::Connecting),
@@ -76,14 +92,17 @@ impl Link {
         Self { shared, tx, address: address.trim().to_string() }
     }
 
+    /// Current state.
     pub fn state(&self) -> LinkState {
         self.shared.state.lock().clone()
     }
 
+    /// Take the messages received since the last call.
     pub fn drain(&self) -> Vec<ServerMsg> {
         std::mem::take(&mut *self.shared.inbox.lock())
     }
 
+    /// Queue a message for the main device.
     pub fn send(&self, msg: ClientMsg) {
         let _ = self.tx.send(msg);
     }

@@ -39,6 +39,7 @@ impl Homography {
         }
     }
 
+    /// Map unit-square coordinates (u, v) to the quad.
     pub fn map(&self, u: f32, v: f32) -> [f32; 2] {
         let w = self.g * u + self.h * v + 1.0;
         let w = if w.abs() < 1e-9 { 1e-9 } else { w };
@@ -50,22 +51,26 @@ impl Homography {
 /// (0..1, may extend beyond) and the source UV rect `[u0, v0, u1, v1]`.
 #[derive(Clone, Copy, Debug)]
 pub struct LayerQuad {
+    /// Corners top-left, top-right, bottom-right, bottom-left in normalised canvas coordinates.
     pub corners: [[f32; 2]; 4],
+    /// Source texture rectangle `[u0, v0, u1, v1]` shown by the quad.
     pub uv: [f32; 4],
 }
 
 impl LayerQuad {
-    /// Point at (s, t) ∈ [0,1]² across the quad (exact: the quad is a parallelogram).
+    /// Point at `(s, t)` in the unit square across the quad (exact: the quad is a parallelogram).
     pub fn point(&self, s: f32, t: f32) -> [f32; 2] {
         let [p0, p1, _, p3] = self.corners;
         [p0[0] + (p1[0] - p0[0]) * s + (p3[0] - p0[0]) * t, p0[1] + (p1[1] - p0[1]) * s + (p3[1] - p0[1]) * t]
     }
 
+    /// Texture coordinate at `(s, t)` in the unit square across the quad.
     pub fn uv_at(&self, s: f32, t: f32) -> [f32; 2] {
         [self.uv[0] + (self.uv[2] - self.uv[0]) * s, self.uv[1] + (self.uv[3] - self.uv[1]) * t]
     }
 }
 
+/// Place an `image`-sized layer on a `canvas`: fit mode, then crop, scale, rotation and offset.
 pub fn layer_quad(canvas: [f32; 2], image: [f32; 2], fit: VideoFit, g: &Geometry) -> LayerQuad {
     let [cw, ch] = canvas;
     let [iw, ih] = [image[0].max(1.0), image[1].max(1.0)];

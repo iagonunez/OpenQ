@@ -16,6 +16,7 @@ use symphonia::core::io::MediaSourceStream;
 use symphonia::core::meta::MetadataOptions;
 use symphonia::core::units::{Time, TimeBase};
 
+/// How a decoder voice reads its file.
 pub struct DecodeParams {
     /// Sections to play in order (slices / start-end region with loops).
     pub segments: Vec<crate::model::Segment>,
@@ -32,6 +33,7 @@ pub struct Waveform {
     pub peaks: Vec<[f32; 2]>,
     /// Seconds per bucket.
     pub bucket_secs: f64,
+    /// File duration in seconds.
     pub duration: f64,
 }
 
@@ -108,8 +110,11 @@ pub fn waveform(path: &Path) -> anyhow::Result<Waveform> {
 /// Basic facts about an audio file.
 #[derive(Clone, Debug, Default)]
 pub struct AudioInfo {
+    /// Duration in seconds, if the container says.
     pub duration: Option<f64>,
+    /// Native sample rate.
     pub sample_rate: u32,
+    /// Channel count.
     pub channels: usize,
 }
 
@@ -153,11 +158,14 @@ fn open(path: &Path) -> anyhow::Result<Opened> {
     Ok(Opened { format, decoder, track_id, time_base, rate, channels, duration })
 }
 
+/// Read an audio file's duration, sample rate and channels.
 pub fn probe(path: &Path) -> anyhow::Result<AudioInfo> {
     let o = open(path)?;
     Ok(AudioInfo { duration: o.duration, sample_rate: o.rate, channels: o.channels.unwrap_or(2) })
 }
 
+/// Start a decoder thread for one voice: decodes `params.segments` of `path`, resamples to
+/// `out_rate` and pushes interleaved samples into `tx` until done or stopped via `shared`.
 pub fn spawn(path: PathBuf, params: DecodeParams, out_rate: u32, tx: rtrb::Producer<f32>, shared: Arc<VoiceShared>) {
     // With a vamp (slice looping until devamped) keep read-ahead short, so a Devamp is heard
     // within ~0.3 s instead of after the whole buffer.

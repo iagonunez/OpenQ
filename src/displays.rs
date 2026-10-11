@@ -6,21 +6,28 @@
 
 use std::process::Command;
 
+/// A monitor attached to this machine.
 #[derive(Clone, Debug, PartialEq)]
 pub struct Display {
+    /// Output name as the OS reports it (e.g. `HDMI-A-1`).
     pub name: String,
+    /// Width and height in physical pixels.
     pub size: [u32; 2],
+    /// Top-left corner on the virtual desktop.
     pub position: [i32; 2],
+    /// Refresh rate, when known.
     pub refresh_hz: Option<f32>,
 }
 
 impl Display {
+    /// "name — W×H @ Hz" for menus.
     pub fn label(&self) -> String {
         let hz = self.refresh_hz.map(|r| format!(" @ {r:.0} Hz")).unwrap_or_default();
         format!("{} — {}×{}{hz}", self.name, self.size[0], self.size[1])
     }
 }
 
+/// Command-line flag that makes the binary print the display list and exit.
 pub const LIST_FLAG: &str = "--list-displays";
 
 /// Ask a child process for the current displays.

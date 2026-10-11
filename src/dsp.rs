@@ -5,10 +5,15 @@ use crate::model::{Eq, EqBand, EqKind, MAX_EQ_BANDS};
 /// Normalised biquad coefficients (a0 = 1).
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct Coeffs {
+    /// Feed-forward coefficient for `x[n]`.
     pub b0: f32,
+    /// Feed-forward coefficient for `x[n-1]`.
     pub b1: f32,
+    /// Feed-forward coefficient for `x[n-2]`.
     pub b2: f32,
+    /// Feedback coefficient for `y[n-1]`.
     pub a1: f32,
+    /// Feedback coefficient for `y[n-2]`.
     pub a2: f32,
 }
 
@@ -19,8 +24,10 @@ impl Default for Coeffs {
 }
 
 impl Coeffs {
+    /// Pass-through filter.
     pub const IDENTITY: Coeffs = Coeffs { b0: 1.0, b1: 0.0, b2: 0.0, a1: 0.0, a2: 0.0 };
 
+    /// RBJ-cookbook coefficients for one EQ band at sample rate `rate`.
     pub fn design(band: &EqBand, rate: f32) -> Coeffs {
         let f = band.freq.clamp(10.0, rate * 0.49);
         let q = band.q.max(0.05);
@@ -103,6 +110,7 @@ pub struct BiquadState {
 }
 
 impl BiquadState {
+    /// Filter one sample.
     #[inline]
     pub fn process(&mut self, c: &Coeffs, x: f32) -> f32 {
         let y = c.b0 * x + self.s1;

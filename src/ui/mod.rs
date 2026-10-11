@@ -61,6 +61,7 @@ enum SettingsTab {
     Stages,
 }
 
+/// The egui application: owns all UI state and draws the main window, stage windows and dialogs.
 pub struct App {
     show: SharedShow,
     prober: Arc<Prober>,
@@ -115,6 +116,7 @@ pub struct App {
 }
 
 impl App {
+    /// Create the UI for a shared show; `prober` is the media-info cache shared with the engine.
     pub fn new(show: SharedShow, prober: Arc<Prober>) -> Self {
         Self {
             show,
@@ -1748,6 +1750,7 @@ impl App {
         }
     }
 
+    /// Load a workspace file, replacing the current show.
     pub fn open_path(&mut self, path: PathBuf) {
         match Workspace::load(&path) {
             Ok(ws) => {
