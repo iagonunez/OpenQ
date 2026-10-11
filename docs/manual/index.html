@@ -390,8 +390,33 @@ cargo run --release -- show.openq    # open a saved show</code></pre>
   mode, drag in the preview to move the picture, scroll to scale it, and double-click to centre it. For a Fade cue that
   changes geometry, the preview shows where the fade ends, with the starting position as a dashed outline.</p>
   <h3>Text cues</h3>
-  <p>Text cues show typed text on a stage. The <strong>Text</strong> tab sets the text, size, colour, bold, alignment and how long it shows.
-  The <strong>Geometry</strong> tab works as it does for video. Changes to the text appear at once on a cue that is showing.</p>
+  <p>Text cues show typed text on a stage: titles, surtitles, captions, or a countdown for the crew.
+  The <strong>Geometry</strong> tab works as it does for video, and Fade cues can move and fade text. Changes on the
+  <strong>Text</strong> tab appear at once on a cue that is showing.</p>
+  <figure>
+    <img src="img/text-cue.webp" width="1000" height="523" alt="Text tab with font, weight, size, line height, spacing, colour, outline and shadow settings.">
+    <figcaption>The Text tab. A preview of the first line in the chosen style appears under the settings.</figcaption>
+  </figure>
+  <div class="table-wrap"><table>
+    <thead><tr><th>Setting</th><th>What it does</th></tr></thead>
+    <tbody>
+      <tr><td>Font</td><td>Any font installed on the computer. Type in the list to search. <em>Inter (built-in)</em> is always available.</td></tr>
+      <tr><td>Weight · Italic</td><td>Thin (100) to Black (900). Weights the font doesn't include are greyed out, and the nearest installed one is used.</td></tr>
+      <tr><td>Size</td><td>Letter size in stage pixels: 96 px on a 1080-line stage is about a tenth of its height.</td></tr>
+      <tr><td>Line height · Spacing</td><td>Distance between lines (as a multiple of the size), and extra space between letters in em.</td></tr>
+      <tr><td>Colour · alignment</td><td>Text colour and transparency; left, centred or right lines.</td></tr>
+      <tr><td>Outline</td><td>An edge around every letter, in stage pixels, with its own colour. Keeps text readable over busy video.</td></tr>
+      <tr><td>Shadow</td><td>A soft drop shadow: colour, offset right and down, and blur.</td></tr>
+      <tr><td>Show for</td><td>Time on screen; 0 shows it until stopped.</td></tr>
+    </tbody>
+  </table></div>
+  <p>Text is laid out properly for every language. Pairs like <em>AV</em> are kerned, ligatures are used, and
+  right-to-left scripts work. Characters the chosen font lacks, such as emoji or Chinese, are drawn with another
+  installed font. Text is rendered at twice the stage resolution, so it stays sharp when it is scaled up and smooth when
+  it is scaled down.</p>
+  <div class="note"><span class="label">Touring a show</span><p>The show file stores the font's name, not the font itself.
+  Install the same fonts on every computer that plays the show. If a font is missing, the Text tab says <em>not installed
+  here</em> and a fallback font is used.</p></div>
 </section>
 
 <section id="fades">

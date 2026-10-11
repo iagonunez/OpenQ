@@ -670,8 +670,28 @@ pub struct TextCue {
     pub size: f32,
     /// RGBA colour.
     pub color: [u8; 4],
-    /// Bold weight.
+    /// Bold weight (used when `weight` is 0, i.e. files from before weights existed).
     pub bold: bool,
+    /// Font family as installed on the system; empty = the built-in Inter.
+    pub font: String,
+    /// Weight 100 (thin) to 900 (black); 0 = from `bold`.
+    pub weight: u16,
+    /// Italic / oblique style.
+    pub italic: bool,
+    /// Extra space between letters, in em (may be negative).
+    pub letter_spacing: f32,
+    /// Line height as a multiple of the size.
+    pub line_height: f32,
+    /// Outline width in stage pixels (0 = none).
+    pub outline_width: f32,
+    /// Outline RGBA colour.
+    pub outline_color: [u8; 4],
+    /// Drop shadow RGBA colour (alpha 0 = no shadow).
+    pub shadow_color: [u8; 4],
+    /// Shadow offset in stage pixels (right, down).
+    pub shadow_offset: [f32; 2],
+    /// Shadow softness (blur radius) in stage pixels.
+    pub shadow_blur: f32,
     /// Line alignment.
     pub align: TextAlign,
     /// Stage it shows on (None = first stage).
@@ -686,6 +706,17 @@ pub struct TextCue {
     pub duration: f64,
 }
 
+impl TextCue {
+    /// The weight to render with (100–900).
+    pub fn effective_weight(&self) -> u16 {
+        match self.weight {
+            0 if self.bold => 700,
+            0 => 400,
+            w => w.clamp(100, 900),
+        }
+    }
+}
+
 impl Default for TextCue {
     fn default() -> Self {
         Self {
@@ -693,6 +724,16 @@ impl Default for TextCue {
             size: 96.0,
             color: [255, 255, 255, 255],
             bold: true,
+            font: String::new(),
+            weight: 0,
+            italic: false,
+            letter_spacing: 0.0,
+            line_height: 1.2,
+            outline_width: 0.0,
+            outline_color: [0, 0, 0, 255],
+            shadow_color: [0, 0, 0, 0],
+            shadow_offset: [4.0, 4.0],
+            shadow_blur: 6.0,
             align: TextAlign::Center,
             stage: None,
             geometry: Geometry::default(),

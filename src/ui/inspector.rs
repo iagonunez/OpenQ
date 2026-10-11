@@ -776,35 +776,7 @@ fn settings_tab(ui: &mut Ui, cue: &mut Cue, ctx: &Ctx) {
                 RichText::new("Lets the target's looping slice finish its current pass, then play on to the next slice.").weak(),
             );
         }
-        CueKind::Text(t) => {
-            ui.add(TextEdit::multiline(&mut t.text).desired_rows(3).desired_width(f32::INFINITY).hint_text("Text to show"));
-            egui::Grid::new("text").num_columns(2).spacing([10.0, 6.0]).show(ui, |ui| {
-                ui.label("Size");
-                ui.add(DragValue::new(&mut t.size).range(4.0..=1000.0).speed(1.0).suffix(" px"));
-                ui.end_row();
-                ui.label("Colour");
-                let mut c = egui::Color32::from_rgba_unmultiplied(t.color[0], t.color[1], t.color[2], t.color[3]);
-                if egui::color_picker::color_edit_button_srgba(ui, &mut c, egui::color_picker::Alpha::OnlyBlend).changed() {
-                    t.color = c.to_srgba_unmultiplied();
-                }
-                ui.end_row();
-                ui.label("Style");
-                ui.horizontal(|ui| {
-                    ui.checkbox(&mut t.bold, "Bold");
-                    for a in [crate::model::TextAlign::Left, crate::model::TextAlign::Center, crate::model::TextAlign::Right] {
-                        ui.selectable_value(&mut t.align, a, format!("{a:?}"));
-                    }
-                });
-                ui.end_row();
-                ui.label("Show for");
-                ui.horizontal(|ui| {
-                    time_edit(ui, &mut t.duration);
-                    ui.label(RichText::new(if t.duration <= 0.0 { "until stopped" } else { "" }).weak());
-                });
-                ui.end_row();
-            });
-            ui.label(RichText::new("Text appears on the stage like a video layer: use the Geometry tab and Fade cues to move and fade it.").weak());
-        }
+        CueKind::Text(t) => text_settings(ui, t),
         CueKind::Network(n) => {
             egui::Grid::new("net").num_columns(2).spacing([10.0, 6.0]).show(ui, |ui| {
                 ui.label("Destination");
@@ -825,4 +797,177 @@ fn settings_tab(ui: &mut Ui, cue: &mut Cue, ctx: &Ctx) {
         }
         _ => {}
     }
+}
+
+fn color_button(ui: &mut Ui, rgba: &mut [u8; 4]) -> bool {
+    let mut c = egui::Color32::from_rgba_unmultiplied(rgba[0], rgba[1], rgba[2], rgba[3]);
+    let changed = egui::color_picker::color_edit_button_srgba(ui, &mut c, egui::color_picker::Alpha::OnlyBlend).changed();
+    if changed {
+        *rgba = c.to_srgba_unmultiplied();
+    }
+    changed
+}
+
+const WEIGHTS: [(u16, &str); 9] = [
+    (100, "Thin"),
+    (200, "Extra Light"),
+    (300, "Light"),
+    (400, "Regular"),
+    (500, "Medium"),
+    (600, "Semibold"),
+    (700, "Bold"),
+    (800, "Extra Bold"),
+    (900, "Black"),
+];
+
+/// Text cue settings: text, font and style, outline and shadow, with a rendered sample.
+fn text_settings(ui: &mut Ui, t: &mut crate::model::TextCue) {
+    use crate::media::text;
+    ui.add(TextEdit::multiline(&mut t.text).desired_rows(3).desired_width(f32::INFINITY).hint_text("Text to show"));
+    egui::Grid::new("text").num_columns(2).spacing([10.0, 6.0]).show(ui, |ui| {
+        ui.label("Font");
+        ui.horizontal(|ui| {
+            font_picker(ui, &mut t.font);
+            if text::families_ready() && !text::is_installed(&t.font) {
+                ui.label(RichText::new("not installed here: a fallback font is used").color(super::widgets::AMBER))
+                    .on_hover_text("Install this font on every computer that plays the show");
+            }
+        });
+        ui.end_row();
+
+        ui.label("Weight");
+        ui.horizontal(|ui| {
+            let styles = if text::families_ready() { text::styles_of(&t.font) } else { Vec::new() };
+            let has = |w: u16, italic: bool| styles.iter().any(|s| s.0 == w && s.1 == italic);
+            let mut w = t.effective_weight();
+            let name = |w: u16| WEIGHTS.iter().find(|x| x.0 == w).map_or_else(|| w.to_string(), |x| format!("{} {}", x.0, x.1));
+            ComboBox::from_id_salt("weight").selected_text(name(w)).show_ui(ui, |ui| {
+                for (v, _) in WEIGHTS {
+                    let label = if styles.is_empty() || has(v, t.italic) { RichText::new(name(v)) } else { RichText::new(name(v)).weak() };
+                    ui.selectable_value(&mut w, v, label);
+                }
+            })
+            .response
+            .on_hover_text("Weights the font doesn't include are greyed out; the nearest one is used");
+            if w != t.effective_weight() {
+                t.weight = w;
+                t.bold = w >= 600;
+            }
+            ui.checkbox(&mut t.italic, "Italic");
+        });
+        ui.end_row();
+
+        ui.label("Size");
+        ui.horizontal(|ui| {
+            ui.add(DragValue::new(&mut t.size).range(4.0..=1000.0).speed(1.0).suffix(" px"));
+            ui.label("Line height");
+            ui.add(DragValue::new(&mut t.line_height).range(0.5..=4.0).speed(0.01).fixed_decimals(2).suffix("×"));
+            ui.label("Spacing");
+            ui.add(DragValue::new(&mut t.letter_spacing).range(-0.5..=2.0).speed(0.002).fixed_decimals(3).suffix(" em"))
+                .on_hover_text("Extra space between letters");
+        });
+        ui.end_row();
+
+        ui.label("Colour");
+        ui.horizontal(|ui| {
+            color_button(ui, &mut t.color);
+            for a in [crate::model::TextAlign::Left, crate::model::TextAlign::Center, crate::model::TextAlign::Right] {
+                ui.selectable_value(&mut t.align, a, format!("{a:?}"));
+            }
+        });
+        ui.end_row();
+
+        ui.label("Outline");
+        ui.horizontal(|ui| {
+            ui.add(DragValue::new(&mut t.outline_width).range(0.0..=100.0).speed(0.1).fixed_decimals(1).suffix(" px"));
+            color_button(ui, &mut t.outline_color);
+            ui.label(RichText::new(if t.outline_width <= 0.0 { "off" } else { "" }).weak());
+        });
+        ui.end_row();
+
+        ui.label("Shadow");
+        ui.horizontal(|ui| {
+            let mut on = t.shadow_color[3] > 0;
+            if ui.checkbox(&mut on, "").changed() {
+                t.shadow_color[3] = if on { 200 } else { 0 };
+            }
+            ui.add_enabled_ui(on, |ui| {
+                color_button(ui, &mut t.shadow_color);
+                ui.label("offset");
+                ui.add(DragValue::new(&mut t.shadow_offset[0]).range(-200.0..=200.0).speed(0.2).suffix(" px"));
+                ui.add(DragValue::new(&mut t.shadow_offset[1]).range(-200.0..=200.0).speed(0.2).suffix(" px"));
+                ui.label("blur");
+                ui.add(DragValue::new(&mut t.shadow_blur).range(0.0..=100.0).speed(0.2).suffix(" px"));
+            });
+        });
+        ui.end_row();
+
+        ui.label("Show for");
+        ui.horizontal(|ui| {
+            time_edit(ui, &mut t.duration);
+            ui.label(RichText::new(if t.duration <= 0.0 { "until stopped" } else { "" }).weak());
+        });
+        ui.end_row();
+    });
+    text_sample(ui, t);
+    ui.label(RichText::new("Text appears on the stage like a video layer: use the Geometry tab and Fade cues to move and fade it.").weak());
+}
+
+/// Searchable list of installed font families.
+fn font_picker(ui: &mut Ui, font: &mut String) {
+    use crate::media::text;
+    let label = if font.is_empty() { format!("{} (built-in)", text::BUILT_IN) } else { font.clone() };
+    let search_id = ui.id().with("font-search");
+    ComboBox::from_id_salt("font").selected_text(label).width(240.0).height(360.0).show_ui(ui, |ui| {
+        if !text::families_ready() {
+            ui.horizontal(|ui| {
+                ui.spinner();
+                ui.label("Loading installed fonts…");
+            });
+            ui.ctx().request_repaint_after(std::time::Duration::from_millis(200));
+            return;
+        }
+        let mut q = ui.data(|d| d.get_temp::<String>(search_id)).unwrap_or_default();
+        let r = ui.add(TextEdit::singleline(&mut q).hint_text("Search fonts").desired_width(220.0));
+        if q.is_empty() && !r.has_focus() {
+            r.request_focus();
+        }
+        ui.data_mut(|d| d.insert_temp(search_id, q.clone()));
+        let q = q.to_lowercase();
+        ui.selectable_value(font, String::new(), format!("{} (built-in)", text::BUILT_IN));
+        for name in text::families().iter().filter(|n| q.is_empty() || n.to_lowercase().contains(&q)) {
+            if ui.selectable_label(font == name, name).clicked() {
+                *font = name.clone();
+                ui.close();
+            }
+        }
+    });
+}
+
+/// A small rendering of the cue's first line in its font and style.
+fn text_sample(ui: &mut Ui, t: &crate::model::TextCue) {
+    use crate::media::text;
+    if !text::families_ready() {
+        return;
+    }
+    let first = t.text.lines().find(|l| !l.trim().is_empty()).unwrap_or("Sample").chars().take(60).collect::<String>();
+    let sample = crate::model::TextCue { text: first, size: 40.0, align: crate::model::TextAlign::Left, ..t.clone() };
+    // One cached texture, replaced when the look changes.
+    let slot = egui::Id::new("text-sample");
+    let key = serde_json::to_string(&sample).unwrap_or_default();
+    let cached = ui.data(|d| d.get_temp::<(String, egui::TextureHandle)>(slot)).filter(|(k, _)| *k == key);
+    let tex = cached.map(|(_, h)| h).unwrap_or_else(|| {
+        let img = text::render(&sample);
+        let ci = egui::ColorImage::from_rgba_unmultiplied([img.width as usize, img.height as usize], &img.rgba);
+        let opts = egui::TextureOptions { mipmap_mode: Some(egui::TextureFilter::Linear), ..egui::TextureOptions::LINEAR };
+        let h = ui.ctx().load_texture("text-sample", ci, opts);
+        ui.data_mut(|d| d.insert_temp(slot, (key, h.clone())));
+        h
+    });
+    let size = tex.size_vec2() / 2.0;
+    let max_w = ui.available_width().min(560.0);
+    let size = if size.x > max_w { size * (max_w / size.x) } else { size };
+    egui::Frame::new().fill(super::theme::BG_INPUT).corner_radius(6).inner_margin(8).show(ui, |ui| {
+        ui.add(egui::Image::new((tex.id(), size)));
+    });
 }

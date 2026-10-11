@@ -12,6 +12,7 @@ fn main() -> eframe::Result {
     }
     env_logger::Builder::from_env(env_logger::Env::default().default_filter_or("openq=info")).init();
 
+    media::text::preload();
     let prober = media::Prober::new();
     let show = Arc::new(Mutex::new(show::Show::new(prober.clone())));
     let open_arg = std::env::args().nth(1).map(std::path::PathBuf::from);

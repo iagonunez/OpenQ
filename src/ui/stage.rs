@@ -91,16 +91,17 @@ impl App {
                             continue;
                         }
                         let size = [f.width as usize, f.height as usize];
+                        let opts = texture_options(f.density);
                         let entry = textures.entry(l.id).or_insert_with(|| {
                             let img = egui::ColorImage::from_rgba_unmultiplied(size, &f.data);
-                            (ctx.load_texture(format!("video-{}", l.id), img, egui::TextureOptions::LINEAR), f.generation)
+                            (ctx.load_texture(format!("video-{}", l.id), img, opts), f.generation)
                         });
                         if entry.1 != f.generation {
                             let img = egui::ColorImage::from_rgba_unmultiplied(size, &f.data);
-                            entry.0.set(img, egui::TextureOptions::LINEAR);
+                            entry.0.set(img, opts);
                             entry.1 = f.generation;
                         }
-                        let img = [f.width as f32, f.height as f32];
+                        let img = f.stage_size();
                         drop(f);
                         let q = layer_quad(canvas, img, l.fit, &l.geometry);
                         let tint = Color32::WHITE.gamma_multiply(l.opacity.clamp(0.0, 1.0));
@@ -213,6 +214,17 @@ impl App {
             }
         }
         !layers.is_empty()
+    }
+}
+
+/// Texture filtering for a layer: supersampled pictures (rendered text) get mipmaps, so they
+/// stay smooth however small they are drawn. Video frames change every frame, so they skip the
+/// mipmap cost.
+pub(super) fn texture_options(density: f32) -> egui::TextureOptions {
+    if density > 1.0 {
+        egui::TextureOptions { mipmap_mode: Some(egui::TextureFilter::Linear), ..egui::TextureOptions::LINEAR }
+    } else {
+        egui::TextureOptions::LINEAR
     }
 }
 

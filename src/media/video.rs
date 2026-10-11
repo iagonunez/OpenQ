@@ -52,6 +52,16 @@ pub struct Frame {
     pub data: Vec<u8>,
     /// Bumped on every new frame so the UI only re-uploads when needed.
     pub generation: u64,
+    /// Image pixels per stage pixel (rendered text is supersampled); 0 means 1.
+    pub density: f32,
+}
+
+impl Frame {
+    /// Size of the picture in stage pixels.
+    pub fn stage_size(&self) -> [f32; 2] {
+        let d = if self.density > 0.0 { self.density } else { 1.0 };
+        [self.width as f32 / d, self.height as f32 / d]
+    }
 }
 
 /// A frame shared between a decode thread and the stage windows.
@@ -545,8 +555,13 @@ pub fn text_layer_params(t: &TextCue) -> VideoCue {
 }
 
 fn text_frame(t: &TextCue) -> FrameSlot {
-    let (w, h, data) = super::text::render(t);
-    Arc::new(Mutex::new(Frame { width: w, height: h, data, generation: 1 }))
+    let img = super::text::render(t);
+    Arc::new(Mutex::new(Frame { width: img.width, height: img.height, data: img.rgba, generation: 1, density: img.density }))
+}
+
+/// The settings that change how a Text cue's picture looks (not where it goes).
+fn text_look(t: &TextCue) -> TextCue {
+    TextCue { stage: None, geometry: Default::default(), layer: 0, opacity: 1.0, duration: 0.0, ..t.clone() }
 }
 
 impl Player {
@@ -779,15 +794,15 @@ impl VideoOutput {
     /// Live edits to a showing Text cue: re-render if the text itself changed.
     pub fn update_text(&mut self, cue: CueId, t: &TextCue) {
         let Some(old) = self.texts.get(&cue).cloned() else { return };
-        let looks = |x: &TextCue| (x.text.clone(), x.size.to_bits(), x.color, x.bold, x.align);
-        if looks(&old) != looks(t)
+        if text_look(&old) != text_look(t)
             && let Some(p) = self.players.get_mut(&cue)
         {
-            let (w, h, data) = super::text::render(t);
+            let img = super::text::render(t);
             let mut f = p.frame.lock();
-            f.width = w;
-            f.height = h;
-            f.data = data;
+            f.width = img.width;
+            f.height = img.height;
+            f.data = img.rgba;
+            f.density = img.density;
             f.generation = f.generation.wrapping_add(1);
         }
         self.texts.insert(cue, t.clone());

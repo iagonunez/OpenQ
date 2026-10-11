@@ -82,7 +82,8 @@ impl App {
 
     /// Texture and source size for the layer: the live frame while it plays, else a poster.
     fn preview_texture(&mut self, ctx: &egui::Context, t: &Target) -> Result<Option<(egui::TextureId, [f32; 2])>, String> {
-        if let Some((tex, _)) = self.textures.get(&t.layer) {
+        // Movies show their live frame; text is re-rendered here (its live texture is supersampled).
+        if let (Source::Poster(..), Some((tex, _))) = (&t.source, self.textures.get(&t.layer)) {
             let s = tex.size();
             return Ok(Some((tex.id(), [s[0] as f32, s[1] as f32])));
         }
@@ -105,15 +106,17 @@ impl App {
                 Some(Ok(p)) => (p.width, p.height, p.rgba, p.source_size.map(|v| v as f32)),
             },
             Source::Text(tc) => {
-                let (w, h, rgba) = crate::media::text::render(tc);
-                (w, h, std::sync::Arc::new(rgba), [w as f32, h as f32])
+                let img = crate::media::text::render(tc);
+                let size = [img.width as f32 / img.density, img.height as f32 / img.density];
+                (img.width, img.height, std::sync::Arc::new(img.rgba), size)
             }
         };
+        let density = if matches!(t.source, Source::Text(_)) { 2.0 } else { 1.0 };
         if w == 0 || h == 0 {
             return Ok(None);
         }
         let img = egui::ColorImage::from_rgba_unmultiplied([w as usize, h as usize], &rgba);
-        let tex = ctx.load_texture("geometry-preview", img, egui::TextureOptions::LINEAR);
+        let tex = ctx.load_texture("geometry-preview", img, super::stage::texture_options(density));
         let id = tex.id();
         self.preview_tex = Some((key, tex, size));
         Ok(Some((id, size)))

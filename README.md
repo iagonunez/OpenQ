@@ -17,7 +17,11 @@ without video with `--no-default-features`.
 
 ## Cues
 
-Audio, Video, Group (folder), Wait, Memo, Fade, Start, Stop, Pause, Go To, Devamp, Network.
+Audio, Video, Text, Group (folder), Wait, Memo, Fade, Start, Stop, Pause, Go To, Devamp, Network.
+
+**Text cues** use any font installed on the system (plus the built-in Inter), with weight,
+italic, letter spacing, line height, outline and drop shadow. They get proper shaping (kerning,
+ligatures, right-to-left scripts) and fall back to another font for missing characters.
 
 Every cue has a number, name, notes, color, armed flag, **pre-wait**, **post-wait** and a
 **continue mode**:
