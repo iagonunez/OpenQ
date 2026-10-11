@@ -1,13 +1,16 @@
 //! egui front end.
 
 mod cue_list;
+mod eq;
 mod inspector;
 #[cfg(feature = "video")]
 mod stage;
+mod waveform;
 mod widgets;
 
-use crate::media::{self, Prober};
-use crate::model::{AudioCue, Cue, CueId, CueKind, GroupMode, KindTag, VideoCue, Workspace};
+use crate::media::audio::DeviceEntry;
+use crate::media::{self, Prober, Waveforms};
+use crate::model::{AudioCue, Cue, CueId, CueKind, GroupMode, KindTag, Stage, StageId, VideoCue, Workspace};
 use crate::show::{SharedShow, Show};
 use egui::{Color32, Key, KeyboardShortcut, Modifiers, RichText};
 use std::collections::HashSet;
@@ -27,6 +30,13 @@ enum Deferred {
     AddMediaCues,
 }
 
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum SettingsTab {
+    General,
+    Audio,
+    Stages,
+}
+
 pub struct App {
     show: SharedShow,
     prober: Arc<Prober>,
@@ -37,8 +47,15 @@ pub struct App {
     drag: Option<Vec<CueId>>,
     last_playhead: Option<CueId>,
     deferred: Vec<Deferred>,
-    stage_open: bool,
-    stage_fullscreen: bool,
+    /// Stage windows currently open / fullscreen / in mapping-edit mode.
+    stage_open: HashSet<StageId>,
+    stage_fullscreen: HashSet<StageId>,
+    mapping_edit: HashSet<StageId>,
+    waveforms: Arc<Waveforms>,
+    inspector_tab: inspector::Tab,
+    settings_tab: SettingsTab,
+    /// Cached audio device list for the settings window.
+    devices: Option<Vec<DeviceEntry>>,
     #[cfg(feature = "video")]
     textures: std::collections::HashMap<CueId, (egui::TextureHandle, u64)>,
     meters: Vec<f32>,
@@ -49,6 +66,8 @@ pub struct App {
     title: String,
     allow_close: bool,
     frame_count: u64,
+    debug_t0: Option<Instant>,
+    debug_gos: u64,
 }
 
 impl App {
@@ -61,8 +80,13 @@ impl App {
             drag: None,
             last_playhead: None,
             deferred: Vec::new(),
-            stage_open: false,
-            stage_fullscreen: false,
+            stage_open: HashSet::new(),
+            stage_fullscreen: HashSet::new(),
+            mapping_edit: HashSet::new(),
+            waveforms: Waveforms::new(),
+            inspector_tab: Default::default(),
+            settings_tab: SettingsTab::General,
+            devices: None,
             #[cfg(feature = "video")]
             textures: Default::default(),
             meters: Vec::new(),
@@ -73,6 +97,8 @@ impl App {
             title: String::new(),
             allow_close: false,
             frame_count: 0,
+            debug_t0: None,
+            debug_gos: 0,
         }
     }
 
@@ -400,7 +426,21 @@ impl App {
                 }
             });
             ui.menu_button("Window", |ui| {
-                ui.checkbox(&mut self.stage_open, "Video stage");
+                for st in &show.ws.stages {
+                    let mut open = self.stage_open.contains(&st.id);
+                    if ui.checkbox(&mut open, format!("Stage: {}", st.name)).changed() {
+                        if open {
+                            self.stage_open.insert(st.id);
+                        } else {
+                            self.stage_open.remove(&st.id);
+                        }
+                    }
+                }
+                if ui.button("Stages & mapping…").clicked() {
+                    self.show_settings = true;
+                    self.settings_tab = SettingsTab::Stages;
+                    ui.close();
+                }
                 ui.checkbox(&mut self.show_log, "Engine log");
             });
         });
@@ -577,27 +617,167 @@ impl App {
 
     fn settings_window(&mut self, ctx: &egui::Context, show: &mut Show) {
         let mut open = self.show_settings;
-        egui::Window::new("Settings").open(&mut open).resizable(false).show(ctx, |ui| {
-            let before = show.ws.settings.clone();
-            egui::Grid::new("settings").num_columns(2).show(ui, |ui| {
-                ui.label("Stop-all fade time");
-                widgets::time_edit(ui, &mut show.ws.settings.panic_fade);
-                ui.end_row();
-                ui.label("Double-GO protection");
-                widgets::time_edit(ui, &mut show.ws.settings.double_go_protection);
-                ui.end_row();
-                ui.label("Master volume");
-                widgets::db_edit(ui, &mut show.ws.settings.master_volume_db);
-                ui.end_row();
+        egui::Window::new("Settings").open(&mut open).default_width(560.0).show(ctx, |ui| {
+            ui.horizontal(|ui| {
+                ui.selectable_value(&mut self.settings_tab, SettingsTab::General, "General");
+                ui.selectable_value(&mut self.settings_tab, SettingsTab::Audio, "Audio");
+                ui.selectable_value(&mut self.settings_tab, SettingsTab::Stages, "Video stages");
             });
-            if show.ws.settings != before {
-                if let Some(a) = &mut show.media.audio {
-                    a.set_master(show.ws.settings.master_volume_db);
-                }
-                show.edited();
+            ui.separator();
+            match self.settings_tab {
+                SettingsTab::General => self.settings_general(ui, show),
+                SettingsTab::Audio => self.settings_audio(ui, show),
+                SettingsTab::Stages => self.settings_stages(ui, show),
             }
         });
         self.show_settings = open;
+    }
+
+    fn settings_general(&mut self, ui: &mut egui::Ui, show: &mut Show) {
+        let before = show.ws.settings.clone();
+        egui::Grid::new("settings").num_columns(2).show(ui, |ui| {
+            ui.label("Stop-all fade time");
+            widgets::time_edit(ui, &mut show.ws.settings.panic_fade);
+            ui.end_row();
+            ui.label("Double-GO protection");
+            widgets::time_edit(ui, &mut show.ws.settings.double_go_protection);
+            ui.end_row();
+            ui.label("Master volume");
+            widgets::db_edit(ui, &mut show.ws.settings.master_volume_db);
+            ui.end_row();
+            ui.label("Video decoding");
+            ui.checkbox(&mut show.ws.settings.hardware_video_decoding, "Use GPU decoders")
+                .on_hover_text("Faster for big files, but some drivers (e.g. NVIDIA NVDEC) can hang. Applies to cues loaded from now on.");
+            ui.end_row();
+        });
+        if show.ws.settings.hardware_video_decoding != before.hardware_video_decoding {
+            show.media.set_hardware_video_decoding(show.ws.settings.hardware_video_decoding);
+        }
+        if show.ws.settings != before {
+            if let Some(a) = &mut show.media.audio {
+                a.set_master(show.ws.settings.master_volume_db);
+            }
+            show.edited();
+        }
+    }
+
+    fn settings_audio(&mut self, ui: &mut egui::Ui, show: &mut Show) {
+        if self.devices.is_none() {
+            self.devices = Some(media::audio::list_output_devices());
+        }
+        let devices = self.devices.clone().unwrap_or_default();
+        let current = show.ws.settings.audio_device.clone();
+        let label = |id: &Option<String>| match id {
+            None => "System default".to_string(),
+            Some(id) => devices.iter().find(|d| &d.id == id).map(|d| d.name.clone()).unwrap_or_else(|| format!("{id} (missing)")),
+        };
+        let mut chosen = current.clone();
+        egui::Grid::new("audio_settings").num_columns(2).show(ui, |ui| {
+            ui.label("Output device");
+            ui.horizontal(|ui| {
+                egui::ComboBox::from_id_salt("device").width(320.0).selected_text(label(&chosen)).show_ui(ui, |ui| {
+                    ui.selectable_value(&mut chosen, None, "System default");
+                    for d in &devices {
+                        ui.selectable_value(&mut chosen, Some(d.id.clone()), &d.name).on_hover_text(&d.id);
+                    }
+                });
+                if ui.button("⟳").on_hover_text("Rescan devices").clicked() {
+                    self.devices = None;
+                }
+            });
+            ui.end_row();
+            ui.label("Active");
+            match &show.media.audio {
+                Some(a) => ui.label(format!("{} · {} Hz · {} outputs", a.device_name, a.rate, a.channels)),
+                None => ui.label(RichText::new(show.media.audio_error.clone().unwrap_or_default()).color(RED)),
+            };
+            ui.end_row();
+        });
+        ui.label(RichText::new("Changing the device stops all playback. Cue routing matrices address the device's outputs.").weak());
+        if chosen != current {
+            show.ws.settings.audio_device = chosen;
+            let now = Instant::now();
+            let Show { engine, media, ws, .. } = show;
+            engine.stop_all(media, now, 0.0);
+            media.reopen_audio(ws.settings.audio_device.as_deref(), ws.settings.master_volume_db);
+            engine.workspace_changed();
+            show.edited();
+            if let Some(e) = &show.media.audio_error {
+                self.notify(format!("Audio device failed: {e}"));
+            }
+        }
+    }
+
+    fn settings_stages(&mut self, ui: &mut egui::Ui, show: &mut Show) {
+        let before = show.ws.stages.clone();
+        let mut remove = None;
+        let n = show.ws.stages.len();
+        for (i, st) in show.ws.stages.iter_mut().enumerate() {
+            egui::Frame::group(ui.style()).show(ui, |ui| {
+                ui.horizontal(|ui| {
+                    ui.add(egui::TextEdit::singleline(&mut st.name).desired_width(140.0));
+                    ui.add(egui::DragValue::new(&mut st.width).range(16..=16384).suffix(" px"));
+                    ui.label("×");
+                    ui.add(egui::DragValue::new(&mut st.height).range(16..=16384).suffix(" px"));
+                    if n > 1 && ui.small_button("🗑").on_hover_text("Delete stage").clicked() {
+                        remove = Some(i);
+                    }
+                });
+                ui.horizontal(|ui| {
+                    let mut open = self.stage_open.contains(&st.id);
+                    if ui.toggle_value(&mut open, "🖵 Window").changed() {
+                        if open {
+                            self.stage_open.insert(st.id);
+                        } else {
+                            self.stage_open.remove(&st.id);
+                        }
+                    }
+                    if ui.button("⛶ Fullscreen").on_hover_text("Also: double-click or F11 in the stage window").clicked() {
+                        self.stage_open.insert(st.id);
+                        let fs = !self.stage_fullscreen.remove(&st.id);
+                        if fs {
+                            self.stage_fullscreen.insert(st.id);
+                        }
+                        ui.ctx().send_viewport_cmd_to(stage::viewport_id(st.id), egui::ViewportCommand::Fullscreen(fs));
+                    }
+                    let mut editing = self.mapping_edit.contains(&st.id);
+                    if ui.toggle_value(&mut editing, "✥ Edit mapping").on_hover_text("Shows a test pattern and corner pins in the stage window").changed() {
+                        if editing {
+                            self.mapping_edit.insert(st.id);
+                            self.stage_open.insert(st.id);
+                        } else {
+                            self.mapping_edit.remove(&st.id);
+                        }
+                    }
+                    if ui.button("Reset mapping").clicked() {
+                        st.corners = Stage::IDENTITY;
+                    }
+                });
+                if st.corners != Stage::IDENTITY {
+                    ui.label(
+                        RichText::new(format!(
+                            "corners: {}",
+                            st.corners.iter().map(|c| format!("({:.3}, {:.3})", c[0], c[1])).collect::<Vec<_>>().join("  ")
+                        ))
+                        .weak()
+                        .small(),
+                    );
+                }
+            });
+        }
+        if let Some(i) = remove {
+            let id = show.ws.stages.remove(i).id;
+            self.stage_open.remove(&id);
+            self.mapping_edit.remove(&id);
+        }
+        if ui.button("➕ Add stage").clicked() {
+            let st = Stage::new(&format!("Stage {}", show.ws.stages.len() + 1));
+            self.stage_open.insert(st.id);
+            show.ws.stages.push(st);
+        }
+        if show.ws.stages != before {
+            show.edited();
+        }
     }
 
     // ------------------------------------------------------------------ files
@@ -729,16 +909,52 @@ impl App {
 impl App {
     /// Dev hook for automated visual checks: with `OPENQ_SCREENSHOT=out.ppm` the app presses GO
     /// `OPENQ_SCREENSHOT_GOS` times (default 0), captures its window a couple of frames later and exits.
+    /// `OPENQ_SCREENSHOT_CUE` / `OPENQ_SCREENSHOT_TAB` pick the cue and inspector tab shown;
+    /// `OPENQ_SCREENSHOT_STAGE=1` embeds stage windows in the main window for the capture
+    /// (`OPENQ_SCREENSHOT_MAPPING=1` turns on the first stage's mapping test pattern).
     fn debug_screenshot(&mut self, ctx: &egui::Context, show: &mut Show) {
         let Some(path) = std::env::var_os("OPENQ_SCREENSHOT") else { return };
         self.frame_count += 1;
+        if self.frame_count == 1 {
+            // Optional: select cue N and an inspector tab (time|levels|eq|geometry|settings).
+            if let Ok(n) = std::env::var("OPENQ_SCREENSHOT_CUE") {
+                let id = show.ws.cue_list.iter_all().iter().find(|c| c.number == n).map(|c| c.id);
+                self.select(show, id);
+            }
+            self.inspector_tab = match std::env::var("OPENQ_SCREENSHOT_TAB").as_deref() {
+                Ok("time") => inspector::Tab::Time,
+                Ok("levels") => inspector::Tab::Levels,
+                Ok("eq") => inspector::Tab::Eq,
+                Ok("geometry") => inspector::Tab::Geometry,
+                Ok("settings") => inspector::Tab::Settings,
+                _ => inspector::Tab::Basics,
+            };
+            if std::env::var_os("OPENQ_SCREENSHOT_MAPPING").is_some()
+                && let Some(st) = show.ws.stages.first()
+            {
+                self.mapping_edit.insert(st.id);
+                self.stage_open.insert(st.id);
+            }
+            if let Ok(t) = std::env::var("OPENQ_SCREENSHOT_SETTINGS") {
+                self.show_settings = true;
+                self.settings_tab = if t == "audio" { SettingsTab::Audio } else { SettingsTab::Stages };
+            }
+        }
         ctx.request_repaint();
         let gos: u64 = std::env::var("OPENQ_SCREENSHOT_GOS").ok().and_then(|v| v.parse().ok()).unwrap_or(0);
-        // Frame-count based (hidden windows may only get ~1 frame per second).
-        if self.frame_count >= 3 && self.frame_count < 3 + gos {
+        // GOs 0.4 s apart (past double-GO protection), then shoot 2 s after the last one.
+        let t0 = *self.debug_t0.get_or_insert_with(Instant::now);
+        let elapsed = t0.elapsed().as_secs_f64();
+        let gos_due = ((elapsed / 0.4) as u64).min(gos);
+        while self.debug_gos < gos_due {
             show.go();
+            self.debug_gos += 1;
         }
-        if self.frame_count == 5 + gos {
+        if std::env::var_os("OPENQ_SCREENSHOT_STAGE").is_some() {
+            // Render stage windows embedded in the main window so one capture shows them.
+            ctx.set_embed_viewports(true);
+        }
+        if self.frame_count > 2 && elapsed > gos as f64 * 0.4 + 2.0 {
             ctx.send_viewport_cmd(egui::ViewportCommand::Screenshot(Default::default()));
         }
         let shot = ctx.input(|i| {
@@ -753,12 +969,17 @@ impl App {
                 out.extend_from_slice(&[p.r(), p.g(), p.b()]);
             }
             let _ = std::fs::write(&path, out);
+            show.shutdown();
             std::process::exit(0);
         }
     }
 }
 
 impl eframe::App for App {
+    fn on_exit(&mut self) {
+        self.show.lock().shutdown();
+    }
+
     fn ui(&mut self, ui: &mut egui::Ui, _frame: &mut eframe::Frame) {
         let ctx = ui.ctx().clone();
         let show_arc = self.show.clone();
@@ -788,7 +1009,7 @@ impl eframe::App for App {
             egui::Panel::bottom("status").show(ui, |ui| self.status_bar(ui, show));
             egui::Panel::bottom("inspector")
                 .resizable(true)
-                .default_size(250.0)
+                .default_size(340.0)
                 .min_size(120.0)
                 .show(ui, |ui| self.inspector(ui, show));
             egui::Panel::right("active")
@@ -806,7 +1027,7 @@ impl eframe::App for App {
             }
 
             #[cfg(feature = "video")]
-            let video_active = self.stage(&ctx, show);
+            let video_active = self.stages(&ctx, show);
             #[cfg(not(feature = "video"))]
             let video_active = false;
 

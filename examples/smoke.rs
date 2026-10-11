@@ -49,11 +49,24 @@ fn main() {
     let mut a = Cue::new(CueKind::Audio(AudioCue { path: wav_a.clone(), ..Default::default() }));
     a.number = "1".into();
     a.continue_mode = ContinueMode::AutoFollow;
-    let mut b = Cue::new(CueKind::Audio(AudioCue { path: wav_b.clone(), start_time: 0.1, ..Default::default() }));
+    // Varispeed 2x + EQ + custom routing (L/R swapped): 0.5 s file trimmed to 0.4 s → 0.2 s.
+    let mut eq = openq::model::Eq { enabled: true, ..Default::default() };
+    eq.bands[2].gain_db = 6.0;
+    let mut b = Cue::new(CueKind::Audio(AudioCue {
+        path: wav_b.clone(),
+        start_time: 0.1,
+        rate: 2.0,
+        eq,
+        routing: Some(vec![vec![-60.0, 0.0], vec![0.0, -60.0]]),
+        ..Default::default()
+    }));
+    b.continue_mode = ContinueMode::AutoFollow;
     b.number = "2".into();
-    let (ai, bi) = (a.id, b.id);
+    let mut c = Cue::new(CueKind::Memo);
+    c.number = "2.5".into();
+    let (ai, bi, ci) = (a.id, b.id, c.id);
     let mut ws = Workspace::default();
-    ws.cue_list.cues = vec![a, b];
+    ws.cue_list.cues = vec![a, b, c];
 
     let video_path = dir.join(std::env::var("OPENQ_SMOKE_VIDEO").unwrap_or("v.mp4".into()));
     let have_video = std::process::Command::new("ffmpeg")
@@ -64,7 +77,8 @@ fn main() {
         .is_ok_and(|s| s.success());
     let mut vi = None;
     if have_video {
-        let mut v = Cue::new(CueKind::Video(VideoCue { path: video_path.clone(), ..Default::default() }));
+        // End-trim at 0.6 s of a 1 s clip.
+        let mut v = Cue::new(CueKind::Video(VideoCue { path: video_path.clone(), end_time: Some(0.6), ..Default::default() }));
         v.number = "3".into();
         vi = Some(v.id);
         ws.cue_list.cues.push(v);
@@ -84,10 +98,14 @@ fn main() {
     show.go();
     let mut b_seen_at = None;
     let mut a_done_at = None;
+    let mut c_seen_at = None;
     while t0.elapsed() < Duration::from_secs(3) {
         show.tick(Instant::now());
         if b_seen_at.is_none() && show.engine.instances.contains_key(&bi) {
             b_seen_at = Some(t0.elapsed());
+        }
+        if c_seen_at.is_none() && show.engine.instances.contains_key(&ci) {
+            c_seen_at = Some(t0.elapsed());
         }
         if a_done_at.is_none() && b_seen_at.is_some() && !show.engine.instances.contains_key(&ai) {
             a_done_at = Some(t0.elapsed());
@@ -102,6 +120,9 @@ fn main() {
     assert!(b_seen_at.is_some(), "auto-follow did not fire");
     let fired = b_seen_at.unwrap().as_secs_f64();
     assert!((0.95..1.05).contains(&fired), "auto-follow timing off: {fired}");
+    println!("memo after 2x cue fired at {:?} (expected ≈1.2s)", c_seen_at);
+    let c_at = c_seen_at.expect("auto-follow after varispeed cue").as_secs_f64();
+    assert!((1.15..1.25).contains(&c_at), "varispeed duration off: {c_at}");
     assert!(show.engine.instances.is_empty(), "cues still running after 3s");
 
     if let Some(vi) = vi {
@@ -117,10 +138,35 @@ fn main() {
             }
             std::thread::sleep(Duration::from_millis(2));
         }
-        println!("video frames decoded: {frames}; running after 3s: {}", show.engine.instances.contains_key(&vi));
-        assert!(frames > 10, "video produced too few frames");
+        println!("video frames decoded: {frames} (end trim 0.6 s); running after 3s: {}", show.engine.instances.contains_key(&vi));
+        assert!((10..=18).contains(&frames), "end trim not honoured: {frames} frames");
         assert!(!show.engine.instances.contains_key(&vi), "video didn't finish");
     }
+    // Still image with a 0.5 s duration.
+    let png = dir.join("still.png");
+    image::RgbaImage::from_pixel(64, 32, image::Rgba([255, 0, 0, 255])).save(&png).unwrap();
+    let mut still = Cue::new(CueKind::Video(VideoCue { path: png, still_duration: 0.5, ..Default::default() }));
+    still.number = "9".into();
+    let si = still.id;
+    show.ws.cue_list.cues.push(still);
+    show.edited();
+    show.engine.set_playhead(Some(si));
+    show.go();
+    let t2 = Instant::now();
+    let mut shown = false;
+    let mut gone_at = None;
+    while t2.elapsed() < Duration::from_secs(2) {
+        show.tick(Instant::now());
+        if show.media.stage_layers().iter().any(|l| l.id == si && l.frame.lock().width == 64) {
+            shown = true;
+        }
+        if gone_at.is_none() && !show.engine.instances.contains_key(&si) {
+            gone_at = Some(t2.elapsed());
+        }
+        std::thread::sleep(Duration::from_millis(2));
+    }
+    println!("still shown: {shown}, ended at {gone_at:?} (expected ≈0.5s)");
+    assert!(shown && gone_at.is_some_and(|t| (0.45..0.6).contains(&t.as_secs_f64())));
     let _: Option<&Media> = None;
     println!("SMOKE OK");
 }

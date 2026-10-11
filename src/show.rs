@@ -16,16 +16,21 @@ pub struct Show {
     pub media: Media,
     pub path: Option<PathBuf>,
     pub dirty: bool,
+    /// Set once media has been torn down; the engine stops ticking.
+    pub shut_down: bool,
 }
 
 pub type SharedShow = Arc<Mutex<Show>>;
 
 impl Show {
     pub fn new(prober: Arc<Prober>) -> Self {
-        Self { ws: Workspace::default(), engine: Engine::new(), media: Media::new(prober), path: None, dirty: false }
+        Self { ws: Workspace::default(), engine: Engine::new(), media: Media::new(prober), path: None, dirty: false, shut_down: false }
     }
 
     pub fn tick(&mut self, now: Instant) {
+        if self.shut_down {
+            return;
+        }
         let Show { ws, engine, media, .. } = self;
         engine.tick(ws, media, now);
     }
@@ -33,6 +38,15 @@ impl Show {
     pub fn go(&mut self) {
         let Show { ws, engine, media, .. } = self;
         engine.go(ws, media, Instant::now());
+    }
+
+    /// Stop everything and release audio/video before the process exits, so no GStreamer or
+    /// audio thread is still running (e.g. initialising a hardware decoder) during teardown.
+    pub fn shutdown(&mut self) {
+        let Show { engine, media, .. } = self;
+        engine.stop_all(media, Instant::now(), 0.0);
+        media.shutdown();
+        self.shut_down = true;
     }
 
     /// Call after any edit to the workspace.
@@ -49,8 +63,11 @@ impl Show {
         self.dirty = false;
         self.engine.set_playhead(self.ws.cue_list.first());
         self.engine.workspace_changed();
+        self.media.set_hardware_video_decoding(self.ws.settings.hardware_video_decoding);
+        let master = self.ws.settings.master_volume_db;
+        self.media.reopen_audio(self.ws.settings.audio_device.as_deref(), master);
         if let Some(a) = &mut self.media.audio {
-            a.set_master(self.ws.settings.master_volume_db);
+            a.set_master(master);
         }
     }
 }

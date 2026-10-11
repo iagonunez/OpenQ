@@ -19,6 +19,10 @@ pub struct MediaInfo {
     pub duration: Option<f64>,
     /// Human-readable summary (format, channels, resolution...).
     pub detail: String,
+    /// Audio channels (0 if none / unknown).
+    pub channels: usize,
+    /// True for still images.
+    pub still: bool,
 }
 
 /// Background file prober with a cache, shared by the UI and the engine.
@@ -41,18 +45,78 @@ pub fn is_audio_path(p: &Path) -> bool {
     )
 }
 
+pub fn is_image_path(p: &Path) -> bool {
+    matches!(
+        p.extension().and_then(|e| e.to_str()).map(|e| e.to_ascii_lowercase()).as_deref(),
+        Some("png" | "jpg" | "jpeg" | "bmp" | "gif" | "webp" | "tif" | "tiff")
+    )
+}
+
+/// Files that become video cues (moving images and stills).
 pub fn is_video_file(p: &Path) -> bool {
-    is_video_path(p)
+    is_video_path(p) || is_image_path(p)
+}
+
+/// Background waveform builder with a cache (decoding a whole file can take a while).
+type WaveformResult = Result<Arc<decoder::Waveform>, String>;
+
+pub struct Waveforms {
+    cache: Mutex<HashMap<PathBuf, Option<WaveformResult>>>,
+    tx: Mutex<std::sync::mpsc::Sender<PathBuf>>,
+}
+
+impl Waveforms {
+    pub fn new() -> Arc<Self> {
+        let (tx, rx) = std::sync::mpsc::channel::<PathBuf>();
+        let w = Arc::new(Self { cache: Mutex::new(HashMap::new()), tx: Mutex::new(tx) });
+        let weak = Arc::downgrade(&w);
+        std::thread::Builder::new()
+            .name("openq-waveform".into())
+            .spawn(move || {
+                while let Ok(path) = rx.recv() {
+                    let res = decoder::waveform(&path).map(Arc::new).map_err(|e| format!("{e:#}"));
+                    let Some(w) = weak.upgrade() else { break };
+                    w.cache.lock().insert(path, Some(res));
+                }
+            })
+            .expect("spawn waveform thread");
+        w
+    }
+
+    /// The waveform if ready; queues it otherwise.
+    pub fn get(&self, path: &Path) -> Option<WaveformResult> {
+        if path.as_os_str().is_empty() {
+            return None;
+        }
+        let mut c = self.cache.lock();
+        match c.get(path) {
+            Some(r) => r.clone(),
+            None => {
+                c.insert(path.to_path_buf(), None);
+                let _ = self.tx.lock().send(path.to_path_buf());
+                None
+            }
+        }
+    }
 }
 
 fn probe_now(path: &Path) -> Result<MediaInfo, String> {
     let audio = || {
         decoder::probe(path)
-            .map(|i| MediaInfo { duration: i.duration, detail: format!("{} Hz, {} ch", i.sample_rate, i.channels) })
+            .map(|i| MediaInfo {
+                duration: i.duration,
+                detail: format!("{} Hz, {} ch", i.sample_rate, i.channels),
+                channels: i.channels,
+                still: false,
+            })
             .map_err(|e| format!("{e:#}"))
     };
     if is_audio_path(path) {
         return audio();
+    }
+    if is_image_path(path) {
+        let (w, h) = image::image_dimensions(path).map_err(|e| format!("{e}"))?;
+        return Ok(MediaInfo { duration: None, detail: format!("{w}×{h} still"), channels: 0, still: true });
     }
     // Anything else goes to GStreamer, which knows far more containers.
     #[cfg(feature = "video")]
@@ -60,6 +124,8 @@ fn probe_now(path: &Path) -> Result<MediaInfo, String> {
         video::probe(path)
             .map(|i| MediaInfo {
                 duration: i.duration,
+                channels: i.audio_channels,
+                still: false,
                 detail: if i.width > 0 {
                     format!("{}×{}{}", i.width, i.height, if i.has_audio { " + audio" } else { "" })
                 } else {
@@ -81,7 +147,10 @@ impl Prober {
             .name("openq-probe".into())
             .spawn(move || {
                 while let Ok(path) = rx.recv() {
+                    let t = std::time::Instant::now();
+                    log::debug!("probing {}", path.display());
                     let res = probe_now(&path);
+                    log::debug!("probed {} in {:?}: {}", path.display(), t.elapsed(), res.is_ok());
                     let Some(p) = weak.upgrade() else { break };
                     p.cache.lock().insert(path, Some(res));
                 }
@@ -126,14 +195,19 @@ pub fn effective_duration(cue: &Cue, file_duration: Option<f64>) -> Option<f64> 
             }
             let file = file_duration?;
             let end = a.end_time.map_or(file, |e| e.min(file));
-            Some((end - a.start_time).max(0.0) * a.play_count.max(1) as f64)
+            let rate = if a.rate > 0.0 { a.rate as f64 } else { 1.0 };
+            Some((end - a.start_time).max(0.0) * a.play_count.max(1) as f64 / rate)
         }
         CueKind::Video(v) => {
             if v.infinite_loop {
                 return None;
             }
+            if is_image_path(&v.path) {
+                return (v.still_duration > 0.0).then_some(v.still_duration);
+            }
             let file = file_duration?;
-            Some((file - v.start_time).max(0.0) * v.play_count.max(1) as f64)
+            let end = v.end_time.map_or(file, |e| e.min(file));
+            Some((end - v.start_time).max(0.0) * v.play_count.max(1) as f64)
         }
         _ => None,
     }
@@ -150,7 +224,7 @@ pub struct Media {
 
 impl Media {
     pub fn new(prober: Arc<Prober>) -> Self {
-        let (audio, audio_error) = match audio::AudioOutput::open() {
+        let (audio, audio_error) = match audio::AudioOutput::open(None) {
             Ok(a) => (Some(a), None),
             Err(e) => {
                 log::error!("audio unavailable: {e:#}");
@@ -198,6 +272,66 @@ impl Media {
         self.video.as_ref().map(|v| v.stage_layers()).unwrap_or_default()
     }
 
+    /// Apply the hardware-decoding preference to pipelines created from now on.
+    pub fn set_hardware_video_decoding(&mut self, enabled: bool) {
+        #[cfg(feature = "video")]
+        if self.video.is_some() {
+            video::set_hardware_decoding(enabled);
+        }
+        let _ = enabled;
+    }
+
+    /// Release every player and the audio stream.
+    pub fn shutdown(&mut self) {
+        #[cfg(feature = "video")]
+        {
+            self.video = None;
+        }
+        self.audio = None;
+    }
+
+    /// Switch audio output device. Running audio cues must be stopped first.
+    pub fn reopen_audio(&mut self, device: Option<&str>, master_db: f32) {
+        if self.audio.as_ref().is_some_and(|a| a.device_id.as_deref() == device) {
+            return;
+        }
+        self.audio = None; // close the old stream first
+        match audio::AudioOutput::open(device) {
+            Ok(mut a) => {
+                a.set_master(master_db);
+                self.audio = Some(a);
+                self.audio_error = None;
+            }
+            Err(e) => {
+                log::error!("audio unavailable: {e:#}");
+                self.audio_error = Some(format!("{e:#}"));
+            }
+        }
+    }
+
+    /// Source channel count for an audio file (probing it if needed).
+    fn audio_channels(&self, path: &Path) -> usize {
+        self.prober.get_blocking(path).map(|i| i.channels).unwrap_or(2).max(1)
+    }
+
+    /// Push inspector edits to a cue that is playing right now.
+    pub fn update_live(&mut self, cue: &Cue) {
+        match &cue.kind {
+            CueKind::Audio(p) => {
+                if let Some(a) = &mut self.audio {
+                    a.update_live(cue.id, p);
+                }
+            }
+            #[cfg(feature = "video")]
+            CueKind::Video(p) => {
+                if let Some(v) = &mut self.video {
+                    v.update_live(cue.id, p);
+                }
+            }
+            _ => {}
+        }
+    }
+
     pub fn take_meters(&self) -> Vec<f32> {
         self.audio.as_ref().map(|a| a.take_meters()).unwrap_or_default()
     }
@@ -205,15 +339,15 @@ impl Media {
 
 impl Backend for Media {
     fn set_preloaded(&mut self, cues: &[&Cue]) {
+        let list: Vec<_> = cues
+            .iter()
+            .filter(|c| c.armed)
+            .filter_map(|c| match &c.kind {
+                CueKind::Audio(p) if p.path.exists() => Some((c.id, p, self.audio_channels(&p.path))),
+                _ => None,
+            })
+            .collect();
         if let Some(a) = &mut self.audio {
-            let list: Vec<_> = cues
-                .iter()
-                .filter(|c| c.armed)
-                .filter_map(|c| match &c.kind {
-                    CueKind::Audio(p) => Some((c.id, p)),
-                    _ => None,
-                })
-                .collect();
             a.set_preloaded(&list);
         }
         #[cfg(feature = "video")]
@@ -232,9 +366,12 @@ impl Backend for Media {
 
     fn start(&mut self, cue: &Cue, at: Instant) -> Result<(), String> {
         match &cue.kind {
-            CueKind::Audio(p) => match &mut self.audio {
-                Some(a) => a.start(cue.id, p, at),
-                None => Err(format!("audio unavailable: {}", self.audio_error.as_deref().unwrap_or("?"))),
+            CueKind::Audio(p) => match self.audio.is_some() {
+                true => {
+                    let ch = self.audio_channels(&p.path);
+                    self.audio.as_mut().unwrap().start(cue.id, p, ch, at)
+                }
+                false => Err(format!("audio unavailable: {}", self.audio_error.as_deref().unwrap_or("?"))),
             },
             #[cfg(feature = "video")]
             CueKind::Video(p) => match &mut self.video {
@@ -285,7 +422,7 @@ impl Backend for Media {
         }
         #[cfg(feature = "video")]
         if let Some(v) = &mut self.video {
-            v.fade(id, f.volume_db, f.opacity, f.duration, f.curve, at);
+            v.fade(id, f, at);
         }
     }
 

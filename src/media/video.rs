@@ -1,7 +1,9 @@
-//! Video playback via GStreamer `playbin`. Decoded RGBA frames land in a shared slot that the
-//! stage window uploads as a texture; the video's own audio goes to the default audio sink.
+//! Video playback via GStreamer `playbin`, plus still images. Decoded RGBA frames land in a
+//! shared slot that the stage windows upload as textures; a video's own audio goes to the
+//! default audio sink.
 
-use crate::model::{CueId, FadeCurve, VideoCue, VideoFit, db_to_gain};
+use crate::engine::FadeRequest;
+use crate::model::{CueId, FadeCurve, Geometry, StageId, VideoCue, VideoFit, db_to_gain};
 use anyhow::{Context, anyhow};
 use gstreamer as gst;
 use gstreamer::prelude::*;
@@ -11,7 +13,44 @@ use parking_lot::Mutex;
 use std::collections::HashMap;
 use std::path::Path;
 use std::sync::Arc;
-use std::time::Instant;
+use std::time::{Duration, Instant};
+
+/// Plugins whose decoders use GPU APIs. NVIDIA's NVDEC/CUDA decoders in particular can hang or
+/// crash when initialised inside a process that also renders with the GPU driver, so hardware
+/// decoding is off unless the user turns it on.
+const HW_DECODER_PLUGINS: &[&str] = &["nvcodec", "va", "vaapi", "v4l2codecs", "qsv", "amfcodec"];
+
+static ORIGINAL_RANKS: std::sync::OnceLock<Mutex<HashMap<String, gst::Rank>>> = std::sync::OnceLock::new();
+
+/// Initialise GStreamer (idempotent) and apply the default decoder policy (software only).
+pub fn init() -> anyhow::Result<()> {
+    static INIT: std::sync::OnceLock<Result<(), String>> = std::sync::OnceLock::new();
+    INIT.get_or_init(|| {
+        gst::init().map_err(|e| e.to_string())?;
+        set_hardware_decoding(false);
+        Ok(())
+    })
+    .clone()
+    .map_err(|e| anyhow!("GStreamer init failed: {e}"))
+}
+
+/// Enable or disable GPU video decoders for pipelines created from now on.
+pub fn set_hardware_decoding(enabled: bool) {
+    let originals = ORIGINAL_RANKS.get_or_init(|| Mutex::new(HashMap::new()));
+    let mut originals = originals.lock();
+    let reg = gst::Registry::get();
+    for plugin in HW_DECODER_PLUGINS {
+        for f in reg.features_by_plugin(plugin) {
+            let Some(factory) = f.downcast_ref::<gst::ElementFactory>() else { continue };
+            if !factory.klass().contains("Decoder") {
+                continue;
+            }
+            let name = f.name().to_string();
+            let original = *originals.entry(name).or_insert_with(|| f.rank());
+            f.set_rank(if enabled { original } else { gst::Rank::NONE });
+        }
+    }
+}
 
 #[derive(Default)]
 pub struct Frame {
@@ -25,61 +64,124 @@ pub struct Frame {
 
 pub type FrameSlot = Arc<Mutex<Frame>>;
 
-/// What the stage window needs to draw one running video.
+/// What a stage window needs to draw one running video.
 #[derive(Clone)]
 pub struct StageLayer {
     pub id: CueId,
+    pub stage: Option<StageId>,
     pub frame: FrameSlot,
     pub opacity: f32,
+    pub geometry: Geometry,
     pub layer: i32,
     pub fit: VideoFit,
     pub order: u64,
 }
 
+/// Progress shaping for non-level parameters.
+fn shape(curve: FadeCurve, t: f32) -> f32 {
+    let t = t.clamp(0.0, 1.0);
+    match curve {
+        FadeCurve::Linear | FadeCurve::Logarithmic => t,
+        FadeCurve::SCurve => t * t * (3.0 - 2.0 * t),
+    }
+}
+
 #[derive(Clone, Copy)]
-struct Ramp {
-    from: f32,
-    to: f32,
+struct Ramp<T> {
+    from: T,
+    to: T,
     start: Instant,
     secs: f64,
     curve: FadeCurve,
 }
 
-impl Ramp {
-    fn value(&self, now: Instant) -> (f32, bool) {
+impl<T: Copy> Ramp<T> {
+    fn progress(&self, now: Instant) -> f32 {
         if now < self.start {
-            return (self.from, false);
+            return 0.0;
         }
-        let t = if self.secs <= 0.0 { 1.0 } else { ((now - self.start).as_secs_f64() / self.secs) as f32 };
-        (self.curve.interpolate(self.from, self.to, t), t >= 1.0)
+        if self.secs <= 0.0 { 1.0 } else { ((now - self.start).as_secs_f64() / self.secs) as f32 }
     }
 }
 
+enum Source {
+    Pipeline(gst::Element),
+    Still,
+}
+
 struct Player {
-    pipeline: gst::Element,
+    source: Source,
     frame: FrameSlot,
     params: VideoCue,
     volume: f32,
-    vol_ramp: Option<Ramp>,
+    vol_ramp: Option<Ramp<f32>>,
     opacity: f32,
-    op_ramp: Option<Ramp>,
+    op_ramp: Option<Ramp<f32>>,
+    geometry: Geometry,
+    geo_ramp: Option<Ramp<Geometry>>,
     plays_done: u32,
     /// Waiting for the initial seek to the start time to complete.
     seeking: bool,
     prerolled: bool,
     play_at: Option<Instant>,
     playing: bool,
+    /// When a still started showing (shifted by pauses).
+    started_at: Option<Instant>,
     paused_at: Option<Instant>,
     finished: bool,
     error: Option<String>,
     error_reported: bool,
+    last_pos_check: Instant,
     order: u64,
+}
+
+fn load_still(path: &Path, slot: &FrameSlot) -> anyhow::Result<()> {
+    let img = image::open(path).with_context(|| format!("cannot read image {}", path.display()))?.to_rgba8();
+    let mut f = slot.lock();
+    f.width = img.width();
+    f.height = img.height();
+    f.data = img.into_raw();
+    f.generation = f.generation.wrapping_add(1);
+    Ok(())
 }
 
 impl Player {
     fn new(params: &VideoCue, order: u64) -> anyhow::Result<Self> {
-        let uri = gst::glib::filename_to_uri(&params.path, None).context("bad path")?;
         let frame: FrameSlot = Arc::new(Mutex::new(Frame::default()));
+        let source = if super::is_image_path(&params.path) {
+            load_still(&params.path, &frame)?;
+            Source::Still
+        } else {
+            Source::Pipeline(Self::pipeline(params, &frame)?)
+        };
+        let still = matches!(source, Source::Still);
+        Ok(Self {
+            source,
+            frame,
+            params: params.clone(),
+            volume: db_to_gain(params.volume_db),
+            vol_ramp: None,
+            opacity: params.opacity.clamp(0.0, 1.0),
+            op_ramp: None,
+            geometry: params.geometry,
+            geo_ramp: None,
+            plays_done: 0,
+            seeking: false,
+            prerolled: still,
+            play_at: None,
+            playing: false,
+            started_at: None,
+            paused_at: None,
+            finished: false,
+            error: None,
+            error_reported: false,
+            last_pos_check: Instant::now(),
+            order,
+        })
+    }
+
+    fn pipeline(params: &VideoCue, frame: &FrameSlot) -> anyhow::Result<gst::Element> {
+        let uri = gst::glib::filename_to_uri(&params.path, None).context("bad path")?;
         let caps = gst_video::VideoCapsBuilder::new().format(gst_video::VideoFormat::Rgba).build();
         let sink = gst_app::AppSink::builder().caps(&caps).max_buffers(2).drop(true).build();
         let slot = frame.clone();
@@ -99,36 +201,55 @@ impl Player {
             .context("GStreamer 'playbin' element missing (install gst-plugins-base)")?;
         pipeline.set_property("volume", db_to_gain(params.volume_db) as f64);
         pipeline.set_state(gst::State::Paused).map_err(|e| anyhow!("cannot preroll video: {e}"))?;
-        Ok(Self {
-            pipeline,
-            frame,
-            params: params.clone(),
-            volume: db_to_gain(params.volume_db),
-            vol_ramp: None,
-            opacity: params.opacity.clamp(0.0, 1.0),
-            op_ramp: None,
-            plays_done: 0,
-            seeking: false,
-            prerolled: false,
-            play_at: None,
-            playing: false,
-            paused_at: None,
-            finished: false,
-            error: None,
-            error_reported: false,
-            order,
-        })
+        Ok(pipeline)
+    }
+
+    fn set_state(&self, state: gst::State) {
+        if let Source::Pipeline(p) = &self.source {
+            let _ = p.set_state(state);
+        }
     }
 
     fn seek_to_start(&self) -> bool {
+        let Source::Pipeline(p) = &self.source else { return false };
         let t = gst::ClockTime::from_nseconds((self.params.start_time.max(0.0) * 1e9) as u64);
-        self.pipeline
-            .seek_simple(gst::SeekFlags::FLUSH | gst::SeekFlags::ACCURATE, t)
-            .is_ok()
+        p.seek_simple(gst::SeekFlags::FLUSH | gst::SeekFlags::ACCURATE, t).is_ok()
+    }
+
+    /// Rewind a stream that can't seek by resetting the pipeline (the start-time seek, if any,
+    /// happens again after the new preroll).
+    fn restart(&mut self) -> bool {
+        let Source::Pipeline(p) = &self.source else { return false };
+        log::debug!("video {}: not seekable, restarting pipeline to loop", self.params.path.display());
+        if p.set_state(gst::State::Ready).is_err() {
+            return false;
+        }
+        self.prerolled = false;
+        self.seeking = false;
+        p.set_state(gst::State::Playing).is_ok()
+    }
+
+    /// Reached the end of the file or the end trim point.
+    fn on_end(&mut self) {
+        self.plays_done += 1;
+        let more = self.params.infinite_loop || self.plays_done < self.params.play_count.max(1);
+        if more && (self.seek_to_start() || self.restart()) {
+            return;
+        }
+        self.finish();
+    }
+
+    fn finish(&mut self) {
+        self.finished = true;
+        self.set_state(gst::State::Paused);
+        if !self.params.hold_last_frame {
+            *self.frame.lock() = Frame::default();
+        }
     }
 
     fn handle_bus(&mut self) {
-        let Some(bus) = self.pipeline.bus() else { return };
+        let Source::Pipeline(p) = &self.source else { return };
+        let Some(bus) = p.bus() else { return };
         while let Some(msg) = bus.pop() {
             use gst::MessageView;
             match msg.view() {
@@ -145,15 +266,8 @@ impl Player {
                     }
                 }
                 MessageView::Eos(_) => {
-                    self.plays_done += 1;
-                    let more = self.params.infinite_loop || self.plays_done < self.params.play_count.max(1);
-                    if more && self.seek_to_start() {
-                        continue;
-                    }
-                    self.finished = true;
-                    let _ = self.pipeline.set_state(gst::State::Paused);
-                    if !self.params.hold_last_frame {
-                        *self.frame.lock() = Frame::default();
+                    if !self.finished {
+                        self.on_end();
                     }
                 }
                 MessageView::Error(e) => {
@@ -168,6 +282,13 @@ impl Player {
         }
     }
 
+    fn position(&self) -> Option<f64> {
+        match &self.source {
+            Source::Pipeline(p) => p.query_position::<gst::ClockTime>().map(|t| t.nseconds() as f64 / 1e9),
+            Source::Still => self.started_at.map(|s| (self.paused_at.unwrap_or_else(Instant::now) - s).as_secs_f64()),
+        }
+    }
+
     fn update(&mut self, now: Instant) {
         self.handle_bus();
         if self.paused_at.is_some() || self.finished {
@@ -178,22 +299,53 @@ impl Player {
             && let Some(at) = self.play_at
             && now >= at
         {
-            let _ = self.pipeline.set_state(gst::State::Playing);
+            self.set_state(gst::State::Playing);
             self.playing = true;
+            self.started_at = Some(at);
+        }
+        if self.playing {
+            match &self.source {
+                Source::Still => {
+                    let d = self.params.still_duration;
+                    if d > 0.0 && self.started_at.is_some_and(|s| now.saturating_duration_since(s).as_secs_f64() >= d) {
+                        self.finish();
+                    }
+                }
+                Source::Pipeline(_) => {
+                    // End trim point: poll position every 10 ms.
+                    if let Some(end) = self.params.end_time
+                        && now.duration_since(self.last_pos_check) >= Duration::from_millis(10)
+                    {
+                        self.last_pos_check = now;
+                        if self.position().is_some_and(|p| p >= end) {
+                            self.on_end();
+                        }
+                    }
+                }
+            }
         }
         if let Some(r) = self.vol_ramp {
-            let (v, done) = r.value(now);
-            self.volume = v;
-            self.pipeline.set_property("volume", v.clamp(0.0, 10.0) as f64);
-            if done {
+            let t = r.progress(now);
+            self.volume = r.curve.interpolate(r.from, r.to, t);
+            if let Source::Pipeline(p) = &self.source {
+                p.set_property("volume", self.volume.clamp(0.0, 10.0) as f64);
+            }
+            if t >= 1.0 {
                 self.vol_ramp = None;
             }
         }
         if let Some(r) = self.op_ramp {
-            let (v, done) = r.value(now);
-            self.opacity = v.clamp(0.0, 1.0);
-            if done {
+            let t = r.progress(now);
+            self.opacity = (r.from + (r.to - r.from) * shape(r.curve, t)).clamp(0.0, 1.0);
+            if t >= 1.0 {
                 self.op_ramp = None;
+            }
+        }
+        if let Some(r) = self.geo_ramp {
+            let t = r.progress(now);
+            self.geometry = r.from.lerp(&r.to, shape(r.curve, t));
+            if t >= 1.0 {
+                self.geo_ramp = None;
             }
         }
     }
@@ -201,7 +353,7 @@ impl Player {
 
 impl Drop for Player {
     fn drop(&mut self) {
-        let _ = self.pipeline.set_state(gst::State::Null);
+        self.set_state(gst::State::Null);
     }
 }
 
@@ -231,7 +383,7 @@ pub struct VideoOutput {
 
 impl VideoOutput {
     pub fn new() -> anyhow::Result<Self> {
-        gst::init().context("GStreamer init failed")?;
+        init()?;
         Ok(Self { players: HashMap::new(), preloaded: HashMap::new(), order: 0 })
     }
 
@@ -279,7 +431,7 @@ impl VideoOutput {
             && p.paused_at.is_none()
         {
             p.paused_at = Some(Instant::now());
-            let _ = p.pipeline.set_state(gst::State::Paused);
+            p.set_state(gst::State::Paused);
         }
     }
 
@@ -288,25 +440,56 @@ impl VideoOutput {
             && let Some(paused) = p.paused_at.take()
         {
             let shift = at.saturating_duration_since(paused);
-            for r in [&mut p.vol_ramp, &mut p.op_ramp].into_iter().flatten() {
+            if let Some(r) = &mut p.vol_ramp {
                 r.start += shift;
             }
-            if let Some(t) = &mut p.play_at {
+            if let Some(r) = &mut p.op_ramp {
+                r.start += shift;
+            }
+            if let Some(r) = &mut p.geo_ramp {
+                r.start += shift;
+            }
+            for t in [&mut p.play_at, &mut p.started_at].into_iter().flatten() {
                 *t += shift;
             }
             if p.playing {
-                let _ = p.pipeline.set_state(gst::State::Playing);
+                p.set_state(gst::State::Playing);
             }
         }
     }
 
-    pub fn fade(&mut self, cue: CueId, volume_db: Option<f32>, opacity: Option<f32>, secs: f64, curve: FadeCurve, at: Instant) {
+    pub fn fade(&mut self, cue: CueId, f: &FadeRequest, at: Instant) {
         let Some(p) = self.players.get_mut(&cue) else { return };
-        if let Some(db) = volume_db {
+        let (secs, curve) = (f.duration, f.curve);
+        if let Some(db) = f.volume_db {
             p.vol_ramp = Some(Ramp { from: p.volume, to: db_to_gain(db), start: at, secs, curve });
         }
-        if let Some(o) = opacity {
+        if let Some(o) = f.opacity {
             p.op_ramp = Some(Ramp { from: p.opacity, to: o.clamp(0.0, 1.0), start: at, secs, curve });
+        }
+        if let Some(g) = f.geometry {
+            p.geo_ramp = Some(Ramp { from: p.geometry, to: g, start: at, secs, curve });
+        }
+    }
+
+    /// Apply inspector edits to a playing cue (level, opacity, geometry, layer, fit, stage).
+    pub fn update_live(&mut self, cue: CueId, params: &VideoCue) {
+        let Some(p) = self.players.get_mut(&cue) else { return };
+        let old = std::mem::replace(&mut p.params, params.clone());
+        if old.volume_db != params.volume_db {
+            p.vol_ramp = None;
+            p.volume = db_to_gain(params.volume_db);
+            if let Source::Pipeline(pl) = &p.source {
+                pl.set_property("volume", p.volume.clamp(0.0, 10.0) as f64);
+            }
+        }
+        if old.opacity != params.opacity {
+            p.op_ramp = None;
+            p.opacity = params.opacity.clamp(0.0, 1.0);
+        }
+        if old.geometry != params.geometry {
+            p.geo_ramp = None;
+            p.geometry = params.geometry;
         }
     }
 
@@ -321,8 +504,7 @@ impl VideoOutput {
     }
 
     pub fn elapsed(&self, cue: CueId) -> Option<f64> {
-        let p = self.players.get(&cue)?;
-        p.pipeline.query_position::<gst::ClockTime>().map(|t| t.nseconds() as f64 / 1e9)
+        self.players.get(&cue)?.position()
     }
 
     pub fn update(&mut self, now: Instant) {
@@ -352,8 +534,10 @@ impl VideoOutput {
             .filter(|(_, p)| p.playing || p.finished)
             .map(|(id, p)| StageLayer {
                 id: *id,
+                stage: p.params.stage,
                 frame: p.frame.clone(),
                 opacity: p.opacity,
+                geometry: p.geometry,
                 layer: p.params.layer,
                 fit: p.params.fit,
                 order: p.order,
@@ -370,23 +554,22 @@ pub struct VideoInfo {
     pub width: u32,
     pub height: u32,
     pub has_audio: bool,
+    pub audio_channels: usize,
 }
 
 pub fn probe(path: &Path) -> anyhow::Result<VideoInfo> {
     use gstreamer_pbutils as pbutils;
-    gst::init()?;
+    init()?;
     let uri = gst::glib::filename_to_uri(path, None)?;
     let disc = pbutils::Discoverer::new(gst::ClockTime::from_seconds(10))?;
     let info = disc.discover_uri(&uri)?;
-    let (width, height) = info
-        .video_streams()
-        .first()
-        .map(|v| (v.width(), v.height()))
-        .unwrap_or((0, 0));
+    let (width, height) = info.video_streams().first().map(|v| (v.width(), v.height())).unwrap_or((0, 0));
+    let audio = info.audio_streams();
     Ok(VideoInfo {
         duration: info.duration().map(|d| d.nseconds() as f64 / 1e9),
         width,
         height,
-        has_audio: !info.audio_streams().is_empty(),
+        has_audio: !audio.is_empty(),
+        audio_channels: audio.first().map(|a| a.channels() as usize).unwrap_or(0),
     })
 }

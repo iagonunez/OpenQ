@@ -1,25 +1,30 @@
 //! Real-time audio output: a lock-free mixer running in the cpal callback.
 //!
 //! Each playing audio cue is a [`Voice`] fed by its own decoder thread through a ring buffer
-//! (already resampled and channel-mapped to the device format). The control side talks to the
-//! callback only through a wait-free command queue, and removed voices are shipped back for
-//! deallocation so the audio thread never frees memory.
+//! (resampled to the device rate, still in the file's channel layout). The voice applies the
+//! cue's EQ, routing matrix, level and pan in the callback, so all of them can change live.
+//! The control side talks to the callback only through a wait-free command queue, and removed
+//! voices are shipped back for deallocation so the audio thread never frees memory.
 
 use super::decoder::{self, DecodeParams};
-use crate::model::{AudioCue, CueId, FadeCurve, db_to_gain};
+use crate::dsp::{BiquadState, Coeffs, eq_coeffs};
+use crate::model::{AudioCue, CueId, FadeCurve, MAX_EQ_BANDS, MAX_OUT_CHANNELS, MAX_SRC_CHANNELS, db_to_gain};
 use anyhow::{Context, anyhow};
 use cpal::traits::{DeviceTrait, HostTrait, StreamTrait};
 use cpal::{FromSample, OutputCallbackInfo, SampleFormat, SizedSample, StreamConfig};
 use std::collections::HashMap;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, AtomicU32, AtomicU64, Ordering};
-use std::time::Instant;
+use std::time::{Duration, Instant};
 
-const MAX_METER_CHANNELS: usize = 8;
+const MAX_METER_CHANNELS: usize = MAX_OUT_CHANNELS;
 /// Fade applied on stop to avoid clicks.
 const DECLICK_SECS: f64 = 0.008;
 /// Seconds of decoded audio buffered per voice.
 const VOICE_BUFFER_SECS: f64 = 2.0;
+
+/// Linear routing gains, `[src * MAX_OUT_CHANNELS + out]`.
+pub type Matrix = [f32; MAX_SRC_CHANNELS * MAX_OUT_CHANNELS];
 
 /// Maps between wall-clock instants and the mixer's frame counter. Re-anchored every callback
 /// so drift between the audio and system clocks never accumulates.
@@ -61,7 +66,7 @@ impl Clock {
             let n = self.nanos.load(Ordering::Relaxed);
             std::sync::atomic::fence(Ordering::Acquire);
             if self.seq.load(Ordering::Relaxed) == s1 {
-                return (f, self.origin + std::time::Duration::from_nanos(n));
+                return (f, self.origin + Duration::from_nanos(n));
             }
         }
     }
@@ -118,8 +123,13 @@ pub struct Voice {
     rx: rtrb::Consumer<f32>,
     shared: Arc<VoiceShared>,
     state: VoiceState,
+    src_channels: usize,
     gain: f32,
     pan: [f32; 2],
+    matrix: Matrix,
+    eq: [Coeffs; MAX_EQ_BANDS],
+    eq_bands: usize,
+    eq_state: [[BiquadState; MAX_EQ_BANDS]; MAX_SRC_CHANNELS],
     ramp: Option<Ramp>,
     stop_after_ramp: bool,
     done: bool,
@@ -132,6 +142,9 @@ enum Cmd {
     Resume { id: u64, at: u64 },
     Stop(u64),
     Ramp { id: u64, to: f32, frames: u64, curve: FadeCurve, at: u64, stop_after: bool },
+    Pan { id: u64, pan: [f32; 2] },
+    Eq { id: u64, coeffs: [Coeffs; MAX_EQ_BANDS], bands: usize },
+    Matrix { id: u64, matrix: Box<Matrix> },
     Master(f32),
 }
 
@@ -141,9 +154,25 @@ fn pan_gains(pan: f32) -> [f32; 2] {
     [theta.cos() * std::f32::consts::SQRT_2, theta.sin() * std::f32::consts::SQRT_2]
 }
 
+fn build_matrix(params: &AudioCue, src: usize, out: usize) -> Matrix {
+    let mut m = [0.0; MAX_SRC_CHANNELS * MAX_OUT_CHANNELS];
+    for (s, row) in params.routing_gains(src, out).iter().enumerate().take(MAX_SRC_CHANNELS) {
+        for (o, g) in row.iter().enumerate().take(MAX_OUT_CHANNELS) {
+            m[s * MAX_OUT_CHANNELS + o] = *g;
+        }
+    }
+    m
+}
+
+/// Things the audio thread hands back to be freed elsewhere.
+enum Garbage {
+    Voice(#[allow(dead_code)] Box<Voice>),
+    Matrix(#[allow(dead_code)] Box<Matrix>),
+}
+
 struct Mixer {
     cmds: rtrb::Consumer<Cmd>,
-    garbage: rtrb::Producer<Box<Voice>>,
+    garbage: rtrb::Producer<Garbage>,
     // Boxed so voices move in/out of the RT thread via the queues without copying or freeing.
     #[allow(clippy::vec_box)]
     voices: Vec<Box<Voice>>,
@@ -184,9 +213,8 @@ impl Mixer {
                         match v.state {
                             VoiceState::Playing => {
                                 let frames = (DECLICK_SECS * rate as f64) as u64;
-                                let from = v.gain;
                                 v.ramp = Some(Ramp {
-                                    from,
+                                    from: v.gain,
                                     to: 0.0,
                                     start: 0,
                                     total: frames.max(1),
@@ -205,17 +233,31 @@ impl Mixer {
                         if v.stop_after_ramp {
                             continue;
                         }
-                        v.ramp = Some(Ramp {
-                            from: v.gain,
-                            to,
-                            start: at,
-                            total: frames.max(1),
-                            pos: 0,
-                            curve,
-                            started: false,
-                        });
+                        v.ramp = Some(Ramp { from: v.gain, to, start: at, total: frames.max(1), pos: 0, curve, started: false });
                         v.stop_after_ramp = stop_after;
                     }
+                }
+                Cmd::Pan { id, pan } => {
+                    if let Some(v) = self.voice(id) {
+                        v.pan = pan;
+                    }
+                }
+                Cmd::Eq { id, coeffs, bands } => {
+                    if let Some(v) = self.voice(id) {
+                        if bands != v.eq_bands {
+                            // Band layout changed: start the filters from rest.
+                            v.eq_state = Default::default();
+                        }
+                        v.eq = coeffs;
+                        v.eq_bands = bands;
+                    }
+                }
+                Cmd::Matrix { id, mut matrix } => {
+                    if let Some(v) = self.voice(id) {
+                        std::mem::swap(&mut v.matrix, &mut *matrix);
+                    }
+                    // The box (now holding the old matrix) is freed off the audio thread.
+                    let _ = self.garbage.push(Garbage::Matrix(matrix));
                 }
             }
         }
@@ -240,7 +282,7 @@ impl Mixer {
                 let v = self.voices.swap_remove(i);
                 v.shared.finished.store(true, Ordering::Release);
                 v.shared.stop.store(true, Ordering::Release);
-                if let Err(rtrb::PushError::Full(v)) = self.garbage.push(v) {
+                if let Err(rtrb::PushError::Full(v)) = self.garbage.push(Garbage::Voice(v)) {
                     drop(v);
                 }
             } else {
@@ -284,12 +326,15 @@ fn render_voice(v: &mut Voice, out: &mut [f32], ch: usize, frames: usize, start_
         VoiceState::Playing => {}
     }
 
-    let available = v.rx.slots() / ch;
+    let src = v.src_channels;
+    let outs = ch.min(MAX_OUT_CHANNELS);
+    let available = v.rx.slots() / src;
     let n = (frames - i).min(available);
     if n > 0 {
-        let Ok(chunk) = v.rx.read_chunk(n * ch) else { return };
+        let Ok(chunk) = v.rx.read_chunk(n * src) else { return };
         let (a, b) = chunk.as_slices();
         let mut samples = a.iter().chain(b.iter());
+        let mut x = [0f32; MAX_SRC_CHANNELS];
         for f in i..i + n {
             let gf = start_frame + f as u64;
             let g = match &mut v.ramp {
@@ -313,11 +358,21 @@ fn render_voice(v: &mut Voice, out: &mut [f32], ch: usize, frames: usize, start_
                 }
                 _ => v.gain,
             };
+            for (s, xs) in x.iter_mut().enumerate().take(src) {
+                let mut val = *samples.next().unwrap_or(&0.0);
+                for b in 0..v.eq_bands {
+                    val = v.eq_state[s][b].process(&v.eq[b], val);
+                }
+                *xs = val;
+            }
             let base = f * ch;
-            for c in 0..ch {
-                let s = *samples.next().unwrap_or(&0.0);
-                let p = if c < 2 && ch >= 2 { v.pan[c] } else { 1.0 };
-                out[base + c] += s * g * p;
+            for o in 0..outs {
+                let mut acc = 0.0;
+                for (s, xs) in x.iter().enumerate().take(src) {
+                    acc += xs * v.matrix[s * MAX_OUT_CHANNELS + o];
+                }
+                let p = if o < 2 && ch >= 2 { v.pan[o] } else { 1.0 };
+                out[base + o] += acc * g * p;
             }
             if v.done {
                 break;
@@ -326,7 +381,7 @@ fn render_voice(v: &mut Voice, out: &mut [f32], ch: usize, frames: usize, start_
         chunk.commit_all();
         v.shared.frames_played.fetch_add(n as u64, Ordering::Relaxed);
     }
-    if !v.done && i + n < frames && v.rx.slots() < ch && v.shared.eof.load(Ordering::Acquire) {
+    if !v.done && i + n < frames && v.rx.slots() < src && v.shared.eof.load(Ordering::Acquire) {
         v.done = true;
     }
 }
@@ -335,40 +390,80 @@ struct VoiceHandle {
     id: u64,
     shared: Arc<VoiceShared>,
     params: AudioCue,
+    src_channels: usize,
     error_reported: bool,
+}
+
+/// An output device the user can pick.
+#[derive(Clone, Debug)]
+pub struct DeviceEntry {
+    pub id: String,
+    pub name: String,
+}
+
+/// Output devices of the default host.
+pub fn list_output_devices() -> Vec<DeviceEntry> {
+    let host = cpal::default_host();
+    let Ok(devs) = host.output_devices() else { return Vec::new() };
+    devs.filter_map(|d| {
+        let id = d.id().ok()?.to_string();
+        let name = d.description().map(|x| x.to_string()).unwrap_or_else(|_| id.clone());
+        Some(DeviceEntry { id, name })
+    })
+    .collect()
 }
 
 /// Control side of the audio output.
 pub struct AudioOutput {
     cmd: rtrb::Producer<Cmd>,
-    garbage: rtrb::Consumer<Box<Voice>>,
+    garbage: rtrb::Consumer<Garbage>,
     clock: Arc<Clock>,
     meters: Arc<[AtomicU32; MAX_METER_CHANNELS]>,
+    shutdown: Arc<AtomicBool>,
     pub rate: u32,
     pub channels: usize,
     pub device_name: String,
+    /// The id this output was opened with (None = system default).
+    pub device_id: Option<String>,
     voices: HashMap<CueId, VoiceHandle>,
     preloaded: HashMap<CueId, VoiceHandle>,
     next_id: u64,
 }
 
+impl Drop for AudioOutput {
+    fn drop(&mut self) {
+        for h in self.voices.values().chain(self.preloaded.values()) {
+            h.shared.stop.store(true, Ordering::Release);
+        }
+        self.shutdown.store(true, Ordering::Release);
+    }
+}
+
 impl AudioOutput {
-    pub fn open() -> anyhow::Result<Self> {
-        let (cmd_tx, cmd_rx) = rtrb::RingBuffer::<Cmd>::new(4096);
-        let (gb_tx, gb_rx) = rtrb::RingBuffer::<Box<Voice>>::new(1024);
+    /// Open `device_id` (cpal id string) or the system default.
+    pub fn open(device_id: Option<&str>) -> anyhow::Result<Self> {
+        let (cmd_tx, cmd_rx) = rtrb::RingBuffer::<Cmd>::new(2048);
+        let (gb_tx, gb_rx) = rtrb::RingBuffer::<Garbage>::new(2048);
         let meters: Arc<[AtomicU32; MAX_METER_CHANNELS]> = Arc::new(Default::default());
-        let (setup_tx, setup_rx) = std::sync::mpsc::channel::<anyhow::Result<(u32, usize, String, Arc<Clock>)>>();
+        let shutdown = Arc::new(AtomicBool::new(false));
+        type Setup = anyhow::Result<(u32, usize, String, Arc<Clock>)>;
+        let (setup_tx, setup_rx) = std::sync::mpsc::channel::<Setup>();
         let meters2 = meters.clone();
+        let shutdown2 = shutdown.clone();
+        let wanted = device_id.map(str::to_string);
 
         // The cpal stream isn't Send on every platform, so it lives on its own thread.
         std::thread::Builder::new().name("openq-audio-out".into()).spawn(move || {
             let res = (|| -> anyhow::Result<(cpal::Stream, u32, usize, String, Arc<Clock>)> {
                 let host = cpal::default_host();
-                let device = host.default_output_device().context("no default audio output device")?;
-                let name = device
-                    .description()
-                    .map(|d| d.to_string())
-                    .unwrap_or_else(|_| "default".to_string());
+                let device = match &wanted {
+                    Some(id) => {
+                        let parsed = id.parse().map_err(|e| anyhow!("bad device id {id}: {e:?}"))?;
+                        host.device_by_id(&parsed).with_context(|| format!("audio device not found: {id}"))?
+                    }
+                    None => host.default_output_device().context("no default audio output device")?,
+                };
+                let name = device.description().map(|d| d.to_string()).unwrap_or_else(|_| "default".to_string());
                 let supported = device.default_output_config()?;
                 let format = supported.sample_format();
                 let config: StreamConfig = supported.into();
@@ -400,11 +495,11 @@ impl AudioOutput {
             match res {
                 Ok((stream, rate, ch, name, clock)) => {
                     let _ = setup_tx.send(Ok((rate, ch, name, clock)));
-                    // Keep the stream alive for the life of the process.
-                    loop {
-                        std::thread::park();
-                        let _ = &stream;
+                    // Keep the stream alive until the output is dropped.
+                    while !shutdown2.load(Ordering::Acquire) {
+                        std::thread::park_timeout(Duration::from_millis(100));
                     }
+                    drop(stream);
                 }
                 Err(e) => {
                     let _ = setup_tx.send(Err(e));
@@ -419,9 +514,11 @@ impl AudioOutput {
             garbage: gb_rx,
             clock,
             meters,
+            shutdown,
             rate,
             channels,
             device_name,
+            device_id: device_id.map(str::to_string),
             voices: HashMap::new(),
             preloaded: HashMap::new(),
             next_id: 1,
@@ -434,10 +531,11 @@ impl AudioOutput {
         }
     }
 
-    fn create_voice(&mut self, params: &AudioCue) -> VoiceHandle {
+    fn create_voice(&mut self, params: &AudioCue, src_channels: usize) -> VoiceHandle {
         let id = self.next_id;
         self.next_id += 1;
-        let cap = (self.rate as f64 * VOICE_BUFFER_SECS) as usize * self.channels;
+        let src = src_channels.clamp(1, MAX_SRC_CHANNELS);
+        let cap = (self.rate as f64 * VOICE_BUFFER_SECS) as usize * src;
         let (tx, rx) = rtrb::RingBuffer::<f32>::new(cap);
         let shared = Arc::new(VoiceShared::default());
         decoder::spawn(
@@ -446,36 +544,41 @@ impl AudioOutput {
                 start: params.start_time.max(0.0),
                 end: params.end_time,
                 plays: if params.infinite_loop { None } else { Some(params.play_count.max(1)) },
+                rate: params.rate as f64,
+                channels: src,
             },
             self.rate,
-            self.channels,
             tx,
             shared.clone(),
         );
+        let (eq, eq_bands) = eq_coeffs(&params.eq, self.rate as f32);
         let voice = Box::new(Voice {
             id,
             rx,
             shared: shared.clone(),
             state: VoiceState::Idle,
+            src_channels: src,
             gain: db_to_gain(params.volume_db),
             pan: pan_gains(params.pan),
+            matrix: build_matrix(params, src, self.channels),
+            eq,
+            eq_bands,
+            eq_state: Default::default(),
             ramp: None,
             stop_after_ramp: false,
             done: false,
         });
         self.send(Cmd::Add(voice));
-        VoiceHandle { id, shared, params: params.clone(), error_reported: false }
+        VoiceHandle { id, shared, params: params.clone(), src_channels: src, error_reported: false }
     }
 
     /// Keep exactly these cues preloaded (buffered and ready to start instantly).
-    pub fn set_preloaded(&mut self, cues: &[(CueId, &AudioCue)]) {
-        let keep: Vec<CueId> = cues.iter().map(|c| c.0).collect();
+    /// Each entry is (cue, params, source channel count).
+    pub fn set_preloaded(&mut self, cues: &[(CueId, &AudioCue, usize)]) {
         let stale: Vec<CueId> = self
             .preloaded
             .iter()
-            .filter(|(id, h)| {
-                !keep.contains(id) || cues.iter().find(|c| c.0 == **id).is_none_or(|c| *c.1 != h.params)
-            })
+            .filter(|(id, h)| cues.iter().find(|c| c.0 == **id).is_none_or(|c| *c.1 != h.params))
             .map(|(id, _)| *id)
             .collect();
         for id in stale {
@@ -483,15 +586,15 @@ impl AudioOutput {
                 self.send(Cmd::Stop(h.id));
             }
         }
-        for (id, p) in cues {
-            if !self.preloaded.contains_key(id) && !p.path.as_os_str().is_empty() {
-                let h = self.create_voice(p);
+        for (id, p, src) in cues {
+            if !self.preloaded.contains_key(id) && p.path.exists() {
+                let h = self.create_voice(p, *src);
                 self.preloaded.insert(*id, h);
             }
         }
     }
 
-    pub fn start(&mut self, cue: CueId, params: &AudioCue, at: Instant) -> Result<(), String> {
+    pub fn start(&mut self, cue: CueId, params: &AudioCue, src_channels: usize, at: Instant) -> Result<(), String> {
         if params.path.as_os_str().is_empty() {
             return Err("no audio file".into());
         }
@@ -503,9 +606,9 @@ impl AudioOutput {
             Some(h) if h.params == *params && !h.shared.finished.load(Ordering::Acquire) => h,
             Some(h) => {
                 self.send(Cmd::Stop(h.id));
-                self.create_voice(params)
+                self.create_voice(params, src_channels)
             }
-            None => self.create_voice(params),
+            None => self.create_voice(params, src_channels),
         };
         if let Some(err) = handle.shared.error.lock().clone() {
             self.send(Cmd::Stop(handle.id));
@@ -544,6 +647,29 @@ impl AudioOutput {
         }
     }
 
+    /// Apply edits to a playing cue: level (short ramp), pan, EQ and routing take effect now.
+    /// (Timing edits like start/end/rate apply the next time the cue starts.)
+    pub fn update_live(&mut self, cue: CueId, params: &AudioCue) {
+        let Some(h) = self.voices.get_mut(&cue) else { return };
+        let (id, src) = (h.id, h.src_channels);
+        let old = std::mem::replace(&mut h.params, params.clone());
+        if old.volume_db != params.volume_db {
+            let frames = (0.03 * self.rate as f64) as u64;
+            self.send(Cmd::Ramp { id, to: db_to_gain(params.volume_db), frames, curve: FadeCurve::Linear, at: 0, stop_after: false });
+        }
+        if old.pan != params.pan {
+            self.send(Cmd::Pan { id, pan: pan_gains(params.pan) });
+        }
+        if old.eq != params.eq {
+            let (coeffs, bands) = eq_coeffs(&params.eq, self.rate as f32);
+            self.send(Cmd::Eq { id, coeffs, bands });
+        }
+        if old.routing != params.routing {
+            let matrix = Box::new(build_matrix(params, src, self.channels));
+            self.send(Cmd::Matrix { id, matrix });
+        }
+    }
+
     pub fn set_master(&mut self, db: f32) {
         self.send(Cmd::Master(db_to_gain(db)));
     }
@@ -557,6 +683,7 @@ impl AudioOutput {
         self.voices.get(&cue).is_none_or(|h| h.shared.finished.load(Ordering::Acquire))
     }
 
+    /// Wall-clock seconds of audio played for this cue.
     pub fn elapsed(&self, cue: CueId) -> Option<f64> {
         self.voices
             .get(&cue)
@@ -584,10 +711,10 @@ impl AudioOutput {
             .collect()
     }
 
-    /// Housekeeping: free retired voices.
+    /// Housekeeping: free retired voices and matrices.
     pub fn update(&mut self) {
-        while let Ok(v) = self.garbage.pop() {
-            drop(v);
+        while let Ok(g) = self.garbage.pop() {
+            drop(g);
         }
     }
 }
@@ -616,4 +743,68 @@ where
         None,
     )?;
     Ok(stream)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::model::{Eq, EqBand, EqKind};
+
+    /// Push `input` (interleaved, `src` channels) into a voice and render it once.
+    fn render_once(params: &AudioCue, src: usize, out_ch: usize, input: &[f32]) -> Vec<f32> {
+        let (mut tx, rx) = rtrb::RingBuffer::<f32>::new(input.len().max(1));
+        for s in input {
+            tx.push(*s).unwrap();
+        }
+        let (eq, eq_bands) = eq_coeffs(&params.eq, 48000.0);
+        let mut v = Voice {
+            id: 1,
+            rx,
+            shared: Arc::new(VoiceShared::default()),
+            state: VoiceState::Playing,
+            src_channels: src,
+            gain: db_to_gain(params.volume_db),
+            pan: pan_gains(params.pan),
+            matrix: build_matrix(params, src, out_ch),
+            eq,
+            eq_bands,
+            eq_state: Default::default(),
+            ramp: None,
+            stop_after_ramp: false,
+            done: false,
+        };
+        let frames = input.len() / src;
+        let mut out = vec![0.0; frames * out_ch];
+        render_voice(&mut v, &mut out, out_ch, frames, 0);
+        out
+    }
+
+    #[test]
+    fn mono_feeds_both_outputs_and_custom_routing_overrides() {
+        let p = AudioCue::default();
+        let out = render_once(&p, 1, 2, &[0.5; 4]);
+        assert!(out.iter().all(|s| (s - 0.5).abs() < 1e-5), "{out:?}");
+
+        // Stereo swapped L/R into a 4-channel device, -6 dB on the crosspoints.
+        let p = AudioCue {
+            routing: Some(vec![vec![-60.0, -6.0, -60.0, -60.0], vec![-6.0, -60.0, -60.0, -60.0]]),
+            ..Default::default()
+        };
+        let out = render_once(&p, 2, 4, &[1.0, 0.0, 1.0, 0.0]);
+        assert!(out[0].abs() < 1e-5);
+        assert!((out[1] - 0.501).abs() < 0.01, "{out:?}");
+        assert_eq!(out[2], 0.0);
+    }
+
+    #[test]
+    fn eq_is_applied_in_the_voice() {
+        // A -40 dB low shelf nearly removes DC.
+        let eq = Eq {
+            enabled: true,
+            bands: vec![EqBand { enabled: true, kind: EqKind::LowShelf, freq: 1000.0, gain_db: -40.0, q: 0.707 }],
+        };
+        let p = AudioCue { eq, ..Default::default() };
+        let out = render_once(&p, 1, 1, &[1.0; 4800]);
+        assert!(out.last().unwrap().abs() < 0.02, "{}", out.last().unwrap());
+    }
 }

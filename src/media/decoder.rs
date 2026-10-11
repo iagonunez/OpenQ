@@ -3,7 +3,7 @@
 use super::audio::VoiceShared;
 use anyhow::{Context, anyhow};
 use rubato::audioadapter_buffers::direct::SequentialSliceOfVecs;
-use rubato::{Fft, FixedSync, Indexing, Resampler};
+use rubato::{Async, Fft, FixedAsync, FixedSync, Indexing, Resampler, SincInterpolationParameters};
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::sync::atomic::Ordering;
@@ -21,6 +21,90 @@ pub struct DecodeParams {
     pub end: Option<f64>,
     /// None = loop forever.
     pub plays: Option<u32>,
+    /// Playback speed (resampling ratio is scaled by this).
+    pub rate: f64,
+    /// Channels to emit (source channels, padded/truncated). The mixer does the routing.
+    pub channels: usize,
+}
+
+/// Peak overview of a file for waveform display.
+#[derive(Debug, Default)]
+pub struct Waveform {
+    /// (min, max) of the mixed-down signal per bucket.
+    pub peaks: Vec<[f32; 2]>,
+    /// Seconds per bucket.
+    pub bucket_secs: f64,
+    pub duration: f64,
+}
+
+impl Waveform {
+    /// (min, max) over the time range [t0, t1).
+    pub fn range(&self, t0: f64, t1: f64) -> [f32; 2] {
+        if self.peaks.is_empty() || self.bucket_secs <= 0.0 {
+            return [0.0, 0.0];
+        }
+        let n = self.peaks.len();
+        let i0 = ((t0 / self.bucket_secs).floor().max(0.0) as usize).min(n - 1);
+        let i1 = ((t1 / self.bucket_secs).ceil().max(0.0) as usize).clamp(i0 + 1, n);
+        self.peaks[i0..i1]
+            .iter()
+            .fold([0.0f32, 0.0f32], |a, p| [a[0].min(p[0]), a[1].max(p[1])])
+    }
+}
+
+/// Decode the whole file into a 10 ms peak overview.
+pub fn waveform(path: &Path) -> anyhow::Result<Waveform> {
+    let mut o = open(path)?;
+    let per_bucket = (o.rate as usize / 100).max(1);
+    let mut peaks = Vec::new();
+    let mut cur = [0f32, 0f32];
+    let mut in_bucket = 0usize;
+    let mut total = 0u64;
+    let mut planar: Vec<Vec<f32>> = Vec::new();
+    loop {
+        let packet = match o.format.next_packet() {
+            Ok(Some(p)) => p,
+            Ok(None) => break,
+            Err(SymError::ResetRequired) => {
+                o.decoder.reset();
+                continue;
+            }
+            Err(SymError::IoError(_)) => break,
+            Err(e) => return Err(anyhow!(e)),
+        };
+        if packet.track_id != o.track_id {
+            continue;
+        }
+        let buf = match o.decoder.decode(&packet) {
+            Ok(b) => b,
+            Err(SymError::DecodeError(_)) | Err(SymError::IoError(_)) => continue,
+            Err(e) => return Err(anyhow!(e)),
+        };
+        let frames = buf.frames();
+        buf.copy_to_vecs_planar::<f32>(&mut planar);
+        for f in 0..frames {
+            for ch in planar.iter() {
+                let v = ch[f];
+                cur[0] = cur[0].min(v);
+                cur[1] = cur[1].max(v);
+            }
+            in_bucket += 1;
+            if in_bucket == per_bucket {
+                peaks.push(cur);
+                cur = [0.0, 0.0];
+                in_bucket = 0;
+            }
+        }
+        total += frames as u64;
+    }
+    if in_bucket > 0 {
+        peaks.push(cur);
+    }
+    Ok(Waveform {
+        peaks,
+        bucket_secs: per_bucket as f64 / o.rate as f64,
+        duration: total as f64 / o.rate as f64,
+    })
 }
 
 /// Basic facts about an audio file.
@@ -76,18 +160,12 @@ pub fn probe(path: &Path) -> anyhow::Result<AudioInfo> {
     Ok(AudioInfo { duration: o.duration, sample_rate: o.rate, channels: o.channels.unwrap_or(2) })
 }
 
-pub fn spawn(
-    path: PathBuf,
-    params: DecodeParams,
-    out_rate: u32,
-    out_channels: usize,
-    tx: rtrb::Producer<f32>,
-    shared: Arc<VoiceShared>,
-) {
+pub fn spawn(path: PathBuf, params: DecodeParams, out_rate: u32, tx: rtrb::Producer<f32>, shared: Arc<VoiceShared>) {
     let name = format!("openq-dec-{}", path.file_name().map(|f| f.to_string_lossy()).unwrap_or_default());
     let sh = shared.clone();
     let res = std::thread::Builder::new().name(name).spawn(move || {
-        let mut sink = Sink { tx, shared: sh.clone(), out_channels, resampler: None, scratch: Vec::new() };
+        let mut sink =
+            Sink { tx, shared: sh.clone(), out_channels: params.channels.max(1), resampler: None, scratch: Vec::new() };
         if let Err(e) = run(&path, &params, out_rate, &mut sink)
             && e.downcast_ref::<Stopped>().is_none()
         {
@@ -117,9 +195,9 @@ fn run(path: &Path, p: &DecodeParams, out_rate: u32, sink: &mut Sink) -> anyhow:
     loop {
         // Re-open for every pass: robust for formats with poor seeking, and cheap.
         let mut o = open(path)?;
-        if sink.resampler.is_none() && o.rate != out_rate {
-            let ch = o.channels.unwrap_or(2);
-            sink.resampler = Some(Resample::new(o.rate, out_rate, ch)?);
+        let rate = if p.rate.is_finite() && p.rate > 0.0 { p.rate.clamp(0.05, 8.0) } else { 1.0 };
+        if sink.resampler.is_none() && (o.rate != out_rate || (rate - 1.0).abs() > 1e-6) {
+            sink.resampler = Some(Resample::new(o.rate, out_rate, rate, sink.out_channels)?);
         }
         if p.start > 0.0 {
             let time = Time::try_from_secs_f64(p.start).context("bad start time")?;
@@ -189,7 +267,7 @@ fn run(path: &Path, p: &DecodeParams, out_rate: u32, sink: &mut Sink) -> anyhow:
 }
 
 struct Resample {
-    rs: Fft<f32>,
+    rs: Box<dyn Resampler<f32>>,
     channels: usize,
     acc: Vec<Vec<f32>>,
     out: Vec<Vec<f32>>,
@@ -200,9 +278,20 @@ struct Resample {
 }
 
 impl Resample {
-    fn new(from: u32, to: u32, channels: usize) -> anyhow::Result<Self> {
-        let rs = Fft::<f32>::new(from as usize, to as usize, 1024, channels, FixedSync::Input)
-            .map_err(|e| anyhow!("resampler: {e}"))?;
+    fn new(from: u32, to: u32, speed: f64, channels: usize) -> anyhow::Result<Self> {
+        let ratio = to as f64 / (from as f64 * speed);
+        let rs: Box<dyn Resampler<f32>> = if (speed - 1.0).abs() < 1e-6 {
+            // Fixed rational ratio: FFT resampler is fastest and cleanest.
+            Box::new(
+                Fft::<f32>::new(from as usize, to as usize, 1024, channels, FixedSync::Input)
+                    .map_err(|e| anyhow!("resampler: {e}"))?,
+            )
+        } else {
+            Box::new(
+                Async::<f32>::new_sinc(ratio, 1.1, &SincInterpolationParameters::default(), 1024, channels, FixedAsync::Input)
+                    .map_err(|e| anyhow!("resampler: {e}"))?,
+            )
+        };
         let out_max = rs.output_frames_max();
         Ok(Self {
             delay_left: rs.output_delay(),
@@ -212,7 +301,7 @@ impl Resample {
             out: vec![vec![0.0; out_max]; channels],
             in_total: 0,
             out_total: 0,
-            ratio: to as f64 / from as f64,
+            ratio,
         })
     }
 }
@@ -294,27 +383,18 @@ impl Sink {
         Ok(())
     }
 
-    /// Map channels, interleave and push frames [lo, hi) into the ring buffer (blocking).
+    /// Interleave frames [lo, hi) as `out_channels` channels (pad with silence / truncate) and
+    /// push them into the ring buffer (blocking).
     fn write(&mut self, planar: &[Vec<f32>], lo: usize, hi: usize) -> anyhow::Result<()> {
-        let src_ch = planar.len();
         let out_ch = self.out_channels;
-        if src_ch == 0 {
+        if planar.is_empty() {
             return Ok(());
         }
         self.scratch.clear();
         self.scratch.reserve((hi - lo) * out_ch);
         for f in lo..hi {
             for o in 0..out_ch {
-                let s = if out_ch == 1 {
-                    planar.iter().map(|c| c[f]).sum::<f32>() / src_ch as f32
-                } else if src_ch == 1 {
-                    if o < 2 { planar[0][f] } else { 0.0 }
-                } else if o < src_ch {
-                    planar[o][f]
-                } else {
-                    0.0
-                };
-                self.scratch.push(s);
+                self.scratch.push(planar.get(o).map_or(0.0, |c| c[f]));
             }
         }
         let mut off = 0;

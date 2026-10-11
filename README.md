@@ -10,7 +10,8 @@ cargo run --release --example smoke     # headless end-to-end check of real audi
 ```
 
 Video needs GStreamer (`gst-plugins-base`, plus `-good`/`-libav` for common containers and codecs).
-Build without it with `--no-default-features`.
+Build without it with `--no-default-features`. GPU video decoders are off by default (NVIDIA's NVDEC
+can hang inside a GPU-rendering process); turn them on in Settings → General.
 
 ## Cues
 
@@ -26,6 +27,27 @@ Every cue has a number, name, notes, color, armed flag, **pre-wait**, **post-wai
 
 Group modes: start first child and enter the group, playlist (start the first child and skip past
 the group), start all children at once, start a random child.
+
+### Audio cues
+
+- **Time & Loops**: waveform with draggable start/end trim markers (drag to pan, Ctrl+scroll to
+  zoom, live playhead), play count / infinite loop, and **rate** (varispeed, pitch follows).
+- **Levels & Routing**: level, pan, and a per-cue **routing matrix** (file channels → device
+  outputs, dB per crosspoint).
+- **EQ**: up to 8 bands (high/low-pass, shelves, peaks) with a response curve; drag handles to set
+  frequency/gain, scroll on a handle for Q.
+- Level, pan, EQ and routing changes apply live to a playing cue. Pick the output device in
+  Settings → Audio.
+
+### Video cues
+
+- Movies and still images (PNG/JPEG/…; stills can show for a set time or until stopped).
+- Start/end trim, loops, hold last frame.
+- **Geometry**: position, scale (proportional or not), rotation, opacity, layer, fit/fill/stretch.
+- **Fade cues** can animate level, opacity *and* geometry.
+- **Stages**: any number of outputs (Settings → Video stages), each with its own canvas size and
+  window. *Edit mapping* shows a test pattern and four corner pins; drag them (or nudge with the
+  arrow keys) for keystone correction / projection mapping. Double-click or F11 for fullscreen.
 
 ## Keys
 
@@ -47,12 +69,15 @@ can also drop media files from your file manager onto the window.
 
 ```
 src/model.rs        cue tree, workspace file (.openq JSON, media paths stored relative)
+src/dsp.rs          biquad EQ (design, response, processing)
+src/geometry.rs     layer placement + corner-pin homography
 src/engine.rs       cue state machine (GO, waits, continues, groups, fades, pause, panic)
-src/media/audio.rs  cpal output + lock-free real-time mixer (sample-accurate starts, gain ramps)
+src/media/audio.rs  cpal output + lock-free real-time mixer (sample-accurate starts, gain ramps,
+                    per-voice EQ and routing matrix)
 src/media/decoder.rs  per-voice symphonia decode → trim/loop → rubato resample → ring buffer
-src/media/video.rs  GStreamer playbin → RGBA frames for the stage window
+src/media/video.rs  GStreamer playbin / still images → RGBA frames, geometry and fades
 src/show.rs         shared state + 1 kHz engine thread
-src/ui/             egui front end (cue list, inspector, transport, active cues, stage)
+src/ui/             egui front end (cue list, inspector tabs, waveform, EQ, stages + mapping)
 ```
 
 The engine works on logical timestamps, so the timing error does not build up along a chain of

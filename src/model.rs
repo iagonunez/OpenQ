@@ -181,6 +181,155 @@ impl VideoFit {
     }
 }
 
+/// Most source channels a cue's routing matrix handles.
+pub const MAX_SRC_CHANNELS: usize = 8;
+/// Most output channels a cue's routing matrix handles.
+pub const MAX_OUT_CHANNELS: usize = 16;
+pub const MAX_EQ_BANDS: usize = 8;
+
+#[derive(Serialize, Deserialize, Clone, Copy, PartialEq, Eq, Debug)]
+pub enum EqKind {
+    HighPass,
+    LowShelf,
+    Peak,
+    HighShelf,
+    LowPass,
+}
+
+impl EqKind {
+    pub const ALL: [EqKind; 5] = [EqKind::HighPass, EqKind::LowShelf, EqKind::Peak, EqKind::HighShelf, EqKind::LowPass];
+
+    pub fn label(self) -> &'static str {
+        match self {
+            EqKind::HighPass => "High-pass",
+            EqKind::LowShelf => "Low shelf",
+            EqKind::Peak => "Peak",
+            EqKind::HighShelf => "High shelf",
+            EqKind::LowPass => "Low-pass",
+        }
+    }
+
+    pub fn has_gain(self) -> bool {
+        matches!(self, EqKind::LowShelf | EqKind::Peak | EqKind::HighShelf)
+    }
+}
+
+#[derive(Serialize, Deserialize, Clone, Copy, PartialEq, Debug)]
+pub struct EqBand {
+    pub enabled: bool,
+    pub kind: EqKind,
+    pub freq: f32,
+    pub gain_db: f32,
+    pub q: f32,
+}
+
+#[derive(Serialize, Deserialize, Clone, PartialEq, Debug)]
+#[serde(default)]
+pub struct Eq {
+    pub enabled: bool,
+    pub bands: Vec<EqBand>,
+}
+
+impl Default for Eq {
+    fn default() -> Self {
+        let b = |enabled, kind, freq, q| EqBand { enabled, kind, freq, gain_db: 0.0, q };
+        Self {
+            enabled: false,
+            bands: vec![
+                b(false, EqKind::HighPass, 80.0, 0.707),
+                b(true, EqKind::LowShelf, 120.0, 0.707),
+                b(true, EqKind::Peak, 500.0, 1.0),
+                b(true, EqKind::Peak, 2000.0, 1.0),
+                b(true, EqKind::HighShelf, 8000.0, 0.707),
+                b(false, EqKind::LowPass, 16000.0, 0.707),
+            ],
+        }
+    }
+}
+
+/// Default source→output mapping as linear gains `[src][out]`: mono feeds the first two
+/// outputs, multichannel maps 1:1, everything folds down to a mono output.
+pub fn default_routing(src: usize, out: usize) -> Vec<Vec<f32>> {
+    let mut m = vec![vec![0.0; out]; src];
+    for (s, row) in m.iter_mut().enumerate() {
+        for (o, g) in row.iter_mut().enumerate() {
+            *g = if out == 1 {
+                1.0 / src as f32
+            } else if src == 1 {
+                if o < 2 { 1.0 } else { 0.0 }
+            } else if s == o {
+                1.0
+            } else {
+                0.0
+            };
+        }
+    }
+    m
+}
+
+/// Position/scale/rotation of a video layer on its stage.
+#[derive(Serialize, Deserialize, Clone, Copy, PartialEq, Debug)]
+#[serde(default)]
+pub struct Geometry {
+    /// Offset as a fraction of the stage width (0 = centred, 0.5 = half a stage to the right).
+    pub x: f32,
+    /// Offset as a fraction of the stage height (positive = down).
+    pub y: f32,
+    pub scale_x: f32,
+    pub scale_y: f32,
+    /// Degrees clockwise.
+    pub rotation: f32,
+}
+
+impl Default for Geometry {
+    fn default() -> Self {
+        Self { x: 0.0, y: 0.0, scale_x: 1.0, scale_y: 1.0, rotation: 0.0 }
+    }
+}
+
+impl Geometry {
+    pub fn lerp(&self, to: &Geometry, t: f32) -> Geometry {
+        let l = |a: f32, b: f32| a + (b - a) * t;
+        Geometry {
+            x: l(self.x, to.x),
+            y: l(self.y, to.y),
+            scale_x: l(self.scale_x, to.scale_x),
+            scale_y: l(self.scale_y, to.scale_y),
+            rotation: l(self.rotation, to.rotation),
+        }
+    }
+}
+
+pub type StageId = Uuid;
+
+/// A video output (projector/screen). Its canvas is warped onto the window with four corner
+/// pins for keystone correction / projection mapping.
+#[derive(Serialize, Deserialize, Clone, PartialEq, Debug)]
+#[serde(default)]
+pub struct Stage {
+    pub id: StageId,
+    pub name: String,
+    pub width: u32,
+    pub height: u32,
+    /// Window-normalised positions of the canvas corners: top-left, top-right, bottom-right,
+    /// bottom-left.
+    pub corners: [[f32; 2]; 4],
+}
+
+impl Stage {
+    pub const IDENTITY: [[f32; 2]; 4] = [[0.0, 0.0], [1.0, 0.0], [1.0, 1.0], [0.0, 1.0]];
+
+    pub fn new(name: &str) -> Self {
+        Self { id: Uuid::new_v4(), name: name.into(), width: 1920, height: 1080, corners: Self::IDENTITY }
+    }
+}
+
+impl Default for Stage {
+    fn default() -> Self {
+        Self::new("Main")
+    }
+}
+
 #[derive(Serialize, Deserialize, Clone, PartialEq, Debug)]
 #[serde(default)]
 pub struct AudioCue {
@@ -194,6 +343,27 @@ pub struct AudioCue {
     pub end_time: Option<f64>,
     pub play_count: u32,
     pub infinite_loop: bool,
+    /// Playback speed (varispeed: pitch follows). 1 = normal.
+    pub rate: f32,
+    pub eq: Eq,
+    /// Custom routing in dB, `[source channel][output channel]`; None = automatic.
+    pub routing: Option<Vec<Vec<f32>>>,
+}
+
+impl AudioCue {
+    /// Linear routing gains for `src` source and `out` output channels.
+    pub fn routing_gains(&self, src: usize, out: usize) -> Vec<Vec<f32>> {
+        match &self.routing {
+            None => default_routing(src, out),
+            Some(m) => (0..src)
+                .map(|s| {
+                    (0..out)
+                        .map(|o| m.get(s).and_then(|r| r.get(o)).map_or(0.0, |db| db_to_gain(*db)))
+                        .collect()
+                })
+                .collect(),
+        }
+    }
 }
 
 impl Default for AudioCue {
@@ -206,6 +376,9 @@ impl Default for AudioCue {
             end_time: None,
             play_count: 1,
             infinite_loop: false,
+            rate: 1.0,
+            eq: Eq::default(),
+            routing: None,
         }
     }
 }
@@ -221,10 +394,17 @@ pub struct VideoCue {
     pub layer: i32,
     pub fit: VideoFit,
     pub start_time: f64,
+    /// Seconds into the file to stop at (None = end of file).
+    pub end_time: Option<f64>,
     pub play_count: u32,
     pub infinite_loop: bool,
     /// Keep showing the last frame when playback ends instead of clearing.
     pub hold_last_frame: bool,
+    /// Output stage (None = the first stage).
+    pub stage: Option<StageId>,
+    pub geometry: Geometry,
+    /// For still images: seconds to show (0 = until stopped).
+    pub still_duration: f64,
 }
 
 impl Default for VideoCue {
@@ -236,9 +416,13 @@ impl Default for VideoCue {
             layer: 0,
             fit: VideoFit::Fit,
             start_time: 0.0,
+            end_time: None,
             play_count: 1,
             infinite_loop: false,
             hold_last_frame: false,
+            stage: None,
+            geometry: Geometry::default(),
+            still_duration: 0.0,
         }
     }
 }
@@ -253,6 +437,8 @@ pub struct FadeCue {
     pub volume_db: Option<f32>,
     /// Fade video opacity to this value (None = leave opacity alone).
     pub opacity: Option<f32>,
+    /// Fade video geometry to this value (None = leave geometry alone).
+    pub geometry: Option<Geometry>,
     pub stop_target_when_done: bool,
 }
 
@@ -264,6 +450,7 @@ impl Default for FadeCue {
             curve: FadeCurve::SCurve,
             volume_db: Some(MIN_DB),
             opacity: None,
+            geometry: None,
             stop_target_when_done: true,
         }
     }
@@ -715,29 +902,53 @@ pub struct Settings {
     pub master_volume_db: f32,
     /// Ignore a second GO within this many seconds (double-GO protection).
     pub double_go_protection: f64,
+    /// cpal output device id (None = system default).
+    pub audio_device: Option<String>,
+    /// Use GPU video decoders (can be unstable with some drivers).
+    pub hardware_video_decoding: bool,
 }
 
 impl Default for Settings {
     fn default() -> Self {
-        Self { panic_fade: 1.0, master_volume_db: 0.0, double_go_protection: 0.25 }
+        Self { panic_fade: 1.0, master_volume_db: 0.0, double_go_protection: 0.25, audio_device: None, hardware_video_decoding: false }
     }
 }
 
-#[derive(Serialize, Deserialize, Clone, Debug, Default, PartialEq)]
+#[derive(Serialize, Deserialize, Clone, Debug, PartialEq)]
 #[serde(default)]
 pub struct Workspace {
     pub format_version: u32,
     pub cue_list: CueList,
     pub settings: Settings,
+    pub stages: Vec<Stage>,
+}
+
+impl Default for Workspace {
+    fn default() -> Self {
+        Self {
+            format_version: Self::FORMAT_VERSION,
+            cue_list: CueList::default(),
+            settings: Settings::default(),
+            stages: vec![Stage::default()],
+        }
+    }
 }
 
 impl Workspace {
+    /// The stage a video cue plays on (falls back to the first stage).
+    pub fn stage_for(&self, stage: Option<StageId>) -> Option<&Stage> {
+        stage.and_then(|id| self.stages.iter().find(|s| s.id == id)).or(self.stages.first())
+    }
+
     pub const FORMAT_VERSION: u32 = 1;
     pub const EXTENSION: &'static str = "openq";
 
     pub fn load(path: &Path) -> anyhow::Result<Self> {
         let s = std::fs::read_to_string(path)?;
         let mut ws: Workspace = serde_json::from_str(&s)?;
+        if ws.stages.is_empty() {
+            ws.stages.push(Stage::default());
+        }
         // Resolve media paths stored relative to the workspace file.
         if let Some(dir) = path.parent() {
             for_each_media_path(&mut ws.cue_list.cues, &mut |p| {

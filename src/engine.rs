@@ -21,6 +21,7 @@ const MAX_LOG: usize = 200;
 pub struct FadeRequest {
     pub volume_db: Option<f32>,
     pub opacity: Option<f32>,
+    pub geometry: Option<crate::model::Geometry>,
     pub duration: f64,
     pub curve: FadeCurve,
 }
@@ -288,6 +289,7 @@ impl Engine {
         let req = FadeRequest {
             volume_db: Some(MIN_DB),
             opacity: Some(0.0),
+            geometry: None,
             duration: fade,
             curve: FadeCurve::Linear,
         };
@@ -519,6 +521,7 @@ impl Engine {
                 let req = FadeRequest {
                     volume_db: f.volume_db,
                     opacity: f.opacity,
+                    geometry: f.geometry,
                     duration: f.duration.max(0.0),
                     curve: f.curve,
                 };
