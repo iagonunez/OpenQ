@@ -203,8 +203,19 @@ footer { margin-top: 56px; padding-top: 18px; border-top: 1px solid var(--border
 
 <section id="start">
   <h2><span class="n">01</span>Getting started</h2>
-  <p>OpenQ runs on Linux, macOS and Windows. Video needs the system FFmpeg libraries.
-  To build and run it from the source folder:</p>
+  <h3>Installing</h3>
+  <div class="table-wrap"><table>
+    <thead><tr><th>System</th><th>How</th></tr></thead>
+    <tbody>
+      <tr><td>Windows 10/11 (64-bit)</td><td>Download <code>OpenQ-…-windows-x64.zip</code> from the
+      <a href="https://github.com/iagonunez/OpenQ/releases">Releases page</a>, unzip it anywhere and run <code>OpenQ.exe</code>.
+      Keep the <code>.dll</code> files next to it. If Windows says it protected your PC, choose <em>More info → Run anyway</em>.</td></tr>
+      <tr><td>macOS 11 or later</td><td>Download the zip for your Mac (<code>arm64</code> for Apple silicon, <code>x86_64</code> for Intel),
+      unzip it and drag <code>OpenQ.app</code> to Applications. The first time, right-click it and choose <em>Open</em>.</td></tr>
+      <tr><td>Linux</td><td>Build it from source with your distribution's FFmpeg. The commands are in the project README.</td></tr>
+    </tbody>
+  </table></div>
+  <p>The Windows and macOS downloads include FFmpeg for video. To build from source on any system:</p>
 <pre><code>cargo run --release                  # start with an empty show
 cargo run --release -- show.openq    # open a saved show</code></pre>
   <h3>Your first show</h3>

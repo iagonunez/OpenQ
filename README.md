@@ -3,6 +3,28 @@
 An open-source show-control / cue playback system, written in Rust with egui.
 Free to use, including for commercial productions. See [Licence](#licence).
 
+## Install
+
+- **Windows 10/11 (64-bit) and macOS 11+ (Apple silicon or Intel):** download the zip for your
+  system from the [Releases](https://github.com/iagonunez/OpenQ/releases) page. The zips include
+  FFmpeg for video, built without GPL parts. They aren't code-signed: on Windows choose
+  *More info → Run anyway*; on macOS right-click OpenQ.app and choose *Open*.
+- **Linux:** build from source, using your distribution's FFmpeg:
+
+  ```sh
+  # Debian/Ubuntu
+  sudo apt install build-essential clang pkg-config libasound2-dev libudev-dev \
+    libavcodec-dev libavformat-dev libavutil-dev libavdevice-dev libavfilter-dev \
+    libswscale-dev libswresample-dev
+  # Fedora:  sudo dnf install clang pkgconf alsa-lib-devel systemd-devel ffmpeg-free-devel
+  # Arch:    sudo pacman -S --needed base-devel clang pkgconf alsa-lib ffmpeg
+  curl https://sh.rustup.rs -sSf | sh          # Rust, if you don't have it
+  git clone https://github.com/iagonunez/OpenQ && cd OpenQ
+  cargo build --release && ./target/release/openq
+  ```
+
+## Development
+
 ```sh
 cargo run --release                     # empty workspace
 cargo run --release -- show.openq       # open a workspace
@@ -12,9 +34,13 @@ cargo run --release --example smoke     # headless end-to-end check of real audi
 
 User manual: open `docs/manual/index.html` in a browser. API documentation: `cargo doc --no-deps --open`.
 
-Video uses the system FFmpeg libraries (libavformat/libavcodec/libswscale/libswresample, plus
-clang at build time), so anything FFmpeg can play works, with no codec plugins to install. Build
-without video with `--no-default-features`.
+Video uses the FFmpeg libraries (the system's on Linux; bundled in the Windows and macOS
+releases), plus clang at build time, so anything FFmpeg can play works, with no codec plugins to
+install. Build without video with `--no-default-features`.
+
+**Releases** are built by `.github/workflows/release.yml` when a `v*` tag is pushed. It builds the
+Windows package with BtbN's LGPL-only FFmpeg, and the macOS packages (arm64 and x86_64) with FFmpeg
+compiled by `tools/build_ffmpeg_macos.sh`. It then attaches the matching FFmpeg sources to the release.
 
 ## Cues
 

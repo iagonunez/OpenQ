@@ -65,6 +65,12 @@ Notable cases:
   > GPL 2 only), so a binary combined with a GPL FFmpeg can be distributed, but only under GPL 3
   > as a whole, with its complete source.
   > Distributing the source code is not affected.
+
+  The official Windows and macOS releases do this. They bundle FFmpeg 9.0 shared libraries
+  configured without GPL, version-3 or nonfree parts. The release workflow refuses any other
+  configuration. Each zip has the LGPL text and build details under `Licenses/ffmpeg`, and the
+  release page carries the exact FFmpeg source. The libraries stay replaceable, as the LGPL
+  requires (see `packaging/FFMPEG.md`).
 - **Audio, windowing and graphics:** the operating system's own libraries (ALSA/PipeWire, X11,
   Wayland, Vulkan/OpenGL, CoreAudio, WASAPI…), under their own terms.
 - **System fonts:** Text cues can use any font installed on the computer. The show file stores

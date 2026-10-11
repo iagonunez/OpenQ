@@ -1,0 +1,143 @@
+# Builds OpenQ for Windows and macOS with LGPL-only FFmpeg libraries and publishes a GitHub
+# release. Push a tag like `v0.1.0` to release; run it by hand (Actions → Release → Run
+# workflow) to build the packages as workflow artifacts without publishing.
+# Linux users build from source (see README), so no Linux binaries are published.
+name: Release
+
+on:
+  push:
+    tags: ["v*"]
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+env:
+  FFMPEG_VERSION: "9.0.2"     # macOS: source release built by tools/build_ffmpeg_macos.sh
+  FFMPEG_WIN_SERIES: "9.0"    # Windows: BtbN lgpl-shared build of this release series
+  CARGO_TERM_COLOR: always
+
+jobs:
+  windows:
+    runs-on: windows-latest
+    defaults: { run: { shell: pwsh } }
+    steps:
+      - uses: actions/checkout@v4
+      - name: Rust
+        run: rustup toolchain install stable --profile minimal && rustup default stable
+      - name: FFmpeg (LGPL, shared) from BtbN
+        env: { GH_TOKEN: "${{ github.token }}" }
+        run: |
+          # Newest dated build of the series: its file name carries the exact FFmpeg commit.
+          $pattern = "^ffmpeg-n$env:FFMPEG_WIN_SERIES\.\d+.*-win64-lgpl-shared-$env:FFMPEG_WIN_SERIES\.zip$"
+          $asset = $null; $tag = $null
+          foreach ($r in (gh api "repos/BtbN/FFmpeg-Builds/releases?per_page=10" | ConvertFrom-Json)) {
+            if ($r.tag_name -notlike 'autobuild-*') { continue }
+            $a = $r.assets | Where-Object { $_.name -match $pattern } | Select-Object -First 1
+            if ($a) { $asset = $a; $tag = $r.tag_name; break }
+          }
+          if (-not $asset) { throw "no BtbN $env:FFMPEG_WIN_SERIES lgpl-shared build found" }
+          Invoke-WebRequest $asset.browser_download_url -OutFile ffmpeg.zip
+          Expand-Archive ffmpeg.zip -DestinationPath .
+          $dir = (Resolve-Path ($asset.name -replace '\.zip$','')).Path
+          "FFMPEG_DIR=$dir" | Out-File -Append $env:GITHUB_ENV
+          "LIBCLANG_PATH=C:\Program Files\LLVM\bin" | Out-File -Append $env:GITHUB_ENV
+          # e.g. ffmpeg-n9.0.2-25-g67b60c310b-... -> commit 67b60c310b
+          if ($asset.name -match '-g([0-9a-f]{7,})-') { $commit = $Matches[1] } else { $commit = "n$env:FFMPEG_WIN_SERIES" }
+          "Build: $($asset.name) (BtbN release $tag)`nFFmpeg commit: $commit" | Set-Content ffmpeg-windows-build.txt
+          "FFMPEG_WIN_COMMIT=$commit" | Out-File -Append $env:GITHUB_ENV
+      - name: Build
+        run: cargo build --release --locked
+      - name: Package
+        run: |
+          $v = if ($env:GITHUB_REF_TYPE -eq 'tag') { $env:GITHUB_REF_NAME } else { "dev-$($env:GITHUB_SHA.Substring(0,7))" }
+          pwsh tools/package_windows.ps1 -Binary target/release/openq.exe -FFmpeg $env:FFMPEG_DIR -Version $v -OutDir dist
+          Copy-Item ffmpeg-windows-build.txt dist/
+          "$env:FFMPEG_WIN_COMMIT" | Set-Content dist/ffmpeg-windows-commit.txt
+      - uses: actions/upload-artifact@v4
+        with: { name: windows, path: dist/* }
+
+  macos:
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - { runner: macos-15, arch: arm64 }
+          - { runner: macos-15-intel, arch: x86_64 }
+    runs-on: ${{ matrix.runner }}
+    steps:
+      - uses: actions/checkout@v4
+      - name: Rust
+        run: rustup toolchain install stable --profile minimal && rustup default stable
+      - name: Cache FFmpeg
+        id: ffcache
+        uses: actions/cache@v4
+        with:
+          path: ffmpeg-out
+          key: ffmpeg-${{ env.FFMPEG_VERSION }}-${{ matrix.arch }}-${{ hashFiles('tools/build_ffmpeg_macos.sh') }}
+      - name: Build FFmpeg (LGPL, shared)
+        if: steps.ffcache.outputs.cache-hit != 'true'
+        run: |
+          brew install nasm pkg-config || true
+          tools/build_ffmpeg_macos.sh "$FFMPEG_VERSION" "$PWD/ffmpeg-out"
+      - name: Build
+        run: |
+          export FFMPEG_DIR="$PWD/ffmpeg-out"
+          export PKG_CONFIG_PATH="$PWD/ffmpeg-out/lib/pkgconfig"
+          export MACOSX_DEPLOYMENT_TARGET=11.0
+          cargo build --release --locked
+      - name: Package
+        run: |
+          if [ "$GITHUB_REF_TYPE" = tag ]; then v="$GITHUB_REF_NAME"; else v="dev-${GITHUB_SHA::7}"; fi
+          tools/package_macos.sh target/release/openq "$PWD/ffmpeg-out" "$v" "${{ matrix.arch }}" dist
+          if [ "${{ matrix.arch }}" = arm64 ]; then
+            cp "ffmpeg-out/src/ffmpeg-${FFMPEG_VERSION}.tar.xz" "dist/ffmpeg-${FFMPEG_VERSION}-source.tar.xz"
+          fi
+      - uses: actions/upload-artifact@v4
+        with: { name: "macos-${{ matrix.arch }}", path: dist/* }
+
+  release:
+    if: github.ref_type == 'tag'
+    needs: [windows, macos]
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/download-artifact@v4
+        with: { path: dist, merge-multiple: true }
+      - name: FFmpeg source for the Windows libraries
+        run: |
+          commit="$(cat dist/ffmpeg-windows-commit.txt | tr -d '\r\n')"
+          curl -fsSL "https://github.com/FFmpeg/FFmpeg/archive/${commit}.tar.gz" \
+            -o "dist/ffmpeg-windows-${commit}-source.tar.gz"
+          rm dist/ffmpeg-windows-commit.txt
+      - name: Publish
+        env: { GH_TOKEN: "${{ github.token }}" }
+        run: |
+          win_build="$(cat dist/ffmpeg-windows-build.txt)"
+          rm dist/ffmpeg-windows-build.txt
+          cat > notes.md <<EOF
+          ## Downloads
+
+          | System | File |
+          |---|---|
+          | Windows 10/11, 64-bit | \`OpenQ-${GITHUB_REF_NAME}-windows-x64.zip\` |
+          | macOS 11+, Apple silicon | \`OpenQ-${GITHUB_REF_NAME}-macos-arm64.zip\` |
+          | macOS 11+, Intel | \`OpenQ-${GITHUB_REF_NAME}-macos-x86_64.zip\` |
+          | Linux | Build from source: see the README (\`cargo build --release\`, with your distribution's FFmpeg). |
+
+          These builds aren't code-signed or notarised. On Windows choose **More info → Run anyway**.
+          On macOS, right-click OpenQ.app and choose **Open** (the README inside the zip has details).
+
+          ## Licences
+
+          OpenQ is licensed under the Apache License 2.0 (\`LICENSE.md\`):
+          it is free to use, change, share and sell, including for commercial
+          productions. Third-party notices are in \`NOTICE.md\`, \`THIRD_PARTY_LICENSES.md\` and the
+          \`Licenses\` folder in each zip.
+
+          Video uses **FFmpeg** libraries under the LGPL 2.1 or later, built **without GPL or nonfree
+          parts**. They are bundled as replaceable shared libraries. The exact sources are attached
+          here: \`ffmpeg-${FFMPEG_VERSION}-source.tar.xz\` (macOS) and \`ffmpeg-windows-*-source.tar.gz\`
+          (Windows, ${win_build//$'\n'/; }).
+          EOF
+          gh release create "$GITHUB_REF_NAME" dist/* --title "OpenQ ${GITHUB_REF_NAME}" --notes-file notes.md --verify-tag
