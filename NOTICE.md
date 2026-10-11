@@ -70,6 +70,13 @@ Notable cases:
 - **System fonts:** Text cues can use any font installed on the computer. The show file stores
   only the font's name. Each font's licence governs its use on stage.
 
+## Media formats and patents
+
+OpenQ decodes audio with Symphonia: WAV, FLAC, MP3, Vorbis, ALAC, AAC and others. Patents on MP3
+have expired. Some countries may still have patents on AAC. If you distribute binaries
+commercially where those apply, think about patent licensing, or build Symphonia without the
+`aac` feature. Video codecs come from the system FFmpeg (see above) and aren't part of OpenQ.
+
 ## User manual
 
 `docs/manual` is part of OpenQ and is under the same licence. Its screenshots show OpenQ itself. The web

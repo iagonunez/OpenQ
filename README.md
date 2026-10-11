@@ -1,6 +1,7 @@
 # OpenQ
 
 An open-source show-control / cue playback system, written in Rust with egui.
+Free to use, including for commercial productions. See [Licence](#licence).
 
 ```sh
 cargo run --release                     # empty workspace
@@ -187,3 +188,5 @@ in the app under **Help → About OpenQ and licences**. Two points to note when 
   under GPL 3, with its complete source.
 
 After changing dependencies, run `python3 -I tools/third_party_licenses.py`.
+
+OpenQ is open source: the Apache License 2.0 is approved by the Open Source Initiative.
