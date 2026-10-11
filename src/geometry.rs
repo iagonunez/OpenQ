@@ -91,7 +91,20 @@ pub fn layer_quad(canvas: [f32; 2], image: [f32; 2], fit: VideoFit, g: &Geometry
         let (rx, ry) = (x * cos - y * sin, x * sin + y * cos);
         [(centre[0] + rx) / cw, (centre[1] + ry) / ch]
     });
-    LayerQuad { corners, uv }
+    let full = LayerQuad { corners, uv };
+    // Crop trims the picture in place: shrink both the quad and the UV rect to the kept part.
+    let [l, t, r, b] = g.crop.map(|c| c.clamp(0.0, 1.0));
+    let (s0, s1) = (l, (1.0 - r).max(l));
+    let (t0, t1) = (t, (1.0 - b).max(t));
+    if (s0, t0, s1, t1) == (0.0, 0.0, 1.0, 1.0) {
+        return full;
+    }
+    let [u0, v0] = full.uv_at(s0, t0);
+    let [u1, v1] = full.uv_at(s1, t1);
+    LayerQuad {
+        corners: [full.point(s0, t0), full.point(s1, t0), full.point(s1, t1), full.point(s0, t1)],
+        uv: [u0, v0, u1, v1],
+    }
 }
 
 /// Map a point in source-canvas coordinates into an output that shows `crop` of that canvas.
@@ -165,5 +178,14 @@ mod tests {
         // Top-left corner rotates to the top-right position.
         assert!(close(q.corners[0], [1.0, 0.25]));
         assert!(close(q.point(0.5, 0.5), [0.75, 0.5]));
+    }
+
+    #[test]
+    fn crop_trims_in_place() {
+        let g = Geometry { crop: [0.25, 0.0, 0.0, 0.5], ..Default::default() };
+        let q = layer_quad([100.0, 100.0], [100.0, 100.0], VideoFit::Stretch, &g);
+        assert!(close(q.corners[0], [0.25, 0.0]));
+        assert!(close(q.corners[2], [1.0, 0.5]));
+        assert_eq!(q.uv, [0.25, 0.0, 1.0, 0.5]);
     }
 }

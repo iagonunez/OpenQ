@@ -14,6 +14,7 @@ fastrand = "2.5.0"
 ffmpeg-next = { version = "9", optional = true }
 image = { version = "0.25", default-features = false, features = ["png", "jpeg", "bmp", "gif", "webp", "tiff"] }
 log = "0.4.34"
+winit = { version = "0.30", default-features = false }
 midir = "0.11.1"
 parking_lot = "0.12.5"
 rfd = "0.17.2"

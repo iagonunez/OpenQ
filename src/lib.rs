@@ -1,5 +1,6 @@
 //! OpenQ — an open-source show control / cue playback system.
 
+pub mod displays;
 pub mod dsp;
 pub mod engine;
 pub mod geometry;

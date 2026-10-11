@@ -4,6 +4,9 @@ mod cue_list;
 mod eq;
 mod icons;
 mod inspector;
+mod outputs;
+#[cfg(feature = "video")]
+mod preview;
 #[cfg(feature = "video")]
 mod stage;
 mod theme;
@@ -17,6 +20,7 @@ use crate::model::{
 };
 use crate::show::{SharedShow, Show};
 use egui::{Color32, Key, KeyboardShortcut, Modifiers, RichText};
+use parking_lot::Mutex;
 use std::collections::HashSet;
 use std::path::PathBuf;
 use std::sync::Arc;
@@ -69,6 +73,15 @@ pub struct App {
     stage_open: HashSet<StageId>,
     stage_fullscreen: HashSet<StageId>,
     mapping_edit: HashSet<StageId>,
+    /// Displays a stage can be sent to, and the monitor index last applied to each stage window.
+    displays: Arc<Mutex<outputs::DisplayList>>,
+    #[cfg(feature = "video")]
+    stage_monitor: std::collections::HashMap<StageId, Option<usize>>,
+    show_preview: bool,
+    #[cfg(feature = "video")]
+    posters: Arc<media::Posters>,
+    #[cfg(feature = "video")]
+    preview_tex: Option<(String, egui::TextureHandle, [f32; 2])>,
     waveforms: Arc<Waveforms>,
     inspector_tab: inspector::Tab,
     settings_tab: SettingsTab,
@@ -111,6 +124,14 @@ impl App {
             stage_open: HashSet::new(),
             stage_fullscreen: HashSet::new(),
             mapping_edit: HashSet::new(),
+            displays: Default::default(),
+            #[cfg(feature = "video")]
+            stage_monitor: Default::default(),
+            show_preview: false,
+            #[cfg(feature = "video")]
+            posters: media::Posters::new(),
+            #[cfg(feature = "video")]
+            preview_tex: None,
             waveforms: Waveforms::new(),
             inspector_tab: Default::default(),
             settings_tab: SettingsTab::General,
@@ -752,28 +773,47 @@ impl App {
                     self.toggle_mode();
                 }
             });
-            ui.menu_button("Window", |ui| {
-                for st in &show.ws.stages {
-                    let mut open = self.stage_open.contains(&st.id);
-                    if ui
-                        .checkbox(
-                            &mut open,
-                            wi(I::DESKTOP_WINDOWS, &format!("Stage: {}", st.name)),
-                        )
-                        .changed()
-                    {
-                        if open {
-                            self.stage_open.insert(st.id);
-                        } else {
-                            self.stage_open.remove(&st.id);
+            ui.menu_button("Video", |ui| {
+                let mut edited = false;
+                for st in show.ws.stages.iter_mut() {
+                    let open = self.stage_open.contains(&st.id);
+                    let glyph = if open { I::DESKTOP_WINDOWS } else { I::MONITOR };
+                    ui.menu_button(wi(glyph, &format!("Stage: {}", st.name)), |ui| {
+                        let mut open = open;
+                        if ui.checkbox(&mut open, "Show stage window").changed() {
+                            if open {
+                                self.stage_open.insert(st.id);
+                            } else {
+                                self.stage_open.remove(&st.id);
+                            }
                         }
-                    }
+                        let mut editing = self.mapping_edit.contains(&st.id);
+                        if ui.checkbox(&mut editing, "Edit mapping").changed() {
+                            if editing {
+                                self.mapping_edit.insert(st.id);
+                                self.stage_open.insert(st.id);
+                            } else {
+                                self.mapping_edit.remove(&st.id);
+                            }
+                        }
+                        ui.separator();
+                        ui.label(theme::caption("Output"));
+                        edited |= self.output_choices(ui, st);
+                    });
                 }
+                if edited {
+                    show.edited();
+                }
+                ui.separator();
                 if ui.button(wi(I::CROP_FREE, "Stages & mapping…")).clicked() {
                     self.show_settings = true;
                     self.settings_tab = SettingsTab::Stages;
                     ui.close();
                 }
+            });
+            ui.menu_button("View", |ui| {
+                #[cfg(feature = "video")]
+                ui.checkbox(&mut self.show_preview, wi(I::PREVIEW, "Geometry preview"));
                 ui.checkbox(&mut self.show_log, wi(I::RECEIPT_LONG, "Engine log"));
             });
         });
@@ -833,7 +873,7 @@ impl App {
             }
 
             // Standby card.
-            let right_w = 360.0;
+            let right_w = 250.0;
             let card_w = (ui.available_width() - right_w).max(240.0);
             egui::Frame::new()
                 .fill(theme::BG_RAISED)
@@ -949,34 +989,31 @@ impl App {
                     let Show { engine, media, .. } = show;
                     engine.pause_all(media, now);
                 }
-                ui.add_space(6.0);
-                self.mode_toggle(ui);
             });
         });
     }
 
-    /// Edit / Show segmented control: two halves that fill the container exactly.
-    fn mode_toggle(&mut self, ui: &mut egui::Ui) {
-        use egui::{Align2, CornerRadius, Rect, Sense, Stroke, StrokeKind, pos2, vec2};
-        let (rect, _) = ui.allocate_exact_size(vec2(96.0, 84.0), Sense::hover());
+    /// Edit / Show segmented control: two halves side by side that fill `rect` exactly.
+    fn mode_toggle(&mut self, ui: &mut egui::Ui, rect: egui::Rect) {
+        use egui::{CornerRadius, Rect, Sense, Stroke, StrokeKind, pos2, vec2};
         let p = ui.painter();
-        p.rect_filled(rect, CornerRadius::same(12), theme::BG_INPUT);
+        p.rect_filled(rect, CornerRadius::same(8), theme::BG_INPUT);
         p.rect_stroke(
             rect,
-            CornerRadius::same(12),
+            CornerRadius::same(8),
             Stroke::new(1.0, theme::BORDER),
             StrokeKind::Inside,
         );
-        let inner = rect.shrink(4.0);
-        let gap = 4.0;
-        let h = (inner.height() - gap) / 2.0;
+        let inner = rect.shrink(3.0);
+        let gap = 3.0;
+        let w = (inner.width() - gap) / 2.0;
         let halves = [
             (
                 Mode::Edit,
                 icons::EDIT,
                 "Edit",
                 theme::ACCENT,
-                Rect::from_min_size(inner.min, vec2(inner.width(), h)),
+                Rect::from_min_size(inner.min, vec2(w, inner.height())),
             ),
             (
                 Mode::Show,
@@ -984,8 +1021,8 @@ impl App {
                 "Show",
                 theme::RED,
                 Rect::from_min_size(
-                    pos2(inner.left(), inner.top() + h + gap),
-                    vec2(inner.width(), h),
+                    pos2(inner.left() + w + gap, inner.top()),
+                    vec2(w, inner.height()),
                 ),
             ),
         ];
@@ -1002,15 +1039,15 @@ impl App {
                 Color32::TRANSPARENT
             };
             let p = ui.painter();
-            p.rect_filled(r, CornerRadius::same(8), fill);
+            p.rect_filled(r, CornerRadius::same(6), fill);
             let fg = if on || resp.hovered() {
                 Color32::WHITE
             } else {
                 theme::TEXT_DIM
             };
             // Icon and label laid out as one centred group.
-            let icon_g = p.layout_no_wrap(glyph.to_string(), theme::icon_font(17.0), fg);
-            let text_g = p.layout_no_wrap(label.to_string(), theme::semibold(13.5), fg);
+            let icon_g = p.layout_no_wrap(glyph.to_string(), theme::icon_font(16.0), fg);
+            let text_g = p.layout_no_wrap(label.to_string(), theme::semibold(12.5), fg);
             let total = icon_g.size().x + 6.0 + text_g.size().x;
             let x0 = r.center().x - total / 2.0;
             p.galley(
@@ -1033,7 +1070,6 @@ impl App {
             {
                 self.toggle_mode();
             }
-            let _ = Align2::CENTER_CENTER;
         }
     }
 
@@ -1055,6 +1091,11 @@ impl App {
             .unwrap_or_else(|| "Untitled".into());
         let label = format!("{name}{}", if show.dirty { "  •" } else { "" });
         ui.painter().text(rect.center(), egui::Align2::CENTER_CENTER, label, egui::FontId::proportional(14.0), theme::TEXT_DIM);
+        let toggle = egui::Rect::from_min_size(
+            egui::pos2(rect.right() - 168.0, rect.center().y - 13.0),
+            egui::vec2(168.0, 26.0),
+        );
+        self.mode_toggle(ui, toggle);
     }
 
     /// Output level meter with a dB scale (one bar per device channel, up to 8).
@@ -1576,6 +1617,7 @@ impl App {
                         if fs {
                             self.stage_fullscreen.insert(st.id);
                         }
+                        #[cfg(feature = "video")]
                         ui.ctx().send_viewport_cmd_to(
                             stage::viewport_id(st.id),
                             egui::ViewportCommand::Fullscreen(fs),
@@ -1603,6 +1645,16 @@ impl App {
                     {
                         st.corners = Stage::IDENTITY;
                     }
+                });
+                ui.horizontal(|ui| {
+                    ui.label("Output");
+                    let label = st.output.clone().unwrap_or_else(|| "Window".into());
+                    egui::ComboBox::from_id_salt(("stage-output", st.id))
+                        .selected_text(label)
+                        .width(260.0)
+                        .show_ui(ui, |ui| {
+                            self.output_choices(ui, st);
+                        });
                 });
                 if st.corners != Stage::IDENTITY {
                     ui.label(
@@ -1693,6 +1745,8 @@ impl App {
                 self.selection.clear();
                 self.collapsed.clear();
                 self.last_playhead = None;
+                // Stages assigned to a display come up on it straight away.
+                self.stage_open.extend(s.ws.stages.iter().filter(|st| st.output.is_some()).map(|st| st.id));
                 drop(s);
                 self.notify(format!("Opened {}", path.display()));
             }
@@ -1840,6 +1894,9 @@ impl App {
             {
                 self.mapping_edit.insert(st.id);
                 self.stage_open.insert(st.id);
+            }
+            if std::env::var_os("OPENQ_SCREENSHOT_PREVIEW").is_some() {
+                self.show_preview = true;
             }
             if let Ok(t) = std::env::var("OPENQ_SCREENSHOT_SETTINGS") {
                 self.show_settings = true;
@@ -2002,6 +2059,8 @@ impl eframe::App for App {
             if self.show_settings {
                 self.settings_window(&ctx, show);
             }
+            #[cfg(feature = "video")]
+            self.geometry_preview(&ctx, show);
             self.track_undo(&ctx, show);
             self.sync_osc(&ctx, show);
 

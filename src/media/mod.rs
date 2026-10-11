@@ -7,7 +7,9 @@ pub mod text;
 pub mod video;
 
 use crate::engine::{Backend, FadeRequest};
-use crate::model::{Cue, CueId, CueKind, NetworkCue, VideoCue};
+#[cfg(feature = "video")]
+use crate::model::VideoCue;
+use crate::model::{Cue, CueId, CueKind, NetworkCue};
 use parking_lot::Mutex;
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
@@ -99,6 +101,83 @@ impl Waveforms {
             }
         }
     }
+}
+
+/// A still preview of a video or image file: RGBA plus its size.
+#[derive(Clone)]
+pub struct Poster {
+    pub width: u32,
+    pub height: u32,
+    pub rgba: Arc<Vec<u8>>,
+    /// Full size of the source picture (the poster itself may be scaled down).
+    pub source_size: [u32; 2],
+}
+
+type PosterKey = (PathBuf, u32);
+type PosterResult = Result<Poster, String>;
+
+/// Background poster-frame loader with a cache, keyed by file and time (in 10 ms steps).
+pub struct Posters {
+    cache: Mutex<HashMap<PosterKey, Option<PosterResult>>>,
+    tx: Mutex<std::sync::mpsc::Sender<PosterKey>>,
+}
+
+impl Posters {
+    pub const MAX_SIDE: u32 = 640;
+
+    pub fn new() -> Arc<Self> {
+        let (tx, rx) = std::sync::mpsc::channel::<PosterKey>();
+        let p = Arc::new(Self { cache: Mutex::new(HashMap::new()), tx: Mutex::new(tx) });
+        let weak = Arc::downgrade(&p);
+        std::thread::Builder::new()
+            .name("openq-poster".into())
+            .spawn(move || {
+                while let Ok(key) = rx.recv() {
+                    let res = load_poster(&key.0, key.1 as f64 / 100.0).map_err(|e| format!("{e:#}"));
+                    let Some(p) = weak.upgrade() else { break };
+                    p.cache.lock().insert(key, Some(res));
+                }
+            })
+            .expect("spawn poster thread");
+        p
+    }
+
+    /// The poster if ready; queues it otherwise.
+    pub fn get(&self, path: &Path, at: f64) -> Option<PosterResult> {
+        if path.as_os_str().is_empty() {
+            return None;
+        }
+        let key = (path.to_path_buf(), (at.max(0.0) * 100.0).round() as u32);
+        let mut c = self.cache.lock();
+        match c.get(&key) {
+            Some(r) => r.clone(),
+            None => {
+                c.insert(key.clone(), None);
+                let _ = self.tx.lock().send(key);
+                None
+            }
+        }
+    }
+}
+
+fn load_poster(path: &Path, at: f64) -> anyhow::Result<Poster> {
+    let (width, height, rgba, source_size) = if is_image_path(path) {
+        let img = image::open(path)?;
+        let size = [img.width(), img.height()];
+        let img = img.thumbnail(Posters::MAX_SIDE, Posters::MAX_SIDE).to_rgba8();
+        (img.width(), img.height(), img.into_raw(), size)
+    } else {
+        #[cfg(feature = "video")]
+        {
+            video::poster(path, at, Posters::MAX_SIDE)?
+        }
+        #[cfg(not(feature = "video"))]
+        {
+            let _ = at;
+            anyhow::bail!("video support is not built in")
+        }
+    };
+    Ok(Poster { width, height, rgba: Arc::new(rgba), source_size })
 }
 
 fn probe_now(path: &Path) -> Result<MediaInfo, String> {
@@ -548,6 +627,7 @@ impl Backend for Media {
     }
 
     fn drain_errors(&mut self) -> Vec<String> {
+        #[cfg_attr(not(feature = "video"), allow(unused_mut))]
         let mut out = self.audio.as_mut().map(|a| a.drain_errors()).unwrap_or_default();
         #[cfg(feature = "video")]
         if let Some(v) = &mut self.video {

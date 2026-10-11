@@ -155,8 +155,12 @@ impl App {
                 }
             }
             Tab::Geometry => match &mut cue.kind {
-                CueKind::Video(v) => video_geometry(ui, v, &ctx),
+                CueKind::Video(v) => {
+                    preview_toggle(ui, &mut self.show_preview);
+                    video_geometry(ui, v, &ctx)
+                }
                 CueKind::Text(t) => {
+                    preview_toggle(ui, &mut self.show_preview);
                     egui::Grid::new("tgeo").num_columns(2).spacing([10.0, 6.0]).show(ui, |ui| {
                         ui.label("Stage");
                         stage_combo(ui, "tstage", &mut t.stage, ctx.stages);
@@ -556,6 +560,14 @@ fn stage_combo(ui: &mut Ui, salt: &str, stage: &mut Option<StageId>, stages: &[(
     });
 }
 
+fn preview_toggle(ui: &mut Ui, open: &mut bool) {
+    if cfg!(feature = "video") {
+        ui.toggle_value(open, super::theme::with_icon(super::icons::PREVIEW, "Preview"))
+            .on_hover_text("Show where this layer lands on its stage (View → Geometry preview)");
+        ui.add_space(4.0);
+    }
+}
+
 fn video_geometry(ui: &mut Ui, v: &mut VideoCue, ctx: &Ctx) {
     egui::Grid::new("vgeo").num_columns(2).spacing([10.0, 6.0]).show(ui, |ui| {
         ui.label("Stage");
@@ -580,7 +592,7 @@ fn video_geometry(ui: &mut Ui, v: &mut VideoCue, ctx: &Ctx) {
 }
 
 /// Position / scale / rotation editor.
-fn geometry_editor(ui: &mut Ui, salt: &str, g: &mut Geometry) {
+pub(super) fn geometry_editor(ui: &mut Ui, salt: &str, g: &mut Geometry) {
     let lock_id = ui.id().with((salt, "lock"));
     let mut lock = ui.data(|d| d.get_temp::<bool>(lock_id)).unwrap_or(true);
     let pct = |v: f64, _| format!("{:.1}%", v * 100.0);
@@ -614,6 +626,21 @@ fn geometry_editor(ui: &mut Ui, salt: &str, g: &mut Geometry) {
         ui.end_row();
         ui.label("Rotation");
         ui.add(Slider::new(&mut g.rotation, -180.0..=180.0).suffix("°"));
+        ui.end_row();
+        ui.label("Crop");
+        ui.horizontal(|ui| {
+            for (i, side) in ["L", "T", "R", "B"].into_iter().enumerate() {
+                ui.label(side);
+                // Opposite edges can't cross.
+                let max = (1.0 - g.crop[(i + 2) % 4]).max(0.0);
+                ui.add(
+                    DragValue::new(&mut g.crop[i]).speed(0.002).range(0.0..=max).custom_formatter(pct).custom_parser(parse_pct),
+                );
+            }
+            if g.crop != [0.0; 4] && ui.small_button("Clear").clicked() {
+                g.crop = [0.0; 4];
+            }
+        });
         ui.end_row();
         ui.label("");
         if ui.button("Reset geometry").clicked() {

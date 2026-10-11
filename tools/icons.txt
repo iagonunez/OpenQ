@@ -88,3 +88,8 @@ flashlight_on
 light_mode
 tungsten
 format_color_fill
+tv
+monitor
+preview
+crop
+visibility

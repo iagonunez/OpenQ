@@ -22,8 +22,22 @@ fn to_screen(h: &Homography, rect: Rect, u: f32, v: f32) -> Pos2 {
 }
 
 impl App {
+    /// Index (in winit's monitor order) of the display a stage should be fullscreen on.
+    fn monitor_index(&self, stage: &Stage) -> Option<usize> {
+        let name = stage.output.as_ref()?;
+        self.displays.lock().list.iter().position(|d| &d.name == name)
+    }
+
     /// Draw every open stage window. Returns true if any video is on screen.
     pub(super) fn stages(&mut self, ctx: &egui::Context, show: &mut Show) -> bool {
+        {
+            let d = self.displays.lock();
+            let needed = !d.loaded && !d.loading;
+            drop(d);
+            if needed {
+                self.refresh_displays(ctx);
+            }
+        }
         let layers = show.media.stage_layers();
         let first = show.ws.stages.first().map(|s| s.id);
         let ids: Vec<StageId> = show.ws.stages.iter().map(|s| s.id).collect();
@@ -47,13 +61,18 @@ impl App {
             let mut corners = stage.corners;
             let mut close = false;
             let mut toggle_fs = false;
-            let textures = &mut self.textures;
             let aspect = stage.height.max(1) as f32 / stage.width.max(1) as f32;
+            let monitor = self.monitor_index(&stage);
+            let mut builder = ViewportBuilder::default()
+                .with_title(format!("{} — OpenQ Stage", stage.name))
+                .with_inner_size([960.0, 960.0 * aspect]);
+            if let Some(i) = monitor {
+                builder = builder.with_monitor(i);
+            }
+            let textures = &mut self.textures;
             ctx.show_viewport_immediate(
                 viewport_id(stage.id),
-                ViewportBuilder::default()
-                    .with_title(format!("{} — OpenQ Stage", stage.name))
-                    .with_inner_size([960.0, 960.0 * aspect]),
+                builder,
                 |ui, _class| {
                     let ctx = ui.ctx().clone();
                     let rect = ui.max_rect();
@@ -85,24 +104,7 @@ impl App {
                         drop(f);
                         let q = layer_quad(canvas, img, l.fit, &l.geometry);
                         let tint = Color32::WHITE.gamma_multiply(l.opacity.clamp(0.0, 1.0));
-                        let mut mesh = Mesh::with_texture(entry.0.id());
-                        for j in 0..=GRID {
-                            for i in 0..=GRID {
-                                let (s, t) = (i as f32 / GRID as f32, j as f32 / GRID as f32);
-                                let [u, v] = q.point(s, t);
-                                let [tu, tv] = q.uv_at(s, t);
-                                mesh.vertices.push(Vertex { pos: to_screen(&h, rect, u, v), uv: pos2(tu, tv), color: tint });
-                            }
-                        }
-                        let w = (GRID + 1) as u32;
-                        for j in 0..GRID as u32 {
-                            for i in 0..GRID as u32 {
-                                let a = j * w + i;
-                                mesh.add_triangle(a, a + 1, a + w);
-                                mesh.add_triangle(a + 1, a + w + 1, a + w);
-                            }
-                        }
-                        painter.add(Shape::mesh(mesh));
+                        painter.add(layer_mesh(entry.0.id(), &q, tint, |u, v| to_screen(&h, rect, u, v)));
                     }
 
                     if editing {
@@ -171,6 +173,25 @@ impl App {
                     }
                 },
             );
+            // Follow output changes on an open window (a new window starts on its monitor).
+            match self.stage_monitor.insert(stage.id, monitor) {
+                Some(prev) if prev != monitor => {
+                    let cmd = match monitor {
+                        Some(i) => ViewportCommand::SetMonitor(i),
+                        None => ViewportCommand::Fullscreen(false),
+                    };
+                    ctx.send_viewport_cmd_to(viewport_id(stage.id), cmd);
+                    if monitor.is_some() {
+                        self.stage_fullscreen.insert(stage.id);
+                    } else {
+                        self.stage_fullscreen.remove(&stage.id);
+                    }
+                }
+                None if monitor.is_some() => {
+                    self.stage_fullscreen.insert(stage.id);
+                }
+                _ => {}
+            }
             if toggle_fs {
                 let fs = !self.stage_fullscreen.remove(&stage.id);
                 if fs {
@@ -180,6 +201,7 @@ impl App {
             }
             if close {
                 self.stage_open.remove(&stage.id);
+                self.stage_monitor.remove(&stage.id);
                 self.stage_fullscreen.remove(&stage.id);
                 self.mapping_edit.remove(&stage.id);
             }
@@ -192,6 +214,33 @@ impl App {
         }
         !layers.is_empty()
     }
+}
+
+/// A textured layer as a subdivided mesh; `place` maps canvas coordinates to the screen.
+pub(super) fn layer_mesh(
+    tex: egui::TextureId,
+    q: &crate::geometry::LayerQuad,
+    tint: Color32,
+    place: impl Fn(f32, f32) -> Pos2,
+) -> Shape {
+    let mut mesh = Mesh::with_texture(tex);
+    for j in 0..=GRID {
+        for i in 0..=GRID {
+            let (s, t) = (i as f32 / GRID as f32, j as f32 / GRID as f32);
+            let [u, v] = q.point(s, t);
+            let [tu, tv] = q.uv_at(s, t);
+            mesh.vertices.push(Vertex { pos: place(u, v), uv: pos2(tu, tv), color: tint });
+        }
+    }
+    let w = (GRID + 1) as u32;
+    for j in 0..GRID as u32 {
+        for i in 0..GRID as u32 {
+            let a = j * w + i;
+            mesh.add_triangle(a, a + 1, a + w);
+            mesh.add_triangle(a + 1, a + w + 1, a + w);
+        }
+    }
+    Shape::mesh(mesh)
 }
 
 /// Grid, border and diagonals drawn through the mapping, for lining up a projector.

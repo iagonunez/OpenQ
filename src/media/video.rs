@@ -915,3 +915,50 @@ pub fn probe(path: &Path) -> anyhow::Result<VideoInfo> {
     }
     Ok(info)
 }
+
+/// One RGBA frame of a movie at `at` seconds (or the first frame after it), scaled so neither
+/// side exceeds `max_side`. Used for previews.
+/// Returns the scaled size, the pixels and the movie's own size.
+pub fn poster(path: &Path, at: f64, max_side: u32) -> anyhow::Result<(u32, u32, Vec<u8>, [u32; 2])> {
+    let mut ictx = ff::format::input(&path).with_context(|| format!("cannot open {}", path.display()))?;
+    let stream = ictx.streams().best(ff::media::Type::Video).context("no video stream")?;
+    let (idx, tb) = (stream.index(), f64::from(stream.time_base()));
+    let mut dec = ff::codec::context::Context::from_parameters(stream.parameters())?.decoder().video()?;
+    if at > 0.0 {
+        let ts = (at * f64::from(ff::ffi::AV_TIME_BASE)) as i64;
+        ictx.seek(ts, ..ts + 1).context("seek failed")?;
+    }
+    let mut frame = ff::util::frame::video::Video::empty();
+    let mut got = false;
+    'read: for (s, packet) in ictx.packets() {
+        if s.index() != idx || dec.send_packet(&packet).is_err() {
+            continue;
+        }
+        while dec.receive_frame(&mut frame).is_ok() {
+            let pts = frame.timestamp().or(frame.pts()).unwrap_or(0) as f64 * tb;
+            if pts + 0.05 >= at {
+                got = true;
+                break 'read;
+            }
+        }
+    }
+    if !got {
+        dec.send_eof()?;
+        got = dec.receive_frame(&mut frame).is_ok();
+    }
+    anyhow::ensure!(got, "no frame at {at:.2}s");
+    let (w, h) = (frame.width(), frame.height());
+    let k = (max_side as f32 / w.max(h) as f32).min(1.0);
+    let (tw, th) = (((w as f32 * k) as u32).max(2), ((h as f32 * k) as u32).max(2));
+    let mut scaler =
+        ff::software::scaling::Context::get(frame.format(), w, h, ff::format::Pixel::RGBA, tw, th, ff::software::scaling::Flags::BILINEAR)?;
+    let mut rgba = ff::util::frame::video::Video::empty();
+    scaler.run(&frame, &mut rgba)?;
+    let (stride, row) = (rgba.stride(0), tw as usize * 4);
+    let src = rgba.data(0);
+    let mut data = Vec::with_capacity(row * th as usize);
+    for y in 0..th as usize {
+        data.extend_from_slice(&src[y * stride..y * stride + row]);
+    }
+    Ok((tw, th, data, [w, h]))
+}

@@ -1,8 +1,15 @@
-use openq::{media, show, ui};
+use openq::{displays, media, show, ui};
 use parking_lot::Mutex;
 use std::sync::Arc;
 
 fn main() -> eframe::Result {
+    if std::env::args().nth(1).as_deref() == Some(displays::LIST_FLAG) {
+        if let Err(e) = displays::print_list() {
+            eprintln!("{e:#}");
+            std::process::exit(1);
+        }
+        return Ok(());
+    }
     env_logger::Builder::from_env(env_logger::Env::default().default_filter_or("openq=info")).init();
 
     let prober = media::Prober::new();

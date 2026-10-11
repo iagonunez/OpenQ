@@ -282,11 +282,14 @@ pub struct Geometry {
     pub scale_y: f32,
     /// Degrees clockwise.
     pub rotation: f32,
+    /// Fraction of the image trimmed from each edge: left, top, right, bottom. The rest of the
+    /// picture stays where it was.
+    pub crop: [f32; 4],
 }
 
 impl Default for Geometry {
     fn default() -> Self {
-        Self { x: 0.0, y: 0.0, scale_x: 1.0, scale_y: 1.0, rotation: 0.0 }
+        Self { x: 0.0, y: 0.0, scale_x: 1.0, scale_y: 1.0, rotation: 0.0, crop: [0.0; 4] }
     }
 }
 
@@ -299,6 +302,7 @@ impl Geometry {
             scale_x: l(self.scale_x, to.scale_x),
             scale_y: l(self.scale_y, to.scale_y),
             rotation: l(self.rotation, to.rotation),
+            crop: std::array::from_fn(|i| l(self.crop[i], to.crop[i])),
         }
     }
 }
@@ -326,6 +330,8 @@ pub struct Stage {
     pub blend: [f32; 4],
     /// Projector gamma used to shape the blend so overlapping light adds up evenly.
     pub blend_gamma: f32,
+    /// System display (by name) the stage goes fullscreen on; `None` = an ordinary window.
+    pub output: Option<String>,
 }
 
 impl Stage {
@@ -346,6 +352,7 @@ impl Stage {
             crop: Self::FULL_CROP,
             blend: [0.0; 4],
             blend_gamma: 2.2,
+            output: None,
         }
     }
 }
