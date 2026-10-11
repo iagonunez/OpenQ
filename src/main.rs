@@ -22,6 +22,7 @@ fn main() -> eframe::Result {
         "OpenQ",
         options,
         Box::new(move |cc| {
+            ui::install_theme(&cc.egui_ctx);
             let ctx = cc.egui_ctx.clone();
             show::spawn_engine_thread(show.clone(), move || ctx.request_repaint());
             let mut app = ui::App::new(show, prober);

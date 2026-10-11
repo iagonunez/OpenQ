@@ -619,23 +619,6 @@ impl KindTag {
         }
     }
 
-    pub fn icon(self) -> &'static str {
-        match self {
-            KindTag::Audio => "🔊",
-            KindTag::Video => "🎬",
-            KindTag::Group => "📁",
-            KindTag::Wait => "⏳",
-            KindTag::Memo => "📝",
-            KindTag::Fade => "📉",
-            KindTag::Start => "▶",
-            KindTag::Stop => "⏹",
-            KindTag::Pause => "⏸",
-            KindTag::Goto => "➡",
-            KindTag::Devamp => "⏭",
-            KindTag::Network => "🖧",
-        }
-    }
-
     pub fn default_kind(self) -> CueKind {
         match self {
             KindTag::Audio => CueKind::Audio(AudioCue::default()),

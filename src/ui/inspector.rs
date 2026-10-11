@@ -97,10 +97,19 @@ impl App {
             self.inspector_tab = Tab::Basics;
         }
         ui.horizontal(|ui| {
-            ui.label(RichText::new(format!("{} {} {}", cue.kind.tag().icon(), cue.number, cue.display_name())).strong());
+            ui.label(super::theme::icon(super::theme::kind_icon(cue.kind.tag()), 18.0).color(super::theme::TEXT_DIM));
+            ui.label(RichText::new(format!("{}  {}", cue.number, cue.display_name())).font(super::theme::semibold(14.0)));
             ui.separator();
             for (t, label) in tabs {
-                ui.selectable_value(&mut self.inspector_tab, *t, *label);
+                let glyph = match t {
+                    Tab::Basics => super::icons::INFO,
+                    Tab::Time => super::icons::TIMER,
+                    Tab::Levels => super::icons::TUNE,
+                    Tab::Eq => super::icons::GRAPHIC_EQ,
+                    Tab::Geometry => super::icons::OPEN_WITH,
+                    Tab::Settings => super::icons::SETTINGS,
+                };
+                ui.selectable_value(&mut self.inspector_tab, *t, super::theme::with_icon(glyph, label));
             }
             if self.selection.len() > 1 {
                 ui.label(RichText::new(format!("({} selected — editing the last)", self.selection.len())).weak());
@@ -236,7 +245,7 @@ fn target_combo(ui: &mut Ui, salt: &str, target: &mut Option<CueId>, options: &[
     let selected = target
         .and_then(|t| options.iter().find(|o| o.0 == t))
         .map(|o| o.1.clone())
-        .unwrap_or_else(|| if target.is_some() { "⚠ missing cue".into() } else { none_label.into() });
+        .unwrap_or_else(|| if target.is_some() { super::theme::with_icon(super::icons::WARNING, "missing cue") } else { none_label.into() });
     ComboBox::from_id_salt(salt).width(220.0).selected_text(selected).show_ui(ui, |ui| {
         ui.selectable_value(target, None, none_label);
         for (id, label) in options {
@@ -250,7 +259,7 @@ fn file_row(ui: &mut Ui, path: &Path, prober: &Prober, pick: &mut bool) -> Optio
     let mut info = None;
     ui.label("File");
     ui.horizontal(|ui| {
-        if ui.button("Browse…").clicked() {
+        if ui.button(super::theme::with_icon(super::icons::FOLDER_OPEN, "Browse…")).clicked() {
             *pick = true;
         }
         if path.as_os_str().is_empty() {
@@ -396,7 +405,7 @@ fn slice_table(ui: &mut Ui, a: &mut AudioCue) {
                     m.plays = if forever { 0 } else { 1 };
                 }
             });
-            if ui.small_button("🗑").clicked() {
+            if super::theme::icon_button(ui, super::icons::DELETE, "Remove slice").clicked() {
                 remove = Some(i);
             }
             ui.end_row();
@@ -584,7 +593,8 @@ fn geometry_editor(ui: &mut Ui, salt: &str, g: &mut Geometry) {
                 ui.label("Y");
                 ui.add(DragValue::new(&mut g.scale_y).speed(0.005).range(0.0..=10.0).custom_formatter(pct).custom_parser(parse_pct));
             }
-            ui.checkbox(&mut lock, "🔒 proportional");
+            let glyph = if lock { super::icons::LOCK } else { super::icons::LOCK_OPEN };
+            ui.checkbox(&mut lock, super::theme::with_icon(glyph, "proportional"));
         });
         ui.end_row();
         ui.label("Rotation");

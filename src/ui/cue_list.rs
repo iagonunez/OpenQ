@@ -1,16 +1,16 @@
 //! The cue list: a table with playhead, live status, progress bars and drag & drop.
 
-use super::{App, Mode};
-use super::widgets::{AMBER, BLUE, GREEN, RED, fmt_time, paint_progress, parse_time};
+use super::{App, Mode, icons, theme};
+use super::widgets::{AMBER, BLUE, GREEN, RED, fmt_time, parse_time};
 use crate::media::effective_duration;
 use crate::model::{ContinueMode, Cue, CueId, CueKind, CueList, GroupMode, KindTag};
 use crate::show::Show;
 use egui::{Align2, Color32, CursorIcon, FontId, Rect, RichText, Sense, Stroke, StrokeKind, Ui, pos2, vec2};
 use std::time::Instant;
 
-const ROW_H: f32 = 26.0;
+const ROW_H: f32 = 30.0;
 /// Taller rows in show mode, readable from across a booth.
-const ROW_H_SHOW: f32 = 34.0;
+const ROW_H_SHOW: f32 = 40.0;
 const W_MARK: f32 = 18.0;
 const W_STATE: f32 = 20.0;
 const W_ICON: f32 = 24.0;
@@ -52,6 +52,7 @@ enum DropTarget {
 
 struct Columns {
     mark: f32,
+    #[allow(dead_code)]
     state: f32,
     icon: f32,
     num: f32,
@@ -83,18 +84,45 @@ impl Columns {
 }
 
 impl App {
+    /// Cue-type palette (toolbox): icon tiles grouped by kind, plus edit actions.
     pub(super) fn toolbar(&mut self, ui: &mut Ui, show: &mut Show) {
-        ui.horizontal_wrapped(|ui| {
-            for (i, tag) in KindTag::ALL.iter().enumerate() {
-                let key = if i < 10 { format!(" (Ctrl+{})", (i + 1) % 10) } else { String::new() };
-                if ui
-                    .button(format!("{} {}", tag.icon(), tag.label()))
-                    .on_hover_text(format!("New {} cue{key}", tag.label()))
-                    .clicked()
-                {
-                    self.add_cue(show, *tag);
+        use KindTag::*;
+        let groups: [&[KindTag]; 4] = [&[Audio, Video], &[Group, Wait, Memo], &[Fade, Start, Stop, Pause, Goto, Devamp], &[Network]];
+        ui.horizontal(|ui| {
+            ui.spacing_mut().item_spacing.x = 2.0;
+            for (gi, group) in groups.iter().enumerate() {
+                if gi > 0 {
+                    ui.add_space(6.0);
+                    let (r, _) = ui.allocate_exact_size(vec2(1.0, 40.0), Sense::hover());
+                    ui.painter().rect_filled(r, 0.0, theme::BORDER);
+                    ui.add_space(6.0);
+                }
+                for tag in *group {
+                    let i = KindTag::ALL.iter().position(|t| t == tag).unwrap_or(99);
+                    let key = if i < 10 { format!("  ·  Ctrl+{}", (i + 1) % 10) } else { String::new() };
+                    if tile(ui, theme::kind_icon(*tag), tag.label()).on_hover_text(format!("New {} cue{key}", tag.label())).clicked() {
+                        self.add_cue(show, *tag);
+                    }
                 }
             }
+            ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                if theme::icon_button(ui, icons::DELETE, "Delete (Del)").clicked() {
+                    self.delete_selected(show);
+                }
+                if theme::icon_button(ui, icons::CONTENT_COPY, "Duplicate (Ctrl+D)").clicked() {
+                    self.duplicate_selected(show);
+                }
+                if theme::icon_button(ui, icons::CREATE_NEW_FOLDER, "Group selected (Ctrl+G)").clicked() {
+                    self.group_selected(show);
+                }
+                ui.add_space(8.0);
+                if theme::icon_button(ui, icons::REDO, "Redo (Ctrl+Shift+Z)").clicked() {
+                    self.redo(show);
+                }
+                if theme::icon_button(ui, icons::UNDO, "Undo (Ctrl+Z)").clicked() {
+                    self.undo(show);
+                }
+            });
         });
     }
 
@@ -104,22 +132,22 @@ impl App {
         let rows = show.ws.cue_list.visible_rows(&|id| collapsed.contains(&id));
 
         // Header.
-        let (hdr, _) = ui.allocate_exact_size(vec2(ui.available_width(), 20.0), Sense::hover());
+        let (hdr, _) = ui.allocate_exact_size(vec2(ui.available_width(), 24.0), Sense::hover());
         let cols = Columns::new(hdr.left(), hdr.width());
         let hp = ui.painter();
-        let hf = FontId::proportional(12.0);
-        let hc = ui.visuals().weak_text_color();
-        for (x, t) in [
-            (cols.num, "#"),
-            (cols.name, "Name"),
-            (cols.target, "Target"),
-            (cols.pre, "Pre-wait"),
-            (cols.action, "Action"),
-            (cols.post, "Post-wait"),
+        let hf = theme::semibold(10.5);
+        for (x, t, right) in [
+            (cols.num, "#", false),
+            (cols.name, "NAME", false),
+            (cols.target, "TARGET", false),
+            (cols.pre + W_TIME - 8.0, "PRE-WAIT", true),
+            (cols.action + W_TIME - 8.0, "ACTION", true),
+            (cols.post + W_TIME - 8.0, "POST-WAIT", true),
         ] {
-            hp.text(pos2(x + 4.0, hdr.center().y), Align2::LEFT_CENTER, t, hf.clone(), hc);
+            let align = if right { Align2::RIGHT_CENTER } else { Align2::LEFT_CENTER };
+            hp.text(pos2(x + if right { 0.0 } else { 4.0 }, hdr.center().y), align, t, hf.clone(), theme::TEXT_FAINT);
         }
-        hp.line_segment([hdr.left_bottom(), hdr.right_bottom()], ui.visuals().widgets.noninteractive.bg_stroke);
+        hp.line_segment([hdr.left_bottom(), hdr.right_bottom()], Stroke::new(1.0, theme::BORDER));
 
         let mut row_rects: Vec<(Rect, CueId, bool)> = Vec::new();
         let mut clicked: Option<(CueId, egui::Modifiers)> = None;
@@ -196,7 +224,7 @@ impl App {
                         cycle_continue = Some(*id);
                     }
                     if r.hovered() && cue.continue_mode == ContinueMode::DoNotContinue {
-                        ui.painter().text(cont.center(), Align2::CENTER_CENTER, "↓", FontId::proportional(14.0), ui.visuals().weak_text_color());
+                        ui.painter().text(cont.center(), Align2::CENTER_CENTER, icons::ARROW_DOWNWARD, theme::icon_font(16.0), theme::TEXT_FAINT);
                     }
                 }
 
@@ -405,43 +433,43 @@ impl App {
 
     #[allow(clippy::too_many_arguments)]
     fn paint_row(&self, ui: &Ui, show: &Show, cue: &Cue, depth: usize, rect: Rect, cols: &Columns, now: Instant) {
-        let v = ui.visuals();
         let p = ui.painter();
         let id = cue.id;
         let selected = self.selection.contains(&id);
         let is_playhead = show.engine.playhead == Some(id);
         let inst = show.engine.instances.get(&id);
-
-        // Background.
-        let mut bg = if selected {
-            v.selection.bg_fill
-        } else if inst.is_some() {
-            Color32::from_rgba_unmultiplied(60, 170, 80, 40)
-        } else {
-            Color32::TRANSPARENT
-        };
-        if bg == Color32::TRANSPARENT && (rect.top() / rect.height()) as i64 % 2 == 0 {
-            bg = v.faint_bg_color;
-        }
-        p.rect_filled(rect, 0.0, bg);
-        if let Some([r, g, b]) = cue.color.rgb() {
-            p.rect_filled(Rect::from_min_size(rect.min, vec2(4.0, rect.height())), 0.0, Color32::from_rgb(r, g, b));
-            if !selected {
-                p.rect_filled(rect, 0.0, Color32::from_rgba_unmultiplied(r, g, b, 28));
-            }
-        }
-        if is_playhead {
-            p.rect_stroke(rect.shrink(1.0), 2.0, Stroke::new(1.5, GREEN), StrokeKind::Inside);
-            p.text(pos2(cols.mark + 9.0, rect.center().y), Align2::CENTER_CENTER, "▶", FontId::proportional(13.0), GREEN);
-        }
-
-        let text_color = if cue.armed { v.text_color() } else { v.weak_text_color() };
         let big = self.mode == Mode::Show;
-        let font = FontId::proportional(if big { 18.0 } else { 14.0 });
-        let mono = FontId::monospace(if big { 15.0 } else { 12.5 });
         let cy = rect.center().y;
 
-        // Live state / broken indicator.
+        // Background: zebra, colour tag, running tint, selection, playhead.
+        let row = rect.shrink2(vec2(0.0, 1.0));
+        let zebra = (rect.top() / rect.height()) as i64 % 2 == 0;
+        let mut bg = if zebra { Color32::from_rgb(0x18, 0x19, 0x1d) } else { theme::BG_APP };
+        if let Some([r, g, b]) = cue.color.rgb() {
+            bg = Color32::from_rgb(r / 5 + bg.r() / 2, g / 5 + bg.g() / 2, b / 5 + bg.b() / 2);
+        }
+        if inst.is_some() {
+            bg = Color32::from_rgb(0x1a, 0x2e, 0x22);
+        }
+        if selected {
+            bg = Color32::from_rgb(0x22, 0x33, 0x58);
+        }
+        p.rect_filled(row, 5.0, bg);
+        if let Some([r, g, b]) = cue.color.rgb() {
+            p.rect_filled(Rect::from_min_size(row.min, vec2(4.0, row.height())), 2.0, Color32::from_rgb(r, g, b));
+        }
+        if is_playhead {
+            p.rect_stroke(row, 5.0, Stroke::new(1.5, theme::GREEN), StrokeKind::Inside);
+        } else if selected {
+            p.rect_stroke(row, 5.0, Stroke::new(1.0, theme::ACCENT.gamma_multiply(0.6)), StrokeKind::Inside);
+        }
+
+        let text_color = if cue.armed { theme::TEXT } else { theme::TEXT_FAINT };
+        let font = if big { theme::semibold(18.0) } else { FontId::proportional(14.0) };
+        let mono = theme::mono(if big { 15.0 } else { 12.5 });
+        let icon_size = if big { 22.0 } else { 18.0 };
+
+        // Status column: playhead / live state / problems.
         let media_path = cue.kind.media_path().filter(|p| !p.as_os_str().is_empty());
         let probe = media_path.and_then(|path| self.prober.get(path));
         let broken = match (&cue.kind, media_path) {
@@ -450,28 +478,38 @@ impl App {
             _ => cue.kind.target_missing(&show.ws),
         };
         let state = match inst {
-            Some(i) if i.is_paused() => Some(("⏸", AMBER)),
-            Some(i) if i.in_pre_wait(now) => Some(("◔", AMBER)),
-            Some(_) => Some(("▶", GREEN)),
-            None if broken => Some(("⚠", RED)),
+            Some(i) if i.is_paused() => Some((icons::PAUSE, AMBER)),
+            Some(i) if i.in_pre_wait(now) => Some((icons::SCHEDULE, AMBER)),
+            Some(_) => Some((icons::PLAY_ARROW, theme::GREEN)),
+            None if !cue.armed => Some((icons::BLOCK, theme::TEXT_FAINT)),
+            None if broken => Some((icons::ERROR, RED)),
+            None if is_playhead => Some((icons::ARROW_RIGHT, theme::GREEN)),
             None => None,
         };
-        if let Some((s, c)) = state {
-            p.text(pos2(cols.state + W_STATE / 2.0, cy), Align2::CENTER_CENTER, s, FontId::proportional(13.0), c);
-        }
-        if !cue.armed {
-            p.text(pos2(cols.state + W_STATE / 2.0, cy), Align2::CENTER_CENTER, "⊘", FontId::proportional(13.0), v.weak_text_color());
+        if let Some((g, c)) = state {
+            let font = if matches!(g, s if s == icons::PLAY_ARROW || s == icons::PAUSE || s == icons::ARROW_RIGHT) {
+                theme::icon_font_filled(icon_size)
+            } else {
+                theme::icon_font(icon_size)
+            };
+            p.text(pos2(cols.mark + (W_MARK + W_STATE) / 2.0, cy), Align2::CENTER_CENTER, g, font, c);
         }
 
-        p.text(pos2(cols.icon + W_ICON / 2.0, cy), Align2::CENTER_CENTER, cue.kind.tag().icon(), FontId::proportional(14.0), text_color);
+        p.text(
+            pos2(cols.icon + W_ICON / 2.0, cy),
+            Align2::CENTER_CENTER,
+            theme::kind_icon(cue.kind.tag()),
+            theme::icon_font(icon_size),
+            if cue.armed { theme::TEXT_DIM } else { theme::TEXT_FAINT },
+        );
         let clip = |l: f32, r: f32| p.with_clip_rect(Rect::from_x_y_ranges(l..=r - 4.0, rect.y_range()));
-        clip(cols.num, cols.name).text(pos2(cols.num + 4.0, cy), Align2::LEFT_CENTER, &cue.number, font.clone(), text_color);
+        clip(cols.num, cols.name).text(pos2(cols.num + 4.0, cy), Align2::LEFT_CENTER, &cue.number, theme::semibold(if big { 17.0 } else { 13.5 }), text_color);
 
-        // Name with indentation and group triangle.
+        // Name with indentation and group chevron.
         let mut x = cols.name + depth as f32 * INDENT;
         if let CueKind::Group { mode, .. } = &cue.kind {
-            let tri = if self.collapsed.contains(&id) { "⏵" } else { "⏷" };
-            p.text(pos2(x + INDENT / 2.0, cy), Align2::CENTER_CENTER, tri, FontId::proportional(13.0), text_color);
+            let chev = if self.collapsed.contains(&id) { icons::CHEVRON_RIGHT } else { icons::EXPAND_MORE };
+            p.text(pos2(x + INDENT / 2.0, cy), Align2::CENTER_CENTER, chev, theme::icon_font(icon_size), theme::TEXT_DIM);
             x += INDENT;
             let tag = match mode {
                 GroupMode::StartFirstAndEnter => "enter",
@@ -479,12 +517,22 @@ impl App {
                 GroupMode::StartAll => "all",
                 GroupMode::StartRandom => "random",
             };
-            let name_end = clip(x, cols.target)
-                .text(pos2(x + 2.0, cy), Align2::LEFT_CENTER, cue.display_name(), font.clone(), text_color)
-                .right();
-            clip(x, cols.target).text(pos2(name_end + 8.0, cy), Align2::LEFT_CENTER, tag, FontId::proportional(11.0), v.weak_text_color());
+            let name_end = clip(x, cols.target).text(pos2(x + 2.0, cy), Align2::LEFT_CENTER, cue.display_name(), font.clone(), text_color).right();
+            // Mode pill.
+            let galley = p.layout_no_wrap(tag.to_string(), theme::semibold(9.5), theme::TEXT_DIM);
+            let pill = Rect::from_min_size(pos2(name_end + 8.0, cy - 8.0), vec2(galley.size().x + 10.0, 16.0));
+            if pill.right() < cols.target - 4.0 {
+                p.rect_filled(pill, 8.0, theme::BG_HOVER);
+                p.galley(pill.min + vec2(5.0, (16.0 - galley.size().y) / 2.0), galley, theme::TEXT_DIM);
+            }
         } else {
             clip(x, cols.target).text(pos2(x + 2.0, cy), Align2::LEFT_CENTER, cue.display_name(), font.clone(), text_color);
+        }
+        if let Some(k) = &cue.hotkey {
+            let galley = p.layout_no_wrap(k.clone(), theme::semibold(9.5), theme::TEXT_DIM);
+            let pill = Rect::from_min_size(pos2(cols.target - galley.size().x - 18.0, cy - 8.0), vec2(galley.size().x + 10.0, 16.0));
+            p.rect_stroke(pill, 4.0, Stroke::new(1.0, theme::BORDER), StrokeKind::Inside);
+            p.galley(pill.min + vec2(5.0, (16.0 - galley.size().y) / 2.0), galley, theme::TEXT_DIM);
         }
 
         // Target column.
@@ -511,7 +559,7 @@ impl App {
             Align2::LEFT_CENTER,
             target_text,
             FontId::proportional(12.0),
-            if broken { RED } else { v.weak_text_color() },
+            if broken { RED } else { theme::TEXT_DIM },
         );
 
         // Time columns.
@@ -523,18 +571,20 @@ impl App {
             }
             _ => None,
         };
-        let cell = |x: f32| Rect::from_min_max(pos2(x + 3.0, rect.top() + 5.0), pos2(x + W_TIME - 5.0, rect.bottom() - 5.0));
-        let dim = v.weak_text_color();
+        let cell = |x: f32| Rect::from_min_max(pos2(x + 4.0, cy - 9.0), pos2(x + W_TIME - 4.0, cy + 9.0));
+        let dim = theme::TEXT_FAINT;
         let time_text = |x: f32, t: f64, color: Color32| {
             p.text(pos2(x + W_TIME - 8.0, cy), Align2::RIGHT_CENTER, fmt_time(t), mono.clone(), color);
         };
         let bar = |x: f32, frac: f32, label: String, color: Color32| {
             let r = cell(x);
-            paint_progress(ui, r, frac, color);
-            p.text(pos2(r.right() - 3.0, cy), Align2::RIGHT_CENTER, label, mono.clone(), Color32::WHITE);
+            p.rect_filled(r, 4.0, color.gamma_multiply(0.18));
+            let mut f = r;
+            f.set_width(r.width() * frac.clamp(0.0, 1.0));
+            p.rect_filled(f, 4.0, color.gamma_multiply(0.75));
+            p.text(pos2(r.right() - 4.0, cy), Align2::RIGHT_CENTER, label, mono.clone(), Color32::WHITE);
         };
 
-        // Pre-wait.
         match inst {
             Some(i) if i.in_pre_wait(now) && i.pre_wait > 0.0 => {
                 let e = i.pre_wait_elapsed(now);
@@ -543,16 +593,15 @@ impl App {
             _ => time_text(cols.pre, cue.pre_wait, if cue.pre_wait > 0.0 { text_color } else { dim }),
         }
 
-        // Action.
         match inst {
             Some(i) if !i.in_pre_wait(now) && !i.action_done => {
                 let e = match cue.kind {
                     CueKind::Audio(_) | CueKind::Video(_) => show.media.elapsed(id).unwrap_or(i.action_elapsed(now)),
                     _ => i.action_elapsed(now),
                 };
-                let d = i.action_duration.or(action_dur);
-                match d {
-                    Some(d) if d > 0.0 => bar(cols.action, (e / d) as f32, format!("-{}", fmt_time((d - e).max(0.0))), if i.is_paused() { AMBER } else { GREEN }),
+                let color = if i.is_paused() { AMBER } else { theme::GREEN };
+                match i.action_duration.or(action_dur) {
+                    Some(d) if d > 0.0 => bar(cols.action, (e / d) as f32, format!("-{}", fmt_time((d - e).max(0.0))), color),
                     _ => bar(cols.action, 1.0, fmt_time(e), if i.is_paused() { AMBER } else { BLUE }),
                 }
             }
@@ -562,12 +611,11 @@ impl App {
                 } else if matches!(cue.kind, CueKind::Audio(ref a) if a.infinite_loop)
                     || matches!(cue.kind, CueKind::Video(ref v) if v.infinite_loop)
                 {
-                    p.text(pos2(cols.action + W_TIME - 8.0, cy), Align2::RIGHT_CENTER, "∞", mono.clone(), text_color);
+                    p.text(pos2(cols.action + W_TIME - 8.0, cy), Align2::RIGHT_CENTER, icons::ALL_INCLUSIVE, theme::icon_font(16.0), text_color);
                 }
             }
         }
 
-        // Post-wait.
         match cue.continue_mode {
             ContinueMode::AutoContinue => match inst {
                 Some(i) if !i.in_pre_wait(now) && !i.continue_done && cue.post_wait > 0.0 => {
@@ -588,22 +636,29 @@ impl App {
             }
         }
 
-        // Continue mode: single arrow = auto-continue, double arrow = auto-follow.
-        let arrows = match cue.continue_mode {
-            ContinueMode::DoNotContinue => 0,
-            ContinueMode::AutoContinue => 1,
-            ContinueMode::AutoFollow => 2,
+        let cont = match cue.continue_mode {
+            ContinueMode::DoNotContinue => None,
+            ContinueMode::AutoContinue => Some(icons::ARROW_DOWNWARD),
+            ContinueMode::AutoFollow => Some(icons::KEYBOARD_DOUBLE_ARROW_DOWN),
         };
-        let stroke = Stroke::new(1.8, BLUE);
-        for i in 0..arrows {
-            let x = cols.cont + W_CONT / 2.0 + (i as f32 - (arrows as f32 - 1.0) / 2.0) * 6.0;
-            let (top, bot) = (cy - 7.0, cy + 7.0);
-            p.line_segment([pos2(x, top), pos2(x, bot)], stroke);
-            p.line_segment([pos2(x - 3.5, bot - 4.0), pos2(x, bot)], stroke);
-            p.line_segment([pos2(x + 3.5, bot - 4.0), pos2(x, bot)], stroke);
+        if let Some(g) = cont {
+            p.text(pos2(cols.cont + W_CONT / 2.0, cy), Align2::CENTER_CENTER, g, theme::icon_font(icon_size), BLUE);
         }
         let _ = cols.end;
     }
+}
+
+/// Toolbox tile: icon over a small label.
+fn tile(ui: &mut Ui, glyph: &str, label: &str) -> egui::Response {
+    let (rect, resp) = ui.allocate_exact_size(vec2(58.0, 46.0), Sense::click());
+    let p = ui.painter();
+    if resp.hovered() {
+        p.rect_filled(rect, 8.0, theme::BG_HOVER);
+    }
+    let c = if resp.hovered() { Color32::WHITE } else { theme::TEXT_DIM };
+    p.text(rect.center_top() + vec2(0.0, 15.0), Align2::CENTER_CENTER, glyph, theme::icon_font(22.0), c);
+    p.text(rect.center_bottom() - vec2(0.0, 10.0), Align2::CENTER_CENTER, label, FontId::proportional(10.5), c);
+    resp.on_hover_cursor(egui::CursorIcon::PointingHand)
 }
 
 #[derive(Clone, Copy)]
@@ -621,13 +676,13 @@ fn row_context_menu(ui: &mut Ui, cue: &Cue, editing: bool) -> Option<RowAction> 
     let mut a = None;
     ui.label(RichText::new(format!("{} {}", cue.number, cue.display_name())).strong());
     ui.separator();
-    if ui.button("Set playhead here").clicked() {
+    if ui.button(theme::with_icon(icons::ARROW_RIGHT, "Set playhead here")).clicked() {
         a = Some(RowAction::SetPlayhead);
     }
-    if ui.button("▶ Start this cue").clicked() {
+    if ui.button(theme::with_icon(icons::PLAY_ARROW, "Start this cue")).clicked() {
         a = Some(RowAction::Start);
     }
-    if ui.button("⏹ Stop this cue").clicked() {
+    if ui.button(theme::with_icon(icons::STOP, "Stop this cue")).clicked() {
         a = Some(RowAction::Stop);
     }
     if !editing {
@@ -637,16 +692,16 @@ fn row_context_menu(ui: &mut Ui, cue: &Cue, editing: bool) -> Option<RowAction> 
         return a;
     }
     ui.separator();
-    if ui.button(if cue.armed { "Disarm" } else { "Arm" }).clicked() {
+    if ui.button(if cue.armed { theme::with_icon(icons::BLOCK, "Disarm") } else { theme::with_icon(icons::CHECK_CIRCLE, "Arm") }).clicked() {
         a = Some(RowAction::ToggleArmed);
     }
-    if ui.button("Duplicate").clicked() {
+    if ui.button(theme::with_icon(icons::CONTENT_COPY, "Duplicate")).clicked() {
         a = Some(RowAction::Duplicate);
     }
-    if ui.button("Group selected").clicked() {
+    if ui.button(theme::with_icon(icons::CREATE_NEW_FOLDER, "Group selected")).clicked() {
         a = Some(RowAction::Group);
     }
-    if ui.button("Delete").clicked() {
+    if ui.button(theme::with_icon(icons::DELETE, "Delete")).clicked() {
         a = Some(RowAction::Delete);
     }
     if a.is_some() {

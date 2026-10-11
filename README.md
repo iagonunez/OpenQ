@@ -118,3 +118,16 @@ The engine works on logical timestamps, so the timing error does not build up al
 cues. It hands starts to the backend up to 25 ms early, together with the exact target time. The
 mixer then starts the voice on the matching sample, so auto-continues stay sample-accurate even
 when the UI or engine thread is busy.
+
+## Look and credits
+
+The UI uses a dark theme (`src/ui/theme.rs`) with bundled fonts in `assets/fonts`:
+
+- [Material Symbols Rounded](https://fonts.google.com/icons) icons (Apache-2.0)
+- [Inter](https://fonts.google.com/specimen/Inter) for text and
+  [JetBrains Mono](https://fonts.google.com/specimen/JetBrains+Mono) for times (SIL OFL 1.1)
+
+They are subset to the glyphs in use. To add an icon, put its name in `tools/icons.txt` and
+rebuild with `python3 -I tools/build_fonts.py <dir with the upstream font files>`, which also
+regenerates `src/ui/icons.rs`.
+

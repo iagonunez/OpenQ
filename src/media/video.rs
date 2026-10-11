@@ -249,8 +249,6 @@ impl DecodeJob {
         if vdec.is_none() && adec.is_none() {
             return Err(anyhow!("no playable video or audio stream"));
         }
-        drop(vstream);
-        drop(astream);
         let file_dur = (ictx.duration() > 0).then(|| ictx.duration() as f64 / f64::from(ff::ffi::AV_TIME_BASE));
         let start = p.start_time.max(0.0);
         let end = match (p.end_time, file_dur) {

@@ -14,12 +14,12 @@ const RATE: f32 = 48_000.0;
 pub fn eq_editor(ui: &mut Ui, id: Id, eq: &mut Eq) {
     ui.horizontal(|ui| {
         ui.checkbox(&mut eq.enabled, "EQ enabled");
-        if ui.button("Flat").on_hover_text("Reset all gains to 0 dB").clicked() {
+        if ui.button(super::theme::with_icon(super::icons::REMOVE, "Flat")).on_hover_text("Reset all gains to 0 dB").clicked() {
             for b in &mut eq.bands {
                 b.gain_db = 0.0;
             }
         }
-        if ui.button("Defaults").clicked() {
+        if ui.button(super::theme::with_icon(super::icons::REPLAY, "Defaults")).clicked() {
             *eq = Eq { enabled: eq.enabled, ..Eq::default() };
         }
     });
@@ -104,7 +104,7 @@ pub fn eq_editor(ui: &mut Ui, id: Id, eq: &mut Eq) {
             ui.add(DragValue::new(&mut b.freq).range(F_MIN..=F_MAX).speed(speed).suffix(" Hz").max_decimals(0));
             ui.add_enabled(b.kind.has_gain(), DragValue::new(&mut b.gain_db).range(-24.0..=24.0).speed(0.1).suffix(" dB").max_decimals(1));
             ui.add(DragValue::new(&mut b.q).range(0.1..=18.0).speed(0.01).max_decimals(2));
-            if ui.small_button("🗑").clicked() {
+            if super::theme::icon_button(ui, super::icons::DELETE, "Remove band").clicked() {
                 remove = Some(i);
             }
             ui.end_row();
@@ -113,7 +113,7 @@ pub fn eq_editor(ui: &mut Ui, id: Id, eq: &mut Eq) {
     if let Some(i) = remove {
         eq.bands.remove(i);
     }
-    if eq.bands.len() < MAX_EQ_BANDS && ui.button("➕ Add band").clicked() {
+    if eq.bands.len() < MAX_EQ_BANDS && ui.button(super::theme::with_icon(super::icons::ADD, "Add band")).clicked() {
         eq.bands.push(EqBand { enabled: true, kind: EqKind::Peak, freq: 1000.0, gain_db: 0.0, q: 1.0 });
     }
 }

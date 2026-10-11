@@ -34,18 +34,18 @@ pub fn waveform_editor(
 
     ui.horizontal(|ui| {
         let span = view.t1 - view.t0;
-        if ui.small_button("➖").on_hover_text("Zoom out").clicked() {
+        if super::theme::icon_button(ui, super::icons::ZOOM_OUT, "Zoom out").clicked() {
             let c = (view.t0 + view.t1) / 2.0;
             zoom(&mut view, duration, c, 2.0);
         }
-        if ui.small_button("➕").on_hover_text("Zoom in (or Ctrl+scroll on the waveform)").clicked() {
+        if super::theme::icon_button(ui, super::icons::ZOOM_IN, "Zoom in (or Ctrl+scroll on the waveform)").clicked() {
             let c = (view.t0 + view.t1) / 2.0;
             zoom(&mut view, duration, c, 0.5);
         }
-        if ui.small_button("Show all").clicked() {
+        if super::theme::icon_button(ui, super::icons::FIT_SCREEN, "Show the whole file").clicked() {
             view = View { t0: 0.0, t1: duration };
         }
-        if ui.small_button("Zoom to region").clicked() {
+        if super::theme::icon_button(ui, super::icons::CROP_FREE, "Zoom to the start–end region").clicked() {
             let e = end.unwrap_or(duration);
             let pad = (e - *start) * 0.05;
             view = View { t0: (*start - pad).max(0.0), t1: (e + pad).min(duration) };
