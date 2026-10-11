@@ -330,6 +330,23 @@ impl Default for Stage {
     }
 }
 
+/// A slice marker: the slice *ending* at `time` plays `plays` times (0 = until devamped).
+#[derive(Serialize, Deserialize, Clone, Copy, PartialEq, Debug)]
+pub struct SliceMarker {
+    pub time: f64,
+    pub plays: u32,
+}
+
+/// One playable section of an audio file.
+#[derive(Clone, Copy, PartialEq, Debug)]
+pub struct Segment {
+    pub start: f64,
+    /// None = end of file.
+    pub end: Option<f64>,
+    /// None = loop until devamped / stopped.
+    pub plays: Option<u32>,
+}
+
 #[derive(Serialize, Deserialize, Clone, PartialEq, Debug)]
 #[serde(default)]
 pub struct AudioCue {
@@ -348,21 +365,75 @@ pub struct AudioCue {
     pub eq: Eq,
     /// Custom routing in dB, `[source channel][output channel]`; None = automatic.
     pub routing: Option<Vec<Vec<f32>>>,
+    /// Slice markers between start and end; the last slice uses the cue's play count.
+    pub slices: Vec<SliceMarker>,
 }
 
 impl AudioCue {
-    /// Linear routing gains for `src` source and `out` output channels.
-    pub fn routing_gains(&self, src: usize, out: usize) -> Vec<Vec<f32>> {
-        match &self.routing {
-            None => default_routing(src, out),
-            Some(m) => (0..src)
-                .map(|s| {
-                    (0..out)
-                        .map(|o| m.get(s).and_then(|r| r.get(o)).map_or(0.0, |db| db_to_gain(*db)))
-                        .collect()
-                })
-                .collect(),
+    /// Markers that fall strictly inside the start/end region, sorted.
+    pub fn active_slices(&self) -> Vec<SliceMarker> {
+        let end = self.end_time.unwrap_or(f64::INFINITY);
+        let mut v: Vec<SliceMarker> =
+            self.slices.iter().copied().filter(|m| m.time > self.start_time + 1e-3 && m.time < end - 1e-3).collect();
+        v.sort_by(|a, b| a.time.total_cmp(&b.time));
+        v
+    }
+
+    /// The sections the decoder plays, in order.
+    pub fn segments(&self) -> Vec<Segment> {
+        let mut out = Vec::new();
+        let mut start = self.start_time.max(0.0);
+        for m in self.active_slices() {
+            out.push(Segment { start, end: Some(m.time), plays: (m.plays > 0).then_some(m.plays) });
+            start = m.time;
         }
+        out.push(Segment {
+            start,
+            end: self.end_time,
+            plays: if self.infinite_loop { None } else { Some(self.play_count.max(1)) },
+        });
+        out
+    }
+
+    /// Total file-time played (before rate), None if anything loops forever.
+    pub fn file_time_total(&self, file_duration: f64) -> Option<f64> {
+        self.segments().iter().try_fold(0.0, |acc, s| {
+            let end = s.end.unwrap_or(file_duration).min(file_duration);
+            Some(acc + (end - s.start).max(0.0) * s.plays? as f64)
+        })
+    }
+
+    /// Where in the file playback is after `played` seconds of file time (ignores devamps).
+    pub fn file_position(&self, played: f64, file_duration: f64) -> f64 {
+        let mut left = played.max(0.0);
+        let segs = self.segments();
+        for (i, s) in segs.iter().enumerate() {
+            let end = s.end.unwrap_or(file_duration).min(file_duration);
+            let len = (end - s.start).max(1e-6);
+            match s.plays {
+                None => return s.start + left % len,
+                Some(n) => {
+                    let total = len * n as f64;
+                    if left < total || i + 1 == segs.len() {
+                        return s.start + (left % len).min(len);
+                    }
+                    left -= total;
+                }
+            }
+        }
+        self.start_time
+    }
+
+}
+
+/// Linear routing gains for `src` source and `out` output channels from an optional dB matrix
+/// (None = automatic routing).
+pub fn routing_gains(routing: &Option<Vec<Vec<f32>>>, src: usize, out: usize) -> Vec<Vec<f32>> {
+    match routing {
+        None => default_routing(src, out),
+        Some(m) => (0..src)
+            .map(|s| (0..out).map(|o| m.get(s).and_then(|r| r.get(o)).map_or(0.0, |db| db_to_gain(*db))).collect())
+            .collect(),
     }
 }
 
@@ -379,6 +450,7 @@ impl Default for AudioCue {
             rate: 1.0,
             eq: Eq::default(),
             routing: None,
+            slices: Vec::new(),
         }
     }
 }
@@ -405,6 +477,8 @@ pub struct VideoCue {
     pub geometry: Geometry,
     /// For still images: seconds to show (0 = until stopped).
     pub still_duration: f64,
+    /// Soundtrack routing in dB `[source channel][output channel]`; None = automatic.
+    pub routing: Option<Vec<Vec<f32>>>,
 }
 
 impl Default for VideoCue {
@@ -423,6 +497,7 @@ impl Default for VideoCue {
             stage: None,
             geometry: Geometry::default(),
             still_duration: 0.0,
+            routing: None,
         }
     }
 }
@@ -456,6 +531,24 @@ impl Default for FadeCue {
     }
 }
 
+/// Sends one OSC message over UDP.
+#[derive(Serialize, Deserialize, Clone, PartialEq, Debug)]
+#[serde(default)]
+pub struct NetworkCue {
+    pub host: String,
+    pub port: u16,
+    pub address: String,
+    /// Space-separated arguments; integers and decimals are sent as numbers, the rest as strings
+    /// ("quoted text" keeps spaces).
+    pub args: String,
+}
+
+impl Default for NetworkCue {
+    fn default() -> Self {
+        Self { host: "127.0.0.1".into(), port: 53000, address: "/go".into(), args: String::new() }
+    }
+}
+
 #[derive(Serialize, Deserialize, Clone, PartialEq, Debug)]
 pub enum CueKind {
     Audio(AudioCue),
@@ -472,6 +565,9 @@ pub enum CueKind {
     Pause { target: Option<CueId> },
     /// Move the playhead to the target cue.
     Goto { target: Option<CueId> },
+    /// Make the target audio cue leave its looping slice and carry on.
+    Devamp { target: Option<CueId> },
+    Network(NetworkCue),
 }
 
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
@@ -486,10 +582,12 @@ pub enum KindTag {
     Stop,
     Pause,
     Goto,
+    Devamp,
+    Network,
 }
 
 impl KindTag {
-    pub const ALL: [KindTag; 10] = [
+    pub const ALL: [KindTag; 12] = [
         KindTag::Audio,
         KindTag::Video,
         KindTag::Group,
@@ -500,6 +598,8 @@ impl KindTag {
         KindTag::Stop,
         KindTag::Pause,
         KindTag::Goto,
+        KindTag::Devamp,
+        KindTag::Network,
     ];
 
     pub fn label(self) -> &'static str {
@@ -514,6 +614,8 @@ impl KindTag {
             KindTag::Stop => "Stop",
             KindTag::Pause => "Pause",
             KindTag::Goto => "Go To",
+            KindTag::Devamp => "Devamp",
+            KindTag::Network => "Network",
         }
     }
 
@@ -529,6 +631,8 @@ impl KindTag {
             KindTag::Stop => "⏹",
             KindTag::Pause => "⏸",
             KindTag::Goto => "➡",
+            KindTag::Devamp => "⏭",
+            KindTag::Network => "🖧",
         }
     }
 
@@ -544,6 +648,8 @@ impl KindTag {
             KindTag::Stop => CueKind::Stop { target: None },
             KindTag::Pause => CueKind::Pause { target: None },
             KindTag::Goto => CueKind::Goto { target: None },
+            KindTag::Devamp => CueKind::Devamp { target: None },
+            KindTag::Network => CueKind::Network(NetworkCue::default()),
         }
     }
 }
@@ -561,6 +667,8 @@ impl CueKind {
             CueKind::Stop { .. } => KindTag::Stop,
             CueKind::Pause { .. } => KindTag::Pause,
             CueKind::Goto { .. } => KindTag::Goto,
+            CueKind::Devamp { .. } => KindTag::Devamp,
+            CueKind::Network(_) => KindTag::Network,
         }
     }
 
@@ -571,7 +679,8 @@ impl CueKind {
             CueKind::Start { target }
             | CueKind::Stop { target }
             | CueKind::Pause { target }
-            | CueKind::Goto { target } => *target,
+            | CueKind::Goto { target }
+            | CueKind::Devamp { target } => *target,
             _ => None,
         }
     }
@@ -582,7 +691,8 @@ impl CueKind {
             CueKind::Start { target }
             | CueKind::Stop { target }
             | CueKind::Pause { target }
-            | CueKind::Goto { target } => Some(target),
+            | CueKind::Goto { target }
+            | CueKind::Devamp { target } => Some(target),
             _ => None,
         }
     }
@@ -615,6 +725,9 @@ pub struct Cue {
     pub post_wait: f64,
     #[serde(default)]
     pub continue_mode: ContinueMode,
+    /// Keyboard key that fires this cue in show mode (e.g. "F1", "A").
+    #[serde(default)]
+    pub hotkey: Option<String>,
     pub kind: CueKind,
 }
 
@@ -634,6 +747,7 @@ impl Cue {
             pre_wait: 0.0,
             post_wait: 0.0,
             continue_mode: ContinueMode::DoNotContinue,
+            hotkey: None,
             kind,
         }
     }
@@ -906,11 +1020,18 @@ pub struct Settings {
     pub audio_device: Option<String>,
     /// Use GPU video decoders (can be unstable with some drivers).
     pub hardware_video_decoding: bool,
+    /// Listen for OSC remote control on UDP `osc_port`.
+    pub osc_enabled: bool,
+    pub osc_port: u16,
 }
 
 impl Default for Settings {
     fn default() -> Self {
-        Self { panic_fade: 1.0, master_volume_db: 0.0, double_go_protection: 0.25, audio_device: None, hardware_video_decoding: false }
+        Self { panic_fade: 1.0, master_volume_db: 0.0, double_go_protection: 0.25, audio_device: None,
+            hardware_video_decoding: false,
+            osc_enabled: false,
+            osc_port: 53000,
+        }
     }
 }
 
@@ -1028,6 +1149,28 @@ mod tests {
         assert_eq!(rows.len(), 4);
         let rows = l.visible_rows(&|id| id == gi);
         assert_eq!(rows.len(), 2);
+    }
+
+    #[test]
+    fn slices_segment_and_map_positions() {
+        let a = AudioCue {
+            start_time: 1.0,
+            end_time: Some(9.0),
+            slices: vec![SliceMarker { time: 5.0, plays: 0 }, SliceMarker { time: 3.0, plays: 2 }, SliceMarker { time: 20.0, plays: 1 }],
+            ..Default::default()
+        };
+        let segs = a.segments();
+        assert_eq!(segs.len(), 3);
+        assert_eq!(segs[0], Segment { start: 1.0, end: Some(3.0), plays: Some(2) });
+        assert_eq!(segs[1], Segment { start: 3.0, end: Some(5.0), plays: None });
+        assert_eq!(segs[2], Segment { start: 5.0, end: Some(9.0), plays: Some(1) });
+        assert_eq!(a.file_time_total(10.0), None);
+        // 2 passes of [1,3) then looping [3,5).
+        assert!((a.file_position(1.0, 10.0) - 2.0).abs() < 1e-9);
+        assert!((a.file_position(4.5, 10.0) - 3.5).abs() < 1e-9);
+        assert!((a.file_position(6.5, 10.0) - 3.5).abs() < 1e-9);
+        let b = AudioCue { slices: vec![SliceMarker { time: 2.0, plays: 3 }], ..Default::default() };
+        assert_eq!(b.file_time_total(5.0), Some(2.0 * 3.0 + 3.0));
     }
 
     #[test]

@@ -17,10 +17,8 @@ use symphonia::core::meta::MetadataOptions;
 use symphonia::core::units::{Time, TimeBase};
 
 pub struct DecodeParams {
-    pub start: f64,
-    pub end: Option<f64>,
-    /// None = loop forever.
-    pub plays: Option<u32>,
+    /// Sections to play in order (slices / start-end region with loops).
+    pub segments: Vec<crate::model::Segment>,
     /// Playback speed (resampling ratio is scaled by this).
     pub rate: f64,
     /// Channels to emit (source channels, padded/truncated). The mixer does the routing.
@@ -161,11 +159,16 @@ pub fn probe(path: &Path) -> anyhow::Result<AudioInfo> {
 }
 
 pub fn spawn(path: PathBuf, params: DecodeParams, out_rate: u32, tx: rtrb::Producer<f32>, shared: Arc<VoiceShared>) {
+    // With a vamp (slice looping until devamped) keep read-ahead short, so a Devamp is heard
+    // within ~0.3 s instead of after the whole buffer.
+    let vamp = params.segments.iter().any(|s| s.plays.is_none());
+    let channels = params.channels.max(1);
+    let fill_limit = if vamp { (out_rate as usize * 3 / 10) * channels } else { usize::MAX };
     let name = format!("openq-dec-{}", path.file_name().map(|f| f.to_string_lossy()).unwrap_or_default());
     let sh = shared.clone();
     let res = std::thread::Builder::new().name(name).spawn(move || {
         let mut sink =
-            Sink { tx, shared: sh.clone(), out_channels: params.channels.max(1), resampler: None, scratch: Vec::new() };
+            Sink { tx, shared: sh.clone(), out_channels: channels, resampler: None, scratch: Vec::new(), fill_limit };
         if let Err(e) = run(&path, &params, out_rate, &mut sink)
             && e.downcast_ref::<Stopped>().is_none()
         {
@@ -191,79 +194,91 @@ impl std::fmt::Display for Stopped {
 impl std::error::Error for Stopped {}
 
 fn run(path: &Path, p: &DecodeParams, out_rate: u32, sink: &mut Sink) -> anyhow::Result<()> {
-    let mut plays_done = 0u32;
-    loop {
-        // Re-open for every pass: robust for formats with poor seeking, and cheap.
-        let mut o = open(path)?;
-        let rate = if p.rate.is_finite() && p.rate > 0.0 { p.rate.clamp(0.05, 8.0) } else { 1.0 };
-        if sink.resampler.is_none() && (o.rate != out_rate || (rate - 1.0).abs() > 1e-6) {
-            sink.resampler = Some(Resample::new(o.rate, out_rate, rate, sink.out_channels)?);
-        }
-        if p.start > 0.0 {
-            let time = Time::try_from_secs_f64(p.start).context("bad start time")?;
-            if let Err(e) = o.format.seek(SeekMode::Accurate, SeekTo::Time { time, track_id: Some(o.track_id) }) {
-                log::warn!("seek failed ({e}); decoding from file start");
-            }
-            o.decoder.reset();
-        }
-        let mut planar: Vec<Vec<f32>> = Vec::new();
+    let rate = if p.rate.is_finite() && p.rate > 0.0 { p.rate.clamp(0.05, 8.0) } else { 1.0 };
+    for seg in &p.segments {
+        let mut passes = 0u32;
         loop {
+            play_pass(path, seg.start, seg.end, rate, out_rate, sink)?;
+            passes += 1;
             if sink.shared.stop.load(Ordering::Acquire) {
                 return Err(Stopped.into());
             }
-            let packet = match o.format.next_packet() {
-                Ok(Some(pk)) => pk,
-                Ok(None) => break,
-                Err(SymError::ResetRequired) => {
-                    o.decoder.reset();
-                    continue;
-                }
-                Err(SymError::IoError(e)) if e.kind() == std::io::ErrorKind::UnexpectedEof => break,
-                Err(e) => return Err(anyhow!(e)),
-            };
-            if packet.track_id != o.track_id {
-                continue;
-            }
-            let pkt_time = o.time_base.calc_time_saturating(packet.pts).as_secs_f64();
-            let buf = match o.decoder.decode(&packet) {
-                Ok(b) => b,
-                Err(SymError::DecodeError(e)) => {
-                    log::debug!("decode error (skipped): {e}");
-                    continue;
-                }
-                Err(SymError::IoError(_)) => continue,
-                Err(e) => return Err(anyhow!(e)),
-            };
-            let frames = buf.frames();
-            if frames == 0 {
-                continue;
-            }
-            buf.copy_to_vecs_planar::<f32>(&mut planar);
-            let rate = o.rate as f64;
-            // Trim to [start, end).
-            let lo = (((p.start - pkt_time) * rate).round().max(0.0) as usize).min(frames);
-            let hi = match p.end {
-                Some(end) => (((end - pkt_time) * rate).round().max(0.0) as usize).min(frames),
-                None => frames,
-            };
-            if let Some(end) = p.end
-                && pkt_time >= end
-            {
+            // A devamp lets the current slice finish this pass, then moves on.
+            if sink.shared.devamp.swap(false, Ordering::AcqRel) {
                 break;
             }
-            if hi > lo {
-                sink.push(&planar, lo, hi)?;
+            if seg.plays.is_some_and(|n| passes >= n) {
+                break;
             }
-        }
-        plays_done += 1;
-        if p.plays.is_some_and(|n| plays_done >= n) {
-            break;
-        }
-        if sink.shared.stop.load(Ordering::Acquire) {
-            return Err(Stopped.into());
         }
     }
     sink.finish()
+}
+
+/// Decode [start, end) once into the sink.
+fn play_pass(path: &Path, start: f64, end: Option<f64>, rate: f64, out_rate: u32, sink: &mut Sink) -> anyhow::Result<()> {
+    // Re-open for every pass: robust for formats with poor seeking, and cheap.
+    let mut o = open(path)?;
+    if sink.resampler.is_none() && (o.rate != out_rate || (rate - 1.0).abs() > 1e-6) {
+        sink.resampler = Some(Resample::new(o.rate, out_rate, rate, sink.out_channels)?);
+    }
+    if start > 0.0 {
+        let time = Time::try_from_secs_f64(start).context("bad start time")?;
+        if let Err(e) = o.format.seek(SeekMode::Accurate, SeekTo::Time { time, track_id: Some(o.track_id) }) {
+            log::warn!("seek failed ({e}); decoding from file start");
+        }
+        o.decoder.reset();
+    }
+    let mut planar: Vec<Vec<f32>> = Vec::new();
+    loop {
+        if sink.shared.stop.load(Ordering::Acquire) {
+            return Err(Stopped.into());
+        }
+        let packet = match o.format.next_packet() {
+            Ok(Some(pk)) => pk,
+            Ok(None) => break,
+            Err(SymError::ResetRequired) => {
+                o.decoder.reset();
+                continue;
+            }
+            Err(SymError::IoError(e)) if e.kind() == std::io::ErrorKind::UnexpectedEof => break,
+            Err(e) => return Err(anyhow!(e)),
+        };
+        if packet.track_id != o.track_id {
+            continue;
+        }
+        let pkt_time = o.time_base.calc_time_saturating(packet.pts).as_secs_f64();
+        if let Some(end) = end
+            && pkt_time >= end
+        {
+            break;
+        }
+        let buf = match o.decoder.decode(&packet) {
+            Ok(b) => b,
+            Err(SymError::DecodeError(e)) => {
+                log::debug!("decode error (skipped): {e}");
+                continue;
+            }
+            Err(SymError::IoError(_)) => continue,
+            Err(e) => return Err(anyhow!(e)),
+        };
+        let frames = buf.frames();
+        if frames == 0 {
+            continue;
+        }
+        buf.copy_to_vecs_planar::<f32>(&mut planar);
+        let r = o.rate as f64;
+        // Trim to [start, end).
+        let lo = (((start - pkt_time) * r).round().max(0.0) as usize).min(frames);
+        let hi = match end {
+            Some(end) => (((end - pkt_time) * r).round().max(0.0) as usize).min(frames),
+            None => frames,
+        };
+        if hi > lo {
+            sink.push(&planar, lo, hi)?;
+        }
+    }
+    Ok(())
 }
 
 struct Resample {
@@ -312,6 +327,8 @@ struct Sink {
     out_channels: usize,
     resampler: Option<Resample>,
     scratch: Vec<f32>,
+    /// Most samples to keep buffered ahead of playback.
+    fill_limit: usize,
 }
 
 impl Sink {
@@ -402,7 +419,9 @@ impl Sink {
             if self.shared.stop.load(Ordering::Acquire) {
                 return Err(Stopped.into());
             }
-            let n = self.tx.slots().min(self.scratch.len() - off);
+            let used = self.tx.buffer().capacity() - self.tx.slots();
+            let room = self.fill_limit.saturating_sub(used);
+            let n = self.tx.slots().min(room).min(self.scratch.len() - off);
             if n == 0 {
                 self.shared.ready.store(true, Ordering::Release);
                 std::thread::sleep(Duration::from_millis(5));

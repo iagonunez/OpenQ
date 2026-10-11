@@ -18,13 +18,15 @@ pub struct Show {
     pub dirty: bool,
     /// Set once media has been torn down; the engine stops ticking.
     pub shut_down: bool,
+    /// Bumped on every edit (drives undo snapshots).
+    pub edit_gen: u64,
 }
 
 pub type SharedShow = Arc<Mutex<Show>>;
 
 impl Show {
     pub fn new(prober: Arc<Prober>) -> Self {
-        Self { ws: Workspace::default(), engine: Engine::new(), media: Media::new(prober), path: None, dirty: false, shut_down: false }
+        Self { ws: Workspace::default(), engine: Engine::new(), media: Media::new(prober), path: None, dirty: false, shut_down: false, edit_gen: 0 }
     }
 
     pub fn tick(&mut self, now: Instant) {
@@ -52,6 +54,7 @@ impl Show {
     /// Call after any edit to the workspace.
     pub fn edited(&mut self) {
         self.dirty = true;
+        self.edit_gen += 1;
         self.engine.workspace_changed();
     }
 

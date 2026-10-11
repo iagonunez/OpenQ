@@ -2,6 +2,7 @@
 //! shared slot that the stage windows upload as textures; a video's own audio goes to the
 //! default audio sink.
 
+use super::audio::VoiceShared;
 use crate::engine::FadeRequest;
 use crate::model::{CueId, FadeCurve, Geometry, StageId, VideoCue, VideoFit, db_to_gain};
 use anyhow::{Context, anyhow};
@@ -13,7 +14,18 @@ use parking_lot::Mutex;
 use std::collections::HashMap;
 use std::path::Path;
 use std::sync::Arc;
+use std::sync::atomic::Ordering;
 use std::time::{Duration, Instant};
+
+/// Where a video's soundtrack goes: into the OpenQ mixer at this rate/channel count (so it gets
+/// level, fades, EQ and routing like an audio cue).
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub struct AudioTap {
+    pub rate: u32,
+    pub channels: usize,
+}
+
+type AudioFeed = Arc<Mutex<Option<rtrb::Producer<f32>>>>;
 
 /// Plugins whose decoders use GPU APIs. NVIDIA's NVDEC/CUDA decoders in particular can hang or
 /// crash when initialised inside a process that also renders with the GPU driver, so hardware
@@ -133,6 +145,9 @@ struct Player {
     error_reported: bool,
     last_pos_check: Instant,
     order: u64,
+    tap: Option<AudioTap>,
+    audio_feed: AudioFeed,
+    audio_state: Option<Arc<VoiceShared>>,
 }
 
 fn load_still(path: &Path, slot: &FrameSlot) -> anyhow::Result<()> {
@@ -146,13 +161,14 @@ fn load_still(path: &Path, slot: &FrameSlot) -> anyhow::Result<()> {
 }
 
 impl Player {
-    fn new(params: &VideoCue, order: u64) -> anyhow::Result<Self> {
+    fn new(params: &VideoCue, order: u64, tap: Option<AudioTap>) -> anyhow::Result<Self> {
         let frame: FrameSlot = Arc::new(Mutex::new(Frame::default()));
+        let audio_feed: AudioFeed = Arc::new(Mutex::new(None));
         let source = if super::is_image_path(&params.path) {
             load_still(&params.path, &frame)?;
             Source::Still
         } else {
-            Source::Pipeline(Self::pipeline(params, &frame)?)
+            Source::Pipeline(Self::pipeline(params, &frame, tap, &audio_feed)?)
         };
         let still = matches!(source, Source::Still);
         Ok(Self {
@@ -177,10 +193,13 @@ impl Player {
             error_reported: false,
             last_pos_check: Instant::now(),
             order,
+            tap,
+            audio_feed,
+            audio_state: None,
         })
     }
 
-    fn pipeline(params: &VideoCue, frame: &FrameSlot) -> anyhow::Result<gst::Element> {
+    fn pipeline(params: &VideoCue, frame: &FrameSlot, tap: Option<AudioTap>, feed: &AudioFeed) -> anyhow::Result<gst::Element> {
         let uri = gst::glib::filename_to_uri(&params.path, None).context("bad path")?;
         let caps = gst_video::VideoCapsBuilder::new().format(gst_video::VideoFormat::Rgba).build();
         let sink = gst_app::AppSink::builder().caps(&caps).max_buffers(2).drop(true).build();
@@ -199,7 +218,42 @@ impl Player {
             .property("video-sink", &sink)
             .build()
             .context("GStreamer 'playbin' element missing (install gst-plugins-base)")?;
-        pipeline.set_property("volume", db_to_gain(params.volume_db) as f64);
+        match tap {
+            Some(tap) => {
+                // Soundtrack goes to the mixer; level is applied there.
+                let caps = gst::Caps::builder("audio/x-raw")
+                    .field("format", "F32LE")
+                    .field("layout", "interleaved")
+                    .field("rate", tap.rate as i32)
+                    .field("channels", tap.channels as i32)
+                    .build();
+                let asink = gst_app::AppSink::builder().caps(&caps).build();
+                let feed = feed.clone();
+                asink.set_callbacks(
+                    gst_app::AppSinkCallbacks::builder()
+                        .new_sample(move |s| {
+                            let sample = s.pull_sample().map_err(|_| gst::FlowError::Eos)?;
+                            if let Some(buf) = sample.buffer()
+                                && let Ok(map) = buf.map_readable()
+                                && let Some(tx) = feed.lock().as_mut()
+                            {
+                                for b in map.chunks_exact(4) {
+                                    // A full ring means the mixer isn't consuming (paused/stopped):
+                                    // dropping is the right thing.
+                                    if tx.push(f32::from_le_bytes([b[0], b[1], b[2], b[3]])).is_err() {
+                                        break;
+                                    }
+                                }
+                            }
+                            Ok(gst::FlowSuccess::Ok)
+                        })
+                        .build(),
+                );
+                pipeline.set_property("audio-sink", &asink);
+                pipeline.set_property("volume", 1.0f64);
+            }
+            None => pipeline.set_property("volume", db_to_gain(params.volume_db) as f64),
+        }
         pipeline.set_state(gst::State::Paused).map_err(|e| anyhow!("cannot preroll video: {e}"))?;
         Ok(pipeline)
     }
@@ -239,7 +293,15 @@ impl Player {
         self.finish();
     }
 
+    fn end_audio(&self) {
+        if let Some(st) = &self.audio_state {
+            st.eof.store(true, Ordering::Release);
+        }
+        *self.audio_feed.lock() = None;
+    }
+
     fn finish(&mut self) {
+        self.end_audio();
         self.finished = true;
         self.set_state(gst::State::Paused);
         if !self.params.hold_last_frame {
@@ -275,6 +337,7 @@ impl Player {
                     log::error!("video {}: {msg}", self.params.path.display());
                     self.error = Some(msg);
                     self.finished = true;
+                    self.end_audio();
                     *self.frame.lock() = Frame::default();
                 }
                 _ => {}
@@ -353,6 +416,7 @@ impl Player {
 
 impl Drop for Player {
     fn drop(&mut self) {
+        self.end_audio();
         self.set_state(gst::State::Null);
     }
 }
@@ -387,12 +451,12 @@ impl VideoOutput {
         Ok(Self { players: HashMap::new(), preloaded: HashMap::new(), order: 0 })
     }
 
-    pub fn set_preloaded(&mut self, cues: &[(CueId, &VideoCue)]) {
-        self.preloaded.retain(|id, p| cues.iter().any(|(c, v)| c == id && **v == p.params));
-        for (id, v) in cues {
+    pub fn set_preloaded(&mut self, cues: &[(CueId, &VideoCue, Option<AudioTap>)]) {
+        self.preloaded.retain(|id, p| cues.iter().any(|(c, v, t)| c == id && **v == p.params && *t == p.tap));
+        for (id, v, tap) in cues {
             if !self.preloaded.contains_key(id) && v.path.exists() {
                 self.order += 1;
-                match Player::new(v, self.order) {
+                match Player::new(v, self.order, *tap) {
                     Ok(p) => {
                         self.preloaded.insert(*id, p);
                     }
@@ -402,7 +466,7 @@ impl VideoOutput {
         }
     }
 
-    pub fn start(&mut self, cue: CueId, params: &VideoCue, at: Instant) -> Result<(), String> {
+    pub fn start(&mut self, cue: CueId, params: &VideoCue, at: Instant, tap: Option<AudioTap>) -> Result<(), String> {
         if params.path.as_os_str().is_empty() {
             return Err("no video file".into());
         }
@@ -412,8 +476,8 @@ impl VideoOutput {
         self.players.remove(&cue);
         self.order += 1;
         let mut p = match self.preloaded.remove(&cue) {
-            Some(p) if p.params == *params && !p.finished => p,
-            _ => Player::new(params, self.order).map_err(|e| format!("{e:#}"))?,
+            Some(p) if p.params == *params && p.tap == tap && !p.finished => p,
+            _ => Player::new(params, self.order, tap).map_err(|e| format!("{e:#}"))?,
         };
         p.order = self.order;
         p.play_at = Some(at);
@@ -424,6 +488,27 @@ impl VideoOutput {
 
     pub fn stop(&mut self, cue: CueId) {
         self.players.remove(&cue);
+    }
+
+    /// Connect a started cue's soundtrack to its mixer voice.
+    pub fn attach_audio(&mut self, cue: CueId, tx: rtrb::Producer<f32>, state: Arc<VoiceShared>) {
+        if let Some(p) = self.players.get_mut(&cue) {
+            *p.audio_feed.lock() = Some(tx);
+            if p.finished {
+                state.eof.store(true, Ordering::Release);
+            }
+            p.audio_state = Some(state);
+        }
+    }
+
+    /// Freeze fades in progress on this cue at their current values.
+    pub fn hold(&mut self, cue: CueId) {
+        if let Some(p) = self.players.get_mut(&cue) {
+            p.update(Instant::now());
+            p.vol_ramp = None;
+            p.op_ramp = None;
+            p.geo_ramp = None;
+        }
     }
 
     pub fn pause(&mut self, cue: CueId) {
@@ -461,7 +546,9 @@ impl VideoOutput {
     pub fn fade(&mut self, cue: CueId, f: &FadeRequest, at: Instant) {
         let Some(p) = self.players.get_mut(&cue) else { return };
         let (secs, curve) = (f.duration, f.curve);
-        if let Some(db) = f.volume_db {
+        if let Some(db) = f.volume_db
+            && p.tap.is_none()
+        {
             p.vol_ramp = Some(Ramp { from: p.volume, to: db_to_gain(db), start: at, secs, curve });
         }
         if let Some(o) = f.opacity {
@@ -476,7 +563,7 @@ impl VideoOutput {
     pub fn update_live(&mut self, cue: CueId, params: &VideoCue) {
         let Some(p) = self.players.get_mut(&cue) else { return };
         let old = std::mem::replace(&mut p.params, params.clone());
-        if old.volume_db != params.volume_db {
+        if old.volume_db != params.volume_db && p.tap.is_none() {
             p.vol_ramp = None;
             p.volume = db_to_gain(params.volume_db);
             if let Source::Pipeline(pl) = &p.source {

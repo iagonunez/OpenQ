@@ -167,6 +167,89 @@ fn main() {
     }
     println!("still shown: {shown}, ended at {gone_at:?} (expected ≈0.5s)");
     assert!(shown && gone_at.is_some_and(|t| (0.45..0.6).contains(&t.as_secs_f64())));
+    // --- Slices: [0, 0.2) loops until devamped, then the rest plays once.
+    let mut sl = Cue::new(CueKind::Audio(AudioCue {
+        path: wav_a.clone(),
+        slices: vec![openq::model::SliceMarker { time: 0.2, plays: 0 }],
+        ..Default::default()
+    }));
+    sl.number = "10".into();
+    let sli = sl.id;
+    show.ws.cue_list.cues.push(sl);
+    show.edited();
+    show.engine.set_playhead(Some(sli));
+    show.go();
+    let run = |show: &mut Show, secs: f64| {
+        let t = Instant::now();
+        while t.elapsed().as_secs_f64() < secs {
+            show.tick(Instant::now());
+            std::thread::sleep(Duration::from_millis(2));
+        }
+    };
+    run(&mut show, 1.5);
+    assert!(show.engine.instances.contains_key(&sli), "vamping cue ended on its own");
+    {
+        use openq::engine::Backend;
+        assert!(show.media.devamp(sli));
+    }
+    let t3 = Instant::now();
+    while show.engine.instances.contains_key(&sli) && t3.elapsed() < Duration::from_secs(5) {
+        show.tick(Instant::now());
+        std::thread::sleep(Duration::from_millis(2));
+    }
+    let after = t3.elapsed().as_secs_f64();
+    println!("devamp: cue ended {after:.3}s later (expected 0.8–1.4 s: rest of slice + 0.8 s tail)");
+    assert!((0.75..1.45).contains(&after), "devamp timing off: {after}");
+
+    // --- Video soundtrack through the mixer (ASF: WMV2 + WMA2, decodable with gst-libav).
+    let asf = dir.join("av.asf");
+    let ok = std::process::Command::new("ffmpeg")
+        .args(["-y", "-loglevel", "error", "-f", "lavfi", "-i", "testsrc=duration=2:size=160x120:rate=25"])
+        .args(["-f", "lavfi", "-i", "sine=frequency=330:duration=2", "-c:v", "wmv2", "-c:a", "wmav2"])
+        .arg(&asf)
+        .status()
+        .is_ok_and(|s| s.success());
+    if ok {
+        let _ = prober.get_blocking(&asf);
+        let mut av = Cue::new(CueKind::Video(VideoCue { path: asf.clone(), ..Default::default() }));
+        av.number = "11".into();
+        let avi = av.id;
+        show.ws.cue_list.cues.push(av);
+        show.edited();
+        show.engine.set_playhead(Some(avi));
+        show.go();
+        run(&mut show, 1.2);
+        let played = show.media.audio.as_ref().unwrap().elapsed(avi).unwrap_or(0.0);
+        println!("video soundtrack through mixer: {played:.2}s of audio mixed after 1.2 s");
+        assert!(played > 0.6, "video audio not reaching the mixer");
+        run(&mut show, 2.0);
+        assert!(!show.engine.instances.contains_key(&avi), "A/V cue didn't finish");
+    }
+
+    // --- OSC remote control.
+    let mut w = Cue::new(CueKind::Wait { duration: 1.0 });
+    w.number = "osc".into();
+    let wi = w.id;
+    show.ws.cue_list.cues.push(w);
+    show.edited();
+    let shared = std::sync::Arc::new(parking_lot::Mutex::new(show));
+    let server = openq::osc::OscServer::start(53999, shared.clone(), || {}).expect("bind OSC");
+    let sock = std::net::UdpSocket::bind("127.0.0.1:0").unwrap();
+    let msg = rosc::OscPacket::Message(rosc::OscMessage { addr: "/cue/osc/start".into(), args: vec![] });
+    sock.send_to(&rosc::encoder::encode(&msg).unwrap(), "127.0.0.1:53999").unwrap();
+    let t4 = Instant::now();
+    let mut seen = false;
+    while t4.elapsed() < Duration::from_secs(2) && !seen {
+        let mut s = shared.lock();
+        s.tick(Instant::now());
+        seen = s.engine.instances.contains_key(&wi);
+        drop(s);
+        std::thread::sleep(Duration::from_millis(5));
+    }
+    println!("OSC /cue/osc/start fired the cue: {seen}");
+    assert!(seen);
+    drop(server);
+    shared.lock().shutdown();
     let _: Option<&Media> = None;
     println!("SMOKE OK");
 }

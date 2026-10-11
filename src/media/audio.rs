@@ -8,7 +8,9 @@
 
 use super::decoder::{self, DecodeParams};
 use crate::dsp::{BiquadState, Coeffs, eq_coeffs};
-use crate::model::{AudioCue, CueId, FadeCurve, MAX_EQ_BANDS, MAX_OUT_CHANNELS, MAX_SRC_CHANNELS, db_to_gain};
+use crate::model::{
+    AudioCue, CueId, Eq, FadeCurve, MAX_EQ_BANDS, MAX_OUT_CHANNELS, MAX_SRC_CHANNELS, VideoCue, db_to_gain, routing_gains,
+};
 use anyhow::{Context, anyhow};
 use cpal::traits::{DeviceTrait, HostTrait, StreamTrait};
 use cpal::{FromSample, OutputCallbackInfo, SampleFormat, SizedSample, StreamConfig};
@@ -95,6 +97,8 @@ pub struct VoiceShared {
     pub stop: AtomicBool,
     /// Decoder filled the buffer once (or hit EOF): safe to start without underrun.
     pub ready: AtomicBool,
+    /// Leave the current looping slice after this pass.
+    pub devamp: AtomicBool,
     pub error: parking_lot::Mutex<Option<String>>,
 }
 
@@ -145,6 +149,8 @@ enum Cmd {
     Pan { id: u64, pan: [f32; 2] },
     Eq { id: u64, coeffs: [Coeffs; MAX_EQ_BANDS], bands: usize },
     Matrix { id: u64, matrix: Box<Matrix> },
+    /// Freeze any running gain ramp at its current value.
+    Hold(u64),
     Master(f32),
 }
 
@@ -154,9 +160,30 @@ fn pan_gains(pan: f32) -> [f32; 2] {
     [theta.cos() * std::f32::consts::SQRT_2, theta.sin() * std::f32::consts::SQRT_2]
 }
 
-fn build_matrix(params: &AudioCue, src: usize, out: usize) -> Matrix {
+/// The live-adjustable mix settings of a voice (audio cue or video soundtrack).
+#[derive(Clone, PartialEq, Debug, Default)]
+pub struct MixParams {
+    pub volume_db: f32,
+    pub pan: f32,
+    pub eq: Eq,
+    pub routing: Option<Vec<Vec<f32>>>,
+}
+
+impl From<&AudioCue> for MixParams {
+    fn from(a: &AudioCue) -> Self {
+        Self { volume_db: a.volume_db, pan: a.pan, eq: a.eq.clone(), routing: a.routing.clone() }
+    }
+}
+
+impl From<&VideoCue> for MixParams {
+    fn from(v: &VideoCue) -> Self {
+        Self { volume_db: v.volume_db, pan: 0.0, eq: Eq::default(), routing: v.routing.clone() }
+    }
+}
+
+fn build_matrix(params: &MixParams, src: usize, out: usize) -> Matrix {
     let mut m = [0.0; MAX_SRC_CHANNELS * MAX_OUT_CHANNELS];
-    for (s, row) in params.routing_gains(src, out).iter().enumerate().take(MAX_SRC_CHANNELS) {
+    for (s, row) in routing_gains(&params.routing, src, out).iter().enumerate().take(MAX_SRC_CHANNELS) {
         for (o, g) in row.iter().enumerate().take(MAX_OUT_CHANNELS) {
             m[s * MAX_OUT_CHANNELS + o] = *g;
         }
@@ -235,6 +262,13 @@ impl Mixer {
                         }
                         v.ramp = Some(Ramp { from: v.gain, to, start: at, total: frames.max(1), pos: 0, curve, started: false });
                         v.stop_after_ramp = stop_after;
+                    }
+                }
+                Cmd::Hold(id) => {
+                    if let Some(v) = self.voice(id)
+                        && !v.stop_after_ramp
+                    {
+                        v.ramp = None;
                     }
                 }
                 Cmd::Pan { id, pan } => {
@@ -389,7 +423,10 @@ fn render_voice(v: &mut Voice, out: &mut [f32], ch: usize, frames: usize, start_
 struct VoiceHandle {
     id: u64,
     shared: Arc<VoiceShared>,
-    params: AudioCue,
+    /// Decode parameters (None for externally fed voices, e.g. video soundtracks).
+    params: Option<AudioCue>,
+    mix: MixParams,
+    label: String,
     src_channels: usize,
     error_reported: bool,
 }
@@ -540,27 +577,35 @@ impl AudioOutput {
         let shared = Arc::new(VoiceShared::default());
         decoder::spawn(
             params.path.clone(),
-            DecodeParams {
-                start: params.start_time.max(0.0),
-                end: params.end_time,
-                plays: if params.infinite_loop { None } else { Some(params.play_count.max(1)) },
-                rate: params.rate as f64,
-                channels: src,
-            },
+            DecodeParams { segments: params.segments(), rate: params.rate as f64, channels: src },
             self.rate,
             tx,
             shared.clone(),
         );
-        let (eq, eq_bands) = eq_coeffs(&params.eq, self.rate as f32);
+        let mix = MixParams::from(params);
+        self.add_voice(id, rx, shared.clone(), &mix, src, VoiceState::Idle);
+        VoiceHandle {
+            id,
+            shared,
+            params: Some(params.clone()),
+            mix,
+            label: params.path.display().to_string(),
+            src_channels: src,
+            error_reported: false,
+        }
+    }
+
+    fn add_voice(&mut self, id: u64, rx: rtrb::Consumer<f32>, shared: Arc<VoiceShared>, mix: &MixParams, src: usize, state: VoiceState) {
+        let (eq, eq_bands) = eq_coeffs(&mix.eq, self.rate as f32);
         let voice = Box::new(Voice {
             id,
             rx,
-            shared: shared.clone(),
-            state: VoiceState::Idle,
+            shared,
+            state,
             src_channels: src,
-            gain: db_to_gain(params.volume_db),
-            pan: pan_gains(params.pan),
-            matrix: build_matrix(params, src, self.channels),
+            gain: db_to_gain(mix.volume_db),
+            pan: pan_gains(mix.pan),
+            matrix: build_matrix(mix, src, self.channels),
             eq,
             eq_bands,
             eq_state: Default::default(),
@@ -569,7 +614,50 @@ impl AudioOutput {
             done: false,
         });
         self.send(Cmd::Add(voice));
-        VoiceHandle { id, shared, params: params.clone(), src_channels: src, error_reported: false }
+    }
+
+    /// A voice fed by someone else (a video's soundtrack). Samples pushed into the returned
+    /// producer are interleaved `channels`-channel f32 at the device rate; set `eof` on the
+    /// returned state when done. Plays as soon as data arrives.
+    pub fn add_external(&mut self, cue: CueId, mix: &MixParams, channels: usize, label: &str) -> (rtrb::Producer<f32>, Arc<VoiceShared>) {
+        self.stop(cue);
+        let id = self.next_id;
+        self.next_id += 1;
+        let src = channels.clamp(1, MAX_SRC_CHANNELS);
+        let (tx, rx) = rtrb::RingBuffer::<f32>::new(self.rate as usize * src);
+        let shared = Arc::new(VoiceShared::default());
+        self.add_voice(id, rx, shared.clone(), mix, src, VoiceState::Playing);
+        self.voices.insert(
+            cue,
+            VoiceHandle {
+                id,
+                shared: shared.clone(),
+                params: None,
+                mix: mix.clone(),
+                label: label.to_string(),
+                src_channels: src,
+                error_reported: false,
+            },
+        );
+        (tx, shared)
+    }
+
+    /// Leave the current looping slice of an audio cue after its current pass.
+    pub fn devamp(&mut self, cue: CueId) -> bool {
+        match self.voices.get(&cue) {
+            Some(h) if h.params.is_some() => {
+                h.shared.devamp.store(true, Ordering::Release);
+                true
+            }
+            _ => false,
+        }
+    }
+
+    /// Stop any fade in progress on this cue, keeping the current level.
+    pub fn hold(&mut self, cue: CueId) {
+        if let Some(id) = self.voices.get(&cue).map(|h| h.id) {
+            self.send(Cmd::Hold(id));
+        }
     }
 
     /// Keep exactly these cues preloaded (buffered and ready to start instantly).
@@ -578,7 +666,7 @@ impl AudioOutput {
         let stale: Vec<CueId> = self
             .preloaded
             .iter()
-            .filter(|(id, h)| cues.iter().find(|c| c.0 == **id).is_none_or(|c| *c.1 != h.params))
+            .filter(|(id, h)| cues.iter().find(|c| c.0 == **id).is_none_or(|c| Some(c.1) != h.params.as_ref()))
             .map(|(id, _)| *id)
             .collect();
         for id in stale {
@@ -603,7 +691,7 @@ impl AudioOutput {
         }
         self.stop(cue);
         let handle = match self.preloaded.remove(&cue) {
-            Some(h) if h.params == *params && !h.shared.finished.load(Ordering::Acquire) => h,
+            Some(h) if h.params.as_ref() == Some(params) && !h.shared.finished.load(Ordering::Acquire) => h,
             Some(h) => {
                 self.send(Cmd::Stop(h.id));
                 self.create_voice(params, src_channels)
@@ -649,10 +737,10 @@ impl AudioOutput {
 
     /// Apply edits to a playing cue: level (short ramp), pan, EQ and routing take effect now.
     /// (Timing edits like start/end/rate apply the next time the cue starts.)
-    pub fn update_live(&mut self, cue: CueId, params: &AudioCue) {
+    pub fn update_live(&mut self, cue: CueId, params: &MixParams) {
         let Some(h) = self.voices.get_mut(&cue) else { return };
         let (id, src) = (h.id, h.src_channels);
-        let old = std::mem::replace(&mut h.params, params.clone());
+        let old = std::mem::replace(&mut h.mix, params.clone());
         if old.volume_db != params.volume_db {
             let frames = (0.03 * self.rate as f64) as u64;
             self.send(Cmd::Ramp { id, to: db_to_gain(params.volume_db), frames, curve: FadeCurve::Linear, at: 0, stop_after: false });
@@ -698,7 +786,7 @@ impl AudioOutput {
                 && let Some(e) = h.shared.error.lock().clone()
             {
                 h.error_reported = true;
-                out.push(format!("{}: {e}", h.params.path.display()));
+                out.push(format!("{}: {e}", h.label));
             }
         }
         out
@@ -765,7 +853,7 @@ mod tests {
             src_channels: src,
             gain: db_to_gain(params.volume_db),
             pan: pan_gains(params.pan),
-            matrix: build_matrix(params, src, out_ch),
+            matrix: build_matrix(&MixParams::from(params), src, out_ch),
             eq,
             eq_bands,
             eq_state: Default::default(),

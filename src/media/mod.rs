@@ -6,7 +6,7 @@ pub mod decoder;
 pub mod video;
 
 use crate::engine::{Backend, FadeRequest};
-use crate::model::{Cue, CueId, CueKind};
+use crate::model::{Cue, CueId, CueKind, NetworkCue, VideoCue};
 use parking_lot::Mutex;
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
@@ -193,10 +193,8 @@ pub fn effective_duration(cue: &Cue, file_duration: Option<f64>) -> Option<f64> 
             if a.infinite_loop {
                 return None;
             }
-            let file = file_duration?;
-            let end = a.end_time.map_or(file, |e| e.min(file));
             let rate = if a.rate > 0.0 { a.rate as f64 } else { 1.0 };
-            Some((end - a.start_time).max(0.0) * a.play_count.max(1) as f64 / rate)
+            Some(a.file_time_total(file_duration?)? / rate)
         }
         CueKind::Video(v) => {
             if v.infinite_loop {
@@ -220,6 +218,7 @@ pub struct Media {
     pub video: Option<video::VideoOutput>,
     pub video_error: Option<String>,
     pub prober: Arc<Prober>,
+    net: Option<std::net::UdpSocket>,
 }
 
 impl Media {
@@ -248,21 +247,22 @@ impl Media {
             video,
             video_error,
             prober,
+            net: None,
         }
     }
 
     /// Playback position of a running media cue, as reported by the media itself.
     pub fn elapsed(&self, id: CueId) -> Option<f64> {
-        if let Some(a) = &self.audio
-            && a.has(id)
-        {
-            return a.elapsed(id);
-        }
         #[cfg(feature = "video")]
         if let Some(v) = &self.video
             && v.has(id)
         {
             return v.elapsed(id);
+        }
+        if let Some(a) = &self.audio
+            && a.has(id)
+        {
+            return a.elapsed(id);
         }
         None
     }
@@ -314,16 +314,35 @@ impl Media {
         self.prober.get_blocking(path).map(|i| i.channels).unwrap_or(2).max(1)
     }
 
+    /// How a video cue's soundtrack enters the mixer (None: no mixer, or the file has no audio).
+    #[cfg(feature = "video")]
+    fn video_tap(&self, v: &VideoCue) -> Option<video::AudioTap> {
+        let a = self.audio.as_ref()?;
+        if is_image_path(&v.path) {
+            return None;
+        }
+        let channels = match self.prober.get(&v.path) {
+            Some(Ok(i)) if i.channels == 0 => return None,
+            Some(Ok(i)) => i.channels,
+            _ => 2,
+        };
+        // Stereo at most: multichannel layouts need channel positions GStreamer can't infer here.
+        Some(video::AudioTap { rate: a.rate, channels: channels.clamp(1, 2) })
+    }
+
     /// Push inspector edits to a cue that is playing right now.
     pub fn update_live(&mut self, cue: &Cue) {
         match &cue.kind {
             CueKind::Audio(p) => {
                 if let Some(a) = &mut self.audio {
-                    a.update_live(cue.id, p);
+                    a.update_live(cue.id, &audio::MixParams::from(p));
                 }
             }
             #[cfg(feature = "video")]
             CueKind::Video(p) => {
+                if let Some(a) = &mut self.audio {
+                    a.update_live(cue.id, &audio::MixParams::from(p));
+                }
                 if let Some(v) = &mut self.video {
                     v.update_live(cue.id, p);
                 }
@@ -335,6 +354,42 @@ impl Media {
     pub fn take_meters(&self) -> Vec<f32> {
         self.audio.as_ref().map(|a| a.take_meters()).unwrap_or_default()
     }
+}
+
+/// Parse a Network cue's argument string into OSC values.
+pub fn parse_osc_args(s: &str) -> Vec<rosc::OscType> {
+    let mut out = Vec::new();
+    let mut chars = s.chars().peekable();
+    while let Some(&c) = chars.peek() {
+        if c.is_whitespace() {
+            chars.next();
+            continue;
+        }
+        let tok: String = if c == '"' {
+            chars.next();
+            let t: String = chars.by_ref().take_while(|c| *c != '"').collect();
+            out.push(rosc::OscType::String(t));
+            continue;
+        } else {
+            let mut t = String::new();
+            while let Some(&c) = chars.peek() {
+                if c.is_whitespace() {
+                    break;
+                }
+                t.push(c);
+                chars.next();
+            }
+            t
+        };
+        out.push(if let Ok(i) = tok.parse::<i32>() {
+            rosc::OscType::Int(i)
+        } else if let Ok(f) = tok.parse::<f32>() {
+            rosc::OscType::Float(f)
+        } else {
+            rosc::OscType::String(tok)
+        });
+    }
+    out
 }
 
 impl Backend for Media {
@@ -351,16 +406,18 @@ impl Backend for Media {
             a.set_preloaded(&list);
         }
         #[cfg(feature = "video")]
-        if let Some(v) = &mut self.video {
+        {
             let list: Vec<_> = cues
                 .iter()
                 .filter(|c| c.armed)
                 .filter_map(|c| match &c.kind {
-                    CueKind::Video(p) => Some((c.id, p)),
+                    CueKind::Video(p) => Some((c.id, p, self.video_tap(p))),
                     _ => None,
                 })
                 .collect();
-            v.set_preloaded(&list);
+            if let Some(v) = &mut self.video {
+                v.set_preloaded(&list);
+            }
         }
     }
 
@@ -374,10 +431,19 @@ impl Backend for Media {
                 false => Err(format!("audio unavailable: {}", self.audio_error.as_deref().unwrap_or("?"))),
             },
             #[cfg(feature = "video")]
-            CueKind::Video(p) => match &mut self.video {
-                Some(v) => v.start(cue.id, p, at),
-                None => Err(format!("video unavailable: {}", self.video_error.as_deref().unwrap_or("?"))),
-            },
+            CueKind::Video(p) => {
+                let tap = self.video_tap(p);
+                let Some(v) = &mut self.video else {
+                    return Err(format!("video unavailable: {}", self.video_error.as_deref().unwrap_or("?")));
+                };
+                v.start(cue.id, p, at, tap)?;
+                if let (Some(tap), Some(a)) = (tap, &mut self.audio) {
+                    let label = p.path.display().to_string();
+                    let (tx, state) = a.add_external(cue.id, &audio::MixParams::from(p), tap.channels, &label);
+                    v.attach_audio(cue.id, tx, state);
+                }
+                Ok(())
+            }
             #[cfg(not(feature = "video"))]
             CueKind::Video(_) => Err("built without video support".into()),
             _ => Ok(()),
@@ -426,6 +492,36 @@ impl Backend for Media {
         }
     }
 
+    fn hold_fade(&mut self, id: CueId) {
+        if let Some(a) = &mut self.audio {
+            a.hold(id);
+        }
+        #[cfg(feature = "video")]
+        if let Some(v) = &mut self.video {
+            v.hold(id);
+        }
+    }
+
+    fn devamp(&mut self, id: CueId) -> bool {
+        self.audio.as_mut().is_some_and(|a| a.devamp(id))
+    }
+
+    fn send_network(&mut self, n: &NetworkCue) -> Result<(), String> {
+        use std::net::ToSocketAddrs;
+        if self.net.is_none() {
+            self.net = Some(std::net::UdpSocket::bind("0.0.0.0:0").map_err(|e| e.to_string())?);
+        }
+        let addr = (n.host.as_str(), n.port)
+            .to_socket_addrs()
+            .map_err(|e| format!("{}: {e}", n.host))?
+            .next()
+            .ok_or_else(|| format!("cannot resolve {}", n.host))?;
+        let msg = rosc::OscPacket::Message(rosc::OscMessage { addr: n.address.clone(), args: parse_osc_args(&n.args) });
+        let bytes = rosc::encoder::encode(&msg).map_err(|e| e.to_string())?;
+        self.net.as_ref().unwrap().send_to(&bytes, addr).map_err(|e| e.to_string())?;
+        Ok(())
+    }
+
     fn is_finished(&self, id: CueId) -> bool {
         let audio_done = self.audio.as_ref().is_none_or(|a| a.is_finished(id));
         #[cfg(feature = "video")]
@@ -438,6 +534,7 @@ impl Backend for Media {
     fn duration(&self, cue: &Cue) -> Option<f64> {
         let file = match &cue.kind {
             CueKind::Audio(a) => self.prober.get_blocking(&a.path).ok()?.duration,
+            CueKind::Video(v) if is_image_path(&v.path) => None,
             CueKind::Video(v) => self.prober.get(&v.path)?.ok()?.duration,
             _ => return None,
         };
@@ -462,5 +559,26 @@ impl Backend for Media {
             v.update(now);
         }
         let _ = now;
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use rosc::OscType;
+
+    #[test]
+    fn osc_args_parse_numbers_and_quoted_strings() {
+        let a = parse_osc_args(r#"1 2.5 hello "two words" -3"#);
+        assert_eq!(
+            a,
+            vec![
+                OscType::Int(1),
+                OscType::Float(2.5),
+                OscType::String("hello".into()),
+                OscType::String("two words".into()),
+                OscType::Int(-3)
+            ]
+        );
     }
 }

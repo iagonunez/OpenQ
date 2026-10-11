@@ -125,7 +125,17 @@ impl App {
                         db_edit(ui, &mut v.volume_db);
                         ui.end_row();
                     });
-                    ui.label(RichText::new("A video's soundtrack plays on the system default output.").weak());
+                    ui.add_space(8.0);
+                    match ctx.prober.get(&v.path).and_then(|r| r.ok()) {
+                        Some(i) if i.channels == 0 => {
+                            ui.label(RichText::new("This file has no soundtrack.").weak());
+                        }
+                        info => {
+                            let src = info.map_or(2, |i| i.channels).clamp(1, 2);
+                            routing_editor(ui, &mut v.routing, src, ctx.out_channels.min(crate::model::MAX_OUT_CHANNELS));
+                            ui.label(RichText::new("The soundtrack plays through the OpenQ mixer (stereo).").weak());
+                        }
+                    }
                 }
                 _ => {}
             },
@@ -189,6 +199,23 @@ fn basics(ui: &mut Ui, cue: &mut Cue) {
             ui.label("Armed");
             ui.checkbox(&mut cue.armed, "")
                 .on_hover_text("Disarmed cues skip their action but still run waits and continues");
+            ui.end_row();
+
+            ui.label("Hotkey");
+            ui.horizontal(|ui| {
+                let mut text = cue.hotkey.clone().unwrap_or_default();
+                let valid = text.is_empty() || egui::Key::from_name(&text).is_some();
+                let r = ui.add(
+                    TextEdit::singleline(&mut text)
+                        .desired_width(60.0)
+                        .hint_text("none")
+                        .text_color_opt((!valid).then_some(super::widgets::RED)),
+                );
+                if r.changed() {
+                    cue.hotkey = (!text.trim().is_empty()).then(|| text.trim().to_string());
+                }
+                r.on_hover_text("Key that fires this cue (e.g. F1, A, Num5). Not Space/P/R/Esc.");
+            });
             ui.end_row();
 
             ui.label("Color");
@@ -300,16 +327,28 @@ fn audio_time(ui: &mut Ui, id: CueId, a: &mut AudioCue, ctx: &Ctx, pick: &mut bo
         let duration = file_dur.or(wf_ref.as_ref().map(|w| w.duration)).unwrap_or(0.0);
         if duration > 0.0 {
             // Map wall-clock elapsed to a position in the file (rate + loops).
-            let playhead = ctx.elapsed.map(|e| {
-                let end = a.end_time.unwrap_or(duration);
-                let len = (end - a.start_time).max(1e-3);
-                a.start_time + (e * a.rate as f64) % len
-            });
+            let playhead = ctx.elapsed.map(|e| a.file_position(e * a.rate as f64, duration));
             if let Some(Err(e)) = &wf {
                 ui.label(RichText::new(format!("waveform: {e}")).color(RED));
             }
-            waveform_editor(ui, ui.id().with(("wave", id)), wf_ref.as_deref(), duration, &mut a.start_time, &mut a.end_time, playhead);
-            ui.label(RichText::new("Drag the green/red markers to trim · drag the waveform to pan · Ctrl+scroll to zoom").weak().small());
+            waveform_editor(
+                ui,
+                ui.id().with(("wave", id)),
+                wf_ref.as_deref(),
+                duration,
+                &mut a.start_time,
+                &mut a.end_time,
+                &mut a.slices,
+                playhead,
+            );
+            ui.label(
+                RichText::new(
+                    "Drag green/red markers to trim · double-click to add a slice · drag the waveform to pan · Ctrl+scroll to zoom",
+                )
+                .weak()
+                .small(),
+            );
+            slice_table(ui, a);
         }
     }
     ui.add_space(6.0);
@@ -337,6 +376,41 @@ fn audio_time(ui: &mut Ui, id: CueId, a: &mut AudioCue, ctx: &Ctx, pick: &mut bo
     });
 }
 
+/// Slices: each marker ends a section that plays N times (∞ = until a Devamp cue).
+fn slice_table(ui: &mut Ui, a: &mut AudioCue) {
+    if a.slices.is_empty() {
+        return;
+    }
+    ui.add_space(4.0);
+    ui.label(RichText::new("Slices").strong());
+    let mut remove = None;
+    let mut prev = a.start_time;
+    egui::Grid::new("slices").num_columns(4).spacing([10.0, 4.0]).show(ui, |ui| {
+        for (i, m) in a.slices.iter_mut().enumerate() {
+            ui.label(RichText::new(format!("{} – ", fmt_time(prev))).weak());
+            time_edit(ui, &mut m.time);
+            ui.horizontal(|ui| {
+                let mut forever = m.plays == 0;
+                ui.add_enabled(!forever, DragValue::new(&mut m.plays).range(1..=9999).suffix("×"));
+                if ui.checkbox(&mut forever, "loop until devamp").changed() {
+                    m.plays = if forever { 0 } else { 1 };
+                }
+            });
+            if ui.small_button("🗑").clicked() {
+                remove = Some(i);
+            }
+            ui.end_row();
+            prev = m.time;
+        }
+        ui.label(RichText::new(format!("{} – end", fmt_time(prev))).weak());
+        ui.label(RichText::new("last slice uses Plays below").weak());
+        ui.end_row();
+    });
+    if let Some(i) = remove {
+        a.slices.remove(i);
+    }
+}
+
 fn audio_levels(ui: &mut Ui, a: &mut AudioCue, ctx: &Ctx) {
     egui::Grid::new("alevels").num_columns(2).spacing([10.0, 6.0]).show(ui, |ui| {
         ui.label("Level");
@@ -356,15 +430,15 @@ fn audio_levels(ui: &mut Ui, a: &mut AudioCue, ctx: &Ctx) {
     });
     ui.add_space(8.0);
     let src = ctx.prober.get(&a.path).and_then(|r| r.ok()).map_or(2, |i| i.channels.max(1)).min(crate::model::MAX_SRC_CHANNELS);
-    routing_editor(ui, a, src, ctx.out_channels.min(crate::model::MAX_OUT_CHANNELS));
+    routing_editor(ui, &mut a.routing, src, ctx.out_channels.min(crate::model::MAX_OUT_CHANNELS));
 }
 
-fn routing_editor(ui: &mut Ui, a: &mut AudioCue, src: usize, outs: usize) {
+fn routing_editor(ui: &mut Ui, routing: &mut Option<Vec<Vec<f32>>>, src: usize, outs: usize) {
     ui.horizontal(|ui| {
         ui.label(RichText::new("Routing matrix").strong());
-        let mut custom = a.routing.is_some();
+        let mut custom = routing.is_some();
         if ui.checkbox(&mut custom, "Custom").changed() {
-            a.routing = custom.then(|| {
+            *routing = custom.then(|| {
                 default_routing(src, outs)
                     .into_iter()
                     .map(|row| row.into_iter().map(|g| if g > 0.0 { gain_to_db(g) } else { MIN_DB }).collect())
@@ -373,7 +447,7 @@ fn routing_editor(ui: &mut Ui, a: &mut AudioCue, src: usize, outs: usize) {
         }
         ui.label(RichText::new(format!("{src} in, {outs} out")).weak());
     });
-    let Some(m) = &mut a.routing else {
+    let Some(m) = routing else {
         ui.label(RichText::new("Automatic: mono feeds outputs 1+2, multichannel maps 1:1.").weak());
         return;
     };
@@ -639,6 +713,34 @@ fn settings_tab(ui: &mut Ui, cue: &mut Cue, ctx: &Ctx) {
                 target_combo(ui, "goto_target", target, options, "— none —");
                 ui.end_row();
             });
+        }
+        CueKind::Devamp { target } => {
+            egui::Grid::new("tgt").num_columns(2).show(ui, |ui| {
+                ui.label("Devamp");
+                target_combo(ui, "devamp_target", target, options, "— none —");
+                ui.end_row();
+            });
+            ui.label(
+                RichText::new("Lets the target's looping slice finish its current pass, then play on to the next slice.").weak(),
+            );
+        }
+        CueKind::Network(n) => {
+            egui::Grid::new("net").num_columns(2).spacing([10.0, 6.0]).show(ui, |ui| {
+                ui.label("Destination");
+                ui.horizontal(|ui| {
+                    ui.add(TextEdit::singleline(&mut n.host).desired_width(160.0));
+                    ui.label(":");
+                    ui.add(DragValue::new(&mut n.port).range(1..=65535));
+                });
+                ui.end_row();
+                ui.label("OSC address");
+                ui.add(TextEdit::singleline(&mut n.address).desired_width(260.0));
+                ui.end_row();
+                ui.label("Arguments");
+                ui.add(TextEdit::singleline(&mut n.args).desired_width(260.0).hint_text(r#"1 0.5 "text""#));
+                ui.end_row();
+            });
+            ui.label(RichText::new("Sends one OSC message over UDP. Numbers are sent as int/float, other words as strings.").weak());
         }
         _ => {}
     }

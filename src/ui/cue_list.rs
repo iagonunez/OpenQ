@@ -1,7 +1,7 @@
 //! The cue list: a table with playhead, live status, progress bars and drag & drop.
 
-use super::App;
-use super::widgets::{AMBER, BLUE, GREEN, RED, fmt_time, paint_progress};
+use super::{App, Mode};
+use super::widgets::{AMBER, BLUE, GREEN, RED, fmt_time, paint_progress, parse_time};
 use crate::media::effective_duration;
 use crate::model::{ContinueMode, Cue, CueId, CueKind, CueList, GroupMode, KindTag};
 use crate::show::Show;
@@ -9,6 +9,8 @@ use egui::{Align2, Color32, CursorIcon, FontId, Rect, RichText, Sense, Stroke, S
 use std::time::Instant;
 
 const ROW_H: f32 = 26.0;
+/// Taller rows in show mode, readable from across a booth.
+const ROW_H_SHOW: f32 = 34.0;
 const W_MARK: f32 = 18.0;
 const W_STATE: f32 = 20.0;
 const W_ICON: f32 = 24.0;
@@ -17,6 +19,28 @@ const W_TARGET: f32 = 170.0;
 const W_TIME: f32 = 92.0;
 const W_CONT: f32 = 26.0;
 const INDENT: f32 = 18.0;
+
+/// A cue-row cell being edited in place.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(super) enum InlineField {
+    Number,
+    Name,
+    PreWait,
+    PostWait,
+}
+
+pub(super) struct InlineEdit {
+    pub id: CueId,
+    pub field: InlineField,
+    pub text: String,
+    focused: bool,
+}
+
+impl InlineEdit {
+    pub fn new(id: CueId, field: InlineField, text: String) -> Self {
+        Self { id, field, text, focused: false }
+    }
+}
 
 #[derive(Clone, Copy, Debug, PartialEq)]
 enum DropTarget {
@@ -62,10 +86,10 @@ impl App {
     pub(super) fn toolbar(&mut self, ui: &mut Ui, show: &mut Show) {
         ui.horizontal_wrapped(|ui| {
             for (i, tag) in KindTag::ALL.iter().enumerate() {
-                let key = (i + 1) % 10;
+                let key = if i < 10 { format!(" (Ctrl+{})", (i + 1) % 10) } else { String::new() };
                 if ui
                     .button(format!("{} {}", tag.icon(), tag.label()))
-                    .on_hover_text(format!("New {} cue (Ctrl+{key})", tag.label()))
+                    .on_hover_text(format!("New {} cue{key}", tag.label()))
                     .clicked()
                 {
                     self.add_cue(show, *tag);
@@ -103,11 +127,17 @@ impl App {
         let mut context_action: Option<(CueId, RowAction)> = None;
         let mut list_rect = Rect::NOTHING;
         let scroll_to = self.scroll_to.take();
+        let editing = self.mode == Mode::Edit;
+        let row_h = if editing { ROW_H } else { ROW_H_SHOW };
+        let mut start_inline: Option<InlineEdit> = None;
+        let mut commit: Option<InlineEdit> = None;
+        let mut cycle_continue: Option<CueId> = None;
 
         egui::ScrollArea::vertical().auto_shrink([false, false]).id_salt("cuelist").show(ui, |ui| {
             for (depth, id) in &rows {
                 let Some(cue) = show.ws.cue_list.find(*id) else { continue };
-                let (rect, resp) = ui.allocate_exact_size(vec2(ui.available_width(), ROW_H), Sense::click_and_drag());
+                let sense = if editing { Sense::click_and_drag() } else { Sense::click() };
+                let (rect, resp) = ui.allocate_exact_size(vec2(ui.available_width(), row_h), sense);
                 list_rect = list_rect.union(rect);
                 row_rects.push((rect, *id, cue.is_group()));
                 if scroll_to == Some(*id) {
@@ -123,10 +153,75 @@ impl App {
                 if cue.is_group() {
                     let tri = Rect::from_min_size(
                         pos2(cols.name + *depth as f32 * INDENT, rect.top()),
-                        vec2(INDENT, ROW_H),
+                        vec2(INDENT, row_h),
                     );
                     if ui.interact(tri, ui.id().with(("tri", id)), Sense::click()).clicked() {
                         toggle_collapse = Some(*id);
+                    }
+                }
+
+                // Edit mode: double-click a cell to edit it in place; click the continue column to
+                // cycle do-not-continue → auto-continue → auto-follow.
+                if editing {
+                    let name_x = cols.name + *depth as f32 * INDENT + if cue.is_group() { INDENT } else { 0.0 };
+                    let y = rect.y_range();
+                    let cells = [
+                        (InlineField::Number, Rect::from_x_y_ranges(cols.num..=cols.name - 2.0, y)),
+                        (InlineField::Name, Rect::from_x_y_ranges(name_x..=cols.target - 2.0, y)),
+                        (InlineField::PreWait, Rect::from_x_y_ranges(cols.pre..=cols.pre + W_TIME, y)),
+                        (InlineField::PostWait, Rect::from_x_y_ranges(cols.post..=cols.post + W_TIME, y)),
+                    ];
+                    for (field, cell) in cells {
+                        let r = ui.interact(cell, ui.id().with(("cell", id, field as u8)), Sense::click());
+                        if r.double_clicked() {
+                            let follow = field == InlineField::PostWait && cue.continue_mode == ContinueMode::AutoFollow;
+                            if !follow {
+                                let text = match field {
+                                    InlineField::Number => cue.number.clone(),
+                                    InlineField::Name => cue.display_name(),
+                                    InlineField::PreWait => fmt_time(cue.pre_wait),
+                                    InlineField::PostWait => fmt_time(cue.post_wait),
+                                };
+                                start_inline = Some(InlineEdit { id: *id, field, text, focused: false });
+                            }
+                        } else if r.clicked() {
+                            clicked = Some((*id, ui.input(|i| i.modifiers)));
+                        }
+                    }
+                    let cont = Rect::from_x_y_ranges(cols.cont..=cols.cont + W_CONT, y);
+                    let r = ui
+                        .interact(cont, ui.id().with(("cont", id)), Sense::click())
+                        .on_hover_text("Click to cycle: do not continue → auto-continue → auto-follow");
+                    if r.clicked() {
+                        cycle_continue = Some(*id);
+                    }
+                    if r.hovered() && cue.continue_mode == ContinueMode::DoNotContinue {
+                        ui.painter().text(cont.center(), Align2::CENTER_CENTER, "↓", FontId::proportional(14.0), ui.visuals().weak_text_color());
+                    }
+                }
+
+                // In-place editor overlay.
+                if let Some(ed) = &mut self.inline
+                    && ed.id == *id
+                {
+                    let name_x = cols.name + *depth as f32 * INDENT + if cue.is_group() { INDENT } else { 0.0 };
+                    let x = match ed.field {
+                        InlineField::Number => cols.num..=cols.name - 2.0,
+                        InlineField::Name => name_x..=cols.target - 2.0,
+                        InlineField::PreWait => cols.pre..=cols.pre + W_TIME,
+                        InlineField::PostWait => cols.post..=cols.post + W_TIME,
+                    };
+                    let cell = Rect::from_x_y_ranges(x, rect.y_range()).shrink2(vec2(1.0, 2.0));
+                    let te = ui.put(cell, egui::TextEdit::singleline(&mut ed.text).margin(vec2(3.0, 1.0)));
+                    let mut done = false;
+                    if !ed.focused {
+                        te.request_focus();
+                        ed.focused = true;
+                    } else if te.lost_focus() {
+                        done = true;
+                    }
+                    if done {
+                        commit = self.inline.take();
                     }
                 }
 
@@ -136,7 +231,7 @@ impl App {
                 if resp.double_clicked() && cue.is_group() {
                     toggle_collapse = Some(*id);
                 }
-                if resp.drag_started() {
+                if editing && resp.drag_started() {
                     let ids = if self.selection.contains(id) {
                         rows.iter().map(|r| r.1).filter(|r| self.selection.contains(r)).collect()
                     } else {
@@ -145,7 +240,7 @@ impl App {
                     self.drag = Some(ids);
                 }
                 resp.context_menu(|ui| {
-                    if let Some(a) = row_context_menu(ui, cue) {
+                    if let Some(a) = row_context_menu(ui, cue, editing) {
                         context_action = Some((*id, a));
                     }
                 });
@@ -173,6 +268,47 @@ impl App {
             && !self.collapsed.remove(&id)
         {
             self.collapsed.insert(id);
+        }
+
+        if let Some(ed) = start_inline {
+            self.inline = Some(ed);
+        }
+        if let Some(ed) = commit
+            && let Some(c) = show.ws.cue_list.find_mut(ed.id)
+        {
+            let before = c.clone();
+            match ed.field {
+                InlineField::Number => c.number = ed.text.trim().to_string(),
+                InlineField::Name => {
+                    // Keep the automatic name (file name) unless it was actually changed.
+                    if ed.text != c.display_name() {
+                        c.name = ed.text.trim().to_string();
+                    }
+                }
+                InlineField::PreWait => {
+                    if let Some(t) = parse_time(&ed.text) {
+                        c.pre_wait = t;
+                    }
+                }
+                InlineField::PostWait => {
+                    if let Some(t) = parse_time(&ed.text) {
+                        c.post_wait = t;
+                    }
+                }
+            }
+            if *c != before {
+                show.edited();
+            }
+        }
+        if let Some(id) = cycle_continue
+            && let Some(c) = show.ws.cue_list.find_mut(id)
+        {
+            c.continue_mode = match c.continue_mode {
+                ContinueMode::DoNotContinue => ContinueMode::AutoContinue,
+                ContinueMode::AutoContinue => ContinueMode::AutoFollow,
+                ContinueMode::AutoFollow => ContinueMode::DoNotContinue,
+            };
+            show.edited();
         }
 
         if let Some((id, mods)) = clicked {
@@ -284,7 +420,7 @@ impl App {
         } else {
             Color32::TRANSPARENT
         };
-        if bg == Color32::TRANSPARENT && (rect.top() / ROW_H) as i64 % 2 == 0 {
+        if bg == Color32::TRANSPARENT && (rect.top() / rect.height()) as i64 % 2 == 0 {
             bg = v.faint_bg_color;
         }
         p.rect_filled(rect, 0.0, bg);
@@ -300,8 +436,9 @@ impl App {
         }
 
         let text_color = if cue.armed { v.text_color() } else { v.weak_text_color() };
-        let font = FontId::proportional(14.0);
-        let mono = FontId::monospace(12.5);
+        let big = self.mode == Mode::Show;
+        let font = FontId::proportional(if big { 18.0 } else { 14.0 });
+        let mono = FontId::monospace(if big { 15.0 } else { 12.5 });
         let cy = rect.center().y;
 
         // Live state / broken indicator.
@@ -358,6 +495,7 @@ impl App {
                 None if media_path.is_none() => "no file".into(),
                 None => "…".into(),
             },
+            CueKind::Network(n) => format!("{}:{} {}", n.host, n.port, n.address),
             k => match k.target() {
                 Some(t) => match show.ws.cue_list.find(t) {
                     Some(tc) => format!("{} {}", tc.number, tc.display_name()),
@@ -479,7 +617,7 @@ enum RowAction {
     ToggleArmed,
 }
 
-fn row_context_menu(ui: &mut Ui, cue: &Cue) -> Option<RowAction> {
+fn row_context_menu(ui: &mut Ui, cue: &Cue, editing: bool) -> Option<RowAction> {
     let mut a = None;
     ui.label(RichText::new(format!("{} {}", cue.number, cue.display_name())).strong());
     ui.separator();
@@ -491,6 +629,12 @@ fn row_context_menu(ui: &mut Ui, cue: &Cue) -> Option<RowAction> {
     }
     if ui.button("⏹ Stop this cue").clicked() {
         a = Some(RowAction::Stop);
+    }
+    if !editing {
+        if a.is_some() {
+            ui.close();
+        }
+        return a;
     }
     ui.separator();
     if ui.button(if cue.armed { "Disarm" } else { "Arm" }).clicked() {
@@ -613,7 +757,7 @@ trait TargetExt {
 impl TargetExt for CueKind {
     /// Whether this kind of cue takes a target at all.
     fn needs_target(&self) -> bool {
-        matches!(self, CueKind::Fade(_) | CueKind::Start { .. } | CueKind::Goto { .. })
+        matches!(self, CueKind::Fade(_) | CueKind::Start { .. } | CueKind::Goto { .. } | CueKind::Devamp { .. })
     }
 
     /// A cue that needs a target but has none (or it was deleted).

@@ -8,7 +8,7 @@
 //! accumulates along a chain of cues. Starts are dispatched up to [`LOOKAHEAD`] early with their
 //! exact target time, letting the audio backend start them sample-accurately.
 
-use crate::model::{Cue, CueId, CueKind, FadeCurve, GroupMode, KindTag, MIN_DB, Workspace};
+use crate::model::{Cue, CueId, CueKind, FadeCurve, GroupMode, KindTag, MIN_DB, NetworkCue, Workspace};
 use std::collections::{HashMap, HashSet};
 use std::time::{Duration, Instant};
 
@@ -46,6 +46,16 @@ pub trait Backend {
     fn drain_errors(&mut self) -> Vec<String> {
         Vec::new()
     }
+    /// Make a running audio cue leave its looping slice. Returns false if it can't.
+    fn devamp(&mut self, _id: CueId) -> bool {
+        false
+    }
+    /// Freeze a fade in progress on this cue at its current values.
+    fn hold_fade(&mut self, _id: CueId) {}
+    /// Send a Network cue's message.
+    fn send_network(&mut self, _net: &NetworkCue) -> Result<(), String> {
+        Err("network output unavailable".into())
+    }
 }
 
 #[derive(Clone, Debug)]
@@ -63,6 +73,9 @@ pub struct Instance {
     pub continue_done: bool,
     /// Group instance that launched this cue.
     pub parent: Option<CueId>,
+    /// For running Fade cues: the media being faded and the request (so pausing can freeze it
+    /// and resuming can continue it).
+    pub fade: Option<(Vec<CueId>, FadeRequest)>,
 }
 
 impl Instance {
@@ -201,6 +214,7 @@ impl Engine {
                 action_duration: None,
                 continue_done: false,
                 parent,
+                fade: None,
             },
         );
     }
@@ -343,16 +357,35 @@ impl Engine {
         if inst.started && matches!(inst.kind, KindTag::Audio | KindTag::Video) {
             be.pause(id);
         }
+        if inst.started
+            && !inst.action_done
+            && now >= inst.action_at
+            && let Some((targets, _)) = &inst.fade
+        {
+            for t in targets {
+                be.hold_fade(*t);
+            }
+        }
     }
 
     fn resume_instance(&mut self, be: &mut dyn Backend, id: CueId, now: Instant) {
         let Some(inst) = self.instances.get_mut(&id) else { return };
         let Some(p) = inst.paused_at.take() else { return };
         let shift = now.saturating_duration_since(p);
+        let elapsed = inst.action_elapsed(p);
+        let fading = inst.started && !inst.action_done && p >= inst.action_at;
         inst.fired_at += shift;
         inst.action_at += shift;
         if inst.started && matches!(inst.kind, KindTag::Audio | KindTag::Video) {
             be.resume(id, now);
+        }
+        // Continue a paused fade from where its targets were frozen, over the remaining time.
+        if fading && let Some((targets, req)) = &inst.fade {
+            let mut rest = req.clone();
+            rest.duration = (req.duration - elapsed).max(0.0);
+            for t in targets {
+                be.fade(*t, &rest, now);
+            }
         }
     }
 
@@ -537,10 +570,14 @@ impl Engine {
                 if targets.is_empty() {
                     self.log(format!("Fade cue {}: target is not running", cue.number));
                 }
-                for t in targets {
-                    be.fade(t, &req, at);
+                for t in &targets {
+                    be.fade(*t, &req, at);
                 }
-                Some(req.duration)
+                let d = req.duration;
+                if let Some(inst) = self.instances.get_mut(&cue.id) {
+                    inst.fade = Some((targets, req));
+                }
+                Some(d)
             }
             CueKind::Start { target } => {
                 if let Some(t) = target {
@@ -574,6 +611,27 @@ impl Engine {
             }
             CueKind::Goto { target } => {
                 self.set_playhead(*target);
+                Some(0.0)
+            }
+            CueKind::Devamp { target } => {
+                let Some(target) = target else {
+                    self.log(format!("Devamp cue {} has no target", cue.number));
+                    return Some(0.0);
+                };
+                let hit = self
+                    .instance_subtree(ws, *target)
+                    .into_iter()
+                    .filter(|k| self.instances.get(k).is_some_and(|i| i.kind == KindTag::Audio))
+                    .fold(false, |acc, k| be.devamp(k) || acc);
+                if !hit {
+                    self.log(format!("Devamp cue {}: target is not playing", cue.number));
+                }
+                Some(0.0)
+            }
+            CueKind::Network(net) => {
+                if let Err(e) = be.send_network(net) {
+                    self.log(format!("Network cue {}: {e}", cue.number));
+                }
                 Some(0.0)
             }
             CueKind::Group { mode, children } => {
@@ -668,6 +726,17 @@ mod tests {
     }
 
     impl Backend for Mock {
+        fn devamp(&mut self, id: CueId) -> bool {
+            self.events.push(format!("devamp {id}"));
+            true
+        }
+        fn hold_fade(&mut self, id: CueId) {
+            self.events.push(format!("hold {id}"));
+        }
+        fn send_network(&mut self, n: &NetworkCue) -> Result<(), String> {
+            self.events.push(format!("net {}", n.address));
+            Ok(())
+        }
         fn set_preloaded(&mut self, _cues: &[&Cue]) {}
         fn start(&mut self, cue: &Cue, at: Instant) -> Result<(), String> {
             self.events.push(format!("start {}", cue.number));
@@ -915,6 +984,53 @@ mod tests {
         assert!(!e.instances.contains_key(&ai));
         assert!(!e.instances.contains_key(&fi));
         assert!(m.events.contains(&format!("stop {ai}")));
+    }
+
+    #[test]
+    fn pausing_a_fade_freezes_and_resumes_with_remaining_time() {
+        let a = cue("1", KindTag::Audio);
+        let ai = a.id;
+        let mut f = cue("2", KindTag::Fade);
+        f.kind = CueKind::Fade(FadeCue { target: Some(ai), duration: 4.0, ..Default::default() });
+        let fi = f.id;
+        let w = ws(vec![a, f]);
+        let mut e = Engine::new();
+        let mut m = Mock::default();
+        let t0 = Instant::now();
+        e.set_playhead(Some(ai));
+        e.go(&w, &mut m, t0);
+        e.go(&w, &mut m, t0 + ms(10));
+        e.pause_cue(&w, &mut m, fi, t0 + ms(1010));
+        assert!(m.events.contains(&format!("hold {ai}")));
+        m.events.clear();
+        e.resume_cue(&w, &mut m, fi, t0 + ms(5000));
+        // Re-issued with the 3 s that were left.
+        assert_eq!(m.events, vec![format!("fade {:?}", Some(MIN_DB))]);
+        e.tick(&w, &mut m, t0 + ms(7900));
+        assert!(e.instances.contains_key(&fi));
+        e.tick(&w, &mut m, t0 + ms(8001));
+        assert!(!e.instances.contains_key(&fi));
+    }
+
+    #[test]
+    fn devamp_and_network_cues() {
+        let a = cue("1", KindTag::Audio);
+        let ai = a.id;
+        let mut d = cue("2", KindTag::Devamp);
+        d.kind = CueKind::Devamp { target: Some(ai) };
+        let mut n = cue("3", KindTag::Network);
+        n.kind = CueKind::Network(NetworkCue { address: "/lights/go".into(), ..Default::default() });
+        let w = ws(vec![a, d, n]);
+        let mut e = Engine::new();
+        let mut m = Mock::default();
+        let t0 = Instant::now();
+        e.set_playhead(Some(ai));
+        e.go(&w, &mut m, t0);
+        e.go(&w, &mut m, t0 + ms(10));
+        e.go(&w, &mut m, t0 + ms(20));
+        assert!(m.events.contains(&format!("devamp {ai}")));
+        assert!(m.events.contains(&"net /lights/go".to_string()));
+        assert!(e.log.is_empty(), "{:?}", e.log);
     }
 
     #[test]

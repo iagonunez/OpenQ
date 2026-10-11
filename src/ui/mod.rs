@@ -30,6 +30,20 @@ enum Deferred {
     AddMediaCues,
 }
 
+/// Edit mode allows changing the show; show mode locks it down for running a performance.
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub(crate) enum Mode {
+    Edit,
+    Show,
+}
+
+/// What undo/redo restores.
+#[derive(Clone, PartialEq)]
+struct UndoState {
+    cues: crate::model::CueList,
+    stages: Vec<Stage>,
+}
+
 #[derive(Clone, Copy, PartialEq, Eq)]
 enum SettingsTab {
     General,
@@ -66,6 +80,16 @@ pub struct App {
     title: String,
     allow_close: bool,
     frame_count: u64,
+    mode: Mode,
+    inline: Option<cue_list::InlineEdit>,
+    undo: Vec<UndoState>,
+    redo: Vec<UndoState>,
+    undo_base: Option<UndoState>,
+    undo_seen_gen: u64,
+    undo_pending: Option<Instant>,
+    osc: Option<crate::osc::OscServer>,
+    osc_error: Option<String>,
+    osc_failed_for: Option<u16>,
     debug_t0: Option<Instant>,
     debug_gos: u64,
 }
@@ -97,6 +121,16 @@ impl App {
             title: String::new(),
             allow_close: false,
             frame_count: 0,
+            mode: Mode::Edit,
+            inline: None,
+            undo: Vec::new(),
+            redo: Vec::new(),
+            undo_base: None,
+            undo_seen_gen: 0,
+            undo_pending: None,
+            osc: None,
+            osc_error: None,
+            osc_failed_for: None,
             debug_t0: None,
             debug_gos: 0,
         }
@@ -259,12 +293,16 @@ impl App {
         let now = Instant::now();
         let sc = |m: Modifiers, k: Key| KeyboardShortcut::new(m, k);
         let cmd = Modifiers::COMMAND;
+        let editing = self.mode == Mode::Edit;
 
-        // Panic always works, even while typing.
-        if ctx.input_mut(|i| i.consume_key(Modifiers::NONE, Key::Escape)) {
+        // Panic always works, even while typing (Esc only cancels an in-place edit).
+        if ctx.input_mut(|i| i.consume_key(Modifiers::NONE, Key::Escape)) && self.inline.take().is_none() {
             let fade = show.ws.settings.panic_fade;
             let Show { engine, media, .. } = show;
             engine.stop_all(media, now, fade);
+        }
+        if ctx.input_mut(|i| i.consume_shortcut(&sc(cmd, Key::E))) {
+            self.toggle_mode();
         }
         if ctx.input_mut(|i| i.consume_shortcut(&sc(cmd, Key::S))) {
             self.deferred.push(Deferred::Save);
@@ -272,10 +310,10 @@ impl App {
         if ctx.input_mut(|i| i.consume_shortcut(&sc(cmd | Modifiers::SHIFT, Key::S))) {
             self.deferred.push(Deferred::SaveAs);
         }
-        if ctx.input_mut(|i| i.consume_shortcut(&sc(cmd, Key::O))) {
+        if editing && ctx.input_mut(|i| i.consume_shortcut(&sc(cmd, Key::O))) {
             self.deferred.push(Deferred::Open);
         }
-        if ctx.input_mut(|i| i.consume_shortcut(&sc(cmd, Key::N))) {
+        if editing && ctx.input_mut(|i| i.consume_shortcut(&sc(cmd, Key::N))) {
             self.deferred.push(Deferred::New);
         }
         if typing {
@@ -283,32 +321,6 @@ impl App {
         }
         if ctx.input_mut(|i| i.consume_key(Modifiers::NONE, Key::Space)) {
             show.go();
-        }
-        let keys = [
-            (Key::Num1, KindTag::Audio),
-            (Key::Num2, KindTag::Video),
-            (Key::Num3, KindTag::Group),
-            (Key::Num4, KindTag::Wait),
-            (Key::Num5, KindTag::Memo),
-            (Key::Num6, KindTag::Fade),
-            (Key::Num7, KindTag::Start),
-            (Key::Num8, KindTag::Stop),
-            (Key::Num9, KindTag::Pause),
-            (Key::Num0, KindTag::Goto),
-        ];
-        for (k, tag) in keys {
-            if ctx.input_mut(|i| i.consume_shortcut(&sc(cmd, k))) {
-                self.add_cue(show, tag);
-            }
-        }
-        if ctx.input_mut(|i| i.consume_shortcut(&sc(cmd, Key::D))) {
-            self.duplicate_selected(show);
-        }
-        if ctx.input_mut(|i| i.consume_shortcut(&sc(cmd, Key::G))) {
-            self.group_selected(show);
-        }
-        if ctx.input_mut(|i| i.consume_key(Modifiers::NONE, Key::Delete) || i.consume_key(Modifiers::NONE, Key::Backspace)) {
-            self.delete_selected(show);
         }
         if ctx.input_mut(|i| i.consume_key(Modifiers::NONE, Key::P)) {
             let Show { engine, media, .. } = show;
@@ -318,6 +330,63 @@ impl App {
             let Show { engine, media, .. } = show;
             engine.resume_all(media, now);
         }
+
+        // Per-cue hotkeys (plain key presses, no modifiers).
+        let hotkeys: Vec<(Key, CueId)> = show
+            .ws
+            .cue_list
+            .iter_all()
+            .iter()
+            .filter_map(|c| Some((Key::from_name(c.hotkey.as_deref()?)?, c.id)))
+            .collect();
+        for (k, id) in hotkeys {
+            if ctx.input_mut(|i| i.consume_key(Modifiers::NONE, k)) {
+                let Show { ws, engine, media, .. } = show;
+                engine.start_cue(ws, media, id, now);
+            }
+        }
+
+        if editing {
+            let keys = [
+                (Key::Num1, KindTag::Audio),
+                (Key::Num2, KindTag::Video),
+                (Key::Num3, KindTag::Group),
+                (Key::Num4, KindTag::Wait),
+                (Key::Num5, KindTag::Memo),
+                (Key::Num6, KindTag::Fade),
+                (Key::Num7, KindTag::Start),
+                (Key::Num8, KindTag::Stop),
+                (Key::Num9, KindTag::Pause),
+                (Key::Num0, KindTag::Goto),
+            ];
+            for (k, tag) in keys {
+                if ctx.input_mut(|i| i.consume_shortcut(&sc(cmd, k))) {
+                    self.add_cue(show, tag);
+                }
+            }
+            if ctx.input_mut(|i| i.consume_shortcut(&sc(cmd | Modifiers::SHIFT, Key::Z)) || i.consume_shortcut(&sc(cmd, Key::Y))) {
+                self.redo(show);
+            }
+            if ctx.input_mut(|i| i.consume_shortcut(&sc(cmd, Key::Z))) {
+                self.undo(show);
+            }
+            if ctx.input_mut(|i| i.consume_shortcut(&sc(cmd, Key::D))) {
+                self.duplicate_selected(show);
+            }
+            if ctx.input_mut(|i| i.consume_shortcut(&sc(cmd, Key::G))) {
+                self.group_selected(show);
+            }
+            if ctx.input_mut(|i| i.consume_key(Modifiers::NONE, Key::Delete) || i.consume_key(Modifiers::NONE, Key::Backspace)) {
+                self.delete_selected(show);
+            }
+            if ctx.input_mut(|i| i.consume_key(Modifiers::NONE, Key::Enter)) {
+                // Enter edits the selected cue's name in place.
+                if let Some(c) = self.primary().and_then(|p| show.ws.cue_list.find(p)) {
+                    self.inline = Some(cue_list::InlineEdit::new(c.id, cue_list::InlineField::Name, c.display_name()));
+                }
+            }
+        }
+
         let collapsed = self.collapsed.clone();
         let is_collapsed = |id: CueId| collapsed.contains(&id);
         if ctx.input_mut(|i| i.consume_key(Modifiers::NONE, Key::ArrowDown)) {
@@ -347,8 +416,118 @@ impl App {
         }
     }
 
+    fn toggle_mode(&mut self) {
+        self.mode = match self.mode {
+            Mode::Edit => Mode::Show,
+            Mode::Show => Mode::Edit,
+        };
+        self.inline = None;
+        self.drag = None;
+    }
+
+    // ------------------------------------------------------------------ undo
+
+    /// Record undo points: an edit becomes one step once things settle (no button held,
+    /// 400 ms since the last change), so a slider drag or typing burst undoes in one go.
+    fn track_undo(&mut self, ctx: &egui::Context, show: &Show) {
+        let snap = || UndoState { cues: show.ws.cue_list.clone(), stages: show.ws.stages.clone() };
+        if self.undo_base.is_none() {
+            self.undo_base = Some(snap());
+            self.undo_seen_gen = show.edit_gen;
+            return;
+        }
+        if show.edit_gen != self.undo_seen_gen {
+            self.undo_seen_gen = show.edit_gen;
+            self.undo_pending = Some(Instant::now());
+        }
+        let settled = self.undo_pending.is_some_and(|t| t.elapsed() > Duration::from_millis(400))
+            && !ctx.input(|i| i.pointer.any_down());
+        if settled {
+            self.commit_undo(show);
+        } else if self.undo_pending.is_some() {
+            ctx.request_repaint_after(Duration::from_millis(450));
+        }
+    }
+
+    fn commit_undo(&mut self, show: &Show) {
+        self.undo_pending = None;
+        let now = UndoState { cues: show.ws.cue_list.clone(), stages: show.ws.stages.clone() };
+        if self.undo_base.as_ref() != Some(&now)
+            && let Some(prev) = self.undo_base.replace(now)
+        {
+            self.undo.push(prev);
+            if self.undo.len() > 200 {
+                self.undo.remove(0);
+            }
+            self.redo.clear();
+        }
+    }
+
+    fn apply_undo_state(&mut self, show: &mut Show, st: UndoState) {
+        show.ws.cue_list = st.cues.clone();
+        show.ws.stages = st.stages.clone();
+        show.dirty = true;
+        show.engine.workspace_changed();
+        self.undo_base = Some(st);
+        self.undo_seen_gen = show.edit_gen;
+        self.inline = None;
+    }
+
+    fn undo(&mut self, show: &mut Show) {
+        self.commit_undo(show);
+        if let Some(prev) = self.undo.pop() {
+            self.redo.push(UndoState { cues: show.ws.cue_list.clone(), stages: show.ws.stages.clone() });
+            self.apply_undo_state(show, prev);
+            self.notify("Undo");
+        }
+    }
+
+    fn redo(&mut self, show: &mut Show) {
+        self.commit_undo(show);
+        if let Some(next) = self.redo.pop() {
+            self.undo.push(UndoState { cues: show.ws.cue_list.clone(), stages: show.ws.stages.clone() });
+            self.apply_undo_state(show, next);
+            self.notify("Redo");
+        }
+    }
+
+    fn reset_undo(&mut self) {
+        self.undo.clear();
+        self.redo.clear();
+        self.undo_base = None;
+        self.undo_pending = None;
+    }
+
+    /// Start/stop/restart the OSC listener to match the settings.
+    fn sync_osc(&mut self, ctx: &egui::Context, show: &Show) {
+        let want = show.ws.settings.osc_enabled.then_some(show.ws.settings.osc_port);
+        if self.osc.as_ref().map(|o| o.port) == want && self.osc_error.is_none() {
+            return;
+        }
+        if want == self.osc_failed_for {
+            return;
+        }
+        self.osc = None;
+        self.osc_error = None;
+        self.osc_failed_for = None;
+        if let Some(port) = want {
+            let c = ctx.clone();
+            match crate::osc::OscServer::start(port, self.show.clone(), move || c.request_repaint()) {
+                Ok(s) => self.osc = Some(s),
+                Err(e) => {
+                    self.osc_error = Some(format!("OSC port {port}: {e}"));
+                    self.osc_failed_for = want;
+                }
+            }
+        }
+    }
+
     fn handle_dropped_files(&mut self, ctx: &egui::Context, show: &mut Show) {
         let files: Vec<PathBuf> = ctx.input(|i| i.raw.dropped_files.iter().filter_map(|f| f.path.clone()).collect());
+        if self.mode == Mode::Show && !files.is_empty() {
+            self.notify("Switch to edit mode (Ctrl+E) to add cues");
+            return;
+        }
         for f in files {
             self.add_media_cue(show, f);
         }
@@ -381,6 +560,16 @@ impl App {
                 }
             });
             ui.menu_button("Edit", |ui| {
+                if self.mode == Mode::Show {
+                    ui.disable();
+                }
+                if ui.add_enabled(!self.undo.is_empty() || self.undo_pending.is_some(), egui::Button::new("Undo  (Ctrl+Z)")).clicked() {
+                    self.undo(show);
+                }
+                if ui.add_enabled(!self.redo.is_empty(), egui::Button::new("Redo  (Ctrl+Shift+Z)")).clicked() {
+                    self.redo(show);
+                }
+                ui.separator();
                 if ui.button("Duplicate  (Ctrl+D)").clicked() {
                     self.duplicate_selected(show);
                 }
@@ -399,9 +588,12 @@ impl App {
                 }
             });
             ui.menu_button("Cue", |ui| {
+                if self.mode == Mode::Show {
+                    ui.disable();
+                }
                 for (i, tag) in KindTag::ALL.iter().enumerate() {
-                    let key = (i + 1) % 10;
-                    if ui.button(format!("{} New {} cue  (Ctrl+{key})", tag.icon(), tag.label())).clicked() {
+                    let key = if i < 10 { format!("  (Ctrl+{})", (i + 1) % 10) } else { String::new() };
+                    if ui.button(format!("{} New {} cue{key}", tag.icon(), tag.label())).clicked() {
                         self.add_cue(show, *tag);
                     }
                 }
@@ -449,6 +641,17 @@ impl App {
     fn transport(&mut self, ui: &mut egui::Ui, show: &mut Show) {
         let now = Instant::now();
         ui.horizontal(|ui| {
+            let (label, fill) = match self.mode {
+                Mode::Edit => ("✏ EDIT", Color32::from_rgb(70, 70, 90)),
+                Mode::Show => ("🎭 SHOW", Color32::from_rgb(150, 40, 40)),
+            };
+            if ui
+                .add(egui::Button::new(RichText::new(label).strong().color(Color32::WHITE)).fill(fill).min_size(egui::vec2(80.0, 70.0)))
+                .on_hover_text("Toggle edit / show mode (Ctrl+E). Show mode locks the cue list against edits.")
+                .clicked()
+            {
+                self.toggle_mode();
+            }
             let go = egui::Button::new(RichText::new("GO").size(34.0).strong().color(Color32::WHITE))
                 .fill(Color32::from_rgb(30, 130, 50))
                 .min_size(egui::vec2(130.0, 70.0));
@@ -645,6 +848,19 @@ impl App {
             ui.label("Master volume");
             widgets::db_edit(ui, &mut show.ws.settings.master_volume_db);
             ui.end_row();
+            ui.label("OSC remote control");
+            ui.horizontal(|ui| {
+                ui.checkbox(&mut show.ws.settings.osc_enabled, "Listen on UDP port");
+                ui.add(egui::DragValue::new(&mut show.ws.settings.osc_port).range(1024..=65535));
+            });
+            ui.end_row();
+            ui.label("");
+            match (&self.osc, &self.osc_error) {
+                (Some(o), _) => ui.label(RichText::new(format!("listening on {} · /go /stop /pause /resume /cue/<n>/start …", o.port)).weak()),
+                (None, Some(e)) => ui.label(RichText::new(e).color(RED)),
+                _ => ui.label(RichText::new("off").weak()),
+            };
+            ui.end_row();
             ui.label("Video decoding");
             ui.checkbox(&mut show.ws.settings.hardware_video_decoding, "Use GPU decoders")
                 .on_hover_text("Faster for big files, but some drivers (e.g. NVIDIA NVDEC) can hang. Applies to cues loaded from now on.");
@@ -825,8 +1041,9 @@ impl App {
     pub fn open_path(&mut self, path: PathBuf) {
         match Workspace::load(&path) {
             Ok(ws) => {
-                let mut s = self.show.lock();
-                s.replace_workspace(ws, Some(path.clone()));
+                self.show.lock().replace_workspace(ws, Some(path.clone()));
+                self.reset_undo();
+                let s = self.show.lock();
                 self.selection.clear();
                 self.collapsed.clear();
                 self.last_playhead = None;
@@ -843,6 +1060,7 @@ impl App {
                 Deferred::New => {
                     if self.confirm_discard() {
                         self.show.lock().replace_workspace(Workspace::default(), None);
+                        self.reset_undo();
                         self.selection.clear();
                     }
                 }
@@ -910,6 +1128,8 @@ impl App {
     /// Dev hook for automated visual checks: with `OPENQ_SCREENSHOT=out.ppm` the app presses GO
     /// `OPENQ_SCREENSHOT_GOS` times (default 0), captures its window a couple of frames later and exits.
     /// `OPENQ_SCREENSHOT_CUE` / `OPENQ_SCREENSHOT_TAB` pick the cue and inspector tab shown;
+    /// `OPENQ_SCREENSHOT_MODE=show` starts in show mode; `OPENQ_SCREENSHOT_INLINE=1` opens an
+    /// in-place pre-wait editor on the selected cue.
     /// `OPENQ_SCREENSHOT_STAGE=1` embeds stage windows in the main window for the capture
     /// (`OPENQ_SCREENSHOT_MAPPING=1` turns on the first stage's mapping test pattern).
     fn debug_screenshot(&mut self, ctx: &egui::Context, show: &mut Show) {
@@ -929,6 +1149,14 @@ impl App {
                 Ok("settings") => inspector::Tab::Settings,
                 _ => inspector::Tab::Basics,
             };
+            if std::env::var("OPENQ_SCREENSHOT_MODE").as_deref() == Ok("show") {
+                self.mode = Mode::Show;
+            }
+            if std::env::var_os("OPENQ_SCREENSHOT_INLINE").is_some()
+                && let Some(id) = self.primary()
+            {
+                self.inline = Some(cue_list::InlineEdit::new(id, cue_list::InlineField::PreWait, "1:30.5".into()));
+            }
             if std::env::var_os("OPENQ_SCREENSHOT_MAPPING").is_some()
                 && let Some(st) = show.ws.stages.first()
             {
@@ -1007,24 +1235,30 @@ impl eframe::App for App {
                 ui.add_space(6.0);
             });
             egui::Panel::bottom("status").show(ui, |ui| self.status_bar(ui, show));
-            egui::Panel::bottom("inspector")
-                .resizable(true)
-                .default_size(340.0)
-                .min_size(120.0)
-                .show(ui, |ui| self.inspector(ui, show));
+            if self.mode == Mode::Edit {
+                egui::Panel::bottom("inspector")
+                    .resizable(true)
+                    .default_size(340.0)
+                    .min_size(120.0)
+                    .show(ui, |ui| self.inspector(ui, show));
+            }
             egui::Panel::right("active")
                 .resizable(true)
                 .default_size(260.0)
                 .show(ui, |ui| self.active_panel(ui, show));
             egui::CentralPanel::default().show(ui, |ui| {
-                self.toolbar(ui, show);
-                ui.separator();
+                if self.mode == Mode::Edit {
+                    self.toolbar(ui, show);
+                    ui.separator();
+                }
                 self.cue_list(ui, show);
             });
 
             if self.show_settings {
                 self.settings_window(&ctx, show);
             }
+            self.track_undo(&ctx, show);
+            self.sync_osc(&ctx, show);
 
             #[cfg(feature = "video")]
             let video_active = self.stages(&ctx, show);

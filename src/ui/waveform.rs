@@ -1,6 +1,7 @@
 //! Waveform display with draggable start/end trim markers, zoom and pan.
 
-use super::widgets::{AMBER, GREEN, RED, fmt_time};
+use super::widgets::{AMBER, BLUE, GREEN, RED, fmt_time};
+use crate::model::SliceMarker;
 use crate::media::decoder::Waveform;
 use egui::{Align2, Color32, CursorIcon, FontId, Id, Rect, Sense, Stroke, Ui, pos2, vec2};
 
@@ -15,7 +16,8 @@ struct View {
     t1: f64,
 }
 
-/// Returns true if `start`/`end` changed.
+/// Returns true if `start`/`end`/slices changed.
+#[allow(clippy::too_many_arguments)]
 pub fn waveform_editor(
     ui: &mut Ui,
     id: Id,
@@ -23,6 +25,7 @@ pub fn waveform_editor(
     duration: f64,
     start: &mut f64,
     end: &mut Option<f64>,
+    slices: &mut Vec<SliceMarker>,
     playhead: Option<f64>,
 ) -> bool {
     let duration = duration.max(MIN_REGION);
@@ -131,6 +134,52 @@ pub fn waveform_editor(
         let t = t_of(pos.x).clamp(*start + MIN_REGION, duration);
         *end = if t >= duration - 0.005 { None } else { Some(t) };
         changed = true;
+    }
+
+    // Slice markers: drag to move, right-click to delete; double-click the waveform to add.
+    let mut remove = None;
+    for (i, m) in slices.iter_mut().enumerate() {
+        let x = x_of(m.time);
+        if !(wave.left()..=wave.right()).contains(&x) {
+            continue;
+        }
+        let r = ui.interact(handle(x), id.with(("slice", i)), Sense::click_and_drag());
+        let w = if r.hovered() || r.dragged() { 2.5 } else { 1.5 };
+        let dash = 6.0;
+        let mut y = wave.top();
+        while y < wave.bottom() {
+            p.line_segment([pos2(x, y), pos2(x, (y + dash).min(wave.bottom()))], Stroke::new(w, BLUE));
+            y += dash * 2.0;
+        }
+        let label = if m.plays == 0 { "∞".to_string() } else { format!("{}×", m.plays) };
+        p.text(pos2(x + 3.0, wave.top() + 2.0), Align2::LEFT_TOP, label, FontId::proportional(11.0), BLUE);
+        if r.hovered() || r.dragged() {
+            ui.ctx().set_cursor_icon(CursorIcon::ResizeHorizontal);
+        }
+        if r.dragged()
+            && let Some(pos) = r.interact_pointer_pos()
+        {
+            m.time = t_of(pos.x).clamp(*start + MIN_REGION, end_t - MIN_REGION);
+            changed = true;
+        }
+        if r.secondary_clicked() {
+            remove = Some(i);
+        }
+        r.on_hover_text("Slice marker — drag to move, right-click to delete. Set loops in the slice table.");
+    }
+    if let Some(i) = remove {
+        slices.remove(i);
+        changed = true;
+    }
+    if resp.double_clicked()
+        && let Some(pos) = resp.interact_pointer_pos()
+    {
+        let t = t_of(pos.x);
+        if t > *start + MIN_REGION && t < end_t - MIN_REGION {
+            slices.push(SliceMarker { time: t, plays: 1 });
+            slices.sort_by(|a, b| a.time.total_cmp(&b.time));
+            changed = true;
+        }
     }
 
     if let Some(ph) = playhead {

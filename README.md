@@ -15,7 +15,7 @@ can hang inside a GPU-rendering process); turn them on in Settings → General.
 
 ## Cues
 
-Audio, Video, Group (folder), Wait, Memo, Fade, Start, Stop, Pause, Go To.
+Audio, Video, Group (folder), Wait, Memo, Fade, Start, Stop, Pause, Go To, Devamp, Network.
 
 Every cue has a number, name, notes, color, armed flag, **pre-wait**, **post-wait** and a
 **continue mode**:
@@ -28,10 +28,25 @@ Every cue has a number, name, notes, color, armed flag, **pre-wait**, **post-wai
 Group modes: start first child and enter the group, playlist (start the first child and skip past
 the group), start all children at once, start a random child.
 
+Cues can also have a **hotkey** (Basics tab) that fires them directly.
+
+## Edit and show mode
+
+- **Edit mode** (default): add, delete, reorder and edit cues. Double-click a row's number, name,
+  pre-wait or post-wait to edit it in place (Enter commits, Esc cancels), or press Enter to
+  rename the selected cue. Click the continue column to cycle *do not continue → auto-continue →
+  auto-follow*. Undo/redo with Ctrl+Z / Ctrl+Shift+Z.
+- **Show mode** (Ctrl+E or the EDIT/SHOW button): the cue list is locked, the inspector and
+  toolbar are hidden and rows are bigger. GO, stop, pause, hotkeys and selecting the next cue all
+  still work.
+
 ### Audio cues
 
 - **Time & Loops**: waveform with draggable start/end trim markers (drag to pan, Ctrl+scroll to
   zoom, live playhead), play count / infinite loop, and **rate** (varispeed, pitch follows).
+- **Slices**: double-click the waveform to add slice markers (drag to move, right-click to delete).
+  Each slice plays N times, or loops until a **Devamp** cue (or `/cue/<n>/devamp`) lets it finish
+  its pass and play on.
 - **Levels & Routing**: level, pan, and a per-cue **routing matrix** (file channels → device
   outputs, dB per crosspoint).
 - **EQ**: up to 8 bands (high/low-pass, shelves, peaks) with a response curve; drag handles to set
@@ -45,9 +60,24 @@ the group), start all children at once, start a random child.
 - Start/end trim, loops, hold last frame.
 - **Geometry**: position, scale (proportional or not), rotation, opacity, layer, fit/fill/stretch.
 - **Fade cues** can animate level, opacity *and* geometry.
+- The **soundtrack** plays through the OpenQ mixer (stereo), so it has level, fades and a routing
+  matrix like an audio cue.
 - **Stages**: any number of outputs (Settings → Video stages), each with its own canvas size and
   window. *Edit mapping* shows a test pattern and four corner pins; drag them (or nudge with the
   arrow keys) for keystone correction / projection mapping. Double-click or F11 for fullscreen.
+
+## Remote control and network cues
+
+Turn on **OSC** in Settings → General (UDP port 53000 by default):
+
+| Address | Action |
+|---|---|
+| `/go`, `/stop`, `/panic`, `/pause`, `/resume` | transport |
+| `/playhead/next`, `/playhead/previous`, `/playhead/<number>` | move the playhead |
+| `/cue/<number>/start` `stop` `pause` `resume` `devamp` | act on one cue |
+
+A **Network cue** sends one OSC message (host, port, address, arguments) to other gear, such as a
+lighting desk.
 
 ## Keys
 
@@ -56,6 +86,9 @@ the group), start all children at once, start a random child.
 | Space | GO |
 | Esc | Stop all (fades out; press again to stop instantly) |
 | P / R | Pause all / resume all |
+| Ctrl+E | Toggle edit / show mode |
+| Ctrl+Z / Ctrl+Shift+Z | Undo / redo |
+| Enter | Rename the selected cue in place |
 | ↑ / ↓ | Move the playhead |
 | ← / → | Collapse / expand a group |
 | Ctrl+1…0 | New Audio, Video, Group, Wait, Memo, Fade, Start, Stop, Pause, Go To cue |
@@ -77,6 +110,7 @@ src/media/audio.rs  cpal output + lock-free real-time mixer (sample-accurate sta
 src/media/decoder.rs  per-voice symphonia decode → trim/loop → rubato resample → ring buffer
 src/media/video.rs  GStreamer playbin / still images → RGBA frames, geometry and fades
 src/show.rs         shared state + 1 kHz engine thread
+src/osc.rs          OSC remote-control listener
 src/ui/             egui front end (cue list, inspector tabs, waveform, EQ, stages + mapping)
 ```
 

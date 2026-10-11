@@ -5,5 +5,6 @@ pub mod engine;
 pub mod geometry;
 pub mod media;
 pub mod model;
+pub mod osc;
 pub mod show;
 pub mod ui;
