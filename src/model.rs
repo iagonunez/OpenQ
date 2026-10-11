@@ -1018,8 +1018,6 @@ pub struct Settings {
     pub double_go_protection: f64,
     /// cpal output device id (None = system default).
     pub audio_device: Option<String>,
-    /// Use GPU video decoders (can be unstable with some drivers).
-    pub hardware_video_decoding: bool,
     /// Listen for OSC remote control on UDP `osc_port`.
     pub osc_enabled: bool,
     pub osc_port: u16,
@@ -1028,7 +1026,6 @@ pub struct Settings {
 impl Default for Settings {
     fn default() -> Self {
         Self { panic_fade: 1.0, master_volume_db: 0.0, double_go_protection: 0.25, audio_device: None,
-            hardware_video_decoding: false,
             osc_enabled: false,
             osc_port: 53000,
         }

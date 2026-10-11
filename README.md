@@ -9,9 +9,9 @@ cargo test                              # engine + model tests
 cargo run --release --example smoke     # headless end-to-end check of real audio/video (muted)
 ```
 
-Video needs GStreamer (`gst-plugins-base`, plus `-good`/`-libav` for common containers and codecs).
-Build without it with `--no-default-features`. GPU video decoders are off by default (NVIDIA's NVDEC
-can hang inside a GPU-rendering process); turn them on in Settings → General.
+Video uses the system FFmpeg libraries (libavformat/libavcodec/libswscale/libswresample, plus
+clang at build time), so anything FFmpeg can play works, with no codec plugins to install. Build
+without video with `--no-default-features`.
 
 ## Cues
 
@@ -108,7 +108,7 @@ src/engine.rs       cue state machine (GO, waits, continues, groups, fades, paus
 src/media/audio.rs  cpal output + lock-free real-time mixer (sample-accurate starts, gain ramps,
                     per-voice EQ and routing matrix)
 src/media/decoder.rs  per-voice symphonia decode → trim/loop → rubato resample → ring buffer
-src/media/video.rs  GStreamer playbin / still images → RGBA frames, geometry and fades
+src/media/video.rs  FFmpeg decode threads / still images → RGBA frames + soundtrack to the mixer
 src/show.rs         shared state + 1 kHz engine thread
 src/osc.rs          OSC remote-control listener
 src/ui/             egui front end (cue list, inspector tabs, waveform, EQ, stages + mapping)

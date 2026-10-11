@@ -1,24 +1,24 @@
-//! Video playback via GStreamer `playbin`, plus still images. Decoded RGBA frames land in a
-//! shared slot that the stage windows upload as textures; a video's own audio goes to the
-//! default audio sink.
+//! Video playback with FFmpeg (libavformat/libavcodec) plus still images.
+//!
+//! Each movie runs on its own decode thread: video frames are converted to RGBA and published
+//! into a shared slot at their presentation time (the stage windows upload them as textures);
+//! the soundtrack is resampled to the mixer's rate and fed to an OpenQ mixer voice, so it gets
+//! level, fades, EQ and routing like an audio cue. Using FFmpeg directly means any format the
+//! system FFmpeg can play works, with no codec plugins to install.
 
 use super::audio::VoiceShared;
 use crate::engine::FadeRequest;
-use crate::model::{CueId, FadeCurve, Geometry, StageId, VideoCue, VideoFit, db_to_gain};
+use crate::model::{CueId, FadeCurve, Geometry, StageId, VideoCue, VideoFit};
 use anyhow::{Context, anyhow};
-use gstreamer as gst;
-use gstreamer::prelude::*;
-use gstreamer_app as gst_app;
-use gstreamer_video as gst_video;
-use parking_lot::Mutex;
-use std::collections::HashMap;
+use ffmpeg_next as ff;
+use parking_lot::{Condvar, Mutex};
+use std::collections::{HashMap, VecDeque};
 use std::path::Path;
 use std::sync::Arc;
 use std::sync::atomic::Ordering;
 use std::time::{Duration, Instant};
 
-/// Where a video's soundtrack goes: into the OpenQ mixer at this rate/channel count (so it gets
-/// level, fades, EQ and routing like an audio cue).
+/// Where a video's soundtrack goes: into the OpenQ mixer at this rate/channel count.
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub struct AudioTap {
     pub rate: u32,
@@ -27,41 +27,16 @@ pub struct AudioTap {
 
 type AudioFeed = Arc<Mutex<Option<rtrb::Producer<f32>>>>;
 
-/// Plugins whose decoders use GPU APIs. NVIDIA's NVDEC/CUDA decoders in particular can hang or
-/// crash when initialised inside a process that also renders with the GPU driver, so hardware
-/// decoding is off unless the user turns it on.
-const HW_DECODER_PLUGINS: &[&str] = &["nvcodec", "va", "vaapi", "v4l2codecs", "qsv", "amfcodec"];
-
-static ORIGINAL_RANKS: std::sync::OnceLock<Mutex<HashMap<String, gst::Rank>>> = std::sync::OnceLock::new();
-
-/// Initialise GStreamer (idempotent) and apply the default decoder policy (software only).
+/// Initialise FFmpeg (idempotent).
 pub fn init() -> anyhow::Result<()> {
     static INIT: std::sync::OnceLock<Result<(), String>> = std::sync::OnceLock::new();
     INIT.get_or_init(|| {
-        gst::init().map_err(|e| e.to_string())?;
-        set_hardware_decoding(false);
+        ff::init().map_err(|e| e.to_string())?;
+        ff::util::log::set_level(ff::util::log::Level::Error);
         Ok(())
     })
     .clone()
-    .map_err(|e| anyhow!("GStreamer init failed: {e}"))
-}
-
-/// Enable or disable GPU video decoders for pipelines created from now on.
-pub fn set_hardware_decoding(enabled: bool) {
-    let originals = ORIGINAL_RANKS.get_or_init(|| Mutex::new(HashMap::new()));
-    let mut originals = originals.lock();
-    let reg = gst::Registry::get();
-    for plugin in HW_DECODER_PLUGINS {
-        for f in reg.features_by_plugin(plugin) {
-            let Some(factory) = f.downcast_ref::<gst::ElementFactory>() else { continue };
-            if !factory.klass().contains("Decoder") {
-                continue;
-            }
-            let name = f.name().to_string();
-            let original = *originals.entry(name).or_insert_with(|| f.rank());
-            f.set_rank(if enabled { original } else { gst::Rank::NONE });
-        }
-    }
+    .map_err(|e| anyhow!("FFmpeg init failed: {e}"))
 }
 
 #[derive(Default)]
@@ -116,8 +91,398 @@ impl<T: Copy> Ramp<T> {
     }
 }
 
+// ---------------------------------------------------------------- movie decode thread
+
+#[derive(Default)]
+struct MovieState {
+    /// Media-clock origin while playing: frame with timestamp `t` (seconds since the pass start)
+    /// shows at `origin + t`.
+    origin: Option<Instant>,
+    paused_at: Option<Instant>,
+    quit: bool,
+    prerolled: bool,
+    finished: bool,
+    error: Option<String>,
+    /// Last presented file position, seconds.
+    position: f64,
+}
+
+struct MovieCtl {
+    state: Mutex<MovieState>,
+    wake: Condvar,
+}
+
+impl MovieCtl {
+    fn wait(&self, st: &mut parking_lot::MutexGuard<'_, MovieState>, timeout: Duration) {
+        self.wake.wait_for(st, timeout);
+    }
+}
+
+struct Movie {
+    ctl: Arc<MovieCtl>,
+    thread: Option<std::thread::JoinHandle<()>>,
+}
+
+impl Drop for Movie {
+    fn drop(&mut self) {
+        self.ctl.state.lock().quit = true;
+        self.ctl.wake.notify_all();
+        if let Some(t) = self.thread.take() {
+            let _ = t.join();
+        }
+    }
+}
+
+struct DecodeJob {
+    params: VideoCue,
+    frame: FrameSlot,
+    ctl: Arc<MovieCtl>,
+    tap: Option<AudioTap>,
+    feed: AudioFeed,
+    audio_state: Arc<Mutex<Option<Arc<VoiceShared>>>>,
+}
+
+enum Flow {
+    Continue,
+    Quit,
+}
+
+enum FrameResult {
+    Shown,
+    End,
+    Quit,
+}
+
+impl DecodeJob {
+    fn run(self) {
+        let res = self.decode();
+        let mut st = self.ctl.state.lock();
+        if let Err(e) = res {
+            log::error!("video {}: {e:#}", self.params.path.display());
+            st.error = Some(format!("{e:#}"));
+            *self.frame.lock() = Frame::default();
+        } else if !self.params.hold_last_frame {
+            *self.frame.lock() = Frame::default();
+        }
+        st.finished = true;
+        drop(st);
+        if let Some(s) = self.audio_state.lock().as_ref() {
+            s.eof.store(true, Ordering::Release);
+        }
+        *self.feed.lock() = None;
+    }
+
+    /// Sleep until the media clock reaches `t` (seconds into the pass), honouring pause/quit.
+    fn wait_until(&self, t: f64, pending: &mut VecDeque<f32>) -> Flow {
+        loop {
+            self.flush_audio(pending);
+            let mut st = self.ctl.state.lock();
+            if st.quit {
+                return Flow::Quit;
+            }
+            let Some(origin) = st.origin.filter(|_| st.paused_at.is_none()) else {
+                self.ctl.wait(&mut st, Duration::from_millis(20));
+                continue;
+            };
+            let due = origin + Duration::from_secs_f64(t.max(0.0));
+            let now = Instant::now();
+            if now >= due {
+                return Flow::Continue;
+            }
+            // Wake at least every 10 ms to keep feeding audio.
+            self.ctl.wait(&mut st, (due - now).min(Duration::from_millis(10)));
+        }
+    }
+
+    /// Push pending soundtrack samples into the mixer ring (whatever fits).
+    fn flush_audio(&self, pending: &mut VecDeque<f32>) {
+        if pending.is_empty() {
+            return;
+        }
+        let mut feed = self.feed.lock();
+        let Some(tx) = feed.as_mut() else {
+            // Not attached yet (preroll): keep at most a second.
+            let cap = self.tap.map_or(0, |t| t.rate as usize * t.channels);
+            while pending.len() > cap {
+                pending.pop_front();
+            }
+            return;
+        };
+        let n = tx.slots().min(pending.len());
+        if n == 0 {
+            return;
+        }
+        if let Ok(mut chunk) = tx.write_chunk(n) {
+            let (a, b) = chunk.as_mut_slices();
+            for s in a.iter_mut().chain(b.iter_mut()) {
+                *s = pending.pop_front().unwrap_or(0.0);
+            }
+            chunk.commit_all();
+        }
+    }
+
+    fn decode(&self) -> anyhow::Result<()> {
+        let p = &self.params;
+        let mut ictx = ff::format::input(&p.path).with_context(|| format!("cannot open {}", p.path.display()))?;
+        let vstream = ictx.streams().best(ff::media::Type::Video);
+        let astream = if self.tap.is_some() { ictx.streams().best(ff::media::Type::Audio) } else { None };
+        let (vidx, vtb) = match &vstream {
+            Some(s) => (Some(s.index()), f64::from(s.time_base())),
+            None => (None, 0.0),
+        };
+        let mut vdec = match &vstream {
+            Some(s) => {
+                let mut ctx = ff::codec::context::Context::from_parameters(s.parameters())?;
+                ctx.set_threading(ff::codec::threading::Config { kind: ff::codec::threading::Type::Frame, count: 0 });
+                Some(ctx.decoder().video().context("unsupported video codec")?)
+            }
+            None => None,
+        };
+        let (aidx, atb) = match &astream {
+            Some(s) => (Some(s.index()), f64::from(s.time_base())),
+            None => (None, 0.0),
+        };
+        let mut adec = match &astream {
+            Some(s) => Some(ff::codec::context::Context::from_parameters(s.parameters())?.decoder().audio()?),
+            None => None,
+        };
+        if vdec.is_none() && adec.is_none() {
+            return Err(anyhow!("no playable video or audio stream"));
+        }
+        drop(vstream);
+        drop(astream);
+        let file_dur = (ictx.duration() > 0).then(|| ictx.duration() as f64 / f64::from(ff::ffi::AV_TIME_BASE));
+        let start = p.start_time.max(0.0);
+        let end = match (p.end_time, file_dur) {
+            (Some(e), Some(d)) => Some(e.min(d)),
+            (e, _) => e,
+        };
+
+        let mut scaler: Option<(ff::software::scaling::Context, u32, u32, ff::format::Pixel)> = None;
+        let mut resampler: Option<ff::software::resampling::Context> = None;
+        let mut pending: VecDeque<f32> = VecDeque::new();
+        let mut plays = 0u32;
+        let mut pass_offset = 0.0f64; // media-clock seconds before the current pass
+
+        loop {
+            // Position at the start point.
+            if start > 0.0 || plays > 0 {
+                let ts = (start * f64::from(ff::ffi::AV_TIME_BASE)) as i64;
+                ictx.seek(ts, ..ts + 1).context("seek failed")?;
+                if let Some(d) = vdec.as_mut() {
+                    d.flush();
+                }
+                if let Some(d) = adec.as_mut() {
+                    d.flush();
+                }
+            }
+            let mut pass_len = 0.0f64;
+            let mut reached_end = false;
+            let mut decoded = ff::util::frame::video::Video::empty();
+            let mut adecoded = ff::util::frame::audio::Audio::empty();
+
+            for (stream, packet) in ictx.packets() {
+                let idx = stream.index();
+                if Some(idx) == vidx {
+                    let dec = vdec.as_mut().unwrap();
+                    if dec.send_packet(&packet).is_err() {
+                        continue;
+                    }
+                    while dec.receive_frame(&mut decoded).is_ok() {
+                        let pts = decoded.timestamp().or(decoded.pts()).unwrap_or(0) as f64 * vtb;
+                        match self.show_frame(&decoded, pts, start, end, pass_offset, &mut pass_len, &mut scaler, &mut pending)? {
+                            FrameResult::Quit => return Ok(()),
+                            FrameResult::End => {
+                                reached_end = true;
+                                break;
+                            }
+                            FrameResult::Shown => {}
+                        }
+                    }
+                    if reached_end {
+                        break;
+                    }
+                } else if Some(idx) == aidx {
+                    let dec = adec.as_mut().unwrap();
+                    if dec.send_packet(&packet).is_err() {
+                        continue;
+                    }
+                    while dec.receive_frame(&mut adecoded).is_ok() {
+                        let pts = adecoded.timestamp().or(adecoded.pts()).unwrap_or(0) as f64 * atb;
+                        let frame_secs = adecoded.samples() as f64 / adecoded.rate().max(1) as f64;
+                        if pts + frame_secs <= start {
+                            continue;
+                        }
+                        if end.is_some_and(|e| pts >= e) {
+                            continue;
+                        }
+                        pass_len = pass_len.max(pts - start + frame_secs);
+                        self.resample(&mut adecoded, &mut resampler, &mut pending, (start - pts).max(0.0))?;
+                        if vdec.is_none() {
+                            // Audio-only file: pace on the media clock.
+                            if !self.ctl.state.lock().prerolled {
+                                self.ctl.state.lock().prerolled = true;
+                            }
+                            if let Flow::Quit = self.wait_until(pass_offset + (pts - start) - 0.5, &mut pending) {
+                                return Ok(());
+                            }
+                            self.ctl.state.lock().position = pts;
+                        }
+                    }
+                }
+                self.flush_audio(&mut pending);
+                if self.ctl.state.lock().quit {
+                    return Ok(());
+                }
+            }
+            // Drain frames still inside the decoder (frame threading holds several back).
+            if !reached_end && let Some(dec) = vdec.as_mut() {
+                let _ = dec.send_eof();
+                while dec.receive_frame(&mut decoded).is_ok() {
+                    let pts = decoded.timestamp().or(decoded.pts()).unwrap_or(0) as f64 * vtb;
+                    match self.show_frame(&decoded, pts, start, end, pass_offset, &mut pass_len, &mut scaler, &mut pending)? {
+                        FrameResult::Quit => return Ok(()),
+                        FrameResult::End => break,
+                        FrameResult::Shown => {}
+                    }
+                }
+            }
+            if let Some(dec) = adec.as_mut() {
+                let _ = dec.send_eof();
+                while dec.receive_frame(&mut adecoded).is_ok() {
+                    let pts = adecoded.timestamp().or(adecoded.pts()).unwrap_or(0) as f64 * atb;
+                    if end.is_none_or(|e| pts < e) && pts >= start {
+                        self.resample(&mut adecoded, &mut resampler, &mut pending, 0.0)?;
+                    }
+                }
+            }
+            plays += 1;
+            pass_offset += pass_len.max(0.04);
+            let more = p.infinite_loop || plays < p.play_count.max(1);
+            if !more {
+                break;
+            }
+        }
+        // Drain the soundtrack, then wait for the last frame's display time to pass.
+        while !pending.is_empty() {
+            if let Flow::Quit = self.wait_until(0.0, &mut pending) {
+                return Ok(());
+            }
+            std::thread::sleep(Duration::from_millis(10));
+            if self.feed.lock().is_none() {
+                break;
+            }
+        }
+        let _ = self.wait_until(pass_offset, &mut pending);
+        Ok(())
+    }
+
+    /// Wait for a frame's presentation time and show it.
+    #[allow(clippy::too_many_arguments)]
+    fn show_frame(
+        &self,
+        decoded: &ff::util::frame::video::Video,
+        pts: f64,
+        start: f64,
+        end: Option<f64>,
+        pass_offset: f64,
+        pass_len: &mut f64,
+        scaler: &mut Option<(ff::software::scaling::Context, u32, u32, ff::format::Pixel)>,
+        pending: &mut VecDeque<f32>,
+    ) -> anyhow::Result<FrameResult> {
+        if pts + 1e-6 < start {
+            return Ok(FrameResult::Shown);
+        }
+        if end.is_some_and(|e| pts >= e) {
+            return Ok(FrameResult::End);
+        }
+        let t = pass_offset + (pts - start);
+        *pass_len = pass_len.max(pts - start + 1.0 / 25.0);
+        if !self.ctl.state.lock().prerolled {
+            self.ctl.state.lock().prerolled = true;
+            self.ctl.wake.notify_all();
+        }
+        if let Flow::Quit = self.wait_until(t, pending) {
+            return Ok(FrameResult::Quit);
+        }
+        self.publish(decoded, scaler)?;
+        self.ctl.state.lock().position = pts;
+        Ok(FrameResult::Shown)
+    }
+
+    fn publish(
+        &self,
+        f: &ff::util::frame::video::Video,
+        scaler: &mut Option<(ff::software::scaling::Context, u32, u32, ff::format::Pixel)>,
+    ) -> anyhow::Result<()> {
+        let (w, h, fmt) = (f.width(), f.height(), f.format());
+        if scaler.as_ref().is_none_or(|s| s.1 != w || s.2 != h || s.3 != fmt) {
+            let ctx = ff::software::scaling::Context::get(
+                fmt,
+                w,
+                h,
+                ff::format::Pixel::RGBA,
+                w,
+                h,
+                ff::software::scaling::Flags::BILINEAR,
+            )?;
+            *scaler = Some((ctx, w, h, fmt));
+        }
+        let mut rgba = ff::util::frame::video::Video::empty();
+        scaler.as_mut().unwrap().0.run(f, &mut rgba)?;
+        let stride = rgba.stride(0);
+        let row = w as usize * 4;
+        let src = rgba.data(0);
+        let mut slot = self.frame.lock();
+        slot.data.resize(row * h as usize, 0);
+        for y in 0..h as usize {
+            slot.data[y * row..(y + 1) * row].copy_from_slice(&src[y * stride..y * stride + row]);
+        }
+        slot.width = w;
+        slot.height = h;
+        slot.generation = slot.generation.wrapping_add(1);
+        Ok(())
+    }
+
+    /// Convert a decoded audio frame to interleaved f32 at the mixer rate; `skip` seconds at the
+    /// front are dropped (start-time trim).
+    fn resample(
+        &self,
+        f: &mut ff::util::frame::audio::Audio,
+        resampler: &mut Option<ff::software::resampling::Context>,
+        pending: &mut VecDeque<f32>,
+        skip: f64,
+    ) -> anyhow::Result<()> {
+        let Some(tap) = self.tap else { return Ok(()) };
+        if f.channel_layout().is_empty() {
+            f.set_channel_layout(ff::ChannelLayout::default(f.channels() as i32));
+        }
+        if resampler.is_none() {
+            *resampler = Some(ff::software::resampling::Context::get(
+                f.format(),
+                f.channel_layout(),
+                f.rate(),
+                ff::format::Sample::F32(ff::format::sample::Type::Packed),
+                ff::ChannelLayout::default(tap.channels as i32),
+                tap.rate,
+            )?);
+        }
+        let mut out = ff::util::frame::audio::Audio::empty();
+        resampler.as_mut().unwrap().run(f, &mut out)?;
+        let n = out.samples() * tap.channels;
+        let bytes = &out.data(0)[..n * 4];
+        let skip_samples = ((skip * tap.rate as f64) as usize * tap.channels).min(n);
+        pending.extend(
+            bytes.chunks_exact(4).skip(skip_samples).map(|b| f32::from_le_bytes([b[0], b[1], b[2], b[3]])),
+        );
+        Ok(())
+    }
+}
+
+// ---------------------------------------------------------------- players
+
 enum Source {
-    Pipeline(gst::Element),
+    Movie(Movie),
     Still,
 }
 
@@ -125,16 +490,10 @@ struct Player {
     source: Source,
     frame: FrameSlot,
     params: VideoCue,
-    volume: f32,
-    vol_ramp: Option<Ramp<f32>>,
     opacity: f32,
     op_ramp: Option<Ramp<f32>>,
     geometry: Geometry,
     geo_ramp: Option<Ramp<Geometry>>,
-    plays_done: u32,
-    /// Waiting for the initial seek to the start time to complete.
-    seeking: bool,
-    prerolled: bool,
     play_at: Option<Instant>,
     playing: bool,
     /// When a still started showing (shifted by pauses).
@@ -143,11 +502,10 @@ struct Player {
     finished: bool,
     error: Option<String>,
     error_reported: bool,
-    last_pos_check: Instant,
     order: u64,
     tap: Option<AudioTap>,
     audio_feed: AudioFeed,
-    audio_state: Option<Arc<VoiceShared>>,
+    audio_state: Arc<Mutex<Option<Arc<VoiceShared>>>>,
 }
 
 fn load_still(path: &Path, slot: &FrameSlot) -> anyhow::Result<()> {
@@ -164,26 +522,32 @@ impl Player {
     fn new(params: &VideoCue, order: u64, tap: Option<AudioTap>) -> anyhow::Result<Self> {
         let frame: FrameSlot = Arc::new(Mutex::new(Frame::default()));
         let audio_feed: AudioFeed = Arc::new(Mutex::new(None));
+        let audio_state = Arc::new(Mutex::new(None));
         let source = if super::is_image_path(&params.path) {
             load_still(&params.path, &frame)?;
             Source::Still
         } else {
-            Source::Pipeline(Self::pipeline(params, &frame, tap, &audio_feed)?)
+            let ctl = Arc::new(MovieCtl { state: Mutex::new(MovieState::default()), wake: Condvar::new() });
+            let job = DecodeJob {
+                params: params.clone(),
+                frame: frame.clone(),
+                ctl: ctl.clone(),
+                tap,
+                feed: audio_feed.clone(),
+                audio_state: audio_state.clone(),
+            };
+            let name = format!("openq-video-{}", params.path.file_name().map(|f| f.to_string_lossy()).unwrap_or_default());
+            let thread = std::thread::Builder::new().name(name).spawn(move || job.run())?;
+            Source::Movie(Movie { ctl, thread: Some(thread) })
         };
-        let still = matches!(source, Source::Still);
         Ok(Self {
             source,
             frame,
             params: params.clone(),
-            volume: db_to_gain(params.volume_db),
-            vol_ramp: None,
             opacity: params.opacity.clamp(0.0, 1.0),
             op_ramp: None,
             geometry: params.geometry,
             geo_ramp: None,
-            plays_done: 0,
-            seeking: false,
-            prerolled: still,
             play_at: None,
             playing: false,
             started_at: None,
@@ -191,210 +555,53 @@ impl Player {
             finished: false,
             error: None,
             error_reported: false,
-            last_pos_check: Instant::now(),
             order,
             tap,
             audio_feed,
-            audio_state: None,
+            audio_state,
         })
-    }
-
-    fn pipeline(params: &VideoCue, frame: &FrameSlot, tap: Option<AudioTap>, feed: &AudioFeed) -> anyhow::Result<gst::Element> {
-        let uri = gst::glib::filename_to_uri(&params.path, None).context("bad path")?;
-        let caps = gst_video::VideoCapsBuilder::new().format(gst_video::VideoFormat::Rgba).build();
-        let sink = gst_app::AppSink::builder().caps(&caps).max_buffers(2).drop(true).build();
-        let slot = frame.clone();
-        sink.set_callbacks(
-            gst_app::AppSinkCallbacks::builder()
-                .new_sample(move |s| {
-                    let sample = s.pull_sample().map_err(|_| gst::FlowError::Eos)?;
-                    copy_frame(&sample, &slot);
-                    Ok(gst::FlowSuccess::Ok)
-                })
-                .build(),
-        );
-        let pipeline = gst::ElementFactory::make("playbin")
-            .property("uri", uri.as_str())
-            .property("video-sink", &sink)
-            .build()
-            .context("GStreamer 'playbin' element missing (install gst-plugins-base)")?;
-        match tap {
-            Some(tap) => {
-                // Soundtrack goes to the mixer; level is applied there.
-                let caps = gst::Caps::builder("audio/x-raw")
-                    .field("format", "F32LE")
-                    .field("layout", "interleaved")
-                    .field("rate", tap.rate as i32)
-                    .field("channels", tap.channels as i32)
-                    .build();
-                let asink = gst_app::AppSink::builder().caps(&caps).build();
-                let feed = feed.clone();
-                asink.set_callbacks(
-                    gst_app::AppSinkCallbacks::builder()
-                        .new_sample(move |s| {
-                            let sample = s.pull_sample().map_err(|_| gst::FlowError::Eos)?;
-                            if let Some(buf) = sample.buffer()
-                                && let Ok(map) = buf.map_readable()
-                                && let Some(tx) = feed.lock().as_mut()
-                            {
-                                for b in map.chunks_exact(4) {
-                                    // A full ring means the mixer isn't consuming (paused/stopped):
-                                    // dropping is the right thing.
-                                    if tx.push(f32::from_le_bytes([b[0], b[1], b[2], b[3]])).is_err() {
-                                        break;
-                                    }
-                                }
-                            }
-                            Ok(gst::FlowSuccess::Ok)
-                        })
-                        .build(),
-                );
-                pipeline.set_property("audio-sink", &asink);
-                pipeline.set_property("volume", 1.0f64);
-            }
-            None => pipeline.set_property("volume", db_to_gain(params.volume_db) as f64),
-        }
-        pipeline.set_state(gst::State::Paused).map_err(|e| anyhow!("cannot preroll video: {e}"))?;
-        Ok(pipeline)
-    }
-
-    fn set_state(&self, state: gst::State) {
-        if let Source::Pipeline(p) = &self.source {
-            let _ = p.set_state(state);
-        }
-    }
-
-    fn seek_to_start(&self) -> bool {
-        let Source::Pipeline(p) = &self.source else { return false };
-        let t = gst::ClockTime::from_nseconds((self.params.start_time.max(0.0) * 1e9) as u64);
-        p.seek_simple(gst::SeekFlags::FLUSH | gst::SeekFlags::ACCURATE, t).is_ok()
-    }
-
-    /// Rewind a stream that can't seek by resetting the pipeline (the start-time seek, if any,
-    /// happens again after the new preroll).
-    fn restart(&mut self) -> bool {
-        let Source::Pipeline(p) = &self.source else { return false };
-        log::debug!("video {}: not seekable, restarting pipeline to loop", self.params.path.display());
-        if p.set_state(gst::State::Ready).is_err() {
-            return false;
-        }
-        self.prerolled = false;
-        self.seeking = false;
-        p.set_state(gst::State::Playing).is_ok()
-    }
-
-    /// Reached the end of the file or the end trim point.
-    fn on_end(&mut self) {
-        self.plays_done += 1;
-        let more = self.params.infinite_loop || self.plays_done < self.params.play_count.max(1);
-        if more && (self.seek_to_start() || self.restart()) {
-            return;
-        }
-        self.finish();
-    }
-
-    fn end_audio(&self) {
-        if let Some(st) = &self.audio_state {
-            st.eof.store(true, Ordering::Release);
-        }
-        *self.audio_feed.lock() = None;
-    }
-
-    fn finish(&mut self) {
-        self.end_audio();
-        self.finished = true;
-        self.set_state(gst::State::Paused);
-        if !self.params.hold_last_frame {
-            *self.frame.lock() = Frame::default();
-        }
-    }
-
-    fn handle_bus(&mut self) {
-        let Source::Pipeline(p) = &self.source else { return };
-        let Some(bus) = p.bus() else { return };
-        while let Some(msg) = bus.pop() {
-            use gst::MessageView;
-            match msg.view() {
-                MessageView::AsyncDone(_) => {
-                    if self.seeking {
-                        self.seeking = false;
-                        self.prerolled = true;
-                    } else if !self.prerolled {
-                        if self.params.start_time > 0.0 && self.seek_to_start() {
-                            self.seeking = true;
-                        } else {
-                            self.prerolled = true;
-                        }
-                    }
-                }
-                MessageView::Eos(_) => {
-                    if !self.finished {
-                        self.on_end();
-                    }
-                }
-                MessageView::Error(e) => {
-                    let msg = format!("{} ({:?})", e.error(), e.debug());
-                    log::error!("video {}: {msg}", self.params.path.display());
-                    self.error = Some(msg);
-                    self.finished = true;
-                    self.end_audio();
-                    *self.frame.lock() = Frame::default();
-                }
-                _ => {}
-            }
-        }
     }
 
     fn position(&self) -> Option<f64> {
         match &self.source {
-            Source::Pipeline(p) => p.query_position::<gst::ClockTime>().map(|t| t.nseconds() as f64 / 1e9),
+            Source::Movie(m) => Some(m.ctl.state.lock().position),
             Source::Still => self.started_at.map(|s| (self.paused_at.unwrap_or_else(Instant::now) - s).as_secs_f64()),
         }
     }
 
     fn update(&mut self, now: Instant) {
-        self.handle_bus();
+        if let Source::Movie(m) = &self.source {
+            let mut st = m.ctl.state.lock();
+            if st.finished && !self.finished {
+                self.finished = true;
+                if let Some(e) = st.error.take() {
+                    self.error = Some(e);
+                }
+            }
+        }
         if self.paused_at.is_some() || self.finished {
             return;
         }
         if !self.playing
-            && self.prerolled
             && let Some(at) = self.play_at
             && now >= at
         {
-            self.set_state(gst::State::Playing);
             self.playing = true;
             self.started_at = Some(at);
-        }
-        if self.playing {
-            match &self.source {
-                Source::Still => {
-                    let d = self.params.still_duration;
-                    if d > 0.0 && self.started_at.is_some_and(|s| now.saturating_duration_since(s).as_secs_f64() >= d) {
-                        self.finish();
-                    }
-                }
-                Source::Pipeline(_) => {
-                    // End trim point: poll position every 10 ms.
-                    if let Some(end) = self.params.end_time
-                        && now.duration_since(self.last_pos_check) >= Duration::from_millis(10)
-                    {
-                        self.last_pos_check = now;
-                        if self.position().is_some_and(|p| p >= end) {
-                            self.on_end();
-                        }
-                    }
-                }
+            if let Source::Movie(m) = &self.source {
+                m.ctl.state.lock().origin = Some(at);
+                m.ctl.wake.notify_all();
             }
         }
-        if let Some(r) = self.vol_ramp {
-            let t = r.progress(now);
-            self.volume = r.curve.interpolate(r.from, r.to, t);
-            if let Source::Pipeline(p) = &self.source {
-                p.set_property("volume", self.volume.clamp(0.0, 10.0) as f64);
-            }
-            if t >= 1.0 {
-                self.vol_ramp = None;
+        if self.playing
+            && let Source::Still = self.source
+        {
+            let d = self.params.still_duration;
+            if d > 0.0 && self.started_at.is_some_and(|s| now.saturating_duration_since(s).as_secs_f64() >= d) {
+                self.finished = true;
+                if !self.params.hold_last_frame {
+                    *self.frame.lock() = Frame::default();
+                }
             }
         }
         if let Some(r) = self.op_ramp {
@@ -412,31 +619,38 @@ impl Player {
             }
         }
     }
-}
 
-impl Drop for Player {
-    fn drop(&mut self) {
-        self.end_audio();
-        self.set_state(gst::State::Null);
+    fn pause(&mut self, now: Instant) {
+        if self.paused_at.is_some() {
+            return;
+        }
+        self.paused_at = Some(now);
+        if let Source::Movie(m) = &self.source {
+            m.ctl.state.lock().paused_at = Some(now);
+        }
     }
-}
 
-fn copy_frame(sample: &gst::Sample, slot: &FrameSlot) {
-    let (Some(buffer), Some(caps)) = (sample.buffer(), sample.caps()) else { return };
-    let Ok(info) = gst_video::VideoInfo::from_caps(caps) else { return };
-    let Ok(map) = buffer.map_readable() else { return };
-    let (w, h) = (info.width(), info.height());
-    let stride = info.stride()[0] as usize;
-    let row = w as usize * 4;
-    let mut f = slot.lock();
-    f.data.resize(row * h as usize, 0);
-    for y in 0..h as usize {
-        let src = &map[y * stride..y * stride + row];
-        f.data[y * row..(y + 1) * row].copy_from_slice(src);
+    fn resume(&mut self, at: Instant) {
+        let Some(paused) = self.paused_at.take() else { return };
+        let shift = at.saturating_duration_since(paused);
+        for r in [&mut self.op_ramp].into_iter().flatten() {
+            r.start += shift;
+        }
+        if let Some(r) = &mut self.geo_ramp {
+            r.start += shift;
+        }
+        for t in [&mut self.play_at, &mut self.started_at].into_iter().flatten() {
+            *t += shift;
+        }
+        if let Source::Movie(m) = &self.source {
+            let mut st = m.ctl.state.lock();
+            st.paused_at = None;
+            if let Some(o) = &mut st.origin {
+                *o += shift;
+            }
+            m.ctl.wake.notify_all();
+        }
     }
-    f.width = w;
-    f.height = h;
-    f.generation = f.generation.wrapping_add(1);
 }
 
 pub struct VideoOutput {
@@ -497,7 +711,7 @@ impl VideoOutput {
             if p.finished {
                 state.eof.store(true, Ordering::Release);
             }
-            p.audio_state = Some(state);
+            *p.audio_state.lock() = Some(state);
         }
     }
 
@@ -505,52 +719,27 @@ impl VideoOutput {
     pub fn hold(&mut self, cue: CueId) {
         if let Some(p) = self.players.get_mut(&cue) {
             p.update(Instant::now());
-            p.vol_ramp = None;
             p.op_ramp = None;
             p.geo_ramp = None;
         }
     }
 
     pub fn pause(&mut self, cue: CueId) {
-        if let Some(p) = self.players.get_mut(&cue)
-            && p.paused_at.is_none()
-        {
-            p.paused_at = Some(Instant::now());
-            p.set_state(gst::State::Paused);
+        if let Some(p) = self.players.get_mut(&cue) {
+            p.pause(Instant::now());
         }
     }
 
     pub fn resume(&mut self, cue: CueId, at: Instant) {
-        if let Some(p) = self.players.get_mut(&cue)
-            && let Some(paused) = p.paused_at.take()
-        {
-            let shift = at.saturating_duration_since(paused);
-            if let Some(r) = &mut p.vol_ramp {
-                r.start += shift;
-            }
-            if let Some(r) = &mut p.op_ramp {
-                r.start += shift;
-            }
-            if let Some(r) = &mut p.geo_ramp {
-                r.start += shift;
-            }
-            for t in [&mut p.play_at, &mut p.started_at].into_iter().flatten() {
-                *t += shift;
-            }
-            if p.playing {
-                p.set_state(gst::State::Playing);
-            }
+        if let Some(p) = self.players.get_mut(&cue) {
+            p.resume(at);
         }
     }
 
+    /// Opacity and geometry fades (the soundtrack level is faded in the mixer).
     pub fn fade(&mut self, cue: CueId, f: &FadeRequest, at: Instant) {
         let Some(p) = self.players.get_mut(&cue) else { return };
         let (secs, curve) = (f.duration, f.curve);
-        if let Some(db) = f.volume_db
-            && p.tap.is_none()
-        {
-            p.vol_ramp = Some(Ramp { from: p.volume, to: db_to_gain(db), start: at, secs, curve });
-        }
         if let Some(o) = f.opacity {
             p.op_ramp = Some(Ramp { from: p.opacity, to: o.clamp(0.0, 1.0), start: at, secs, curve });
         }
@@ -559,17 +748,10 @@ impl VideoOutput {
         }
     }
 
-    /// Apply inspector edits to a playing cue (level, opacity, geometry, layer, fit, stage).
+    /// Apply inspector edits to a playing cue (opacity, geometry, layer, fit, stage).
     pub fn update_live(&mut self, cue: CueId, params: &VideoCue) {
         let Some(p) = self.players.get_mut(&cue) else { return };
         let old = std::mem::replace(&mut p.params, params.clone());
-        if old.volume_db != params.volume_db && p.tap.is_none() {
-            p.vol_ramp = None;
-            p.volume = db_to_gain(params.volume_db);
-            if let Source::Pipeline(pl) = &p.source {
-                pl.set_property("volume", p.volume.clamp(0.0, 10.0) as f64);
-            }
-        }
         if old.opacity != params.opacity {
             p.op_ramp = None;
             p.opacity = params.opacity.clamp(0.0, 1.0);
@@ -597,9 +779,6 @@ impl VideoOutput {
     pub fn update(&mut self, now: Instant) {
         for p in self.players.values_mut() {
             p.update(now);
-        }
-        for p in self.preloaded.values_mut() {
-            p.handle_bus();
         }
     }
 
@@ -642,21 +821,27 @@ pub struct VideoInfo {
     pub height: u32,
     pub has_audio: bool,
     pub audio_channels: usize,
+    pub codec: String,
 }
 
 pub fn probe(path: &Path) -> anyhow::Result<VideoInfo> {
-    use gstreamer_pbutils as pbutils;
     init()?;
-    let uri = gst::glib::filename_to_uri(path, None)?;
-    let disc = pbutils::Discoverer::new(gst::ClockTime::from_seconds(10))?;
-    let info = disc.discover_uri(&uri)?;
-    let (width, height) = info.video_streams().first().map(|v| (v.width(), v.height())).unwrap_or((0, 0));
-    let audio = info.audio_streams();
-    Ok(VideoInfo {
-        duration: info.duration().map(|d| d.nseconds() as f64 / 1e9),
-        width,
-        height,
-        has_audio: !audio.is_empty(),
-        audio_channels: audio.first().map(|a| a.channels() as usize).unwrap_or(0),
-    })
+    let ictx = ff::format::input(&path).with_context(|| format!("cannot open {}", path.display()))?;
+    let duration = (ictx.duration() > 0).then(|| ictx.duration() as f64 / f64::from(ff::ffi::AV_TIME_BASE));
+    let mut info = VideoInfo { duration, ..Default::default() };
+    if let Some(s) = ictx.streams().best(ff::media::Type::Video) {
+        let dec = ff::codec::context::Context::from_parameters(s.parameters())?.decoder().video()?;
+        info.width = dec.width();
+        info.height = dec.height();
+        info.codec = dec.codec().map(|c| c.name().to_string()).unwrap_or_default();
+    }
+    if let Some(s) = ictx.streams().best(ff::media::Type::Audio) {
+        let dec = ff::codec::context::Context::from_parameters(s.parameters())?.decoder().audio()?;
+        info.has_audio = true;
+        info.audio_channels = dec.channels() as usize;
+    }
+    if info.width == 0 && !info.has_audio {
+        return Err(anyhow!("no video or audio stream"));
+    }
+    Ok(info)
 }

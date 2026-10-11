@@ -131,9 +131,9 @@ impl App {
                             ui.label(RichText::new("This file has no soundtrack.").weak());
                         }
                         info => {
-                            let src = info.map_or(2, |i| i.channels).clamp(1, 2);
+                            let src = info.map_or(2, |i| i.channels).clamp(1, crate::model::MAX_SRC_CHANNELS);
                             routing_editor(ui, &mut v.routing, src, ctx.out_channels.min(crate::model::MAX_OUT_CHANNELS));
-                            ui.label(RichText::new("The soundtrack plays through the OpenQ mixer (stereo).").weak());
+                            ui.label(RichText::new("The soundtrack plays through the OpenQ mixer.").weak());
                         }
                     }
                 }

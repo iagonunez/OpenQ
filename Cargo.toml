@@ -10,10 +10,7 @@ eframe = "0.35.0"
 egui = "0.35"
 env_logger = "0.11.11"
 fastrand = "2.5.0"
-gstreamer = { version = "0.25.4", optional = true }
-gstreamer-app = { version = "0.25.2", optional = true }
-gstreamer-pbutils = { version = "0.25.4", optional = true }
-gstreamer-video = { version = "0.25.4", optional = true }
+ffmpeg-next = { version = "9", optional = true }
 image = { version = "0.25", default-features = false, features = ["png", "jpeg", "bmp", "gif", "webp", "tiff"] }
 log = "0.4.34"
 parking_lot = "0.12.5"
@@ -28,7 +25,7 @@ uuid = { version = "1.28.0", features = ["v4", "serde"] }
 
 [features]
 default = ["video"]
-video = ["dep:gstreamer", "dep:gstreamer-app", "dep:gstreamer-video", "dep:gstreamer-pbutils"]
+video = ["dep:ffmpeg-next"]
 
 [profile.dev.package."*"]
 opt-level = 2

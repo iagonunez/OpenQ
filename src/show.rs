@@ -66,7 +66,6 @@ impl Show {
         self.dirty = false;
         self.engine.set_playhead(self.ws.cue_list.first());
         self.engine.workspace_changed();
-        self.media.set_hardware_video_decoding(self.ws.settings.hardware_video_decoding);
         let master = self.ws.settings.master_volume_db;
         self.media.reopen_audio(self.ws.settings.audio_device.as_deref(), master);
         if let Some(a) = &mut self.media.audio {

@@ -861,14 +861,7 @@ impl App {
                 _ => ui.label(RichText::new("off").weak()),
             };
             ui.end_row();
-            ui.label("Video decoding");
-            ui.checkbox(&mut show.ws.settings.hardware_video_decoding, "Use GPU decoders")
-                .on_hover_text("Faster for big files, but some drivers (e.g. NVIDIA NVDEC) can hang. Applies to cues loaded from now on.");
-            ui.end_row();
         });
-        if show.ws.settings.hardware_video_decoding != before.hardware_video_decoding {
-            show.media.set_hardware_video_decoding(show.ws.settings.hardware_video_decoding);
-        }
         if show.ws.settings != before {
             if let Some(a) = &mut show.media.audio {
                 a.set_master(show.ws.settings.master_volume_db);

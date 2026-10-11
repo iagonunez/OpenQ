@@ -118,7 +118,7 @@ fn probe_now(path: &Path) -> Result<MediaInfo, String> {
         let (w, h) = image::image_dimensions(path).map_err(|e| format!("{e}"))?;
         return Ok(MediaInfo { duration: None, detail: format!("{w}×{h} still"), channels: 0, still: true });
     }
-    // Anything else goes to GStreamer, which knows far more containers.
+    // Anything else goes to FFmpeg, which knows far more containers.
     #[cfg(feature = "video")]
     {
         video::probe(path)
@@ -127,7 +127,7 @@ fn probe_now(path: &Path) -> Result<MediaInfo, String> {
                 channels: i.audio_channels,
                 still: false,
                 detail: if i.width > 0 {
-                    format!("{}×{}{}", i.width, i.height, if i.has_audio { " + audio" } else { "" })
+                    format!("{} {}×{}{}", i.codec, i.width, i.height, if i.has_audio { " + audio" } else { "" })
                 } else {
                     "audio only".into()
                 },
@@ -272,15 +272,6 @@ impl Media {
         self.video.as_ref().map(|v| v.stage_layers()).unwrap_or_default()
     }
 
-    /// Apply the hardware-decoding preference to pipelines created from now on.
-    pub fn set_hardware_video_decoding(&mut self, enabled: bool) {
-        #[cfg(feature = "video")]
-        if self.video.is_some() {
-            video::set_hardware_decoding(enabled);
-        }
-        let _ = enabled;
-    }
-
     /// Release every player and the audio stream.
     pub fn shutdown(&mut self) {
         #[cfg(feature = "video")]
@@ -326,8 +317,7 @@ impl Media {
             Some(Ok(i)) => i.channels,
             _ => 2,
         };
-        // Stereo at most: multichannel layouts need channel positions GStreamer can't infer here.
-        Some(video::AudioTap { rate: a.rate, channels: channels.clamp(1, 2) })
+        Some(video::AudioTap { rate: a.rate, channels: channels.clamp(1, crate::model::MAX_SRC_CHANNELS) })
     }
 
     /// Push inspector edits to a cue that is playing right now.

@@ -201,29 +201,48 @@ fn main() {
     println!("devamp: cue ended {after:.3}s later (expected 0.8–1.4 s: rest of slice + 0.8 s tail)");
     assert!((0.75..1.45).contains(&after), "devamp timing off: {after}");
 
-    // --- Video soundtrack through the mixer (ASF: WMV2 + WMA2, decodable with gst-libav).
-    let asf = dir.join("av.asf");
-    let ok = std::process::Command::new("ffmpeg")
-        .args(["-y", "-loglevel", "error", "-f", "lavfi", "-i", "testsrc=duration=2:size=160x120:rate=25"])
-        .args(["-f", "lavfi", "-i", "sine=frequency=330:duration=2", "-c:v", "wmv2", "-c:a", "wmav2"])
-        .arg(&asf)
-        .status()
-        .is_ok_and(|s| s.success());
-    if ok {
-        let _ = prober.get_blocking(&asf);
-        let mut av = Cue::new(CueKind::Video(VideoCue { path: asf.clone(), ..Default::default() }));
-        av.number = "11".into();
+    // --- Movies with soundtracks in common containers, audio through the mixer.
+    let formats: [(&str, &[&str]); 4] = [
+        ("av.asf", &["-c:v", "wmv2", "-c:a", "wmav2"]),
+        ("av.mov", &["-c:v", "libx264", "-pix_fmt", "yuv420p", "-c:a", "aac"]),
+        ("av.mkv", &["-c:v", "libvpx-vp9", "-c:a", "libopus"]),
+        ("av.webm", &["-c:v", "libvpx", "-c:a", "libvorbis"]),
+    ];
+    for (i, (name, codec)) in formats.iter().enumerate() {
+        let file = dir.join(name);
+        let ok = std::process::Command::new("ffmpeg")
+            .args(["-y", "-loglevel", "error", "-f", "lavfi", "-i", "testsrc=duration=2:size=160x120:rate=25"])
+            .args(["-f", "lavfi", "-i", "sine=frequency=330:duration=2"])
+            .args(*codec)
+            .arg(&file)
+            .status()
+            .is_ok_and(|s| s.success());
+        if !ok {
+            println!("{name}: ffmpeg can't encode this format here, skipped");
+            continue;
+        }
+        let _ = prober.get_blocking(&file);
+        let mut av = Cue::new(CueKind::Video(VideoCue { path: file.clone(), ..Default::default() }));
+        av.number = format!("av{i}");
         let avi = av.id;
         show.ws.cue_list.cues.push(av);
         show.edited();
         show.engine.set_playhead(Some(avi));
         show.go();
-        run(&mut show, 1.2);
+        let t = Instant::now();
+        let mut frames = 0u64;
+        while t.elapsed() < Duration::from_millis(1200) {
+            show.tick(Instant::now());
+            if let Some(l) = show.media.stage_layers().iter().find(|l| l.id == avi) {
+                frames = frames.max(l.frame.lock().generation);
+            }
+            std::thread::sleep(Duration::from_millis(2));
+        }
         let played = show.media.audio.as_ref().unwrap().elapsed(avi).unwrap_or(0.0);
-        println!("video soundtrack through mixer: {played:.2}s of audio mixed after 1.2 s");
-        assert!(played > 0.6, "video audio not reaching the mixer");
-        run(&mut show, 2.0);
-        assert!(!show.engine.instances.contains_key(&avi), "A/V cue didn't finish");
+        println!("{name}: {frames} frames and {played:.2}s of soundtrack after 1.2 s; log {:?}", show.engine.log);
+        assert!(frames >= 20 && played > 0.6, "{name} didn't play");
+        run(&mut show, 1.5);
+        assert!(!show.engine.instances.contains_key(&avi), "{name} didn't finish");
     }
 
     // --- OSC remote control.
