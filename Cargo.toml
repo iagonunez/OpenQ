@@ -1,0 +1,32 @@
+[package]
+name = "openq"
+version = "0.1.0"
+edition = "2024"
+
+[dependencies]
+anyhow = "1.0.104"
+cpal = "0.18.2"
+eframe = "0.35.0"
+egui = "0.35"
+env_logger = "0.11.11"
+fastrand = "2.5.0"
+gstreamer = { version = "0.25.4", optional = true }
+gstreamer-app = { version = "0.25.2", optional = true }
+gstreamer-pbutils = { version = "0.25.4", optional = true }
+gstreamer-video = { version = "0.25.4", optional = true }
+log = "0.4.34"
+parking_lot = "0.12.5"
+rfd = "0.17.2"
+rtrb = "0.4.0"
+rubato = "5.0.1"
+serde = { version = "1.0.229", features = ["derive"] }
+serde_json = "1.0.152"
+symphonia = { version = "0.6.1", features = ["all"] }
+uuid = { version = "1.28.0", features = ["v4", "serde"] }
+
+[features]
+default = ["video"]
+video = ["dep:gstreamer", "dep:gstreamer-app", "dep:gstreamer-video", "dep:gstreamer-pbutils"]
+
+[profile.dev.package."*"]
+opt-level = 2
