@@ -1,6 +1,10 @@
 //! egui front end.
 
 mod about;
+mod animation;
+#[cfg(feature = "video")]
+mod blend;
+mod debug;
 mod cue_list;
 mod devices;
 mod eq;
@@ -8,8 +12,11 @@ mod icons;
 mod inspector;
 mod manual;
 mod outputs;
+#[cfg(all(test, feature = "video"))]
+mod perf_tests;
 #[cfg(feature = "video")]
 mod preview;
+mod recovery;
 mod remote;
 #[cfg(feature = "video")]
 mod stage;
@@ -102,13 +109,20 @@ pub struct App {
     posters: Arc<media::Posters>,
     #[cfg(feature = "video")]
     preview_tex: Option<(String, egui::TextureHandle, [f32; 2])>,
+    #[cfg(feature = "video")]
+    preview_text: preview::PreviewText,
     waveforms: Arc<Waveforms>,
     inspector_tab: inspector::Tab,
+    /// Animation tab playhead and selection.
+    anim_edit: animation::AnimEdit,
     settings_tab: SettingsTab,
     /// Cached audio device list for the settings window.
     devices: Option<Vec<DeviceEntry>>,
     #[cfg(feature = "video")]
-    textures: std::collections::HashMap<CueId, (egui::TextureHandle, u64)>,
+    textures: stage::LayerTextures,
+    /// The wgpu renderer, for stage layers with a blend mode (None when headless).
+    #[cfg(feature = "video")]
+    gpu: Option<eframe::egui_wgpu::RenderState>,
     meters: Vec<f32>,
     status: Option<(String, Instant)>,
     show_settings: bool,
@@ -128,7 +142,13 @@ pub struct App {
     osc_error: Option<String>,
     osc_failed_for: Option<u16>,
     debug_t0: Option<Instant>,
+    /// `OPENQ_DEBUG_SCRIPT` run and frame timings.
+    debug_run: debug::DebugRun,
     debug_gos: u64,
+    /// Autosave session and shows to recover after a crash.
+    recovery: recovery::Recovery,
+    /// Audio was reconnecting at the last frame (to announce changes).
+    audio_reconnecting: bool,
 }
 
 impl App {
@@ -159,12 +179,17 @@ impl App {
             posters: media::Posters::new(),
             #[cfg(feature = "video")]
             preview_tex: None,
+            #[cfg(feature = "video")]
+            preview_text: Default::default(),
             waveforms: Waveforms::new(),
             inspector_tab: Default::default(),
+            anim_edit: Default::default(),
             settings_tab: SettingsTab::General,
             devices: None,
             #[cfg(feature = "video")]
             textures: Default::default(),
+            #[cfg(feature = "video")]
+            gpu: None,
             meters: Vec::new(),
             status: None,
             show_settings: false,
@@ -184,8 +209,22 @@ impl App {
             osc_error: None,
             osc_failed_for: None,
             debug_t0: None,
+            debug_run: Default::default(),
             debug_gos: 0,
+            recovery: Default::default(),
+            audio_reconnecting: false,
         }
+    }
+
+    /// Hand the app this instance's autosave session (`now` asks its thread to write at once)
+    /// and the shows earlier crashed instances left behind, which it offers to recover.
+    pub fn set_recovery(
+        &mut self,
+        autosave: Option<Arc<Mutex<crate::recovery::Autosave>>>,
+        now: Arc<std::sync::atomic::AtomicBool>,
+        orphans: Vec<crate::recovery::Orphan>,
+    ) {
+        self.recovery = recovery::Recovery { autosave, now, orphans };
     }
 
     fn primary(&self) -> Option<CueId> {
@@ -625,7 +664,9 @@ impl App {
         if self.osc.as_ref().map(|o| o.port) == want && self.osc_error.is_none() {
             return;
         }
-        if want == self.osc_failed_for {
+        // Don't retry a port that failed until the setting changes (but turning OSC off must
+        // always go through, to drop a running listener).
+        if want.is_some() && want == self.osc_failed_for {
             return;
         }
         self.osc = None;
@@ -1529,6 +1570,9 @@ impl App {
                     ),
                     theme::TEXT_DIM,
                 ),
+                (None, _) if show.media.audio_reconnecting() => {
+                    item(ui, icons::SPEAKER, "audio lost · reconnecting…".into(), AMBER)
+                }
                 (None, e) => item(
                     ui,
                     icons::SPEAKER,
@@ -1732,6 +1776,9 @@ impl App {
         let before = show.ws.stages.clone();
         let mut remove = None;
         let n = show.ws.stages.len();
+        // Surfaces another stage can span: stages that don't span anything themselves.
+        let surfaces: Vec<(StageId, String)> =
+            show.ws.stages.iter().filter(|s| s.span_of.is_none()).map(|s| (s.id, s.name.clone())).collect();
         for (i, st) in show.ws.stages.iter_mut().enumerate() {
             egui::Frame::group(ui.style()).show(ui, |ui| {
                 ui.horizontal(|ui| {
@@ -1815,6 +1862,7 @@ impl App {
                             self.output_choices(ui, st);
                         });
                 });
+                stage_span_blend(ui, st, &surfaces);
                 if st.corners != Stage::IDENTITY {
                     ui.label(
                         RichText::new(format!(
@@ -1833,6 +1881,11 @@ impl App {
         }
         if let Some(i) = remove {
             let id = show.ws.stages.remove(i).id;
+            for s in &mut show.ws.stages {
+                if s.span_of == Some(id) {
+                    s.span_of = None;
+                }
+            }
             self.stage_open.remove(&id);
             self.mapping_edit.remove(&id);
         }
@@ -1964,10 +2017,10 @@ impl App {
                     let mut dlg = rfd::FileDialog::new();
                     dlg = if video {
                         dlg.add_filter(
-                            "Video",
+                            "Video and images",
                             &[
                                 "mp4", "mov", "mkv", "avi", "webm", "m4v", "mpg", "mpeg", "ogv",
-                                "mxf",
+                                "mxf", "png", "jpg", "jpeg", "webp", "gif", "bmp", "tif", "tiff", "svg", "svgz",
                             ],
                         )
                     } else {
@@ -1998,7 +2051,8 @@ impl App {
                             "Media",
                             &[
                                 "wav", "aif", "aiff", "flac", "mp3", "ogg", "opus", "m4a", "aac",
-                                "caf", "mp4", "mov", "mkv", "avi", "webm", "m4v",
+                                "caf", "mp4", "mov", "mkv", "avi", "webm", "m4v", "png", "jpg", "jpeg",
+                                "webp", "svg", "svgz",
                             ],
                         )
                         .pick_files()
@@ -2018,7 +2072,8 @@ impl App {
 impl App {
     /// Dev hook for automated visual checks: with `OPENQ_SCREENSHOT=out.ppm` the app presses GO
     /// `OPENQ_SCREENSHOT_GOS` times (default 0), captures its window a couple of frames later and exits.
-    /// `OPENQ_SCREENSHOT_CUE` / `OPENQ_SCREENSHOT_TAB` pick the cue and inspector tab shown;
+    /// `OPENQ_SCREENSHOT_CUE` / `OPENQ_SCREENSHOT_TAB` pick the cue and inspector tab shown
+    /// (`OPENQ_SCREENSHOT_ANIM_TIME` sets the Animation tab playhead);
     /// `OPENQ_SCREENSHOT_MODE=show` starts in show mode; `OPENQ_SCREENSHOT_INLINE=1` opens an
     /// in-place pre-wait editor on the selected cue.
     /// `OPENQ_SCREENSHOT_STAGE=1` embeds stage windows in the main window for the capture
@@ -2029,7 +2084,7 @@ impl App {
         };
         self.frame_count += 1;
         if self.frame_count == 1 {
-            // Optional: select cue N and an inspector tab (time|levels|eq|geometry|settings).
+            // Optional: select cue N and an inspector tab (time|levels|eq|geometry|animation|settings).
             if let Ok(n) = std::env::var("OPENQ_SCREENSHOT_CUE") {
                 let id = show
                     .ws
@@ -2040,12 +2095,23 @@ impl App {
                     .map(|c| c.id);
                 self.select(show, id);
             }
+            // Optional: the Animation tab playhead, in seconds.
+            if let Some(t) = std::env::var("OPENQ_SCREENSHOT_ANIM_TIME").ok().and_then(|v| v.parse().ok()) {
+                // Select the first track's second key, so the Keyframe card has something to show.
+                let sel = self.primary().and_then(|id| show.ws.cue_list.find(id)).and_then(|c| match &c.kind {
+                    CueKind::Video(v) => v.animation.tracks.first().map(|t| t.prop),
+                    CueKind::Text(t) => t.animation.tracks.first().map(|t| t.prop),
+                    _ => None,
+                });
+                self.anim_edit = animation::AnimEdit { cue: self.primary(), time: t, sel: sel.map(|p| (p, 1)) };
+            }
             self.inspector_tab = match std::env::var("OPENQ_SCREENSHOT_TAB").as_deref() {
                 Ok("time") => inspector::Tab::Time,
                 Ok("io") => inspector::Tab::Io,
                 Ok("levels") => inspector::Tab::Levels,
                 Ok("eq") => inspector::Tab::Eq,
                 Ok("geometry") => inspector::Tab::Geometry,
+                Ok("animation") => inspector::Tab::Animation,
                 Ok("settings") => inspector::Tab::Settings,
                 Ok("triggers") => inspector::Tab::Triggers,
                 _ => inspector::Tab::Basics,
@@ -2171,13 +2237,85 @@ pub fn install_theme(ctx: &egui::Context) {
     theme::install(ctx);
 }
 
+/// Stage settings for splitting a surface across projectors: which stage this one shows part
+/// of, the part (crop) and the soft-edge blend zones.
+fn stage_span_blend(ui: &mut egui::Ui, st: &mut Stage, surfaces: &[(StageId, String)]) {
+    let pct = |v: f64, _| format!("{:.1}%", v * 100.0);
+    let parse = |t: &str| t.trim().trim_end_matches('%').trim().parse::<f64>().ok().map(|v| v / 100.0);
+    egui::CollapsingHeader::new("Span & edge blend").id_salt(("span", st.id)).default_open(st.span_of.is_some() || st.blend != [0.0; 4]).show(ui, |ui| {
+        egui::Grid::new(("span-grid", st.id)).num_columns(2).spacing([10.0, 6.0]).show(ui, |ui| {
+            ui.label("Shows");
+            let shown = st.span_of.and_then(|id| surfaces.iter().find(|s| s.0 == id)).map(|s| format!("Part of {}", s.1));
+            egui::ComboBox::from_id_salt(("span-of", st.id))
+                .selected_text(shown.unwrap_or_else(|| "Its own cues".into()))
+                .width(220.0)
+                .show_ui(ui, |ui| {
+                    ui.selectable_value(&mut st.span_of, None, "Its own cues");
+                    for (id, name) in surfaces.iter().filter(|s| s.0 != st.id) {
+                        ui.selectable_value(&mut st.span_of, Some(*id), format!("Part of {name}"));
+                    }
+                })
+                .response
+                .on_hover_text("Split one wide stage (a surface) across several outputs: each shows a part of it");
+            ui.end_row();
+            if st.span_of.is_some() {
+                ui.label("Part");
+                ui.horizontal(|ui| {
+                    for (i, side) in ["Left", "Top", "Right", "Bottom"].into_iter().enumerate() {
+                        ui.label(side);
+                        // x0/y0 stay below x1/y1.
+                        let range = if i < 2 { 0.0..=(st.crop[i + 2] - 0.01).max(0.0) } else { (st.crop[i - 2] + 0.01).min(1.0)..=1.0 };
+                        ui.add(egui::DragValue::new(&mut st.crop[i]).speed(0.001).range(range).custom_formatter(pct).custom_parser(parse));
+                    }
+                })
+                .response
+                .on_hover_text("Edges of the part this output shows, in % of the surface. Neighbouring outputs overlap by their blend width.");
+                ui.end_row();
+            }
+            ui.label("Blend");
+            ui.horizontal(|ui| {
+                for (i, side) in ["L", "T", "R", "B"].into_iter().enumerate() {
+                    ui.label(side);
+                    let max = (1.0 - st.blend[(i + 2) % 4]).clamp(0.0, 0.5);
+                    ui.add(egui::DragValue::new(&mut st.blend[i]).speed(0.001).range(0.0..=max).custom_formatter(pct).custom_parser(parse));
+                }
+            })
+            .response
+            .on_hover_text("Soft-edge widths in % of this output: set them to the overlap with the neighbouring projector");
+            ui.end_row();
+            ui.label("Gamma");
+            ui.add(egui::DragValue::new(&mut st.blend_gamma).speed(0.01).range(1.0..=3.0).max_decimals(2))
+                .on_hover_text("Projector gamma: raise it if the overlap looks too bright, lower it if it looks dark");
+            ui.end_row();
+        });
+    });
+}
+
 impl eframe::App for App {
     fn on_exit(&mut self) {
         self.show.lock().shutdown();
+        // A normal quit (unsaved changes were confirmed away): nothing to recover next time.
+        if let Some(a) = &self.recovery.autosave {
+            a.lock().clear();
+        }
     }
 
-    fn ui(&mut self, ui: &mut egui::Ui, _frame: &mut eframe::Frame) {
+    fn ui(&mut self, ui: &mut egui::Ui, frame: &mut eframe::Frame) {
+        #[cfg(feature = "video")]
+        if self.gpu.is_none() {
+            self.gpu = frame.wgpu_render_state().cloned();
+        }
+        self.draw(ui, frame.info().cpu_usage);
+    }
+}
+
+impl App {
+    /// One frame of the whole window (`cpu`: the previous frame's CPU time, for the debug log).
+    /// Separate from [`eframe::App::ui`] so tests can run it headless.
+    fn draw(&mut self, ui: &mut egui::Ui, cpu: Option<f32>) {
+        let frame_start = Instant::now();
         let ctx = ui.ctx().clone();
+        media::set_max_texture_side(ctx.input(|i| i.max_texture_side));
         let show_arc = self.show.clone();
         {
             let mut guard = show_arc.lock();
@@ -2188,6 +2326,20 @@ impl eframe::App for App {
             self.handle_keys(&ctx, show);
             self.handle_dropped_files(&ctx, show);
             self.debug_screenshot(&ctx, show);
+            self.debug_script(&ctx, show);
+            if let Some(msg) = show.recovered.take() {
+                self.notify(msg);
+                self.recovery.save_soon();
+            }
+            let reconnecting = show.media.audio_reconnecting();
+            if reconnecting != self.audio_reconnecting {
+                self.audio_reconnecting = reconnecting;
+                self.notify(if reconnecting {
+                    "Audio output lost — its sounds stopped. Reconnecting…".to_string()
+                } else {
+                    "Audio output reconnected".to_string()
+                });
+            }
 
             let fresh = match self.remote.meters() {
                 Some(m) => m.to_vec(),
@@ -2280,6 +2432,7 @@ impl eframe::App for App {
             self.geometry_preview(&ctx, show);
             self.remote_window(&ctx, show);
             self.about_window(&ctx);
+            self.recovery_window(&ctx);
             self.track_undo(&ctx, show);
             self.sync_osc(&ctx, show);
 
@@ -2338,5 +2491,35 @@ impl eframe::App for App {
             }
         }
         self.run_deferred();
+        self.debug_frame_done(frame_start, cpu);
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// The OSC checkbox: on starts the listener, off stops it (it once stayed running, and shown
+    /// in the status bar, after being turned off), on again restarts it on the same port.
+    #[test]
+    fn osc_setting_starts_and_stops_the_listener() {
+        let prober = Prober::new();
+        let shared: SharedShow = Arc::new(parking_lot::Mutex::new(Show::new(prober.clone())));
+        let mut app = App::new(shared.clone(), prober);
+        let ctx = egui::Context::default();
+        let port = std::net::UdpSocket::bind(("0.0.0.0", 0)).unwrap().local_addr().unwrap().port();
+        let set = |app: &mut App, on: bool| {
+            let mut s = shared.lock();
+            s.ws.settings.osc_port = port;
+            s.ws.settings.osc_enabled = on;
+            app.sync_osc(&ctx, &s);
+        };
+        set(&mut app, true);
+        assert_eq!(app.osc.as_ref().map(|o| o.port), Some(port), "{:?}", app.osc_error);
+        set(&mut app, false);
+        assert!(app.osc.is_none() && app.osc_error.is_none(), "OSC still listening after being turned off");
+        std::net::UdpSocket::bind(("0.0.0.0", port)).expect("port still taken after OSC was turned off");
+        set(&mut app, true);
+        assert_eq!(app.osc.as_ref().map(|o| o.port), Some(port), "{:?}", app.osc_error);
     }
 }

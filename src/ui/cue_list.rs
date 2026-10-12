@@ -397,18 +397,22 @@ impl App {
         let mut cycle_continue: Option<CueId> = None;
 
         egui::ScrollArea::vertical().auto_shrink([false, false]).id_salt("cuelist").show(ui, |ui| {
-            for (depth, id) in &rows {
-                let Some(cue) = show.ws.cue_list.find(*id) else { continue };
-                let sense = if editing { Sense::click_and_drag() } else { Sense::click() };
-                let (rect, resp) = ui.allocate_exact_size(vec2(ui.available_width(), row_h), sense);
+            // The cues in row order, found in one pass (a lookup per row made frames O(n²)).
+            let cues = show.ws.cue_list.visible_cues(&|id| collapsed.contains(&id));
+            for ((depth, id), &(_, cue)) in rows.iter().zip(&cues) {
+                // Rows outside the view only take space: no widget, no painting.
+                let rect = Rect::from_min_size(ui.cursor().min, vec2(ui.available_width(), row_h));
                 list_rect = list_rect.union(rect);
                 row_rects.push((rect, *id, cue.is_group()));
                 if scroll_to == Some(*id) {
                     ui.scroll_to_rect(rect, None);
                 }
                 if !ui.is_rect_visible(rect) {
+                    ui.advance_cursor_after_rect(rect);
                     continue;
                 }
+                let sense = if editing { Sense::click_and_drag() } else { Sense::click() };
+                let (rect, resp) = ui.allocate_exact_size(rect.size(), sense);
                 let cols = Columns::new(rect.left(), rect.width());
                 self.paint_row(ui, show, cue, *depth, rect, &cols, now);
 
@@ -898,11 +902,8 @@ impl App {
 /// Toolbox tile: icon over a small label.
 fn tile(ui: &mut Ui, glyph: &str, label: &str) -> egui::Response {
     let (rect, resp) = ui.allocate_exact_size(vec2(54.0, 46.0), Sense::click());
+    let c = theme::tool_highlight(ui, rect, &resp, 8.0, theme::TEXT_DIM);
     let p = ui.painter();
-    if resp.hovered() {
-        p.rect_filled(rect, 8.0, theme::BG_HOVER);
-    }
-    let c = if resp.hovered() { Color32::WHITE } else { theme::TEXT_DIM };
     p.text(rect.center_top() + vec2(0.0, 15.0), Align2::CENTER_CENTER, glyph, theme::icon_font(22.0), c);
     p.text(rect.center_bottom() - vec2(0.0, 10.0), Align2::CENTER_CENTER, label, FontId::proportional(10.5), c);
     resp.on_hover_cursor(egui::CursorIcon::PointingHand)

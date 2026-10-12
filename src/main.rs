@@ -1,7 +1,7 @@
 // Release builds on Windows are GUI apps: no console window.
 #![cfg_attr(all(windows, not(debug_assertions)), windows_subsystem = "windows")]
 
-use openq::{displays, media, show, ui};
+use openq::{displays, media, recovery, show, ui};
 use parking_lot::Mutex;
 use std::sync::Arc;
 
@@ -19,6 +19,22 @@ fn main() -> eframe::Result {
     let prober = media::Prober::new();
     let show = Arc::new(Mutex::new(show::Show::new(prober.clone())));
     let open_arg = std::env::args().nth(1).map(std::path::PathBuf::from);
+
+    // Crash safety: autosave unsaved changes, write crash reports, and look for shows an
+    // earlier OpenQ left behind when it went down.
+    let autosave_now = Arc::new(std::sync::atomic::AtomicBool::new(false));
+    let autosave = match recovery::Autosave::new() {
+        Ok(a) => Some(Arc::new(Mutex::new(a))),
+        Err(e) => {
+            log::warn!("autosave unavailable: {e:#}");
+            None
+        }
+    };
+    let orphans = recovery::find_orphans(autosave.as_ref().map(|a| a.lock()).as_deref());
+    if let Some(a) = &autosave {
+        recovery::install_panic_hook(&show, a.clone());
+        recovery::spawn_autosave(show.clone(), a.clone(), autosave_now.clone());
+    }
 
     let options = eframe::NativeOptions {
         viewport: egui::ViewportBuilder::default()
@@ -39,6 +55,7 @@ fn main() -> eframe::Result {
             let ctx = cc.egui_ctx.clone();
             show::spawn_engine_thread(show.clone(), move || ctx.request_repaint());
             let mut app = ui::App::new(show, prober);
+            app.set_recovery(autosave, autosave_now, orphans);
             if let Some(p) = open_arg {
                 app.open_path(p);
             }

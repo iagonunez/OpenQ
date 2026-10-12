@@ -79,19 +79,26 @@ fn db_text(v: f64) -> String {
     if v <= crate::model::MIN_DB as f64 { "-inf".into() } else { format!("{v:.1}") }
 }
 
+/// Narrowest a [`vfader`] column gets (its readout still shows "-inf" / "-12.5").
+pub const FADER_MIN_W: f32 = 34.0;
+
 /// A vertical fader: a dB readout (drag or type), the fader itself (drag; double-click
 /// for 0 dB) and a label underneath. `strong` paints the fill in the accent colour (main fader).
-pub fn vfader(ui: &mut Ui, value: &mut f32, label: &str, track_h: f32, strong: bool) -> Response {
+/// The column is `width` points wide (clamped to [`FADER_MIN_W`]..=[`FADER_W`]), so a bank of many
+/// outputs fits without scrolling.
+pub fn vfader(ui: &mut Ui, value: &mut f32, label: &str, track_h: f32, strong: bool, width: f32) -> Response {
     use super::theme;
     use egui::{Align2, CornerRadius, Sense, Stroke, pos2, vec2};
     let min = crate::model::MIN_DB;
+    let w = width.clamp(FADER_MIN_W, FADER_W);
     ui.vertical(|ui| {
-        ui.set_width(FADER_W);
+        ui.set_width(w);
+        ui.spacing_mut().interact_size.x = w;
         let mut resp = ui.add_sized(
-            [FADER_W, 20.0],
+            [w, 20.0],
             DragValue::new(value).range(min..=FADER_MAX_DB).speed(0.2).custom_formatter(|v, _| db_text(v)),
         );
-        let (rect, track) = ui.allocate_exact_size(vec2(FADER_W, track_h), Sense::click_and_drag());
+        let (rect, track) = ui.allocate_exact_size(vec2(w, track_h), Sense::click_and_drag());
         let track = track.on_hover_cursor(egui::CursorIcon::ResizeVertical).on_hover_text("Drag to set · double-click for 0 dB");
         // The handle's centre travels between these.
         let (top, bottom) = (rect.top() + 7.0, rect.bottom() - 7.0);
@@ -122,11 +129,11 @@ pub fn vfader(ui: &mut Ui, value: &mut f32, label: &str, track_h: f32, strong: b
         let y0 = bottom - fader_pos(0.0) * (bottom - top);
         p.line_segment([pos2(cx - 9.0, y0), pos2(cx - 4.0, y0)], Stroke::new(1.0, theme::TEXT_FAINT));
         p.line_segment([pos2(cx + 4.0, y0), pos2(cx + 9.0, y0)], Stroke::new(1.0, theme::TEXT_FAINT));
-        let handle = egui::Rect::from_center_size(pos2(cx, y), vec2(28.0, 12.0));
+        let handle = egui::Rect::from_center_size(pos2(cx, y), vec2(28.0f32.min(w - 6.0), 12.0));
         let hot = track.hovered() || track.dragged();
         p.rect_filled(handle, CornerRadius::same(3), if hot { theme::TEXT } else { theme::TEXT_DIM });
         p.line_segment([pos2(handle.left() + 4.0, y), pos2(handle.right() - 4.0, y)], Stroke::new(1.5, theme::BG_INPUT));
-        let (lr, _) = ui.allocate_exact_size(vec2(FADER_W, 16.0), Sense::hover());
+        let (lr, _) = ui.allocate_exact_size(vec2(w, 16.0), Sense::hover());
         ui.painter().text(lr.center(), Align2::CENTER_CENTER, label, theme::semibold(11.0), theme::TEXT_DIM);
         resp |= track;
         resp
@@ -148,6 +155,70 @@ pub fn fader_scale(ui: &mut Ui, track_h: f32) {
             ui.painter().text(pos2(rect.right() - 2.0, y), Align2::RIGHT_CENTER, text, theme::mono(9.0), theme::TEXT_FAINT);
         }
     });
+}
+
+/// The fade curve graph: the shape of a fade over its `duration`, with two handles (at 1/3 and
+/// 2/3 of the time) to drag up and down. Dragging a preset curve turns it into a
+/// [`FadeCurve::Custom`] that starts from the preset's shape; double-click a handle for a straight
+/// line ([`FadeCurve::Linear`]). `falling` draws a fade toward silence going down; `level` draws the level law (the
+/// logarithmic curve is in dB) rather than the plain progress used for opacity and geometry.
+pub fn curve_graph(ui: &mut Ui, salt: &str, curve: &mut crate::model::FadeCurve, duration: f64, falling: bool, level: bool) -> Response {
+    use super::theme;
+    use crate::model::FadeCurve;
+    use egui::{Align2, Sense, Shape, Stroke, pos2, vec2};
+    let (outer, mut resp) = ui.allocate_exact_size(vec2(ui.available_width(), 150.0), Sense::hover());
+    let p = ui.painter_at(outer);
+    p.rect_filled(outer, 4.0, theme::BG_INPUT);
+    let rect = outer.shrink2(vec2(10.0, 12.0));
+    let grid = Stroke::new(0.5, Color32::from_gray(50));
+    for k in 1..4 {
+        let f = k as f32 / 4.0;
+        p.line_segment([pos2(rect.left() + f * rect.width(), rect.top()), pos2(rect.left() + f * rect.width(), rect.bottom())], grid);
+        p.line_segment([pos2(rect.left(), rect.top() + f * rect.height()), pos2(rect.right(), rect.top() + f * rect.height())], grid);
+    }
+    p.rect_stroke(rect, 0.0, Stroke::new(0.8, Color32::from_gray(70)), egui::StrokeKind::Middle);
+    // Value (0..1, up) at progress t; a falling fade goes from 1 to 0.
+    let (a, b) = if falling { (1.0, 0.0) } else { (0.0, 1.0) };
+    let value = |c: FadeCurve, t: f32| if level { c.interpolate(a, b, t) } else { a + (b - a) * c.progress(t) };
+    let at = |t: f32, v: f32| pos2(rect.left() + t * rect.width(), rect.bottom() - v * rect.height());
+    // Handle heights as drawn (a falling fade mirrors them).
+    let shown = |h: f32| if falling { 1.0 - h } else { h };
+    let handles = curve.handles(falling);
+    for (k, &h) in handles.iter().enumerate() {
+        let t = (k + 1) as f32 / 3.0;
+        let id = ui.id().with((salt, k));
+        let c = at(t, shown(h));
+        let r = ui.interact(egui::Rect::from_center_size(c, vec2(18.0, 18.0)), id, Sense::click_and_drag());
+        if r.double_clicked() {
+            *curve = FadeCurve::Linear;
+            resp.mark_changed();
+        } else if r.dragged()
+            && let Some(pos) = r.interact_pointer_pos()
+        {
+            let v = ((rect.bottom() - pos.y) / rect.height()).clamp(0.0, 1.0);
+            let mut hs = handles;
+            hs[k] = (if falling { 1.0 - v } else { v } * 100.0).round() / 100.0;
+            *curve = FadeCurve::Custom(hs);
+            resp.mark_changed();
+        }
+        let hot = r.hovered() || r.dragged();
+        let r = r.on_hover_cursor(egui::CursorIcon::ResizeVertical).on_hover_text("Drag to shape the fade · double-click for a straight line");
+        resp |= r;
+        // Control arm from the nearer end point.
+        let end = if k == 0 { at(0.0, a) } else { at(1.0, b) };
+        p.add(Shape::dashed_line(&[end, c], Stroke::new(1.0, theme::TEXT_FAINT), 3.0, 3.0));
+        p.circle_filled(c, if hot { 6.0 } else { 5.0 }, if hot { theme::AMBER } else { theme::TEXT_DIM });
+    }
+    let pts: Vec<_> = (0..=64).map(|i| {
+        let t = i as f32 / 64.0;
+        at(t, value(*curve, t).clamp(0.0, 1.0))
+    }).collect();
+    p.add(Shape::line(pts, Stroke::new(2.0, theme::ACCENT)));
+    let small = theme::mono(9.0);
+    p.text(pos2(rect.left(), outer.bottom() - 1.0), Align2::LEFT_BOTTOM, "0", small.clone(), theme::TEXT_FAINT);
+    p.text(pos2(rect.right(), outer.bottom() - 1.0), Align2::RIGHT_BOTTOM, fmt_time(duration), small.clone(), theme::TEXT_FAINT);
+    p.text(pos2(rect.left() + 3.0, outer.top() + 1.0), Align2::LEFT_TOP, if falling { "start" } else { "target" }, small, theme::TEXT_FAINT);
+    resp
 }
 
 /// A thin progress bar painted inside `rect`.

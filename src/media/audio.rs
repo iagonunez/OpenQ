@@ -5,6 +5,15 @@
 //! cue's EQ, routing matrix, level and pan in the callback, so all of them can change live.
 //! The control side talks to the callback only through a wait-free command queue, and removed
 //! voices are shipped back for deallocation so the audio thread never frees memory.
+//!
+//! Timing: the mixer's frame counter is tied to wall-clock time by a [`ClockFilter`] (a
+//! delay-locked loop) fed with each callback's timestamp, so scheduling jitter of the audio
+//! thread doesn't move sample-accurate start times around.
+//!
+//! Failure handling: a panic in the callback silences the output instead of unwinding into
+//! the audio driver, and the output (like one whose device went away) reports itself
+//! [lost](AudioOutput::is_lost) so [`super::Media`] can reconnect. An [`Endpoint::Virtual`] output
+//! runs the same mixer on a timer thread without hardware, for tests and CI machines.
 
 use super::decoder::{self, DecodeParams};
 use crate::dsp::{BiquadState, Coeffs, eq_coeffs};
@@ -14,7 +23,7 @@ use crate::model::{
 use anyhow::{Context, anyhow};
 use cpal::traits::{DeviceTrait, HostTrait, StreamTrait};
 use cpal::{FromSample, OutputCallbackInfo, SampleFormat, SizedSample, StreamConfig};
-use std::collections::HashMap;
+use std::collections::{HashMap, VecDeque};
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, AtomicU32, AtomicU64, Ordering};
 use std::time::{Duration, Instant};
@@ -36,6 +45,11 @@ pub enum MeterReader {
 const DECLICK_SECS: f64 = 0.008;
 /// Seconds of decoded audio buffered per voice.
 const VOICE_BUFFER_SECS: f64 = 2.0;
+/// Most voices (playing plus preloaded) the mixer holds. Its voice list is allocated once with
+/// this capacity, so adding a voice never allocates on the audio thread.
+pub const MAX_VOICES: usize = 256;
+/// Commands held back while the mixer's queue is full (beyond this they are dropped).
+const MAX_PENDING: usize = 1 << 16;
 
 /// Linear routing gains, `[src * MAX_OUT_CHANNELS + out]`.
 pub type Matrix = [f32; MAX_SRC_CHANNELS * MAX_OUT_CHANNELS];
@@ -61,11 +75,12 @@ impl Clock {
         }
     }
 
-    fn store(&self, frame: u64, now: Instant) {
+    /// Anchor `frame` at `secs` after the clock's origin.
+    fn store(&self, frame: u64, secs: f64) {
         // Seqlock writer (single writer: the audio callback).
         self.seq.fetch_add(1, Ordering::AcqRel);
         self.frame.store(frame, Ordering::Relaxed);
-        self.nanos.store((now - self.origin).as_nanos() as u64, Ordering::Relaxed);
+        self.nanos.store((secs.max(0.0) * 1e9) as u64, Ordering::Relaxed);
         self.seq.fetch_add(1, Ordering::Release);
     }
 
@@ -97,6 +112,95 @@ impl Clock {
     }
 }
 
+/// Smooths the callback timestamps that anchor the mixer [`Clock`]: a second-order
+/// delay-locked loop that tracks the device's real sample rate while averaging out the
+/// scheduling jitter of the audio thread (often a millisecond or more). A single late callback
+/// is ignored; several in a row (an xrun, a suspended machine) re-anchor at once.
+#[derive(Clone, Debug)]
+pub struct ClockFilter {
+    nominal: f64,
+    period: f64,
+    frame: u64,
+    t: f64,
+    started: bool,
+    outliers: u32,
+}
+
+impl ClockFilter {
+    /// Loop gain for the time estimate (per callback).
+    const GAIN: f64 = 0.01;
+    /// Loop gain for the period (rate) estimate.
+    const RATE_GAIN: f64 = Self::GAIN * Self::GAIN / 4.0;
+    /// Errors beyond this are outliers (seconds).
+    const OUTLIER: f64 = 0.004;
+    /// Consecutive outliers that force a re-anchor.
+    const MAX_OUTLIERS: u32 = 3;
+
+    /// A filter for a device running at `rate` Hz.
+    pub fn new(rate: u32) -> Self {
+        let nominal = 1.0 / rate.max(1) as f64;
+        Self { nominal, period: nominal, frame: 0, t: 0.0, started: false, outliers: 0 }
+    }
+
+    /// The callback that starts at `frame` ran at `measured` seconds; returns the smoothed
+    /// time of `frame`.
+    pub fn observe(&mut self, frame: u64, measured: f64) -> f64 {
+        if !self.started || frame <= self.frame {
+            return self.reset(frame, measured);
+        }
+        let n = (frame - self.frame) as f64;
+        let predicted = self.t + self.period * n;
+        let e = measured - predicted;
+        if e.abs() > Self::OUTLIER {
+            self.outliers += 1;
+            if self.outliers >= Self::MAX_OUTLIERS {
+                return self.reset(frame, measured);
+            }
+            self.t = predicted;
+            self.frame = frame;
+            return predicted;
+        }
+        self.outliers = 0;
+        self.t = predicted + Self::GAIN * e;
+        self.period = (self.period + Self::RATE_GAIN * e / n).clamp(self.nominal * 0.995, self.nominal * 1.005);
+        self.frame = frame;
+        self.t
+    }
+
+    fn reset(&mut self, frame: u64, measured: f64) -> f64 {
+        self.started = true;
+        self.outliers = 0;
+        self.frame = frame;
+        self.t = measured;
+        measured
+    }
+}
+
+/// Health of an output, shared with its audio thread.
+#[derive(Default)]
+struct Health {
+    /// The device went away or the callback failed: the output must be reopened.
+    lost: AtomicBool,
+    /// Buffer underruns/overruns reported by the driver.
+    xruns: AtomicU64,
+    /// Callbacks run so far.
+    callbacks: AtomicU64,
+}
+
+/// Where an [`AudioOutput`] sends its sound.
+#[derive(Clone, Debug, PartialEq)]
+pub enum Endpoint {
+    /// A sound card (cpal device id; None = the system default).
+    Device(Option<String>),
+    /// No hardware: a timer thread pulls the mixer at this rate and channel count.
+    Virtual {
+        /// Sample rate.
+        rate: u32,
+        /// Output channels.
+        channels: usize,
+    },
+}
+
 /// State shared between a voice, its decoder thread and the control side.
 #[derive(Default)]
 pub struct VoiceShared {
@@ -114,6 +218,8 @@ pub struct VoiceShared {
     pub devamp: AtomicBool,
     /// Decoder failure, if any.
     pub error: parking_lot::Mutex<Option<String>>,
+    /// The mixer had no room for this voice (more than [`MAX_VOICES`]).
+    pub rejected: AtomicBool,
 }
 
 #[derive(Clone, Copy)]
@@ -234,15 +340,27 @@ struct Mixer {
     frame: u64,
     master: f32,
     clock: Arc<Clock>,
+    filter: ClockFilter,
     meters: Meters,
     scratch: Vec<f32>,
+    health: Arc<Health>,
 }
 
 impl Mixer {
     fn handle_commands(&mut self) {
         while let Ok(cmd) = self.cmds.pop() {
             match cmd {
-                Cmd::Add(v) => self.voices.push(v),
+                Cmd::Add(v) => {
+                    if self.voices.len() < MAX_VOICES {
+                        self.voices.push(v);
+                    } else {
+                        // No room (pushing would allocate): hand it straight back.
+                        v.shared.rejected.store(true, Ordering::Release);
+                        v.shared.finished.store(true, Ordering::Release);
+                        v.shared.stop.store(true, Ordering::Release);
+                        let _ = self.garbage.push(Garbage::Voice(v));
+                    }
+                }
                 Cmd::Master(g) => self.master = g,
                 Cmd::Start { id, at } => {
                     if let Some(v) = self.voice(id) {
@@ -320,6 +438,40 @@ impl Mixer {
                     // The box (now holding the old matrix) is freed off the audio thread.
                     let _ = self.garbage.push(Garbage::Matrix(matrix));
                 }
+            }
+        }
+    }
+
+    /// One device callback: take commands, re-anchor the clock, render `data`.
+    fn fill<T: FromSample<f32>>(&mut self, data: &mut [T]) {
+        crate::recovery::fault_point(crate::recovery::Fault::AudioCallback);
+        self.health.callbacks.fetch_add(1, Ordering::Relaxed);
+        self.handle_commands();
+        let measured = self.clock.origin.elapsed().as_secs_f64();
+        let t = self.filter.observe(self.frame, measured);
+        self.clock.store(self.frame, t);
+        let ch = self.channels;
+        let mut scratch = std::mem::take(&mut self.scratch);
+        for chunk in data.chunks_mut(scratch.len() / ch * ch) {
+            let buf = &mut scratch[..chunk.len()];
+            self.render(buf);
+            for (o, s) in chunk.iter_mut().zip(buf.iter()) {
+                *o = T::from_sample_(*s);
+            }
+        }
+        self.scratch = scratch;
+    }
+
+    /// [`Mixer::fill`], but a panic silences the output for good and marks it lost instead of
+    /// unwinding into the driver.
+    fn fill_guarded<T: FromSample<f32>>(&mut self, failed: &mut bool, data: &mut [T]) {
+        if !*failed && std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| self.fill(data))).is_err() {
+            *failed = true;
+            self.health.lost.store(true, Ordering::Release);
+        }
+        if *failed {
+            for s in data.iter_mut() {
+                *s = T::from_sample_(0.0);
             }
         }
     }
@@ -473,21 +625,131 @@ pub struct DeviceEntry {
 pub fn list_output_devices() -> Vec<DeviceEntry> {
     let host = cpal::default_host();
     let Ok(devs) = host.output_devices() else { return Vec::new() };
-    devs.filter_map(|d| {
-        let id = d.id().ok()?.to_string();
-        let name = d.description().map(|x| x.to_string()).unwrap_or_else(|_| id.clone());
-        Some(DeviceEntry { id, name })
-    })
-    .collect()
+    device_entries(devs, true)
+}
+
+/// The pickable entries among `devs` (`output`: for an output picker, else an input picker).
+///
+/// PipeWire also lists other programs' streams and a sink/output default pair; only the
+/// default and real sinks (outputs) or sources (inputs) are kept. On ALSA every card shows up a
+/// dozen times (`front:`, `surround51:`, `iec958:`, `dmix:`, `hw:`, `plughw:`, rate
+/// converters…), all with the same description, so only the sound servers, one `sysdefault:`
+/// per card, HDMI outputs and the `plughw:` devices nothing else covers are kept. Ids left out
+/// still open (see [`find_device`]).
+pub(crate) fn device_entries(devs: impl Iterator<Item = cpal::Device>, output: bool) -> Vec<DeviceEntry> {
+    use cpal::DeviceDirection as Dir;
+    let all: Vec<(DeviceEntry, Option<cpal::DeviceDescription>)> = devs
+        .filter_map(|d| {
+            let id = d.id().ok()?.to_string();
+            let desc = d.description().ok();
+            let name = desc.as_ref().map(|x| x.name().to_string()).unwrap_or_else(|| id.clone());
+            Some((DeviceEntry { id, name }, desc))
+        })
+        .collect();
+    let mut out: Vec<DeviceEntry> = if all.iter().any(|(d, _)| d.id.starts_with("pipewire:")) {
+        all.into_iter()
+            .filter_map(|(mut d, desc)| {
+                let node = d.id.strip_prefix("pipewire:").unwrap_or(&d.id);
+                let default = if output { "output_default" } else { "input_default" };
+                if node == default {
+                    d.name = if output { "Default output".into() } else { "Default input".into() };
+                    return Some(d);
+                }
+                let desc = desc?;
+                // Streams are client nodes; sinks show up as duplex (their monitor can be captured).
+                let real = desc.driver().is_some_and(|f| f != "client-node") && !node.ends_with("_default");
+                let dir_ok = if output { desc.direction() == Dir::Duplex } else { desc.direction() == Dir::Input };
+                (real && dir_ok).then_some(d)
+            })
+            .collect()
+    } else {
+        alsa_entries(all.into_iter().map(|(d, _)| d).collect())
+    };
+    // Same description twice (e.g. two PCMs of one card): tell them apart by id.
+    for i in 0..out.len() {
+        if out.iter().filter(|o| o.name == out[i].name).count() > 1 {
+            let pcm = alsa_pcm(&out[i].id).unwrap_or(&out[i].id).to_string();
+            out[i].name = format!("{} ({pcm})", out[i].name);
+        }
+    }
+    out
+}
+
+/// The ALSA part of [`device_entries`] (anything else is returned unchanged).
+fn alsa_entries(all: Vec<DeviceEntry>) -> Vec<DeviceEntry> {
+    let ids: Vec<&str> = all.iter().map(|d| alsa_pcm(&d.id).unwrap_or("")).collect();
+    if !ids.iter().any(|p| !p.is_empty()) {
+        return all;
+    }
+    let card_of = |pcm: &str| -> Option<String> {
+        let rest = pcm.split_once(':')?.1;
+        let card = rest.split(',').next()?.strip_prefix("CARD=")?;
+        Some(card.to_string())
+    };
+    let has = |prefix: &str, card: &str| ids.iter().any(|p| p.starts_with(prefix) && card_of(p).as_deref() == Some(card));
+    let mut out = Vec::new();
+    for (d, pcm) in all.iter().zip(&ids) {
+        let keep = match pcm.split_once(':') {
+            None => matches!(*pcm, "default" | "pipewire" | "pulse" | "jack"),
+            Some(("sysdefault", _)) | Some(("hdmi", _)) => card_of(pcm).is_some(),
+            Some(("plughw", rest)) => {
+                // plughw ids carry the card index; the other plugins carry its name.
+                let mut parts = rest.split(',');
+                let index = parts.next().and_then(|c| c.strip_prefix("CARD=")).unwrap_or("");
+                let dev = parts.next().and_then(|c| c.strip_prefix("DEV=")).unwrap_or("0");
+                let card = alsa_card_name(index).unwrap_or_else(|| index.to_string());
+                !has("hdmi:", &card) && (!has("sysdefault:", &card) || dev != "0")
+            }
+            _ => false,
+        };
+        if keep {
+            out.push(d.clone());
+        }
+    }
+    out
+}
+
+/// The ALSA PCM name inside a cpal device id (`alsa:sysdefault:CARD=K1` → `sysdefault:CARD=K1`).
+fn alsa_pcm(id: &str) -> Option<&str> {
+    id.strip_prefix("alsa:")
+}
+
+/// The ALSA card id (as used in `CARD=` names) for card number `index`.
+fn alsa_card_name(index: &str) -> Option<String> {
+    if !cfg!(target_os = "linux") || index.parse::<u32>().is_err() {
+        return None;
+    }
+    std::fs::read_to_string(format!("/proc/asound/card{index}/id")).ok().map(|s| s.trim().to_string())
+}
+
+/// Find the device with cpal id `id` (on the host the id names, e.g. an `alsa:` id saved before
+/// PipeWire support). Compares ids exactly first: cpal's own `device_by_id` canonicalises ALSA
+/// names (`sysdefault:CARD=K1` → `…,DEV=0`) and then misses devices listed without a `DEV`.
+pub(crate) fn find_device(id: &str, output: bool) -> anyhow::Result<cpal::Device> {
+    let parsed: cpal::DeviceId = id.parse().map_err(|e| anyhow!("bad device id {id}: {e:?}"))?;
+    let default = cpal::default_host();
+    let host = if default.id() == parsed.host() { default } else { cpal::host_from_id(parsed.host())? };
+    let devs = if output { host.output_devices() } else { host.input_devices() };
+    if let Ok(mut devs) = devs
+        && let Some(d) = devs.find(|d| d.id().is_ok_and(|x| x.to_string() == id))
+    {
+        return Ok(d);
+    }
+    host.device_by_id(&parsed).with_context(|| format!("audio device not found: {id}"))
 }
 
 /// Control side of the audio output.
 pub struct AudioOutput {
     cmd: rtrb::Producer<Cmd>,
+    /// Commands that didn't fit in the queue yet (sent on [`AudioOutput::update`]).
+    pending: VecDeque<Cmd>,
     garbage: rtrb::Consumer<Garbage>,
     clock: Arc<Clock>,
     meters: Meters,
     shutdown: Arc<AtomicBool>,
+    /// The thread owning the stream (woken on drop so the stream closes at once).
+    thread: std::thread::Thread,
+    health: Arc<Health>,
     /// Output sample rate.
     pub rate: u32,
     /// Output channel count.
@@ -496,6 +758,10 @@ pub struct AudioOutput {
     pub device_name: String,
     /// The id this output was opened with (None = system default).
     pub device_id: Option<String>,
+    /// What this output was opened on (to reopen it the same way).
+    pub endpoint: Endpoint,
+    /// Master level last set, in dB.
+    pub master_db: f32,
     voices: HashMap<CueId, VoiceHandle>,
     preloaded: HashMap<CueId, VoiceHandle>,
     next_id: u64,
@@ -507,74 +773,97 @@ impl Drop for AudioOutput {
             h.shared.stop.store(true, Ordering::Release);
         }
         self.shutdown.store(true, Ordering::Release);
+        self.thread.unpark();
     }
 }
 
 impl AudioOutput {
     /// Open `device_id` (cpal id string) or the system default.
     pub fn open(device_id: Option<&str>) -> anyhow::Result<Self> {
+        Self::open_endpoint(&Endpoint::Device(device_id.map(str::to_string)), None)
+    }
+
+    /// A hardware-free output at `rate` Hz with `channels` outputs. When `capture` is given,
+    /// everything the mixer renders is also pushed into it (dropped when it is full).
+    pub fn open_virtual(rate: u32, channels: usize, capture: Option<rtrb::Producer<f32>>) -> anyhow::Result<Self> {
+        Self::open_endpoint(&Endpoint::Virtual { rate, channels }, capture)
+    }
+
+    /// Open `endpoint` (see [`AudioOutput::open`] and [`AudioOutput::open_virtual`]).
+    pub fn open_endpoint(endpoint: &Endpoint, capture: Option<rtrb::Producer<f32>>) -> anyhow::Result<Self> {
         let (cmd_tx, cmd_rx) = rtrb::RingBuffer::<Cmd>::new(2048);
         let (gb_tx, gb_rx) = rtrb::RingBuffer::<Garbage>::new(2048);
         let meters: Meters = Arc::new(Default::default());
         let shutdown = Arc::new(AtomicBool::new(false));
+        let health = Arc::new(Health::default());
         type Setup = anyhow::Result<(u32, usize, String, Arc<Clock>)>;
         let (setup_tx, setup_rx) = std::sync::mpsc::channel::<Setup>();
-        let meters2 = meters.clone();
-        let shutdown2 = shutdown.clone();
-        let wanted = device_id.map(str::to_string);
+        let (meters2, shutdown2, health2) = (meters.clone(), shutdown.clone(), health.clone());
+        let ep = endpoint.clone();
+        let make_mixer = move |rate: u32, channels: usize| {
+            let clock = Arc::new(Clock::new(rate));
+            let mixer = Mixer {
+                cmds: cmd_rx,
+                garbage: gb_tx,
+                voices: Vec::with_capacity(MAX_VOICES),
+                channels,
+                frame: 0,
+                master: 1.0,
+                clock: clock.clone(),
+                filter: ClockFilter::new(rate),
+                meters: meters2,
+                scratch: vec![0.0; 8192 * channels],
+                health: health2,
+            };
+            (mixer, clock)
+        };
 
         // The cpal stream isn't Send on every platform, so it lives on its own thread.
-        std::thread::Builder::new().name("openq-audio-out".into()).spawn(move || {
-            let res = (|| -> anyhow::Result<(cpal::Stream, u32, usize, String, Arc<Clock>)> {
-                let host = cpal::default_host();
-                let device = match &wanted {
-                    Some(id) => {
-                        let parsed = id.parse().map_err(|e| anyhow!("bad device id {id}: {e:?}"))?;
-                        host.device_by_id(&parsed).with_context(|| format!("audio device not found: {id}"))?
+        let handle = std::thread::Builder::new().name("openq-audio-out".into()).spawn(move || match ep {
+            Endpoint::Device(wanted) => {
+                let res = (|| -> anyhow::Result<(cpal::Stream, u32, usize, String, Arc<Clock>)> {
+                    let host = cpal::default_host();
+                    let device = match &wanted {
+                        Some(id) => find_device(id, true)?,
+                        None => host.default_output_device().context("no default audio output device")?,
+                    };
+                    let name = device.description().map(|d| d.to_string()).unwrap_or_else(|_| "default".to_string());
+                    let supported = device.default_output_config()?;
+                    let format = supported.sample_format();
+                    let config: StreamConfig = supported.into();
+                    let rate = config.sample_rate;
+                    let channels = config.channels as usize;
+                    let (mixer, clock) = make_mixer(rate, channels);
+                    let stream = match format {
+                        SampleFormat::F32 => build::<f32>(&device, config, mixer)?,
+                        SampleFormat::I16 => build::<i16>(&device, config, mixer)?,
+                        SampleFormat::I32 => build::<i32>(&device, config, mixer)?,
+                        SampleFormat::U16 => build::<u16>(&device, config, mixer)?,
+                        SampleFormat::F64 => build::<f64>(&device, config, mixer)?,
+                        f => return Err(anyhow!("unsupported sample format {f}")),
+                    };
+                    stream.play()?;
+                    Ok((stream, rate, channels, name, clock))
+                })();
+                match res {
+                    Ok((stream, rate, ch, name, clock)) => {
+                        let _ = setup_tx.send(Ok((rate, ch, name, clock)));
+                        // Keep the stream alive until the output is dropped.
+                        while !shutdown2.load(Ordering::Acquire) {
+                            std::thread::park_timeout(Duration::from_millis(100));
+                        }
+                        drop(stream);
                     }
-                    None => host.default_output_device().context("no default audio output device")?,
-                };
-                let name = device.description().map(|d| d.to_string()).unwrap_or_else(|_| "default".to_string());
-                let supported = device.default_output_config()?;
-                let format = supported.sample_format();
-                let config: StreamConfig = supported.into();
-                let rate = config.sample_rate;
-                let channels = config.channels as usize;
-                let clock = Arc::new(Clock::new(rate));
-                let mixer = Mixer {
-                    cmds: cmd_rx,
-                    garbage: gb_tx,
-                    voices: Vec::with_capacity(256),
-                    channels,
-                    frame: 0,
-                    master: 1.0,
-                    clock: clock.clone(),
-                    meters: meters2,
-                    scratch: vec![0.0; 8192 * channels],
-                };
-                let stream = match format {
-                    SampleFormat::F32 => build::<f32>(&device, config, mixer)?,
-                    SampleFormat::I16 => build::<i16>(&device, config, mixer)?,
-                    SampleFormat::I32 => build::<i32>(&device, config, mixer)?,
-                    SampleFormat::U16 => build::<u16>(&device, config, mixer)?,
-                    SampleFormat::F64 => build::<f64>(&device, config, mixer)?,
-                    f => return Err(anyhow!("unsupported sample format {f}")),
-                };
-                stream.play()?;
-                Ok((stream, rate, channels, name, clock))
-            })();
-            match res {
-                Ok((stream, rate, ch, name, clock)) => {
-                    let _ = setup_tx.send(Ok((rate, ch, name, clock)));
-                    // Keep the stream alive until the output is dropped.
-                    while !shutdown2.load(Ordering::Acquire) {
-                        std::thread::park_timeout(Duration::from_millis(100));
+                    Err(e) => {
+                        let _ = setup_tx.send(Err(e));
                     }
-                    drop(stream);
                 }
-                Err(e) => {
-                    let _ = setup_tx.send(Err(e));
-                }
+            }
+            Endpoint::Virtual { rate, channels } => {
+                let channels = channels.clamp(1, MAX_OUT_CHANNELS);
+                let (mut mixer, clock) = make_mixer(rate, channels);
+                let _ = setup_tx.send(Ok((rate, channels, "Virtual output".into(), clock)));
+                run_virtual(&mut mixer, &shutdown2, capture);
             }
         })?;
 
@@ -582,23 +871,74 @@ impl AudioOutput {
         log::info!("audio output: {device_name} @ {rate} Hz, {channels} ch");
         Ok(Self {
             cmd: cmd_tx,
+            thread: handle.thread().clone(),
+            pending: VecDeque::new(),
             garbage: gb_rx,
             clock,
             meters,
             shutdown,
+            health,
             rate,
             channels,
             device_name,
-            device_id: device_id.map(str::to_string),
+            device_id: match endpoint {
+                Endpoint::Device(id) => id.clone(),
+                Endpoint::Virtual { .. } => None,
+            },
+            endpoint: endpoint.clone(),
+            master_db: 0.0,
             voices: HashMap::new(),
             preloaded: HashMap::new(),
             next_id: 1,
         })
     }
 
+    /// The device went away (unplugged, audio server restarted) or the mixer failed: this
+    /// output plays nothing any more and should be replaced by a fresh one.
+    pub fn is_lost(&self) -> bool {
+        self.health.lost.load(Ordering::Acquire)
+    }
+
+    /// Buffer underruns/overruns the driver reported so far.
+    pub fn xruns(&self) -> u64 {
+        self.health.xruns.load(Ordering::Relaxed)
+    }
+
+    /// Device callbacks run so far.
+    pub fn callbacks(&self) -> u64 {
+        self.health.callbacks.load(Ordering::Relaxed)
+    }
+
+    /// Voices the mixer holds or is about to (playing and preloaded).
+    pub fn voice_count(&self) -> usize {
+        self.voices.len() + self.preloaded.len()
+    }
+
     fn send(&mut self, cmd: Cmd) {
-        if self.cmd.push(cmd).is_err() {
-            log::error!("audio command queue full");
+        // Keep order: once something is waiting, everything queues behind it.
+        if self.pending.is_empty() {
+            match self.cmd.push(cmd) {
+                Ok(()) => {}
+                Err(rtrb::PushError::Full(c)) => self.pending.push_back(c),
+            }
+        } else if self.pending.len() < MAX_PENDING {
+            self.pending.push_back(cmd);
+        } else {
+            log::error!("audio command queue full; command dropped");
+        }
+    }
+
+    fn flush_pending(&mut self) {
+        if self.is_lost() {
+            // Nobody will read them.
+            self.pending.clear();
+            return;
+        }
+        while let Some(c) = self.pending.pop_front() {
+            if let Err(rtrb::PushError::Full(c)) = self.cmd.push(c) {
+                self.pending.push_front(c);
+                break;
+            }
         }
     }
 
@@ -724,7 +1064,7 @@ impl AudioOutput {
             }
         }
         for (id, p, src) in cues {
-            if !self.preloaded.contains_key(id) && p.path.exists() {
+            if !self.preloaded.contains_key(id) && p.path.exists() && self.voice_count() < MAX_VOICES {
                 let h = self.create_voice(p, *src);
                 self.preloaded.insert(*id, h);
             }
@@ -740,6 +1080,9 @@ impl AudioOutput {
             return Err(format!("file not found: {}", params.path.display()));
         }
         self.stop(cue);
+        if !self.preloaded.contains_key(&cue) && self.voice_count() >= MAX_VOICES {
+            return Err(format!("too many sounds at once (most is {MAX_VOICES})"));
+        }
         let handle = match self.preloaded.remove(&cue) {
             Some(h) if h.params.as_ref() == Some(params) && !h.shared.finished.load(Ordering::Acquire) => h,
             Some(h) => {
@@ -762,6 +1105,14 @@ impl AudioOutput {
     pub fn stop(&mut self, cue: CueId) {
         if let Some(h) = self.voices.remove(&cue) {
             self.send(Cmd::Stop(h.id));
+        }
+    }
+
+    /// Stop every playing voice (preloaded ones stay ready).
+    pub fn stop_all(&mut self) {
+        let ids: Vec<u64> = self.voices.drain().map(|(_, h)| h.id).collect();
+        for id in ids {
+            self.send(Cmd::Stop(id));
         }
     }
 
@@ -814,6 +1165,7 @@ impl AudioOutput {
 
     /// Set the master level in dB.
     pub fn set_master(&mut self, db: f32) {
+        self.master_db = db;
         self.send(Cmd::Master(db_to_gain(db)));
     }
 
@@ -838,11 +1190,15 @@ impl AudioOutput {
     pub fn drain_errors(&mut self) -> Vec<String> {
         let mut out = Vec::new();
         for h in self.voices.values_mut() {
-            if !h.error_reported
-                && let Some(e) = h.shared.error.lock().clone()
-            {
+            if h.error_reported {
+                continue;
+            }
+            if let Some(e) = h.shared.error.lock().clone() {
                 h.error_reported = true;
                 out.push(format!("{}: {e}", h.label));
+            } else if h.shared.rejected.load(Ordering::Acquire) {
+                h.error_reported = true;
+                out.push(format!("{}: too many sounds at once (most is {MAX_VOICES})", h.label));
             }
         }
         out
@@ -859,6 +1215,7 @@ impl AudioOutput {
 
     /// Housekeeping: free retired voices and matrices.
     pub fn update(&mut self) {
+        self.flush_pending();
         while let Ok(g) = self.garbage.pop() {
             drop(g);
         }
@@ -869,32 +1226,123 @@ fn build<T>(device: &cpal::Device, config: StreamConfig, mut mixer: Mixer) -> an
 where
     T: SizedSample + FromSample<f32>,
 {
-    let ch = mixer.channels;
+    let health = mixer.health.clone();
+    let mut failed = false;
     let stream = device.build_output_stream(
         config,
-        move |data: &mut [T], _: &OutputCallbackInfo| {
-            mixer.handle_commands();
-            mixer.clock.store(mixer.frame, Instant::now());
-            let mut scratch = std::mem::take(&mut mixer.scratch);
-            for chunk in data.chunks_mut(scratch.len() / ch * ch) {
-                let buf = &mut scratch[..chunk.len()];
-                mixer.render(buf);
-                for (o, s) in chunk.iter_mut().zip(buf.iter()) {
-                    *o = T::from_sample(*s);
+        move |data: &mut [T], _: &OutputCallbackInfo| mixer.fill_guarded(&mut failed, data),
+        move |e| {
+            use cpal::ErrorKind as K;
+            match e.kind() {
+                K::Xrun => {
+                    health.xruns.fetch_add(1, Ordering::Relaxed);
                 }
+                K::DeviceNotAvailable | K::HostUnavailable | K::StreamInvalidated => {
+                    log::error!("audio device lost: {e}");
+                    health.lost.store(true, Ordering::Release);
+                }
+                _ => log::error!("audio stream error: {e}"),
             }
-            mixer.scratch = scratch;
         },
-        |e| log::error!("audio stream error: {e}"),
         None,
     )?;
     Ok(stream)
+}
+
+/// Pull the mixer in 256-frame periods paced by the system clock, like a sound card would.
+fn run_virtual(mixer: &mut Mixer, shutdown: &AtomicBool, mut capture: Option<rtrb::Producer<f32>>) {
+    const PERIOD: usize = 256;
+    let rate = mixer.clock.rate;
+    let dt = Duration::from_secs_f64(PERIOD as f64 / rate as f64);
+    let mut buf = vec![0f32; PERIOD * mixer.channels];
+    let mut failed = false;
+    let mut next = Instant::now();
+    while !shutdown.load(Ordering::Acquire) {
+        let now = Instant::now();
+        if next > now {
+            std::thread::sleep(next - now);
+        } else if now - next > Duration::from_millis(200) {
+            next = now;
+        }
+        mixer.fill_guarded(&mut failed, &mut buf);
+        if let Some(cap) = &mut capture {
+            let n = buf.len().min(cap.slots());
+            if let Ok(chunk) = cap.write_chunk_uninit(n) {
+                chunk.fill_from_iter(buf[..n].iter().copied());
+            }
+        }
+        next += dt;
+    }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
     use crate::model::{Eq, EqBand, EqKind};
+
+    #[test]
+    fn alsa_list_keeps_one_entry_per_output() {
+        let e = |id: &str| DeviceEntry { id: format!("alsa:{id}"), name: id.into() };
+        let all = [
+            "null", "default", "pipewire", "lavrate", "sysdefault", "sysdefault:CARD=K1", "front:CARD=K1,DEV=0",
+            "surround51:CARD=K1,DEV=0", "iec958:CARD=K1,DEV=0", "usbstream:CARD=K1", "hdmi:CARD=NVidia,DEV=0",
+            "hw:CARD=9,DEV=0", "plughw:CARD=9,DEV=0", "plughw:CARD=99,DEV=0",
+        ]
+        .map(e);
+        let kept: Vec<String> = alsa_entries(all.to_vec()).into_iter().map(|d| d.id).collect();
+        // Card 9 / 99 have no /proc/asound entry here, so their plughw devices stay (nothing covers them).
+        assert_eq!(
+            kept,
+            ["default", "pipewire", "sysdefault:CARD=K1", "hdmi:CARD=NVidia,DEV=0", "plughw:CARD=9,DEV=0", "plughw:CARD=99,DEV=0"]
+                .map(|s| format!("alsa:{s}"))
+        );
+    }
+
+    #[test]
+    fn clock_filter_removes_jitter_and_tracks_drift() {
+        // A 48 kHz card that really runs 80 ppm fast, 256-frame callbacks woken up to 1.5 ms
+        // late at random.
+        let (rate, period) = (48_000u32, 256u64);
+        let true_rate = rate as f64 * 1.00008;
+        let mut rng = fastrand::Rng::with_seed(7);
+        let mut f = ClockFilter::new(rate);
+        let (mut raw, mut smooth) = (Vec::new(), Vec::new());
+        for k in 0..20_000u64 {
+            let frame = k * period;
+            let truth = frame as f64 / true_rate;
+            let measured = truth + rng.f64() * 0.0015;
+            let t = f.observe(frame, measured);
+            if k > 2_000 {
+                raw.push(measured - truth);
+                smooth.push(t - truth);
+            }
+        }
+        // A constant offset is just latency; what matters is how much the error wanders.
+        let spread = |v: &[f64]| {
+            let mean = v.iter().sum::<f64>() / v.len() as f64;
+            v.iter().map(|e| (e - mean).abs()).fold(0.0, f64::max)
+        };
+        let (r, sm) = (spread(&raw), spread(&smooth));
+        assert!(sm < 0.00015, "smoothed spread {sm}");
+        assert!(sm < r / 4.0, "raw {r} smoothed {sm}");
+    }
+
+    #[test]
+    fn clock_filter_ignores_one_late_callback_and_reanchors_after_a_gap() {
+        let mut f = ClockFilter::new(48_000);
+        for k in 0..100u64 {
+            f.observe(k * 480, k as f64 * 0.01);
+        }
+        // One callback 20 ms late: ignored.
+        let t = f.observe(100 * 480, 1.0 + 0.02);
+        assert!((t - 1.0).abs() < 0.0005, "{t}");
+        // The clock really jumped (e.g. after an xrun the card restarted): follow it.
+        for k in 101..104u64 {
+            f.observe(k * 480, k as f64 * 0.01 + 0.5);
+        }
+        let t = f.observe(104 * 480, 1.04 + 0.5);
+        assert!((t - 1.54).abs() < 0.001, "{t}");
+    }
 
     /// Push `input` (interleaved, `src` channels) into a voice and render it once.
     fn render_once(params: &AudioCue, src: usize, out_ch: usize, input: &[f32]) -> Vec<f32> {

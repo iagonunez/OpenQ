@@ -1,16 +1,33 @@
 //! Stage output windows. Each stage composites its video layers onto a canvas, which is warped
 //! onto the window through four corner pins (keystone / projection mapping).
+//!
+//! A stage can instead show part of another stage (`span_of` + `crop`), so one wide surface
+//! is split across several projectors; soft-edge blend zones then darken each output's
+//! overlapping edges so the overlap adds up to even light. Everything outside the warped canvas
+//! is masked black, and layers with a [`crate::model::BlendMode`] other than Normal draw through
+//! [`super::blend`].
 
 use super::App;
+use super::blend::{Blended, blend};
 use super::widgets::AMBER;
-use crate::geometry::{Homography, layer_quad};
-use crate::model::{Stage, StageId};
+use crate::geometry::{Homography, blend_gain, layer_quad, to_crop};
+use crate::media::video::StageLayer;
+use crate::model::{CueId, Stage, StageId};
+use std::collections::HashMap;
 use crate::show::Show;
 use egui::epaint::Vertex;
 use egui::{Color32, Mesh, Pos2, Rect, Sense, Shape, Stroke, ViewportBuilder, ViewportCommand, ViewportId, pos2, vec2};
 
 /// Mesh subdivisions per side: enough for perspective warps to look straight.
 const GRID: usize = 16;
+
+/// Steps across a soft-edge blend zone (the gain curve is drawn as a gradient between them).
+const BLEND_STEPS: usize = 48;
+
+/// The stage whose cues `stage` shows: the one it spans, or itself.
+pub(super) fn source_of<'a>(stage: &'a Stage, stages: &'a [Stage]) -> &'a Stage {
+    stage.span_of.filter(|id| *id != stage.id).and_then(|id| stages.iter().find(|s| s.id == id)).unwrap_or(stage)
+}
 
 pub(super) fn viewport_id(stage: StageId) -> ViewportId {
     ViewportId::from_hash_of(("openq-stage", stage))
@@ -42,21 +59,30 @@ impl App {
         let first = show.ws.stages.first().map(|s| s.id);
         let ids: Vec<StageId> = show.ws.stages.iter().map(|s| s.id).collect();
         let resolve = |s: Option<StageId>| s.filter(|id| ids.contains(id)).or(first);
-        self.textures.retain(|id, _| layers.iter().any(|l| l.id == *id));
-        // Stages showing video open automatically.
+        self.textures.retain(|(id, _), _| layers.iter().any(|l| l.id == *id));
+        // Stages showing video open automatically: the layer's own stage, or the outputs spanning
+        // it (a surface that only exists to be spanned doesn't open on its own).
         for l in &layers {
             if let Some(s) = resolve(l.stage) {
-                self.stage_open.insert(s);
+                let spans: Vec<StageId> = show.ws.stages.iter().filter(|o| o.span_of == Some(s) && o.id != s).map(|o| o.id).collect();
+                if spans.is_empty() {
+                    self.stage_open.insert(s);
+                } else {
+                    self.stage_open.extend(spans);
+                }
             }
         }
         self.stage_open.retain(|id| show.ws.stages.iter().any(|s| s.id == *id));
 
         let stages = show.ws.stages.clone();
-        for stage in stages {
+        for stage in stages.clone() {
             if !self.stage_open.contains(&stage.id) {
                 continue;
             }
-            let mine: Vec<_> = layers.iter().filter(|l| resolve(l.stage) == Some(stage.id)).cloned().collect();
+            let source = source_of(&stage, &stages);
+            let source_canvas = [source.width.max(1) as f32, source.height.max(1) as f32];
+            let crop = if source.id == stage.id { Stage::FULL_CROP } else { stage.crop };
+            let mine: Vec<_> = layers.iter().filter(|l| resolve(l.stage) == Some(source.id)).cloned().collect();
             let editing = self.mapping_edit.contains(&stage.id);
             let mut corners = stage.corners;
             let mut close = false;
@@ -70,6 +96,7 @@ impl App {
                 builder = builder.with_monitor(i);
             }
             let textures = &mut self.textures;
+            let gpu = self.gpu.clone();
             ctx.show_viewport_immediate(
                 viewport_id(stage.id),
                 builder,
@@ -79,34 +106,28 @@ impl App {
                     let painter = ui.painter().clone();
                     painter.rect_filled(rect, 0.0, Color32::BLACK);
                     let h = Homography::square_to_quad(corners);
-                    let canvas = [stage.width.max(1) as f32, stage.height.max(1) as f32];
 
                     if editing {
                         paint_test_pattern(&painter, &h, rect, &stage);
                     }
 
+                    // Source-canvas point → this output's canvas (its crop of the source) → screen.
+                    let place = |u: f32, v: f32| {
+                        let [x, y] = to_crop([u, v], crop);
+                        to_screen(&h, rect, x, y)
+                    };
                     for l in &mine {
-                        let f = l.frame.lock();
-                        if f.width == 0 || f.data.is_empty() {
-                            continue;
+                        let shapes = paint_layer(&ctx, textures, l, source_canvas, place);
+                        match blend(gpu.as_ref(), l.blend_mode, shapes, rect) {
+                            Blended::Shape(s) => {
+                                painter.add(s);
+                            }
+                            Blended::Plain(v) => painter.extend(v),
+                            Blended::NotReady => ctx.request_repaint(),
                         }
-                        let size = [f.width as usize, f.height as usize];
-                        let opts = texture_options(f.density);
-                        let entry = textures.entry(l.id).or_insert_with(|| {
-                            let img = egui::ColorImage::from_rgba_unmultiplied(size, &f.data);
-                            (ctx.load_texture(format!("video-{}", l.id), img, opts), f.generation)
-                        });
-                        if entry.1 != f.generation {
-                            let img = egui::ColorImage::from_rgba_unmultiplied(size, &f.data);
-                            entry.0.set(img, opts);
-                            entry.1 = f.generation;
-                        }
-                        let img = f.stage_size();
-                        drop(f);
-                        let q = layer_quad(canvas, img, l.fit, &l.geometry);
-                        let tint = Color32::WHITE.gamma_multiply(l.opacity.clamp(0.0, 1.0));
-                        painter.add(layer_mesh(entry.0.id(), &q, tint, |u, v| to_screen(&h, rect, u, v)));
                     }
+                    paint_edge_blend(&painter, &h, rect, stage.blend, stage.blend_gamma);
+                    paint_outside_mask(&painter, &h, rect);
 
                     if editing {
                         // Corner handles: drag to pin the canvas corners.
@@ -217,8 +238,146 @@ impl App {
                 show.edited();
             }
         }
+        // Animations move even when the engine is idle (a held last frame keeps animating).
+        if layers.iter().any(|l| l.animated) {
+            ctx.request_repaint_after(std::time::Duration::from_millis(16));
+        }
         !layers.is_empty()
     }
+}
+
+/// Soft-edge blend zones: black gradients whose transparency follows [`blend_gain`] from the
+/// outer edge (dark) to the inner edge of each zone (`widths`: left, top, right, bottom as a
+/// fraction of the output). Where two zones meet in a corner their gains multiply.
+fn paint_edge_blend(p: &egui::Painter, h: &Homography, rect: Rect, widths: [f32; 4], gamma: f32) {
+    for (side, w) in widths.into_iter().enumerate() {
+        let w = w.clamp(0.0, 1.0);
+        if w <= 0.0 {
+            continue;
+        }
+        // (a, b): a across the zone from the outer edge (0) to the inner edge (1), b along it.
+        let at = |a: f32, b: f32| -> (f32, f32) {
+            match side {
+                0 => (a * w, b),
+                1 => (b, a * w),
+                2 => (1.0 - a * w, b),
+                _ => (b, 1.0 - a * w),
+            }
+        };
+        let mut mesh = Mesh::default();
+        for i in 0..=BLEND_STEPS {
+            let a = i as f32 / BLEND_STEPS as f32;
+            let alpha = 1.0 - blend_gain(a, gamma);
+            let col = Color32::from_black_alpha((alpha * 255.0).round() as u8);
+            for j in 0..=GRID {
+                let (u, v) = at(a, j as f32 / GRID as f32);
+                mesh.colored_vertex(to_screen(h, rect, u, v), col);
+            }
+        }
+        let n = (GRID + 1) as u32;
+        for i in 0..BLEND_STEPS as u32 {
+            for j in 0..GRID as u32 {
+                let k = i * n + j;
+                mesh.add_triangle(k, k + 1, k + n);
+                mesh.add_triangle(k + 1, k + n + 1, k + n);
+            }
+        }
+        p.add(Shape::mesh(mesh));
+    }
+}
+
+/// Paint black over everything outside the warped canvas, so layers that reach past the canvas
+/// (or past this output's crop of a spanned surface) don't spill onto the screen. Each edge masks
+/// the half-plane beyond it; a homography keeps the edges straight.
+fn paint_outside_mask(p: &egui::Painter, h: &Homography, rect: Rect) {
+    let q: Vec<Pos2> = [(0.0, 0.0), (1.0, 0.0), (1.0, 1.0), (0.0, 1.0)].iter().map(|&(u, v)| to_screen(h, rect, u, v)).collect();
+    let centre = pos2(q.iter().map(|c| c.x).sum::<f32>() / 4.0, q.iter().map(|c| c.y).sum::<f32>() / 4.0);
+    let far = (rect.width() + rect.height()) * 4.0;
+    for k in 0..4 {
+        let (a, b) = (q[k], q[(k + 1) % 4]);
+        let d = (b - a).normalized();
+        if !d.x.is_finite() {
+            continue;
+        }
+        let mut n = vec2(-d.y, d.x);
+        if n.dot(centre - a) > 0.0 {
+            n = -n;
+        }
+        let (a2, b2) = (a - d * far, b + d * far);
+        let pts = vec![a2, b2, b2 + n * far, a2 + n * far];
+        p.add(Shape::convex_polygon(pts, Color32::BLACK, Stroke::NONE));
+    }
+}
+
+/// Stage textures: one per layer, or one per plane of a Text cue (`(cue, plane)`), with the
+/// frame generation they hold.
+pub(super) type LayerTextures = HashMap<(CueId, usize), (egui::TextureHandle, u64)>;
+
+/// Vertex colour for a layer drawn in colour `c` (sRGB RGBA 0..1): tinted, and faded by the
+/// layer's opacity.
+fn layer_color(l: &StageLayer, c: [f32; 4]) -> Color32 {
+    let b = |v: f32| (v.clamp(0.0, 1.0) * 255.0).round() as u8;
+    let t = l.tint;
+    Color32::from_rgba_unmultiplied(b(c[0] * t[0]), b(c[1] * t[1]), b(c[2] * t[2]), b(c[3] * t[3] * l.opacity))
+}
+
+/// Upload a layer's picture when it changed and return the meshes that draw it: one for a
+/// movie or still, one per coloured plane for a Text cue.
+pub(super) fn paint_layer(
+    ctx: &egui::Context,
+    textures: &mut LayerTextures,
+    l: &StageLayer,
+    canvas: [f32; 2],
+    place: impl Fn(f32, f32) -> Pos2,
+) -> Vec<Shape> {
+    let f = l.frame.lock();
+    if f.width == 0 || (f.data.is_empty() && f.planes.is_none()) {
+        return Vec::new();
+    }
+    // egui panics on a texture bigger than the GPU takes (an 8K movie on a small GPU): skip it.
+    let max = ctx.input(|i| i.max_texture_side);
+    if f.width.max(f.height) as usize > max {
+        static WARNED: std::sync::Once = std::sync::Once::new();
+        WARNED.call_once(|| log::error!("a {}×{} picture is larger than this GPU's {max} px textures; not shown", f.width, f.height));
+        return Vec::new();
+    }
+    let size = [f.width as usize, f.height as usize];
+    let opts = texture_options(f.density);
+    let mut tex = |k: usize, make: &dyn Fn() -> egui::ColorImage| {
+        let e = textures
+            .entry((l.id, k))
+            .or_insert_with(|| (ctx.load_texture(format!("video-{}-{k}", l.id), make(), opts), f.generation));
+        if e.1 != f.generation {
+            e.0.set(make(), opts);
+            e.1 = f.generation;
+        }
+        e.0.id()
+    };
+    let q = layer_quad(canvas, f.stage_size(), l.fit, &l.geometry);
+    let mut out = Vec::new();
+    match &f.planes {
+        None => {
+            let id = tex(0, &|| egui::ColorImage::from_rgba_unmultiplied(size, &f.data));
+            out.push(layer_mesh(id, &q, layer_color(l, [1.0; 4]), &place));
+        }
+        Some(p) => {
+            // Coverage masks become white-with-alpha textures that the vertex colour paints.
+            for (k, (part, mask)) in p.masks.iter().enumerate() {
+                let c = l.text_colors[*part as usize];
+                if c[3] <= 0.0 {
+                    continue;
+                }
+                let make = || egui::ColorImage::new(size, mask.iter().map(|&a| Color32::from_rgba_premultiplied(a, a, a, a)).collect::<Vec<_>>());
+                let id = tex(k, &make);
+                out.push(layer_mesh(id, &q, layer_color(l, c), &place));
+            }
+            if let Some(rgba) = &p.colour {
+                let id = tex(p.masks.len(), &|| egui::ColorImage::from_rgba_unmultiplied(size, rgba));
+                out.push(layer_mesh(id, &q, layer_color(l, [1.0, 1.0, 1.0, l.text_colors[3][3]]), &place));
+            }
+        }
+    }
+    out
 }
 
 /// Texture filtering for a layer: supersampled pictures (rendered text) get mipmaps, so they

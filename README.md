@@ -13,15 +13,19 @@ Free to use, including for commercial productions. See [Licence](#licence).
 
   ```sh
   # Debian/Ubuntu
-  sudo apt install build-essential clang pkg-config libasound2-dev libudev-dev \
+  sudo apt install build-essential clang pkg-config libasound2-dev libpipewire-0.3-dev libudev-dev \
     libavcodec-dev libavformat-dev libavutil-dev libavdevice-dev libavfilter-dev \
     libswscale-dev libswresample-dev
-  # Fedora:  sudo dnf install clang pkgconf alsa-lib-devel systemd-devel ffmpeg-free-devel
-  # Arch:    sudo pacman -S --needed base-devel clang pkgconf alsa-lib ffmpeg
+  # Fedora:  sudo dnf install clang pkgconf alsa-lib-devel pipewire-devel systemd-devel ffmpeg-free-devel
+  # Arch:    sudo pacman -S --needed base-devel clang pkgconf alsa-lib libpipewire ffmpeg
   curl https://sh.rustup.rs -sSf | sh          # Rust, if you don't have it
   git clone https://github.com/iagonunez/OpenQ && cd OpenQ
   cargo build --release && ./target/release/openq
   ```
+
+  Audio goes through PipeWire when it is running (each sink and source is listed by name), and
+  through ALSA otherwise. Without the PipeWire headers, build with
+  `--no-default-features --features video` (ALSA only).
 
 ## Development
 
@@ -30,7 +34,31 @@ cargo run --release                     # empty workspace
 cargo run --release -- show.openq       # open a workspace
 cargo test                              # engine + model tests
 cargo run --release --example smoke     # headless end-to-end check of real audio/video (muted)
+tools/stress.sh                         # stress, soak, fuzz and crash-recovery suite (slow)
+tools/ui_perf.sh show.openq [cue]       # frame times of the real window through a scripted session
 ```
+
+**UI performance:** `src/ui/perf_tests.rs` runs the whole window headless (part of `cargo test`):
+editing and playing an animated text cue must cost about what an idle frame does and must not
+re-render the text, and frame time must not grow badly with the number of cues. For the real
+window and GPU, `tools/ui_perf.sh` drives the app with `OPENQ_DEBUG_SCRIPT` (timed actions such as
+`go`, `stop`, `scrub`, `drag`, `close`, `quit`) and `OPENQ_DEBUG_FRAMES` (per-frame CSV).
+
+**Stress tests** (`tests/stress.rs`) are `#[ignore]`d so everyday `cargo test` stays fast. Run
+`tools/stress.sh` before a release and after big features; the release workflow runs it too and
+won't publish if it fails. It needs no sound card (audio goes to a virtual output that records what
+it plays) and covers:
+
+- engine fuzzing (hundreds of random shows under random transport and edits) and scale (thousands
+  of cues running at once);
+- sample accuracy of chained cues while other threads hog the show lock and every core;
+- soak tests for leaked voices, threads and memory, and the mixer's voice limit;
+- damaged show files, garbage media, timecode noise, OSC floods and junk remote connections;
+- crash recovery: a process that aborts leaves a recoverable autosave and a crash report, and,
+  with the `fault-injection` feature, panics injected into the engine, the audio callback, a
+  decoder and the prober are recovered from.
+
+`OPENQ_STRESS_SCALE=<n>` multiplies the work for longer runs.
 
 User manual: **Help → User manual** (F1) in the app, or open `docs/manual/index.html` in a browser. API documentation: `cargo doc --no-deps --open`.
 
@@ -51,8 +79,9 @@ A show can hold several **cue lists** (tabs above the cue list). GO works on the
 cues in other lists keep playing and can be targeted from any list.
 
 **Text cues** use any font installed on the system (plus the built-in Inter), with weight,
-italic, letter spacing, line height, outline and drop shadow. They get proper shaping (kerning,
-ligatures, right-to-left scripts) and fall back to another font for missing characters.
+italic, letter spacing, line height, outline, drop shadow and a background box (colour, padding,
+rounded corners). They get proper shaping (kerning, ligatures, right-to-left scripts) and fall back
+to another font for missing characters.
 
 Every cue has a number, name, notes, color, armed flag, **pre-wait**, **post-wait** and a
 **continue mode**:
@@ -101,16 +130,27 @@ Jumps and dropouts don't fire cues.
 
 ### Video cues
 
-- Movies and still images (PNG/JPEG/…; stills can show for a set time or until stopped).
+- Movies and still images (PNG/JPEG/WebP/…, and SVG, rasterised sharp for the size it is shown
+  at; stills can show for a set time or until stopped).
 - Start/end trim, loops, hold last frame.
 - **Geometry**: position, scale (proportional or not), rotation, opacity, layer, fit/fill/stretch.
 - **Fade cues** can animate level, opacity *and* geometry.
+- **Keyframe animation** (Animation tab, video and text cues): position, scale, rotation, crop,
+  opacity, colour tint and, for text, fill/outline/shadow/background colours, with hold, linear,
+  ease or custom Bézier curves and once/loop/ping-pong. Values are relative to the cue's own
+  geometry, so Fade cues still move the animated layer. It is evaluated live on the GPU as the
+  stage draws (a few interpolations per layer), so it adds no decoding or rendering load.
 - The **soundtrack** plays through the OpenQ mixer (stereo), so it has level, fades and a routing
   matrix like an audio cue.
 - **Stages**: any number of outputs (Settings → Video stages), each with its own canvas size and
   window. *Edit mapping* shows a white test pattern with a grid, pixel rulers and circles, plus
   four corner pins; drag them (or nudge with the arrow keys, Shift for 10 px) for keystone
   correction / projection mapping. Double-click or F11 for fullscreen.
+- **Wide surfaces and edge blending**: a stage can show part of another stage (*Span & edge
+  blend* in its settings), so one picture is split across several projectors; soft-edge blend
+  zones (with projector gamma) make the overlaps add up to even light.
+- **Blend modes** per layer (Geometry tab): Normal, Add, Screen, Multiply, Lighten, Darken,
+  Subtract.
 - **Camera cues** show a live camera or capture card (v4l2 / DirectShow / AVFoundation) as a layer
   with the same geometry, opacity and fades.
 
@@ -175,6 +215,7 @@ can also drop media files from your file manager onto the window.
 src/model.rs        cue tree, workspace file (.openq JSON, media paths stored relative)
 src/dsp.rs          biquad EQ (design, response, processing)
 src/geometry.rs     layer placement + corner-pin homography
+src/animation.rs    keyframe tracks, easing, sampling (evaluated as the stages draw)
 src/engine.rs       cue state machine (GO, waits, continues, groups, fades, pause, panic)
 src/media/audio.rs  cpal output + lock-free real-time mixer (sample-accurate starts, gain ramps,
                     per-voice EQ and routing matrix)
@@ -182,9 +223,12 @@ src/media/decoder.rs  per-voice symphonia decode → trim/loop → rubato resamp
 src/media/video.rs  FFmpeg decode threads / still images / cameras → RGBA frames + soundtrack to
                     the mixer
 src/media/input.rs  live audio inputs (Mic cues)
+src/media/still.rs  still images (image crate) and SVG (resvg)
+src/media/text.rs   Text cues → coverage planes (background, shadow, outline, fill)
 src/media/tcio.rs   timecode input (LTC/MTC readers that cue lists follow)
 src/timecode.rs     SMPTE labels, LTC encoder/decoder, MIDI Time Code
-src/show.rs         shared state + 1 kHz engine thread
+src/show.rs         shared state + 1 kHz engine thread (recovers from internal errors)
+src/recovery.rs     crash safety: panics → errors, autosave + crash detection, crash reports
 src/osc.rs          OSC remote-control listener
 src/control.rs      show-control commands shared by UI, OSC and remote devices
 src/remote/         paired remote devices: SPAKE2 handshake + encrypted link, server, replica
@@ -195,7 +239,15 @@ src/ui/             egui front end (cue list, inspector tabs, waveform, EQ, stag
 The engine works on logical timestamps, so the timing error does not build up along a chain of
 cues. It hands starts to the backend up to 25 ms early, together with the exact target time. The
 mixer then starts the voice on the matching sample, so auto-continues stay sample-accurate even
-when the UI or engine thread is busy.
+when the UI or engine thread is busy. The mixer clock is tied to wall-clock time through a
+delay-locked loop, which smooths out the audio thread's scheduling jitter. Cues that running cues
+will continue into are preloaded, like the next GO.
+
+**Crash safety.** Unsaved changes are autosaved every few seconds, and a show left behind by a
+crash is offered back at the next start. Saves are atomic. A panic in a decoder, prober or worker
+thread becomes an error for that one cue. A panic in the engine stops all cues and the show carries
+on. A failing audio callback goes silent instead of crashing, and a lost audio device is reopened
+automatically.
 
 ## Look and credits
 

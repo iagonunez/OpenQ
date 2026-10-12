@@ -22,12 +22,7 @@ pub const MIC_LATENCY_SECS: f64 = 0.03;
 pub fn list_input_devices() -> Vec<DeviceEntry> {
     let host = cpal::default_host();
     let Ok(devs) = host.input_devices() else { return Vec::new() };
-    devs.filter_map(|d| {
-        let id = d.id().ok()?.to_string();
-        let name = d.description().map(|x| x.to_string()).unwrap_or_else(|_| id.clone());
-        Some(DeviceEntry { id, name })
-    })
-    .collect()
+    super::audio::device_entries(devs, false)
 }
 
 /// An open input stream; dropping it closes the stream.
@@ -71,10 +66,7 @@ pub fn open_input(device: Option<&str>, on_data: impl FnMut(&[f32], usize) + Sen
         let res = (|| -> anyhow::Result<(cpal::Stream, u32, usize, String)> {
             let host = cpal::default_host();
             let dev = match &wanted {
-                Some(id) => {
-                    let parsed = id.parse().map_err(|e| anyhow!("bad device id {id}: {e:?}"))?;
-                    host.device_by_id(&parsed).with_context(|| format!("audio input not found: {id}"))?
-                }
+                Some(id) => super::audio::find_device(id, false)?,
                 None => host.default_input_device().context("no default audio input")?,
             };
             let name = dev.description().map(|d| d.to_string()).unwrap_or_else(|_| "default input".into());

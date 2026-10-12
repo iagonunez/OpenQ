@@ -96,3 +96,5 @@ visibility
 mic
 photo_camera
 timer_play
+animation
+diamond

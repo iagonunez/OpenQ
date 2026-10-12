@@ -98,3 +98,5 @@ pub const VISIBILITY: &str = "\u{e8f4}";
 pub const MIC: &str = "\u{e31d}";
 pub const PHOTO_CAMERA: &str = "\u{e412}";
 pub const TIMER_PLAY: &str = "\u{f4ba}";
+pub const ANIMATION: &str = "\u{e71c}";
+pub const DIAMOND: &str = "\u{ead5}";

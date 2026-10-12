@@ -1,6 +1,7 @@
 # Builds OpenQ for Windows and macOS with LGPL-only FFmpeg libraries and publishes a GitHub
-# release. Push a tag like `v0.1.0` to release; run it by hand (Actions → Release → Run
-# workflow) to build the packages as workflow artifacts without publishing.
+# release, once the stress tests (tests/stress.rs) pass. Push a tag like `v0.1.0` to release;
+# run it by hand (Actions → Release → Run workflow) to build the packages as workflow artifacts
+# without publishing.
 # Linux users build from source (see README), so no Linux binaries are published.
 name: Release
 
@@ -18,6 +19,21 @@ env:
   CARGO_TERM_COLOR: always
 
 jobs:
+  # Stress, soak, fuzz and crash-recovery tests (tests/stress.rs) gate every release. They run
+  # without a sound card (virtual audio output) and without FFmpeg (no `video` feature).
+  stress:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Rust
+        run: rustup toolchain install stable --profile minimal && rustup default stable
+      - name: System libraries
+        run: sudo apt-get update && sudo apt-get install -y pkg-config libasound2-dev libudev-dev
+      - name: Unit tests
+        run: cargo test --release --locked --no-default-features
+      - name: Stress tests
+        run: CARGO_FLAGS="--locked --no-default-features" tools/stress.sh
+
   windows:
     runs-on: windows-latest
     defaults: { run: { shell: pwsh } }
@@ -98,7 +114,7 @@ jobs:
 
   release:
     if: github.ref_type == 'tag'
-    needs: [windows, macos]
+    needs: [stress, windows, macos]
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4

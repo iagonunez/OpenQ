@@ -195,7 +195,11 @@ pub fn spawn(path: PathBuf, params: DecodeParams, out_rate: u32, tx: rtrb::Produ
                 curve: params.fade_curve,
             },
         };
-        if let Err(e) = run(&path, &params, out_rate, &mut sink)
+        let res = crate::recovery::catch(|| {
+            crate::recovery::fault_point(crate::recovery::Fault::Decoder);
+            run(&path, &params, out_rate, &mut sink)
+        });
+        if let Err(e) = res
             && e.downcast_ref::<Stopped>().is_none()
         {
             log::error!("decode {}: {e:#}", path.display());

@@ -7,6 +7,11 @@
 //! from *logical* timestamps rather than from when a tick happened to run, so jitter never
 //! accumulates along a chain of cues. Starts are dispatched up to [`LOOKAHEAD`] early with their
 //! exact target time, letting the audio backend start them sample-accurately.
+//!
+//! A tick makes passes over the running cues (sorted once per pass) until nothing changes, so
+//! thousands of running cues stay well under a millisecond. Cues that running cues will continue
+//! into are preloaded along with the next GO's. A cue that keeps restarting itself with no time
+//! in between (a Start cue aimed at itself) is held off and reported instead of spinning.
 
 use crate::model::{Cue, CueId, CueKind, FadeCurve, GroupMode, KindTag, MIN_DB, NetworkCue, Workspace};
 use std::collections::{HashMap, HashSet};
@@ -15,6 +20,9 @@ use std::time::{Duration, Instant};
 /// How far ahead of their due time starts are handed to the backend.
 pub const LOOKAHEAD: Duration = Duration::from_millis(25);
 const MAX_PRELOAD: usize = 16;
+/// A cue fired more often than this within one tick is in a loop with no time in it (a Start
+/// cue aimed at itself, two aimed at each other...): it is held off until the next tick.
+const MAX_FIRES_PER_TICK: u32 = 32;
 const MAX_LOG: usize = 200;
 
 /// What a Fade cue asks the backend to do to one running media cue.
@@ -52,6 +60,12 @@ pub trait Backend {
     fn duration(&self, cue: &Cue) -> Option<f64>;
     /// Called every tick before the engine runs.
     fn update(&mut self, now: Instant);
+    /// True when the last [`Backend::set_preloaded`] skipped cues that aren't ready yet (files
+    /// still being probed in the background) and the preload set should be offered again.
+    /// Backends throttle this themselves.
+    fn preload_retry(&mut self, _now: Instant) -> bool {
+        false
+    }
     /// Asynchronous playback errors since the last call.
     fn drain_errors(&mut self) -> Vec<String> {
         Vec::new()
@@ -176,6 +190,12 @@ pub struct Engine {
     last_go: Option<Instant>,
     preload_dirty: bool,
     panic: Option<(Instant, Vec<CueId>)>,
+    /// Groups with running children, kept up to date during a tick pass.
+    busy_parents: HashSet<CueId>,
+    /// How often each cue was fired during the current tick (loop detection).
+    fired_in_tick: HashMap<CueId, u32>,
+    /// Cues already reported as looping (so the log isn't flooded).
+    loops_reported: HashSet<CueId>,
 }
 
 impl Engine {
@@ -261,6 +281,12 @@ impl Engine {
     /// Call after the workspace was edited so preloaded media gets refreshed.
     pub fn workspace_changed(&mut self) {
         self.preload_dirty = true;
+        self.loops_reported.clear();
+    }
+
+    /// Add a warning to the engine log (shown in View → Engine log).
+    pub fn report(&mut self, msg: impl Into<String>) {
+        self.log(msg);
     }
 
     fn log(&mut self, msg: impl Into<String>) {
@@ -311,11 +337,28 @@ impl Engine {
 
     fn fire(&mut self, ws: &Workspace, be: &mut dyn Backend, id: CueId, at: Instant, parent: Option<CueId>) {
         let Some(cue) = ws.cue_list.find(id) else { return };
+        let n = self.fired_in_tick.entry(id).or_insert(0);
+        *n += 1;
+        if *n > MAX_FIRES_PER_TICK {
+            if self.loops_reported.insert(id) {
+                self.log(format!(
+                    "Cue {} '{}' restarts itself with no time in between (a Start or Goto loop?); held off",
+                    cue.number,
+                    cue.display_name()
+                ));
+            }
+            return;
+        }
         if self.instances.contains_key(&id) {
             // Re-firing a running cue restarts it.
             self.stop_cue(ws, be, id);
         }
         let pre = cue.pre_wait.max(0.0);
+        // What this cue continues into may need preloading now.
+        self.preload_dirty = true;
+        if let Some(p) = parent {
+            self.busy_parents.insert(p);
+        }
         self.instances.insert(
             id,
             Instance {
@@ -337,14 +380,28 @@ impl Engine {
     /// Ids of `id` plus every running instance launched (transitively) by it, plus any
     /// running tree descendants.
     fn instance_subtree(&self, ws: &Workspace, id: CueId) -> Vec<CueId> {
-        let mut out = vec![id];
+        // Linear in the running instances (stopping a group of thousands must stay quick).
         let tree: HashSet<CueId> = ws.cue_list.descendants(id).into_iter().collect();
+        let mut launched: HashMap<CueId, Vec<CueId>> = HashMap::new();
+        for (k, inst) in &self.instances {
+            if let Some(p) = inst.parent {
+                launched.entry(p).or_default().push(*k);
+            }
+        }
+        let mut seen = HashSet::from([id]);
+        let mut out = vec![id];
+        for k in self.instances.keys() {
+            if tree.contains(k) && seen.insert(*k) {
+                out.push(*k);
+            }
+        }
         let mut i = 0;
         while i < out.len() {
-            let cur = out[i];
-            for (k, inst) in &self.instances {
-                if (inst.parent == Some(cur) || tree.contains(k)) && !out.contains(k) {
-                    out.push(*k);
+            if let Some(children) = launched.get(&out[i]) {
+                for k in children {
+                    if seen.insert(*k) {
+                        out.push(*k);
+                    }
                 }
             }
             i += 1;
@@ -513,6 +570,7 @@ impl Engine {
 
     /// Advance time: end pre-waits, start actions, finish fades and waits, handle continues.
     pub fn tick(&mut self, ws: &Workspace, be: &mut dyn Backend, now: Instant) {
+        self.fired_in_tick.clear();
         be.update(now);
         for e in be.drain_errors() {
             self.log(e);
@@ -531,16 +589,33 @@ impl Engine {
         }
 
         let horizon = now + LOOKAHEAD;
-        // Each step makes one state transition; loop until stable (bounded for safety).
-        for _ in 0..10_000 {
-            if !self.step(ws, be, now, horizon) {
+        // Passes over the running cues until nothing changes (bounded for safety).
+        for _ in 0..1_000 {
+            if !self.pass(ws, be, now, horizon) {
                 break;
             }
         }
 
+        if !self.preload_dirty && be.preload_retry(now) {
+            self.preload_dirty = true;
+        }
         if self.preload_dirty {
             self.preload_dirty = false;
-            let ids = preload_set(ws, self.playhead);
+            // What running cues will continue into fires on its own, possibly within
+            // milliseconds, so it comes first; then what the next GO fires.
+            let mut running: Vec<(Instant, CueId)> = self
+                .instances
+                .iter()
+                .filter(|(_, i)| !i.continue_done)
+                .filter_map(|(id, i)| {
+                    let c = ws.cue_list.find(*id)?;
+                    (c.continue_mode != crate::model::ContinueMode::DoNotContinue).then_some((i.fired_at, *id))
+                })
+                .collect();
+            running.sort();
+            let mut seeds: Vec<CueId> = running.into_iter().filter_map(|(_, id)| ws.cue_list.next_sibling(id)).collect();
+            seeds.extend(self.playhead);
+            let ids = preload_set(ws, &seeds);
             let cues: Vec<&Cue> = ids
                 .iter()
                 .filter(|id| !self.instances.contains_key(id))
@@ -550,25 +625,58 @@ impl Engine {
         }
     }
 
-    fn step(&mut self, ws: &Workspace, be: &mut dyn Backend, now: Instant, horizon: Instant) -> bool {
-        // Deterministic order: earliest-fired first.
-        let mut ids: Vec<(Instant, CueId)> =
-            self.instances.iter().map(|(k, i)| (i.fired_at, *k)).collect();
-        ids.sort();
-
+    /// One pass over the running cues, earliest-fired first, moving each as far as it can go
+    /// now. Returns whether anything changed (another pass may then be needed: a cue may have
+    /// fired others, or finished the last child of a group seen earlier in the pass).
+    /// Sorting once per pass instead of once per transition keeps big shows (thousands of
+    /// running cues) to a fraction of a millisecond per tick.
+    fn pass(&mut self, ws: &Workspace, be: &mut dyn Backend, now: Instant, horizon: Instant) -> bool {
+        let mut ids: Vec<(Instant, CueId)> = self.instances.iter().map(|(k, i)| (i.fired_at, *k)).collect();
+        ids.sort_unstable();
+        // Groups with running children. Children that end during the pass leave their group
+        // listed until the next pass; children fired during the pass are added by `fire`.
+        self.busy_parents = self.instances.values().filter_map(|i| i.parent).collect();
+        // Finding a cue walks the cue tree; with many cues running, look them all up in one walk.
+        let index: HashMap<CueId, &Cue> = if ids.len() > 8 {
+            ws.cue_list.iter_all().into_iter().filter(|c| self.instances.contains_key(&c.id)).map(|c| (c.id, c)).collect()
+        } else {
+            HashMap::new()
+        };
+        let mut changed = false;
         for (_, id) in ids {
-            let Some(inst) = self.instances.get(&id) else { continue };
-            if inst.paused_at.is_some() {
-                continue;
+            for _ in 0..100 {
+                if !self.advance(ws, &index, be, now, horizon, id) {
+                    break;
+                }
+                changed = true;
             }
-            let Some(cue) = ws.cue_list.find(id) else {
-                // Cue deleted while running.
+        }
+        changed
+    }
+
+    /// Make one state transition of cue `id`, if one is due. Returns whether it did.
+    fn advance(
+        &mut self,
+        ws: &Workspace,
+        index: &HashMap<CueId, &Cue>,
+        be: &mut dyn Backend,
+        now: Instant,
+        horizon: Instant,
+        id: CueId,
+    ) -> bool {
+        {
+            let Some(inst) = self.instances.get(&id) else { return false };
+            let Some(cue) = index.get(&id).copied().or_else(|| ws.cue_list.find(id)) else {
+                // Cue deleted while running (paused or not).
                 let inst = self.instances.remove(&id).unwrap();
                 if inst.kind.is_media() {
                     be.stop(id);
                 }
                 return true;
             };
+            if inst.paused_at.is_some() {
+                return false;
+            }
 
             if !inst.started {
                 if inst.action_at <= horizon {
@@ -580,7 +688,7 @@ impl Engine {
                     }
                     return true;
                 }
-                continue;
+                return false;
             }
 
             if !inst.action_done {
@@ -588,7 +696,7 @@ impl Engine {
                     _ if !cue.armed => true,
                     k if k.is_media() => be.is_finished(id),
                     KindTag::Group => {
-                        inst.action_at <= now && !self.instances.values().any(|i| i.parent == Some(id))
+                        inst.action_at <= now && !self.busy_parents.contains(&id)
                     }
                     _ => match inst.action_duration {
                         Some(d) => now >= after(inst.action_at, d),
@@ -610,9 +718,8 @@ impl Engine {
                     crate::model::ContinueMode::AutoFollow => match inst.action_duration {
                         Some(d) => Some(after(inst.action_at, d)),
                         None if inst.action_done => Some(now),
-                        None => {
-                            continue;
-                        }
+                        // Waits for the media to report its end.
+                        None => return false,
                     },
                 };
                 match due {
@@ -814,24 +921,35 @@ pub fn after_chain(ws: &Workspace, id: CueId) -> Option<CueId> {
     }
 }
 
-/// Cues that could fire on the next GO: the playhead cue, its continue chain and group children.
-fn preload_set(ws: &Workspace, playhead: Option<CueId>) -> Vec<CueId> {
+/// Cues to keep preloaded, starting from `seeds` (the cue the next GO fires, and the cues
+/// running cues will continue into): each seed, the children it starts, the cue a Start cue
+/// fires, and its own continue chain. At most [`MAX_PRELOAD`] cues.
+fn preload_set(ws: &Workspace, seeds: &[CueId]) -> Vec<CueId> {
     let list = &ws.cue_list;
     let mut out = Vec::new();
-    let mut stack: Vec<CueId> = playhead.into_iter().collect();
-    while let Some(id) = stack.pop() {
-        if out.len() >= MAX_PRELOAD || out.contains(&id) {
-            continue;
-        }
-        let Some(c) = list.find(id) else { continue };
-        out.push(id);
-        for ch in c.children().iter().rev() {
-            stack.push(ch.id);
-        }
-        if c.continue_mode != crate::model::ContinueMode::DoNotContinue
-            && let Some(n) = list.next_sibling(id)
-        {
-            stack.insert(0, n);
+    for &seed in seeds {
+        let mut stack = vec![seed];
+        while let Some(id) = stack.pop() {
+            if out.len() >= MAX_PRELOAD {
+                return out;
+            }
+            if out.contains(&id) {
+                continue;
+            }
+            let Some(c) = list.find(id) else { continue };
+            out.push(id);
+            // Pushed in reverse order of firing, so the soonest is preloaded first.
+            if c.continue_mode != crate::model::ContinueMode::DoNotContinue
+                && let Some(n) = list.next_sibling(id)
+            {
+                stack.push(n);
+            }
+            if let CueKind::Start { target: Some(t) } = &c.kind {
+                stack.push(*t);
+            }
+            for ch in c.children().iter().rev() {
+                stack.push(ch.id);
+            }
         }
     }
     out
@@ -848,6 +966,11 @@ mod tests {
         started: HashMap<CueId, Instant>,
         finished: HashSet<CueId>,
         durations: HashMap<CueId, f64>,
+        preloaded: Vec<CueId>,
+        /// Times `set_preloaded` was called.
+        preload_calls: usize,
+        /// Answers to `preload_retry`, in order (then false).
+        retries: Vec<bool>,
     }
 
     impl Backend for Mock {
@@ -862,7 +985,13 @@ mod tests {
             self.events.push(format!("net {}", n.address));
             Ok(())
         }
-        fn set_preloaded(&mut self, _cues: &[&Cue]) {}
+        fn set_preloaded(&mut self, cues: &[&Cue]) {
+            self.preloaded = cues.iter().map(|c| c.id).collect();
+            self.preload_calls += 1;
+        }
+        fn preload_retry(&mut self, _now: Instant) -> bool {
+            if self.retries.is_empty() { false } else { self.retries.remove(0) }
+        }
         fn start(&mut self, cue: &Cue, at: Instant) -> Result<(), String> {
             self.events.push(format!("start {}", cue.number));
             self.started.insert(cue.id, at);
@@ -905,6 +1034,77 @@ mod tests {
 
     fn ms(n: u64) -> Duration {
         Duration::from_millis(n)
+    }
+
+    #[test]
+    fn running_chains_keep_their_next_cues_preloaded() {
+        // 1 → (auto-continue) 2 → 3, then a separate 4. After GO the playhead is on 4, but
+        // 2 and 3 are still to come on their own and must stay preloaded.
+        let mut a = cue("1", KindTag::Audio);
+        a.continue_mode = ContinueMode::AutoContinue;
+        a.post_wait = 5.0;
+        let mut b = cue("2", KindTag::Audio);
+        b.continue_mode = ContinueMode::AutoContinue;
+        b.post_wait = 5.0;
+        let c = cue("3", KindTag::Audio);
+        let d = cue("4", KindTag::Audio);
+        let (ai, bi, ci, di) = (a.id, b.id, c.id, d.id);
+        let w = ws(vec![a, b, c, d]);
+        let mut e = Engine::new();
+        let mut m = Mock::default();
+        let t0 = Instant::now();
+        e.set_playhead(Some(ai));
+        e.tick(&w, &mut m, t0);
+        assert_eq!(m.preloaded, vec![ai, bi, ci]);
+        e.go(&w, &mut m, t0);
+        assert_eq!(e.playhead, Some(di));
+        assert_eq!(m.preloaded, vec![bi, ci, di]);
+        e.tick(&w, &mut m, t0 + ms(5_000));
+        assert_eq!(m.preloaded, vec![ci, di]);
+    }
+
+    /// The preload set is computed once per change, not every tick, unless the backend asks to
+    /// try again (files it couldn't preload yet).
+    #[test]
+    fn preload_runs_on_changes_and_backend_retries_only() {
+        let a = cue("1", KindTag::Audio);
+        let ai = a.id;
+        let w = ws(vec![a]);
+        let mut e = Engine::new();
+        let mut m = Mock::default();
+        let t0 = Instant::now();
+        e.set_playhead(Some(ai));
+        for i in 0..100 {
+            e.tick(&w, &mut m, t0 + ms(i));
+        }
+        assert_eq!(m.preload_calls, 1, "preload recomputed on idle ticks");
+        m.retries = vec![false, true, false];
+        for i in 100..200 {
+            e.tick(&w, &mut m, t0 + ms(i));
+        }
+        assert_eq!(m.preload_calls, 2);
+        e.workspace_changed();
+        e.tick(&w, &mut m, t0 + ms(200));
+        assert_eq!(m.preload_calls, 3);
+    }
+
+    #[test]
+    fn a_cue_that_starts_itself_is_held_off_and_reported() {
+        let mut a = cue("1", KindTag::Start);
+        a.kind = CueKind::Start { target: Some(a.id) };
+        let ai = a.id;
+        let w = ws(vec![a]);
+        let mut e = Engine::new();
+        let mut m = Mock::default();
+        let t0 = Instant::now();
+        e.set_playhead(Some(ai));
+        let t = Instant::now();
+        e.go(&w, &mut m, t0);
+        for i in 1..50 {
+            e.tick(&w, &mut m, t0 + ms(i));
+        }
+        assert!(t.elapsed() < Duration::from_millis(50), "{:?}", t.elapsed());
+        assert_eq!(e.log.iter().filter(|l| l.contains("restarts itself")).count(), 1, "{:?}", e.log);
     }
 
     #[test]

@@ -24,12 +24,19 @@
 //!   [`control::Command`]; the one entry point used by the UI, OSC and remote devices.
 //! * [`media`] — audio mixer and decoders, live inputs (Mic cues), video/image/text/camera
 //!   layers, timecode in and out ([`media::tcio`]), media probing, waveform and poster caches.
+//!   Audio devices come from cpal's PipeWire host when PipeWire runs (feature `pipewire`), ALSA
+//!   otherwise; the pickers list one entry per real output/input.
 //! * [`timecode`] — SMPTE labels, the LTC encoder/decoder and MIDI Time Code. Cue lists can
 //!   follow LTC or MTC and fire cues at their timecode trigger.
 //! * [`geometry`] — layer placement, crop, corner-pin homography, edge-blend curve.
+//! * [`animation`] — keyframe animation of video, image and text layers, evaluated live as the
+//!   stage windows draw (relative to the cue's own geometry, opacity and colours).
 //! * [`dsp`] — EQ filter design and processing.
 //! * [`osc`] — OSC input. [`remote`] — paired remote devices (encrypted, authenticated).
-//! * [`displays`] — system monitors for stage outputs. [`ui`] — the egui application.
+//! * [`displays`] — system monitors for stage outputs. [`ui`] — the egui application, including
+//!   the stage windows (spanned surfaces, edge blending, layer [`model::BlendMode`]s).
+//! * [`recovery`] — crash safety: panics in workers become errors, the engine thread recovers
+//!   in place, autosave plus crash detection bring unsaved work back after a crash.
 //!
 //! # Threads
 //!
@@ -37,6 +44,12 @@
 //! Decoding (audio and video) runs on one thread per playing file; live inputs, cameras and MIDI
 //! connections each run on a thread that owns them. Everything else that touches
 //! the show takes the [`show::SharedShow`] mutex briefly.
+//!
+//! # Failure handling
+//!
+//! See [`recovery`]: worker panics become per-cue errors, the engine thread recovers from its own
+//! panics, a failing or lost audio device is reopened, unsaved work is autosaved and offered back
+//! after a crash. `tests/stress.rs` (run with `tools/stress.sh`) exercises all of it.
 //!
 //! # Example: drive a show without a UI
 //!
@@ -57,6 +70,7 @@
 
 #![warn(missing_docs)]
 
+pub mod animation;
 pub mod control;
 pub mod displays;
 pub mod dsp;
@@ -65,6 +79,7 @@ pub mod geometry;
 pub mod media;
 pub mod model;
 pub mod osc;
+pub mod recovery;
 pub mod remote;
 pub mod show;
 pub mod timecode;

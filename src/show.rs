@@ -33,7 +33,31 @@ pub struct Show {
     pub timecode: crate::media::tcio::Follower,
     /// Last timecode position seen by each following list (by name).
     tc_last: std::collections::HashMap<String, f64>,
+    /// Engine thread timing and recoveries.
+    pub stats: TickStats,
+    /// Set when the engine recovered from an internal error (the UI tells the user, the
+    /// autosave writes a fresh copy); cleared by whoever handles it.
+    pub recovered: Option<String>,
 }
+
+/// How well the engine thread is keeping time.
+#[derive(Clone, Copy, Debug, Default)]
+pub struct TickStats {
+    /// Ticks run.
+    pub ticks: u64,
+    /// Ticks that started more than [`LATE_TICK`] after the previous one.
+    pub late: u64,
+    /// Longest gap between two ticks.
+    pub max_gap: Duration,
+    /// Longest single tick.
+    pub max_tick: Duration,
+    /// Internal errors the engine recovered from.
+    pub panics: u64,
+}
+
+/// A tick gap longer than this counts as late (actions that aren't scheduled ahead, such as
+/// Wait cue ends, may be this much late).
+pub const LATE_TICK: Duration = Duration::from_millis(5);
 
 /// The show as shared between threads.
 pub type SharedShow = Arc<Mutex<Show>>;
@@ -52,6 +76,8 @@ impl Show {
             replica: false,
             timecode: Default::default(),
             tc_last: Default::default(),
+            stats: TickStats::default(),
+            recovered: None,
         }
     }
 
@@ -60,6 +86,7 @@ impl Show {
         if self.shut_down || self.replica {
             return;
         }
+        crate::recovery::fault_point(crate::recovery::Fault::EngineTick);
         self.follow_timecode(now);
         let Show { ws, engine, media, .. } = self;
         engine.tick(ws, media, now);
@@ -98,6 +125,28 @@ impl Show {
         for id in due {
             engine.start_cue(ws, media, id, now);
         }
+    }
+
+    /// [`Show::tick`], recovering from an internal error instead of letting it take the engine
+    /// thread down: everything stops at once (a half-updated cue state can't be trusted), the
+    /// playhead stays, and the show carries on with the next GO.
+    pub fn guarded_tick(&mut self, now: Instant) {
+        let Err(p) = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| self.tick(now))) else { return };
+        let msg = crate::recovery::panic_message(&*p);
+        log::error!("engine panic: {msg}");
+        self.stats.panics += 1;
+        let Show { engine, media, .. } = self;
+        let stopped = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| engine.stop_all(media, now, 0.0))).is_ok();
+        if !stopped {
+            // Even stopping failed: start from a fresh engine and silence every backend.
+            let playhead = engine.playhead;
+            *engine = Engine::new();
+            engine.set_playhead(playhead);
+            let _ = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| media.stop_everything()));
+        }
+        let note = format!("Internal error, all cues stopped (the show can go on): {msg}");
+        self.engine.report(note.clone());
+        self.recovered = Some(note);
     }
 
     /// GO: fire the cue at the playhead.
@@ -159,23 +208,47 @@ impl Show {
 }
 
 /// Run the engine at ~1 kHz on its own thread so timing doesn't depend on UI frame rate.
+/// Ticks are paced against absolute deadlines (a slow tick doesn't push the next ones back),
+/// and a tick that panics is recovered by [`Show::guarded_tick`] instead of ending the thread.
 pub fn spawn_engine_thread(show: SharedShow, repaint: impl Fn() + Send + 'static) {
     std::thread::Builder::new()
-        .name("openq-engine".into())
+        .name(crate::recovery::ENGINE_THREAD.into())
         .spawn(move || {
             let mut was_active = false;
+            let mut next = Instant::now();
+            let mut last: Option<Instant> = None;
             loop {
-                let active = {
+                let (active, recovered) = {
                     let mut s = show.lock();
-                    s.tick(Instant::now());
-                    s.engine.is_active()
+                    let now = Instant::now();
+                    s.guarded_tick(now);
+                    let took = now.elapsed();
+                    let st = &mut s.stats;
+                    st.ticks += 1;
+                    st.max_tick = st.max_tick.max(took);
+                    if let Some(l) = last {
+                        let gap = now - l;
+                        st.max_gap = st.max_gap.max(gap);
+                        if gap > LATE_TICK {
+                            st.late += 1;
+                        }
+                    }
+                    last = Some(now);
+                    (s.engine.is_active(), s.recovered.is_some())
                 };
-                if active != was_active {
-                    // Make sure the UI notices start/end of activity promptly.
+                if active != was_active || recovered {
+                    // Make sure the UI notices start/end of activity (or a recovery) promptly.
                     repaint();
                     was_active = active;
                 }
-                std::thread::sleep(TICK);
+                next += TICK;
+                let now = Instant::now();
+                if next > now {
+                    std::thread::sleep(next - now);
+                } else if now - next > Duration::from_millis(100) {
+                    // Far behind (machine suspended, debugger): don't try to catch up.
+                    next = now;
+                }
             }
         })
         .expect("spawn engine thread");

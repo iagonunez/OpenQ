@@ -1,5 +1,6 @@
 //! Show data model: cues, cue tree operations and the workspace file format.
 
+use crate::animation::Animation;
 use serde::{Deserialize, Serialize};
 use std::path::{Path, PathBuf};
 use uuid::Uuid;
@@ -90,12 +91,45 @@ impl FadeCurve {
             FadeCurve::SCurve => t * t * (3.0 - 2.0 * t),
             FadeCurve::Logarithmic if t <= 0.0 => 0.0,
             FadeCurve::Logarithmic => db_to_gain(MIN_DB * (1.0 - t)),
+            FadeCurve::Custom(h) => custom_curve(h, t),
+        }
+    }
+
+    /// Progress (0..1) at `t` of the way through, for values without a level law (opacity,
+    /// geometry): Logarithmic is linear here.
+    pub fn progress(self, t: f32) -> f32 {
+        let t = t.clamp(0.0, 1.0);
+        match self {
+            FadeCurve::Linear | FadeCurve::Logarithmic => t,
+            FadeCurve::SCurve => t * t * (3.0 - 2.0 * t),
+            FadeCurve::Custom(h) => custom_curve(h, t),
+        }
+    }
+
+    /// The [`FadeCurve::Custom`] handle heights that draw (about) this curve, so editing a preset
+    /// on the graph starts from what it showed. `falling` = the fade lowers the level, where the
+    /// logarithmic law drops fast and then tails off.
+    pub fn handles(self, falling: bool) -> [f32; 2] {
+        match self {
+            FadeCurve::Linear => [1.0 / 3.0, 2.0 / 3.0],
+            FadeCurve::SCurve => [0.0, 1.0],
+            FadeCurve::Logarithmic if falling => [1.0, 1.0],
+            FadeCurve::Logarithmic => [0.0, 0.0],
+            FadeCurve::Custom(h) => h,
         }
     }
 }
 
+/// A cubic Bézier from (0,0) to (1,1) whose inner control points sit at 1/3 and 2/3 of the time
+/// with heights `h`: x(s) = s, so y is a plain polynomial in `t` (no solving, cheap enough for
+/// the audio thread's per-sample ramps). `[1/3, 2/3]` is linear, `[0, 1]` the S-curve.
+fn custom_curve(h: [f32; 2], t: f32) -> f32 {
+    let m = 1.0 - t;
+    3.0 * m * m * t * h[0] + 3.0 * m * t * t * h[1] + t * t * t
+}
+
 /// Shape of a fade over time.
-#[derive(Serialize, Deserialize, Clone, Copy, PartialEq, Eq, Debug, Default)]
+#[derive(Serialize, Deserialize, Clone, Copy, PartialEq, Debug, Default)]
 pub enum FadeCurve {
     /// Constant rate.
     Linear,
@@ -104,6 +138,9 @@ pub enum FadeCurve {
     SCurve,
     /// Linear in dB (perceptually even).
     Logarithmic,
+    /// Drawn on the fade's curve graph: the heights (0..1) of the two handles at 1/3 and 2/3 of
+    /// the time (see [`FadeCurve::gain`]).
+    Custom([f32; 2]),
 }
 
 impl FadeCurve {
@@ -116,6 +153,7 @@ impl FadeCurve {
             FadeCurve::Linear => "Linear",
             FadeCurve::SCurve => "S-curve",
             FadeCurve::Logarithmic => "Logarithmic",
+            FadeCurve::Custom(_) => "Custom",
         }
     }
 
@@ -137,6 +175,7 @@ impl FadeCurve {
                 let v = a + (b - a) * t;
                 if v <= FLOOR + 0.01 { 0.0 } else { 10f32.powf(v / 20.0) }
             }
+            FadeCurve::Custom(h) => from + (to - from) * custom_curve(h, t),
         }
     }
 }
@@ -225,6 +264,52 @@ impl VideoFit {
             VideoFit::Fill => "Fill (crop)",
             VideoFit::Stretch => "Stretch",
             VideoFit::Native => "Native size",
+        }
+    }
+}
+
+/// How a picture layer combines with the layers below it on its stage.
+#[derive(Serialize, Deserialize, Clone, Copy, PartialEq, Eq, Hash, Debug, Default)]
+pub enum BlendMode {
+    /// Covers what is below (by its opacity).
+    #[default]
+    Normal,
+    /// Adds its light: black disappears, bright parts glow.
+    Add,
+    /// Like Add, but never brighter than white: black disappears, highlights merge softly.
+    Screen,
+    /// Darkens what is below by its colour: white disappears (masks, vignettes, gobos).
+    Multiply,
+    /// Keeps the brighter of the two, channel by channel.
+    Lighten,
+    /// Keeps the darker of the two, channel by channel.
+    Darken,
+    /// Takes its light away from what is below.
+    Subtract,
+}
+
+impl BlendMode {
+    /// Every mode, for menus.
+    pub const ALL: [BlendMode; 7] = [
+        BlendMode::Normal,
+        BlendMode::Add,
+        BlendMode::Screen,
+        BlendMode::Multiply,
+        BlendMode::Lighten,
+        BlendMode::Darken,
+        BlendMode::Subtract,
+    ];
+
+    /// Name shown in the UI.
+    pub fn label(self) -> &'static str {
+        match self {
+            BlendMode::Normal => "Normal",
+            BlendMode::Add => "Add",
+            BlendMode::Screen => "Screen",
+            BlendMode::Multiply => "Multiply",
+            BlendMode::Lighten => "Lighten",
+            BlendMode::Darken => "Darken",
+            BlendMode::Subtract => "Subtract",
         }
     }
 }
@@ -603,6 +688,8 @@ pub struct VideoCue {
     pub opacity: f32,
     /// Higher layers draw on top.
     pub layer: i32,
+    /// How the picture combines with the layers below.
+    pub blend_mode: BlendMode,
     /// How the picture fits the stage.
     pub fit: VideoFit,
     /// Start point in the file, in seconds.
@@ -625,6 +712,9 @@ pub struct VideoCue {
     pub routing: Option<Vec<Vec<f32>>>,
     /// Soundtrack output fader levels in dB, one per device output; missing entries are 0 dB.
     pub out_levels: Vec<f32>,
+    /// Keyframe animation of the picture (relative to the settings above).
+    #[serde(skip_serializing_if = "Animation::is_empty")]
+    pub animation: Animation,
 }
 
 impl Default for VideoCue {
@@ -634,6 +724,7 @@ impl Default for VideoCue {
             volume_db: 0.0,
             opacity: 1.0,
             layer: 0,
+            blend_mode: BlendMode::Normal,
             fit: VideoFit::Fit,
             start_time: 0.0,
             end_time: None,
@@ -645,6 +736,7 @@ impl Default for VideoCue {
             still_duration: 0.0,
             routing: None,
             out_levels: Vec::new(),
+            animation: Animation::default(),
         }
     }
 }
@@ -735,10 +827,21 @@ pub struct TextCue {
     pub geometry: Geometry,
     /// Stacking layer: higher draws on top.
     pub layer: i32,
+    /// How the text combines with the layers below.
+    pub blend_mode: BlendMode,
     /// Opacity 0..1.
     pub opacity: f32,
     /// Seconds to show (0 = until stopped).
     pub duration: f64,
+    /// Box colour behind the text, RGBA (alpha 0 = none).
+    pub bg_color: [u8; 4],
+    /// Space between the text and the edge of its background box, in stage pixels.
+    pub bg_padding: f32,
+    /// Corner radius of the background box, in stage pixels.
+    pub bg_radius: f32,
+    /// Keyframe animation (placement, opacity and colours; relative to the settings above).
+    #[serde(skip_serializing_if = "Animation::is_empty")]
+    pub animation: Animation,
 }
 
 impl TextCue {
@@ -773,8 +876,13 @@ impl Default for TextCue {
             stage: None,
             geometry: Geometry::default(),
             layer: 10,
+            blend_mode: BlendMode::Normal,
             opacity: 1.0,
             duration: 0.0,
+            bg_color: [0, 0, 0, 0],
+            bg_padding: 24.0,
+            bg_radius: 0.0,
+            animation: Animation::default(),
         }
     }
 }
@@ -859,6 +967,8 @@ pub struct CameraCue {
     pub opacity: f32,
     /// Higher layers draw on top.
     pub layer: i32,
+    /// How the picture combines with the layers below.
+    pub blend_mode: BlendMode,
     /// How the picture fits the stage.
     pub fit: VideoFit,
     /// Output stage (None = the first stage).
@@ -879,6 +989,7 @@ impl Default for CameraCue {
             size: None,
             opacity: 1.0,
             layer: 0,
+            blend_mode: BlendMode::Normal,
             fit: VideoFit::Fit,
             stage: None,
             geometry: Geometry::default(),
@@ -1382,6 +1493,19 @@ impl CueList {
         std::iter::once((None, self.cues.as_slice())).chain(self.others.iter().map(|o| (Some(o.info.id), o.cues.as_slice())))
     }
 
+    /// Every cue of every list (depth first, current list first) with the name of its list when
+    /// that isn't the current one. One pass: for per-frame UI such as target menus.
+    pub fn iter_all_with_list(&self) -> Vec<(&Cue, Option<&str>)> {
+        let mut out = Vec::new();
+        let lists = std::iter::once((None, self.cues.as_slice())).chain(self.others.iter().map(|o| (Some(o.info.name.as_str()), o.cues.as_slice())));
+        for (name, cues) in lists {
+            for c in cues {
+                c.visit(&mut |c| out.push((c, name)));
+            }
+        }
+        out
+    }
+
     /// Every list's state and top-level cues, the current one first.
     pub fn lists(&self) -> Vec<(&ListInfo, &[Cue])> {
         std::iter::once((&self.info, self.cues.as_slice())).chain(self.others.iter().map(|o| (&o.info, o.cues.as_slice()))).collect()
@@ -1709,9 +1833,14 @@ impl CueList {
 
     /// (depth, id) of every row visible in the cue list.
     pub fn visible_rows(&self, collapsed: &dyn Fn(CueId) -> bool) -> Vec<(usize, CueId)> {
-        fn rec(list: &[Cue], depth: usize, collapsed: &dyn Fn(CueId) -> bool, out: &mut Vec<(usize, CueId)>) {
+        self.visible_cues(collapsed).into_iter().map(|(d, c)| (d, c.id)).collect()
+    }
+
+    /// Like [`Self::visible_rows`], with the cues themselves (one pass; no lookups by id).
+    pub fn visible_cues(&self, collapsed: &dyn Fn(CueId) -> bool) -> Vec<(usize, &Cue)> {
+        fn rec<'a>(list: &'a [Cue], depth: usize, collapsed: &dyn Fn(CueId) -> bool, out: &mut Vec<(usize, &'a Cue)>) {
             for c in list {
-                out.push((depth, c.id));
+                out.push((depth, c));
                 if c.is_group() && !collapsed(c.id) {
                     rec(c.children(), depth + 1, collapsed, out);
                 }
@@ -1820,11 +1949,9 @@ impl Workspace {
                 });
             }
         }
-        let s = serde_json::to_string_pretty(&ws)?;
-        let tmp = path.with_extension("openq.tmp");
-        std::fs::write(&tmp, s)?;
-        std::fs::rename(&tmp, path)?;
-        Ok(())
+        // Written to a temporary file, flushed to disk, then renamed over the old one: a crash
+        // or power cut mid-save leaves the previous version intact.
+        crate::recovery::write_atomic(path, serde_json::to_string_pretty(&ws)?.as_bytes())
     }
 }
 
@@ -1841,6 +1968,24 @@ fn for_each_media_path(list: &mut [Cue], f: &mut impl FnMut(&mut PathBuf)) {
 
 #[cfg(test)]
 mod tests {
+    /// The drawn curve's presets match the built-in ones, so turning a preset into a Custom curve
+    /// (by dragging a handle) doesn't jump; and it keeps a fade's end points.
+    #[test]
+    fn custom_fade_curve_matches_presets() {
+        for t in [0.0, 0.1, 0.25, 0.5, 0.8, 1.0] {
+            for c in [FadeCurve::Linear, FadeCurve::SCurve] {
+                let custom = FadeCurve::Custom(c.handles(false));
+                assert!((custom.gain(t) - c.gain(t)).abs() < 1e-5, "{c:?} at {t}");
+                assert!((custom.progress(t) - c.progress(t)).abs() < 1e-5, "{c:?} at {t}");
+            }
+        }
+        let c = FadeCurve::Custom([0.9, 0.2]);
+        assert_eq!((c.interpolate(1.0, 0.0, 0.0), c.interpolate(1.0, 0.0, 1.0)), (1.0, 0.0));
+        let json = serde_json::to_string(&c).unwrap();
+        assert_eq!(serde_json::from_str::<FadeCurve>(&json).unwrap(), c);
+        assert_eq!(serde_json::from_str::<FadeCurve>("\"SCurve\"").unwrap(), FadeCurve::SCurve);
+    }
+
     use super::*;
 
     fn group(children: Vec<Cue>) -> Cue {

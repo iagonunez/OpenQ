@@ -1,4 +1,5 @@
-//! Parametric EQ editor: response curve with draggable band handles plus a band table.
+//! Parametric EQ editor: a band table ([`eq_bands`]) and a response curve with draggable band
+//! handles ([`eq_graph`]), laid out side by side by the inspector.
 
 use super::widgets::{AMBER, BLUE, GREEN};
 use crate::dsp::{Coeffs, eq_response_db};
@@ -11,7 +12,11 @@ const DB_RANGE: f32 = 18.0;
 /// Display rate for the response plot.
 const RATE: f32 = 48_000.0;
 
-pub fn eq_editor(ui: &mut Ui, id: Id, eq: &mut Eq) {
+/// Height of the response plot.
+const GRAPH_H: f32 = 190.0;
+
+/// The enable/flat/defaults row and the table of bands.
+pub fn eq_bands(ui: &mut Ui, id: Id, eq: &mut Eq) {
     ui.horizontal(|ui| {
         ui.checkbox(&mut eq.enabled, "EQ enabled");
         if ui.button(super::theme::with_icon(super::icons::REMOVE, "Flat")).on_hover_text("Reset all gains to 0 dB").clicked() {
@@ -24,8 +29,41 @@ pub fn eq_editor(ui: &mut Ui, id: Id, eq: &mut Eq) {
         }
     });
 
-    // --- Response plot.
-    let (rect, _) = ui.allocate_exact_size(vec2(ui.available_width(), 150.0), Sense::hover());
+    ui.add_space(4.0);
+    let mut remove = None;
+    egui::Grid::new(id.with("bands")).num_columns(6).spacing([8.0, 4.0]).show(ui, |ui| {
+        for h in ["#", "Type", "Freq", "Gain", "Q", ""] {
+            ui.label(egui::RichText::new(h).weak());
+        }
+        ui.end_row();
+        for (i, b) in eq.bands.iter_mut().enumerate() {
+            ui.checkbox(&mut b.enabled, format!("{}", i + 1));
+            ComboBox::from_id_salt(id.with(("kind", i))).width(100.0).selected_text(b.kind.label()).show_ui(ui, |ui| {
+                for k in EqKind::ALL {
+                    ui.selectable_value(&mut b.kind, k, k.label());
+                }
+            });
+            let speed = b.freq * 0.01;
+            ui.add(DragValue::new(&mut b.freq).range(F_MIN..=F_MAX).speed(speed).suffix(" Hz").max_decimals(0));
+            ui.add_enabled(b.kind.has_gain(), DragValue::new(&mut b.gain_db).range(-24.0..=24.0).speed(0.1).suffix(" dB").max_decimals(1));
+            ui.add(DragValue::new(&mut b.q).range(0.1..=18.0).speed(0.01).max_decimals(2));
+            if super::theme::icon_button(ui, super::icons::DELETE, "Remove band").clicked() {
+                remove = Some(i);
+            }
+            ui.end_row();
+        }
+    });
+    if let Some(i) = remove {
+        eq.bands.remove(i);
+    }
+    if eq.bands.len() < MAX_EQ_BANDS && ui.button(super::theme::with_icon(super::icons::ADD, "Add band")).clicked() {
+        eq.bands.push(EqBand { enabled: true, kind: EqKind::Peak, freq: 1000.0, gain_db: 0.0, q: 1.0 });
+    }
+}
+
+/// The response curve; drag a band's handle to move it, scroll on it to change its Q.
+pub fn eq_graph(ui: &mut Ui, id: Id, eq: &mut Eq) {
+    let (rect, _) = ui.allocate_exact_size(vec2(ui.available_width(), GRAPH_H), Sense::hover());
     let p = ui.painter_at(rect);
     let vis = ui.visuals();
     p.rect_filled(rect, 3.0, vis.extreme_bg_color);
@@ -83,37 +121,5 @@ pub fn eq_editor(ui: &mut Ui, id: Id, eq: &mut Eq) {
             }
             r.on_hover_text(format!("{} {:.0} Hz  {:+.1} dB  Q {:.2}\nDrag to move · scroll to change Q", b.kind.label(), b.freq, b.gain_db, b.q));
         }
-    }
-
-    // --- Band table.
-    ui.add_space(4.0);
-    let mut remove = None;
-    egui::Grid::new(id.with("bands")).num_columns(6).spacing([8.0, 4.0]).show(ui, |ui| {
-        for h in ["#", "Type", "Freq", "Gain", "Q", ""] {
-            ui.label(egui::RichText::new(h).weak());
-        }
-        ui.end_row();
-        for (i, b) in eq.bands.iter_mut().enumerate() {
-            ui.checkbox(&mut b.enabled, format!("{}", i + 1));
-            ComboBox::from_id_salt(id.with(("kind", i))).width(100.0).selected_text(b.kind.label()).show_ui(ui, |ui| {
-                for k in EqKind::ALL {
-                    ui.selectable_value(&mut b.kind, k, k.label());
-                }
-            });
-            let speed = b.freq * 0.01;
-            ui.add(DragValue::new(&mut b.freq).range(F_MIN..=F_MAX).speed(speed).suffix(" Hz").max_decimals(0));
-            ui.add_enabled(b.kind.has_gain(), DragValue::new(&mut b.gain_db).range(-24.0..=24.0).speed(0.1).suffix(" dB").max_decimals(1));
-            ui.add(DragValue::new(&mut b.q).range(0.1..=18.0).speed(0.01).max_decimals(2));
-            if super::theme::icon_button(ui, super::icons::DELETE, "Remove band").clicked() {
-                remove = Some(i);
-            }
-            ui.end_row();
-        }
-    });
-    if let Some(i) = remove {
-        eq.bands.remove(i);
-    }
-    if eq.bands.len() < MAX_EQ_BANDS && ui.button(super::theme::with_icon(super::icons::ADD, "Add band")).clicked() {
-        eq.bands.push(EqBand { enabled: true, kind: EqKind::Peak, freq: 1000.0, gain_db: 0.0, q: 1.0 });
     }
 }

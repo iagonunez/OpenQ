@@ -13,6 +13,11 @@ pub const BG_APP: Color32 = Color32::from_rgb(0x14, 0x15, 0x18);
 pub const BG_PANEL: Color32 = Color32::from_rgb(0x1b, 0x1c, 0x20);
 pub const BG_RAISED: Color32 = Color32::from_rgb(0x24, 0x25, 0x2b);
 pub const BG_HOVER: Color32 = Color32::from_rgb(0x2e, 0x30, 0x37);
+/// Hover fill for frameless tool buttons (icon buttons, palette tiles): brighter than
+/// [`BG_HOVER`] so the button under the pointer stands out on any panel.
+pub const BG_TOOL_HOVER: Color32 = Color32::from_rgb(0x3d, 0x40, 0x4a);
+/// Pressed fill for frameless tool buttons.
+pub const BG_TOOL_ACTIVE: Color32 = Color32::from_rgb(0x4a, 0x4e, 0x5a);
 pub const BG_INPUT: Color32 = Color32::from_rgb(0x10, 0x11, 0x14);
 pub const BORDER: Color32 = Color32::from_rgb(0x32, 0x34, 0x3b);
 pub const TEXT: Color32 = Color32::from_rgb(0xe8, 0xe8, 0xeb);
@@ -67,14 +72,30 @@ pub fn with_icon(glyph: &str, label: &str) -> String {
     format!("{glyph}  {label}")
 }
 
-/// A compact, frameless icon button with hover highlight.
+/// Paints the hover/press highlight of a frameless tool button and returns its glyph colour:
+/// `rest` when idle, white on a bright fill (with a light outline) under the pointer.
+pub fn tool_highlight(ui: &Ui, rect: egui::Rect, resp: &Response, radius: f32, rest: Color32) -> Color32 {
+    if !ui.is_enabled() {
+        return TEXT_FAINT;
+    }
+    let p = ui.painter();
+    if resp.is_pointer_button_down_on() {
+        p.rect_filled(rect, radius, BG_TOOL_ACTIVE);
+    } else if resp.hovered() {
+        p.rect_filled(rect, radius, BG_TOOL_HOVER);
+        p.rect_stroke(rect, radius, Stroke::new(1.0, Color32::from_rgb(0x5a, 0x5e, 0x6b)), egui::StrokeKind::Inside);
+    } else {
+        return rest;
+    }
+    Color32::WHITE
+}
+
+/// A compact, frameless icon button with a clear hover highlight.
 pub fn icon_button(ui: &mut Ui, glyph: &str, tooltip: &str) -> Response {
-    ui.add(
-        egui::Button::new(icon(glyph, 20.0))
-            .frame(false)
-            .min_size(vec2(30.0, 30.0)),
-    )
-    .on_hover_text(tooltip)
+    let (rect, resp) = ui.allocate_exact_size(vec2(30.0, 30.0), egui::Sense::click());
+    let c = tool_highlight(ui, rect, &resp, 6.0, TEXT);
+    ui.painter().text(rect.center(), egui::Align2::CENTER_CENTER, glyph, icon_font(20.0), c);
+    resp.on_hover_text(tooltip)
 }
 
 pub fn install(ctx: &egui::Context) {

@@ -1,13 +1,13 @@
 //! Inspector: edit the selected cue's properties, organised in tabs.
 
-use super::eq::eq_editor;
+use super::eq::{eq_bands, eq_graph};
 use super::waveform::{Overlay, waveform_editor};
 use super::widgets::{RED, db_edit, fmt_time, time_edit};
 use super::{App, Deferred};
 use crate::media::{MediaInfo, Prober, Waveforms, effective_duration, is_image_path};
 use crate::model::{
     AudioCue, ContinueMode, Cue, CueColor, CueId, CueKind, FadeCurve, Geometry, GroupMode, MIN_DB, StageId, VideoCue,
-    VideoFit, default_routing, gain_to_db,
+    VideoFit, BlendMode, default_routing, gain_to_db,
 };
 use crate::show::Show;
 use egui::{ComboBox, DragValue, RichText, Slider, TextEdit, Ui};
@@ -24,6 +24,7 @@ pub(super) enum Tab {
     Levels,
     Eq,
     Geometry,
+    Animation,
     Settings,
 }
 
@@ -42,21 +43,54 @@ fn tabs_for(kind: &CueKind) -> &'static [(Tab, &'static str)] {
             (Tab::Triggers, "Triggers"),
             (Tab::Time, "Time & Loops"),
             (Tab::Geometry, "Geometry"),
+            (Tab::Animation, "Animation"),
             (Tab::Io, "I/O"),
             (Tab::Levels, "Audio"),
         ],
         CueKind::Mic(_) => &[(Tab::Basics, "Basics"), (Tab::Triggers, "Triggers"), (Tab::Io, "I/O"), (Tab::Levels, "Levels"), (Tab::Eq, "EQ")],
         CueKind::Camera(_) => &[(Tab::Basics, "Basics"), (Tab::Triggers, "Triggers"), (Tab::Settings, "Camera"), (Tab::Geometry, "Geometry")],
         CueKind::Memo => &[(Tab::Basics, "Basics"), (Tab::Triggers, "Triggers")],
-        CueKind::Text(_) => &[(Tab::Basics, "Basics"), (Tab::Triggers, "Triggers"), (Tab::Settings, "Text"), (Tab::Geometry, "Geometry")],
+        CueKind::Text(_) => &[
+            (Tab::Basics, "Basics"),
+            (Tab::Triggers, "Triggers"),
+            (Tab::Settings, "Text"),
+            (Tab::Geometry, "Geometry"),
+            (Tab::Animation, "Animation"),
+        ],
         _ => &[(Tab::Basics, "Basics"), (Tab::Triggers, "Triggers"), (Tab::Settings, "Settings")],
     }
 }
 
 /// Everything the editors need that lives outside the cue being edited.
+/// What a Fade cue can change on a target: its level (sound), its picture (opacity and
+/// geometry), both (a movie, or a group holding both kinds), or nothing.
+#[derive(Clone, Copy, Default, PartialEq, Debug)]
+struct FadeCaps {
+    level: bool,
+    picture: bool,
+}
+
+impl FadeCaps {
+    fn of(cue: &Cue) -> Self {
+        match &cue.kind {
+            CueKind::Audio(_) | CueKind::Mic(_) => Self { level: true, picture: false },
+            // A still has no soundtrack.
+            CueKind::Video(v) => Self { level: !crate::media::is_image_path(&v.path), picture: true },
+            CueKind::Text(_) | CueKind::Camera(_) => Self { level: false, picture: true },
+            CueKind::Group { children, .. } => children.iter().map(Self::of).fold(Self::default(), |a, b| Self {
+                level: a.level || b.level,
+                picture: a.picture || b.picture,
+            }),
+            _ => Self::default(),
+        }
+    }
+}
+
 struct Ctx<'a> {
     options: &'a [(CueId, String)],
     geometries: &'a HashMap<CueId, Geometry>,
+    /// What a Fade cue can change on each cue (Settings tab only).
+    fade_caps: &'a HashMap<CueId, FadeCaps>,
     stages: &'a [(StageId, String)],
     out_channels: usize,
     /// Name of the audio output device (None = no audio).
@@ -82,32 +116,37 @@ impl App {
             return;
         };
         let list = &show.ws.cue_list;
-        let options: Vec<(CueId, String)> = list
-            .iter_all()
+        // Target menus and target geometry: only the Settings tab uses them, and they cover every
+        // cue, so they're built only for it (in one pass over the tree).
+        let all = if self.inspector_tab == Tab::Settings { list.iter_all_with_list() } else { Vec::new() };
+        let options: Vec<(CueId, String)> = all
             .iter()
-            .filter(|c| c.id != id)
-            .map(|c| {
+            .filter(|(c, _)| c.id != id)
+            .map(|(c, other_list)| {
                 let label = format!("{} {}", c.number, c.display_name()).trim().to_string();
                 // Cues in a background list say which list they're in.
-                match list.list_name_of(c.id).filter(|_| !list.in_current(c.id)) {
+                match other_list {
                     Some(l) => (c.id, format!("{label}  ({l})")),
                     None => (c.id, label),
                 }
             })
             .collect();
-        let geometries: HashMap<CueId, Geometry> = list
-            .iter_all()
+        let geometries: HashMap<CueId, Geometry> = all
             .iter()
-            .filter_map(|c| match &c.kind {
+            .filter_map(|(c, _)| match &c.kind {
                 CueKind::Video(v) => Some((c.id, v.geometry)),
+                CueKind::Text(t) => Some((c.id, t.geometry)),
+                CueKind::Camera(k) => Some((c.id, k.geometry)),
                 _ => None,
             })
             .collect();
+        let fade_caps: HashMap<CueId, FadeCaps> = all.iter().map(|(c, _)| (c.id, FadeCaps::of(c))).collect();
         let stages: Vec<(StageId, String)> = show.ws.stages.iter().map(|s| (s.id, s.name.clone())).collect();
         let elapsed = show.engine.instances.get(&id).and_then(|_| show.media.elapsed(id));
         let ctx = Ctx {
             options: &options,
             geometries: &geometries,
+            fade_caps: &fade_caps,
             stages: &stages,
             out_channels: show.media.audio.as_ref().map_or(2, |a| a.channels),
             device: show.media.audio.as_ref().map(|a| a.device_name.clone()),
@@ -149,6 +188,7 @@ impl App {
                     Tab::Levels => super::icons::TUNE,
                     Tab::Eq => super::icons::GRAPHIC_EQ,
                     Tab::Geometry => super::icons::OPEN_WITH,
+                    Tab::Animation => super::icons::ANIMATION,
                     Tab::Settings => super::icons::SETTINGS,
                     Tab::Triggers => super::icons::KEYBOARD,
                 };
@@ -193,8 +233,13 @@ impl App {
                     _ => None,
                 };
                 if let Some(eq) = eq {
-                    let specs = [super::theme::Card::new(super::icons::GRAPHIC_EQ, "Equaliser", f32::INFINITY)];
-                    super::theme::cards(ui, "eq", &specs, |ui, _| eq_editor(ui, ui.id().with(("eq", id)), eq));
+                    // Bands on the left, the response curve to their right (both edit the same EQ).
+                    let specs = [
+                        super::theme::Card::new(super::icons::TUNE, "Bands", 470.0),
+                        super::theme::Card::new(super::icons::GRAPHIC_EQ, "Response", 320.0),
+                    ];
+                    let eq_id = ui.id().with(("eq", id));
+                    super::theme::cards(ui, "eq", &specs, |ui, i| if i == 0 { eq_bands(ui, eq_id, eq) } else { eq_graph(ui, eq_id, eq) });
                 }
             }
             Tab::Geometry => match &mut cue.kind {
@@ -203,6 +248,7 @@ impl App {
                         stage: &mut v.stage,
                         fit: Some(&mut v.fit),
                         layer: &mut v.layer,
+                        blend_mode: &mut v.blend_mode,
                         opacity: &mut v.opacity,
                         geometry: &mut v.geometry,
                     };
@@ -213,6 +259,7 @@ impl App {
                         stage: &mut c.stage,
                         fit: Some(&mut c.fit),
                         layer: &mut c.layer,
+                        blend_mode: &mut c.blend_mode,
                         opacity: &mut c.opacity,
                         geometry: &mut c.geometry,
                     };
@@ -223,10 +270,21 @@ impl App {
                         stage: &mut t.stage,
                         fit: None,
                         layer: &mut t.layer,
+                        blend_mode: &mut t.blend_mode,
                         opacity: &mut t.opacity,
                         geometry: &mut t.geometry,
                     };
                     layer_geometry(ui, "tgeo", refs, &ctx, &mut self.show_preview);
+                }
+                _ => {}
+            },
+            Tab::Animation => match &mut cue.kind {
+                CueKind::Video(v) => {
+                    super::animation::animation_tab(ui, id, &mut v.animation, None, &mut self.anim_edit, &mut self.show_preview)
+                }
+                CueKind::Text(t) => {
+                    let base = [t.bg_color, t.shadow_color, t.outline_color, t.color];
+                    super::animation::animation_tab(ui, id, &mut t.animation, Some(base), &mut self.anim_edit, &mut self.show_preview)
                 }
                 _ => {}
             },
@@ -668,57 +726,76 @@ fn io_tab(
 /// Height of the faders' travel on the Levels tab.
 const FADER_TRACK: f32 = 150.0;
 
-/// Width a [`fader_bank`] needs for `outs` output faders.
+/// Space a [`fader_bank`] needs around its faders: dB scale, the gap after the main fader and
+/// the button column on the right.
+const BANK_EXTRA: f32 = 32.0 + 14.0 + 128.0;
+
+/// Width a [`fader_bank`] needs for `outs` output faders at their narrowest (plus card margins).
 fn fader_bank_width(outs: usize) -> f32 {
-    // Scale, main fader, gap, output faders, card margins.
-    32.0 + (outs as f32 + 1.0) * (super::widgets::FADER_W + 6.0) + 14.0 + 26.0
+    BANK_EXTRA + (outs as f32 + 1.0) * (super::widgets::FADER_MIN_W + 6.0) + 26.0
 }
 
-/// Level faders: the cue's main level, then one fader per device output.
+/// Level faders: the cue's main level, then one fader per device output, with the
+/// "Set all silent" / "Default levels" buttons beside them. The faders narrow to fit the card, so
+/// every output shows without scrolling.
 fn fader_bank(ui: &mut Ui, main: &mut f32, out_levels: &mut Vec<f32>, outs: usize) {
-    use super::widgets::{fader_scale, vfader};
+    use super::widgets::{FADER_W, fader_scale, vfader};
     let mut levels: Vec<f32> = (0..outs).map(|o| out_levels.get(o).copied().unwrap_or(0.0)).collect();
     let mut changed = false;
+    let fader_w = ((ui.available_width() - BANK_EXTRA) / (outs as f32 + 1.0) - 6.0).min(FADER_W);
     ui.horizontal_top(|ui| {
         ui.spacing_mut().item_spacing = egui::vec2(6.0, 4.0);
         fader_scale(ui, FADER_TRACK);
-        vfader(ui, main, "Main", FADER_TRACK, true).on_hover_text("The cue's level");
+        vfader(ui, main, "Main", FADER_TRACK, true, fader_w).on_hover_text("The cue's level");
         ui.add_space(14.0);
         for (o, l) in levels.iter_mut().enumerate() {
-            changed |= vfader(ui, l, &(o + 1).to_string(), FADER_TRACK, false)
+            changed |= vfader(ui, l, &(o + 1).to_string(), FADER_TRACK, false, fader_w)
                 .on_hover_text(format!("Output {} level, after the routing matrix", o + 1))
                 .changed();
         }
+        ui.with_layout(egui::Layout::right_to_left(egui::Align::Min), |ui| {
+            ui.vertical(|ui| {
+                ui.set_width(120.0);
+                ui.add_space(20.0);
+                let silent = *main <= MIN_DB && levels.iter().all(|l| *l <= MIN_DB);
+                if ui.add_enabled(!silent, egui::Button::new("Set all silent").min_size(egui::vec2(120.0, 0.0))).clicked() {
+                    *main = MIN_DB;
+                    levels.iter_mut().for_each(|l| *l = MIN_DB);
+                    changed = true;
+                }
+                let flat = *main == 0.0 && levels.iter().all(|l| *l == 0.0);
+                if ui
+                    .add_enabled(!flat, egui::Button::new("Default levels").min_size(egui::vec2(120.0, 0.0)))
+                    .on_hover_text("Main and every output to 0 dB")
+                    .clicked()
+                {
+                    *main = 0.0;
+                    levels.iter_mut().for_each(|l| *l = 0.0);
+                    changed = true;
+                }
+                ui.add_space(6.0);
+                ui.label(RichText::new("Crosspoints are on the I/O tab.").weak().small());
+            });
+        });
     });
     if changed {
-        *out_levels = levels;
+        *out_levels = if levels.iter().all(|l| *l == 0.0) { Vec::new() } else { levels };
     }
-    ui.add_space(2.0);
-    ui.horizontal(|ui| {
-        let flat = *main == 0.0 && out_levels.iter().all(|l| *l == 0.0);
-        if ui
-            .add_enabled(!flat, egui::Button::new("Reset to 0 dB").small())
-            .on_hover_text("Crosspoint levels are on the I/O tab")
-            .clicked()
-        {
-            *main = 0.0;
-            out_levels.clear();
-        }
-    });
 }
 
 fn audio_levels(ui: &mut Ui, a: &mut AudioCue, outs: usize) {
     use super::icons as ic;
     use super::theme::Card;
-    let specs = [Card::new(ic::TUNE, "Levels", fader_bank_width(outs)), Card::new(ic::CONTROL_CAMERA, "Pan", 260.0)];
+    // Pan in a narrow card on the left, the fader bank takes the rest of the row.
+    let specs = [Card::new(ic::CONTROL_CAMERA, "Pan", PAN_W), Card::new(ic::TUNE, "Levels", fader_bank_width(outs))];
     super::theme::cards(ui, "alevels", &specs, |ui, i| match i {
-        0 => fader_bank(ui, &mut a.volume_db, &mut a.out_levels, outs),
-        _ => pan_card(ui, &mut a.pan),
+        0 => pan_card(ui, &mut a.pan),
+        _ => fader_bank(ui, &mut a.volume_db, &mut a.out_levels, outs),
     });
 }
 
 fn video_levels(ui: &mut Ui, v: &mut VideoCue, outs: usize) {
-    let specs = [super::theme::Card::new(super::icons::TUNE, "Soundtrack levels", fader_bank_width(outs).max(300.0))];
+    let specs = [super::theme::Card::new(super::icons::TUNE, "Soundtrack levels", f32::INFINITY)];
     super::theme::cards(ui, "vlevels", &specs, |ui, _| fader_bank(ui, &mut v.volume_db, &mut v.out_levels, outs));
 }
 
@@ -854,7 +931,7 @@ fn stage_combo(ui: &mut Ui, salt: &str, stage: &mut Option<StageId>, stages: &[(
     });
 }
 
-fn preview_toggle(ui: &mut Ui, open: &mut bool) {
+pub(super) fn preview_toggle(ui: &mut Ui, open: &mut bool) {
     if cfg!(feature = "video") {
         ui.toggle_value(open, super::theme::with_icon(super::icons::PREVIEW, "Preview"))
             .on_hover_text("Show where this layer lands on its stage (View → Geometry preview)");
@@ -865,7 +942,7 @@ fn preview_toggle(ui: &mut Ui, open: &mut bool) {
 fn layer_geometry(ui: &mut Ui, salt: &str, layer: LayerRefs, ctx: &Ctx, preview: &mut bool) {
     use super::icons as ic;
     use super::theme::Card;
-    let LayerRefs { stage, mut fit, layer, opacity, geometry } = layer;
+    let LayerRefs { stage, mut fit, layer, blend_mode, opacity, geometry } = layer;
     let specs = [Card::new(ic::DESKTOP_WINDOWS, "Layer", 320.0), Card::new(ic::OPEN_WITH, "Geometry", 520.0)];
     super::theme::cards(ui, salt, &specs, |ui, i| match i {
         0 => {
@@ -888,6 +965,15 @@ fn layer_geometry(ui: &mut Ui, salt: &str, layer: LayerRefs, ctx: &Ctx, preview:
                 ui.label("Opacity");
                 ui.add(Slider::new(opacity, 0.0..=1.0));
                 ui.end_row();
+                ui.label("Blend");
+                ComboBox::from_id_salt((salt, "blend")).selected_text(blend_mode.label()).show_ui(ui, |ui| {
+                    for m in BlendMode::ALL {
+                        ui.selectable_value(blend_mode, m, m.label());
+                    }
+                })
+                .response
+                .on_hover_text("How this layer combines with the layers below it");
+                ui.end_row();
             });
             ui.add_space(4.0);
             preview_toggle(ui, preview);
@@ -902,6 +988,7 @@ struct LayerRefs<'a> {
     /// None for text, which has no fit mode.
     fit: Option<&'a mut VideoFit>,
     layer: &'a mut i32,
+    blend_mode: &'a mut BlendMode,
     opacity: &'a mut f32,
     geometry: &'a mut Geometry,
 }
@@ -1020,12 +1107,67 @@ fn settings_tab(ui: &mut Ui, cue: &mut Cue, ctx: &Ctx, refresh: &mut bool) {
             });
         }
         CueKind::Fade(f) => {
-            let mut specs = vec![Card::new(ic::TRENDING_DOWN, "Fade", 380.0), Card::new(ic::TUNE, "Changes", 380.0)];
-            if f.geometry.is_some() {
+            // Only what the target can do: no geometry for a sound cue, no level for a text cue.
+            // With no target yet, everything is offered.
+            let caps = f.target.map_or(FadeCaps { level: true, picture: true }, |t| ctx.fade_caps.get(&t).copied().unwrap_or_default());
+            let mut specs = vec![Card::new(ic::TUNE, "Changes", 300.0), Card::new(ic::TRENDING_DOWN, "Fade", 420.0)];
+            if f.geometry.is_some() && caps.picture {
                 specs.push(Card::new(ic::OPEN_WITH, "Target geometry", f32::INFINITY));
             }
+            // Fading toward silence / transparency draws the curve falling.
+            let falling = match (f.volume_db.filter(|_| caps.level), f.opacity.filter(|_| caps.picture)) {
+                (Some(db), _) => db < 0.0,
+                (None, Some(o)) => o < 0.5,
+                _ => false,
+            };
             cards(ui, "fade", &specs, |ui, i| match i {
                 0 => {
+                    if !caps.level && !caps.picture {
+                        ui.label(RichText::new("The target has nothing to fade: pick a sound, video, text, camera or group cue.").weak());
+                        return;
+                    }
+                    egui::Grid::new("fade-changes").num_columns(2).spacing([10.0, 6.0]).show(ui, |ui| {
+                        if caps.level {
+                            ui.label("Level");
+                            ui.horizontal(|ui| {
+                                let mut on = f.volume_db.is_some();
+                                if ui.checkbox(&mut on, "").changed() {
+                                    f.volume_db = on.then_some(MIN_DB);
+                                }
+                                if let Some(db) = &mut f.volume_db {
+                                    db_edit(ui, db);
+                                } else {
+                                    ui.label(RichText::new("unchanged").weak());
+                                }
+                            });
+                            ui.end_row();
+                        }
+                        if caps.picture {
+                            ui.label("Opacity");
+                            ui.horizontal(|ui| {
+                                let mut on = f.opacity.is_some();
+                                if ui.checkbox(&mut on, "").changed() {
+                                    f.opacity = on.then_some(0.0);
+                                }
+                                if let Some(o) = &mut f.opacity {
+                                    ui.add(Slider::new(o, 0.0..=1.0));
+                                } else {
+                                    ui.label(RichText::new("unchanged").weak());
+                                }
+                            });
+                            ui.end_row();
+                            ui.label("Geometry");
+                            let mut on = f.geometry.is_some();
+                            if ui.checkbox(&mut on, "Animate position / scale / rotation").changed() {
+                                // Start from the target's own geometry so only what you change moves.
+                                f.geometry =
+                                    on.then(|| f.target.and_then(|t| ctx.geometries.get(&t).copied()).unwrap_or_default());
+                            }
+                            ui.end_row();
+                        }
+                    });
+                }
+                1 => {
                     egui::Grid::new("fade").num_columns(2).spacing([10.0, 6.0]).show(ui, |ui| {
                         ui.label("Target");
                         target_combo(ui, "fade_target", &mut f.target, options, "— none —");
@@ -1038,50 +1180,17 @@ fn settings_tab(ui: &mut Ui, cue: &mut Cue, ctx: &Ctx, refresh: &mut bool) {
                             for c in FadeCurve::ALL {
                                 ui.selectable_value(&mut f.curve, c, c.label());
                             }
+                            if let FadeCurve::Custom(_) = f.curve {
+                                let _ = ui.selectable_label(true, "Custom");
+                            }
                         });
                         ui.end_row();
                         ui.label("When done");
                         ui.checkbox(&mut f.stop_target_when_done, "Stop target");
                         ui.end_row();
                     });
-                }
-                1 => {
-                    egui::Grid::new("fade-changes").num_columns(2).spacing([10.0, 6.0]).show(ui, |ui| {
-                        ui.label("Level");
-                        ui.horizontal(|ui| {
-                            let mut on = f.volume_db.is_some();
-                            if ui.checkbox(&mut on, "").changed() {
-                                f.volume_db = on.then_some(MIN_DB);
-                            }
-                            if let Some(db) = &mut f.volume_db {
-                                db_edit(ui, db);
-                            } else {
-                                ui.label(RichText::new("unchanged").weak());
-                            }
-                        });
-                        ui.end_row();
-                        ui.label("Opacity");
-                        ui.horizontal(|ui| {
-                            let mut on = f.opacity.is_some();
-                            if ui.checkbox(&mut on, "").changed() {
-                                f.opacity = on.then_some(0.0);
-                            }
-                            if let Some(o) = &mut f.opacity {
-                                ui.add(Slider::new(o, 0.0..=1.0));
-                            } else {
-                                ui.label(RichText::new("unchanged").weak());
-                            }
-                        });
-                        ui.end_row();
-                        ui.label("Geometry");
-                        let mut on = f.geometry.is_some();
-                        if ui.checkbox(&mut on, "Animate position / scale / rotation").changed() {
-                            // Start from the target's own geometry so only what you change moves.
-                            f.geometry =
-                                on.then(|| f.target.and_then(|t| ctx.geometries.get(&t).copied()).unwrap_or_default());
-                        }
-                        ui.end_row();
-                    });
+                    ui.add_space(6.0);
+                    super::widgets::curve_graph(ui, "fade-curve", &mut f.curve, f.duration, falling, caps.level);
                 }
                 _ => {
                     if let Some(g) = &mut f.geometry {
@@ -1262,13 +1371,30 @@ fn text_settings(ui: &mut Ui, t: &mut crate::model::TextCue) {
                 });
                 ui.end_row();
 
+                ui.label("Background");
+                ui.horizontal(|ui| {
+                    let mut on = t.bg_color[3] > 0;
+                    if ui.checkbox(&mut on, "").on_hover_text("A box behind the text").changed() {
+                        t.bg_color[3] = if on { 255 } else { 0 };
+                    }
+                    ui.add_enabled_ui(on, |ui| {
+                        color_button(ui, &mut t.bg_color);
+                        ui.label("padding");
+                        ui.add(DragValue::new(&mut t.bg_padding).range(0.0..=500.0).speed(0.5).suffix(" px"));
+                        ui.label("radius");
+                        ui.add(DragValue::new(&mut t.bg_radius).range(0.0..=500.0).speed(0.5).suffix(" px"))
+                            .on_hover_text("Rounded corners");
+                    });
+                });
+                ui.end_row();
+
             });
         }
         _ => {
             text_sample(ui, t);
             ui.add_space(4.0);
             ui.label(
-                RichText::new("Text appears on the stage like a video layer: use the Geometry tab and Fade cues to move and fade it.")
+                RichText::new("Text appears on the stage like a video layer: use the Geometry and Animation tabs and Fade cues to place, animate and fade it.")
                     .weak()
                     .small(),
             );
@@ -1314,11 +1440,23 @@ fn text_sample(ui: &mut Ui, t: &crate::model::TextCue) {
         return;
     }
     let first = t.text.lines().find(|l| !l.trim().is_empty()).unwrap_or("Sample").chars().take(60).collect::<String>();
-    let sample = crate::model::TextCue { text: first, size: 40.0, align: crate::model::TextAlign::Left, ..t.clone() };
+    // Placement, timing and animation don't change the sample, so editing them renders nothing.
+    let sample = crate::model::TextCue {
+        text: first,
+        size: 40.0,
+        align: crate::model::TextAlign::Left,
+        animation: Default::default(),
+        geometry: Default::default(),
+        stage: None,
+        layer: 0,
+        opacity: 1.0,
+        duration: 0.0,
+        ..t.clone()
+    };
     // One cached texture, replaced when the look changes.
     let slot = egui::Id::new("text-sample");
-    let key = serde_json::to_string(&sample).unwrap_or_default();
-    let cached = ui.data(|d| d.get_temp::<(String, egui::TextureHandle)>(slot)).filter(|(k, _)| *k == key);
+    let key = sample.clone();
+    let cached = ui.data(|d| d.get_temp::<(crate::model::TextCue, egui::TextureHandle)>(slot)).filter(|(k, _)| *k == key);
     let tex = cached.map(|(_, h)| h).unwrap_or_else(|| {
         let img = text::render(&sample);
         let ci = egui::ColorImage::from_rgba_unmultiplied([img.width as usize, img.height as usize], &img.rgba);
@@ -1443,15 +1581,19 @@ fn mic_io(ui: &mut Ui, m: &mut crate::model::MicCue, ctx: &Ctx, refresh: &mut bo
 fn mic_levels(ui: &mut Ui, m: &mut crate::model::MicCue, outs: usize) {
     use super::icons as ic;
     use super::theme::Card;
-    let specs = [Card::new(ic::TUNE, "Levels", fader_bank_width(outs)), Card::new(ic::CONTROL_CAMERA, "Pan", 260.0)];
+    let specs = [Card::new(ic::CONTROL_CAMERA, "Pan", PAN_W), Card::new(ic::TUNE, "Levels", fader_bank_width(outs))];
     super::theme::cards(ui, "miclevels", &specs, |ui, i| match i {
-        0 => fader_bank(ui, &mut m.volume_db, &mut m.out_levels, outs),
-        _ => pan_card(ui, &mut m.pan),
+        0 => pan_card(ui, &mut m.pan),
+        _ => fader_bank(ui, &mut m.volume_db, &mut m.out_levels, outs),
     });
 }
 
+/// Width of the Pan card on the Levels tab.
+const PAN_W: f32 = 190.0;
+
 fn pan_card(ui: &mut Ui, pan: &mut f32) {
     ui.horizontal(|ui| {
+        ui.spacing_mut().slider_width = (ui.available_width() - 44.0).max(60.0);
         ui.add(Slider::new(pan, -1.0..=1.0).show_value(false));
         ui.label(RichText::new(pan_label(*pan)).font(super::theme::mono(12.5)));
     });
@@ -1604,4 +1746,27 @@ fn triggers(ui: &mut Ui, cue: &mut Cue, ctx: &Ctx) -> bool {
         }
     });
     setup
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::model::KindTag;
+
+    /// The Fade cue shows only what its target can change.
+    #[test]
+    fn fade_caps_follow_the_target_kind() {
+        let caps = |k: KindTag| FadeCaps::of(&Cue::new(k.default_kind()));
+        assert_eq!(caps(KindTag::Audio), FadeCaps { level: true, picture: false });
+        assert_eq!(caps(KindTag::Text), FadeCaps { level: false, picture: true });
+        assert_eq!(caps(KindTag::Video), FadeCaps { level: true, picture: true });
+        assert_eq!(caps(KindTag::Wait), FadeCaps::default());
+        let still = crate::model::VideoCue { path: "logo.svg".into(), ..Default::default() };
+        assert_eq!(FadeCaps::of(&Cue::new(CueKind::Video(still))), FadeCaps { level: false, picture: true });
+        let group = CueKind::Group {
+            mode: GroupMode::StartAll,
+            children: vec![Cue::new(KindTag::Audio.default_kind()), Cue::new(KindTag::Camera.default_kind())],
+        };
+        assert_eq!(FadeCaps::of(&Cue::new(group)), FadeCaps { level: true, picture: true });
+    }
 }

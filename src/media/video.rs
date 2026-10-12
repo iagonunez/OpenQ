@@ -7,8 +7,10 @@
 //! system FFmpeg can play works, with no codec plugins to install.
 
 use super::audio::VoiceShared;
+use super::text::{TextPlanes, TextRender};
+use crate::animation::AnimState;
 use crate::engine::FadeRequest;
-use crate::model::{CameraCue, CueId, FadeCurve, Geometry, MIN_DB, StageId, TextCue, VideoCue, VideoFit};
+use crate::model::{BlendMode, CameraCue, CueId, FadeCurve, Geometry, MIN_DB, StageId, TextCue, VideoCue, VideoFit};
 use anyhow::{Context, anyhow};
 use ffmpeg_next as ff;
 use parking_lot::{Condvar, Mutex};
@@ -54,6 +56,9 @@ pub struct Frame {
     pub generation: u64,
     /// Image pixels per stage pixel (rendered text is supersampled); 0 means 1.
     pub density: f32,
+    /// Text cues: coverage planes coloured as they are drawn (`data` is then empty). Shared with
+    /// the render cache, so firing a text cue again costs no copy.
+    pub planes: Option<Arc<TextPlanes>>,
 }
 
 impl Frame {
@@ -82,19 +87,23 @@ pub struct StageLayer {
     pub geometry: Geometry,
     /// Stacking layer: higher draws on top.
     pub layer: i32,
+    /// How the picture combines with the layers below.
+    pub blend_mode: BlendMode,
     /// How the picture fits the stage.
     pub fit: VideoFit,
     /// Start order, to stack equal layers by age.
     pub order: u64,
+    /// Colour multiplier, sRGB RGBA 0..1 (white = unchanged; from the animation).
+    pub tint: [f32; 4],
+    /// Text cues: colours of the background, shadow, outline and fill planes (sRGB RGBA 0..1).
+    pub text_colors: [[f32; 4]; 4],
+    /// True while an animation runs, so stage windows keep redrawing.
+    pub animated: bool,
 }
 
 /// Progress shaping for non-level parameters.
 fn shape(curve: FadeCurve, t: f32) -> f32 {
-    let t = t.clamp(0.0, 1.0);
-    match curve {
-        FadeCurve::Linear | FadeCurve::Logarithmic => t,
-        FadeCurve::SCurve => t * t * (3.0 - 2.0 * t),
-    }
+    curve.progress(t)
 }
 
 #[derive(Clone, Copy)]
@@ -179,7 +188,9 @@ enum FrameResult {
 
 impl DecodeJob {
     fn run(self) {
-        let res = self.decode();
+        // A panic inside FFmpeg handling must still mark the movie finished, or its cue would
+        // never end.
+        let res = crate::recovery::catch(|| self.decode());
         let mut st = self.ctl.state.lock();
         if let Err(e) = res {
             log::error!("video {}: {e:#}", self.params.path.display());
@@ -611,7 +622,7 @@ impl Capture {
         let thread = std::thread::Builder::new()
             .name("openq-camera".into())
             .spawn(move || {
-                if let Err(err) = capture(&c, &frame, &q, &p) {
+                if let Err(err) = crate::recovery::catch(|| capture(&c, &frame, &q, &p)) {
                     log::error!("camera: {err:#}");
                     *e.lock() = Some(format!("{err:#}"));
                 }
@@ -674,6 +685,7 @@ pub fn camera_layer_params(c: &CameraCue) -> VideoCue {
         volume_db: MIN_DB,
         opacity: c.opacity,
         layer: c.layer,
+        blend_mode: c.blend_mode,
         fit: c.fit,
         stage: c.stage,
         geometry: c.geometry,
@@ -708,16 +720,54 @@ struct Player {
     tap: Option<AudioTap>,
     audio_feed: AudioFeed,
     audio_state: Arc<Mutex<Option<Arc<VoiceShared>>>>,
+    /// Text cues: background, shadow, outline and fill colours.
+    text_colors: [[u8; 4]; 4],
+    /// A still image's load error, set by its loader thread.
+    load_error: Option<Arc<Mutex<Option<String>>>>,
+    /// Text cues: planes being rendered, shown once ready (the previous ones stay up meanwhile).
+    text_job: Option<TextRender>,
+    /// Text cues: the look last handed to this layer (shown, or rendering).
+    text_look: Option<TextCue>,
 }
 
-fn load_still(path: &Path, slot: &FrameSlot) -> anyhow::Result<()> {
-    let img = image::open(path).with_context(|| format!("cannot read image {}", path.display()))?.to_rgba8();
-    let mut f = slot.lock();
-    f.width = img.width();
-    f.height = img.height();
-    f.data = img.into_raw();
-    f.generation = f.generation.wrapping_add(1);
-    Ok(())
+/// SVG rasterising scale for a layer: sharp at the largest size its geometry and animation
+/// reach (2× like text when shown at its own size; about 2560 px across when fitted).
+fn svg_scale(params: &VideoCue, longest: f32) -> f32 {
+    let g = &params.geometry;
+    let zoom = g.scale_x.abs().max(g.scale_y.abs()).max(1.0) * params.animation.max_scale();
+    match params.fit {
+        VideoFit::Native => 2.0 * zoom,
+        _ => 2560.0 * zoom / longest.max(1.0),
+    }
+}
+
+/// Decode a still on its own thread (big images and SVGs take a while; the engine must not wait),
+/// publishing it into `slot` when ready.
+fn load_still(params: &VideoCue, slot: FrameSlot) -> Arc<Mutex<Option<String>>> {
+    let error = Arc::new(Mutex::new(None));
+    let (err, params) = (error.clone(), params.clone());
+    let spawned = std::thread::Builder::new().name("openq-still".into()).spawn(move || {
+        let path = &params.path;
+        let res = crate::recovery::catch(|| {
+            let (w, h) = if super::still::is_svg(path) { super::still::dimensions(path)? } else { (1, 1) };
+            super::still::load(path, svg_scale(&params, w.max(h) as f32))
+        });
+        match res {
+            Ok(img) => {
+                let mut f = slot.lock();
+                f.width = img.width;
+                f.height = img.height;
+                f.data = img.rgba;
+                f.density = img.density;
+                f.generation = f.generation.wrapping_add(1);
+            }
+            Err(e) => *err.lock() = Some(format!("{e:#}")),
+        }
+    });
+    if let Err(e) = spawned {
+        *error.lock() = Some(format!("cannot start image loader: {e}"));
+    }
+    error
 }
 
 /// The video-layer settings a Text cue plays with.
@@ -726,23 +776,22 @@ pub fn text_layer_params(t: &TextCue) -> VideoCue {
         volume_db: MIN_DB,
         opacity: t.opacity,
         layer: t.layer,
+        blend_mode: t.blend_mode,
         fit: VideoFit::Native,
         stage: t.stage,
         geometry: t.geometry,
         still_duration: t.duration,
+        animation: t.animation.clone(),
         ..Default::default()
     }
 }
 
-fn text_frame(t: &TextCue) -> FrameSlot {
-    let img = super::text::render(t);
-    Arc::new(Mutex::new(Frame { width: img.width, height: img.height, data: img.rgba, generation: 1, density: img.density }))
+
+/// A Text cue's colours in plane order: background, shadow, outline, fill.
+fn text_colors(t: &TextCue) -> [[u8; 4]; 4] {
+    [t.bg_color, t.shadow_color, t.outline_color, t.color]
 }
 
-/// The settings that change how a Text cue's picture looks (not where it goes).
-fn text_look(t: &TextCue) -> TextCue {
-    TextCue { stage: None, geometry: Default::default(), layer: 0, opacity: 1.0, duration: 0.0, ..t.clone() }
-}
 
 impl Player {
     /// A still layer from an already-rendered frame (Text cues).
@@ -766,6 +815,10 @@ impl Player {
             tap: None,
             audio_feed: Arc::new(Mutex::new(None)),
             audio_state: Arc::new(Mutex::new(None)),
+            text_colors: [[255; 4]; 4],
+            load_error: None,
+            text_job: None,
+            text_look: None,
         }
     }
 
@@ -773,8 +826,9 @@ impl Player {
         let frame: FrameSlot = Arc::new(Mutex::new(Frame::default()));
         let audio_feed: AudioFeed = Arc::new(Mutex::new(None));
         let audio_state = Arc::new(Mutex::new(None));
+        let mut load_error = None;
         let source = if super::is_image_path(&params.path) {
-            load_still(&params.path, &frame)?;
+            load_error = Some(load_still(params, frame.clone()));
             Source::Still
         } else {
             let ctl = Arc::new(MovieCtl { state: Mutex::new(MovieState::default()), wake: Condvar::new() });
@@ -809,7 +863,16 @@ impl Player {
             tap,
             audio_feed,
             audio_state,
+            text_colors: [[255; 4]; 4],
+            load_error,
+            text_job: None,
+            text_look: None,
         })
+    }
+
+    /// Seconds the layer has been playing (its animation clock; stops while paused).
+    fn anim_time(&self, now: Instant) -> f64 {
+        self.started_at.map_or(0.0, |s| self.paused_at.unwrap_or(now).saturating_duration_since(s).as_secs_f64())
     }
 
     fn position(&self) -> Option<f64> {
@@ -821,7 +884,24 @@ impl Player {
         }
     }
 
+    /// Show a Text cue's planes once its background render has finished.
+    fn publish_text(&mut self) {
+        let Some(planes) = self.text_job.as_ref().and_then(|j| j.ready()) else { return };
+        self.text_job = None;
+        let mut f = self.frame.lock();
+        f.width = planes.width;
+        f.height = planes.height;
+        f.density = planes.density;
+        f.planes = Some(planes);
+        f.generation = f.generation.wrapping_add(1);
+    }
+
     fn update(&mut self, now: Instant) {
+        self.publish_text();
+        if let Some(e) = self.load_error.as_ref().and_then(|e| e.lock().take()) {
+            self.finished = true;
+            self.error = Some(e);
+        }
         if let Source::Movie(m) = &self.source {
             let mut st = m.ctl.state.lock();
             if st.finished && !self.finished {
@@ -922,8 +1002,9 @@ impl Player {
 pub struct VideoOutput {
     players: HashMap<CueId, Player>,
     preloaded: HashMap<CueId, Player>,
-    /// Text cues currently showing (to detect content edits).
-    texts: HashMap<CueId, TextCue>,
+    /// Latest render of each Text cue that is preloaded or showing (rendered in the background
+    /// ahead of GO, so starting a text cue renders nothing).
+    text_renders: HashMap<CueId, TextRender>,
     order: u64,
 }
 
@@ -931,7 +1012,7 @@ impl VideoOutput {
     /// Initialise FFmpeg.
     pub fn new() -> anyhow::Result<Self> {
         init()?;
-        Ok(Self { players: HashMap::new(), preloaded: HashMap::new(), texts: HashMap::new(), order: 0 })
+        Ok(Self { players: HashMap::new(), preloaded: HashMap::new(), text_renders: HashMap::new(), order: 0 })
     }
 
     /// Open these cues ahead of time so they start without delay.
@@ -976,6 +1057,11 @@ impl VideoOutput {
         self.players.remove(&cue);
     }
 
+    /// Remove every layer.
+    pub fn stop_all(&mut self) {
+        self.players.clear();
+    }
+
     /// Show a live camera as a layer.
     pub fn start_camera(&mut self, cue: CueId, c: &CameraCue, at: Instant) {
         self.order += 1;
@@ -987,31 +1073,57 @@ impl VideoOutput {
         self.players.insert(cue, p);
     }
 
-    /// Show a Text cue as a layer.
+    /// The render of `t`'s look: the cached one if it still matches, else a new background render.
+    fn text_render(&mut self, cue: CueId, t: &TextCue) -> TextRender {
+        let look = super::text::look(t);
+        match self.text_renders.get(&cue) {
+            Some(r) if r.look == look => r.clone(),
+            _ => {
+                let r = TextRender::spawn(t);
+                self.text_renders.insert(cue, r.clone());
+                r
+            }
+        }
+    }
+
+    /// Render these Text cues in the background ahead of GO; drop renders no longer needed.
+    pub fn set_preloaded_text(&mut self, cues: &[(CueId, &TextCue)]) {
+        let players = &self.players;
+        self.text_renders.retain(|id, _| players.contains_key(id) || cues.iter().any(|(c, _)| c == id));
+        for (id, t) in cues {
+            self.text_render(*id, t);
+        }
+    }
+
+    /// Show a Text cue as a layer. Its planes come from the preload render (or a new background
+    /// render, shown a few milliseconds late); nothing is rendered on the calling thread.
     pub fn start_text(&mut self, cue: CueId, t: &TextCue, at: Instant) {
         self.order += 1;
-        let mut p = Player::from_frame(text_layer_params(t), self.order, text_frame(t));
+        let job = self.text_render(cue, t);
+        let mut p = Player::from_frame(text_layer_params(t), self.order, Arc::new(Mutex::new(Frame::default())));
+        p.text_colors = text_colors(t);
+        p.text_look = Some(job.look.clone());
+        p.text_job = Some(job);
         p.play_at = Some(at);
         p.update(Instant::now());
         self.players.insert(cue, p);
-        self.texts.insert(cue, t.clone());
     }
 
-    /// Live edits to a showing Text cue: re-render if the text itself changed.
+    /// Live edits to a showing Text cue: colours and placement apply at once; a changed look is
+    /// re-rendered in the background and replaces the picture when ready.
     pub fn update_text(&mut self, cue: CueId, t: &TextCue) {
-        let Some(old) = self.texts.get(&cue).cloned() else { return };
-        if text_look(&old) != text_look(t)
-            && let Some(p) = self.players.get_mut(&cue)
-        {
-            let img = super::text::render(t);
-            let mut f = p.frame.lock();
-            f.width = img.width;
-            f.height = img.height;
-            f.data = img.rgba;
-            f.density = img.density;
-            f.generation = f.generation.wrapping_add(1);
+        if !self.players.contains_key(&cue) {
+            return;
         }
-        self.texts.insert(cue, t.clone());
+        let job = self.text_render(cue, t);
+        if let Some(p) = self.players.get_mut(&cue) {
+            p.text_colors = text_colors(t);
+            if p.text_look.as_ref() != Some(&job.look) {
+                p.text_look = Some(job.look.clone());
+                p.text_job = Some(job);
+                p.publish_text();
+            }
+        }
         self.update_live(cue, &text_layer_params(t));
     }
 
@@ -1111,21 +1223,31 @@ impl VideoOutput {
         out
     }
 
-    /// Layers to draw, bottom to top.
+    /// Layers to draw, bottom to top, with their animations evaluated for this moment.
     pub fn stage_layers(&self) -> Vec<StageLayer> {
+        let now = Instant::now();
         let mut v: Vec<StageLayer> = self
             .players
             .iter()
             .filter(|(_, p)| p.playing || p.finished)
-            .map(|(id, p)| StageLayer {
-                id: *id,
-                stage: p.params.stage,
-                frame: p.frame.clone(),
-                opacity: p.opacity,
-                geometry: p.geometry,
-                layer: p.params.layer,
-                fit: p.params.fit,
-                order: p.order,
+            .map(|(id, p)| {
+                let anim = &p.params.animation;
+                let st = if anim.is_empty() { AnimState::default() } else { anim.sample(p.anim_time(now)) };
+                let text_colors = std::array::from_fn(|i| st.text[i].unwrap_or(p.text_colors[i].map(|c| c as f32 / 255.0)));
+                StageLayer {
+                    id: *id,
+                    stage: p.params.stage,
+                    frame: p.frame.clone(),
+                    opacity: p.opacity * st.opacity,
+                    geometry: st.geometry(&p.geometry),
+                    layer: p.params.layer,
+                    blend_mode: p.params.blend_mode,
+                    fit: p.params.fit,
+                    order: p.order,
+                    tint: st.tint,
+                    text_colors,
+                    animated: !anim.is_empty() && p.paused_at.is_none(),
+                }
             })
             .collect();
         v.sort_by_key(|l| (l.layer, l.order));
@@ -1223,6 +1345,110 @@ pub fn poster(path: &Path, at: f64, max_side: u32) -> anyhow::Result<(u32, u32, 
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn animated_text_layer() {
+        use crate::animation::AnimProp;
+        let mut t = TextCue { text: "Anim".into(), color: [255, 0, 0, 255], ..Default::default() };
+        t.geometry.x = 0.1;
+        t.animation.set_key(AnimProp::X, 0.0, [0.0; 4]);
+        t.animation.set_key(AnimProp::X, 0.2, [0.5, 0.0, 0.0, 0.0]);
+        t.animation.set_key(AnimProp::Opacity, 0.0, [0.5, 0.0, 0.0, 0.0]);
+        t.animation.set_key(AnimProp::TextColor, 0.0, [0.0, 1.0, 0.0, 1.0]);
+        let mut out = VideoOutput::new().unwrap();
+        let id = CueId::new_v4();
+        out.start_text(id, &t, Instant::now());
+        std::thread::sleep(Duration::from_millis(250));
+        eventually(|| {
+            out.update(Instant::now());
+            out.stage_layers()[0].frame.lock().planes.is_some()
+        });
+        let l = out.stage_layers().pop().unwrap();
+        assert!((l.geometry.x - 0.6).abs() < 1e-4, "{}", l.geometry.x);
+        assert_eq!(l.opacity, 0.5);
+        assert_eq!(l.text_colors[3], [0.0, 1.0, 0.0, 1.0]);
+        assert!(l.animated);
+        assert!(l.frame.lock().planes.as_ref().is_some_and(|p| p.masks.len() == 1));
+        // Paused: the clock stops.
+        out.pause(id);
+        let a = out.stage_layers()[0].geometry.x;
+        assert!(!out.stage_layers()[0].animated);
+        std::thread::sleep(Duration::from_millis(20));
+        assert_eq!(out.stage_layers()[0].geometry.x, a);
+    }
+
+    /// Wait (up to 10 s) until `f` holds.
+    fn eventually(mut f: impl FnMut() -> bool) {
+        let t0 = Instant::now();
+        while !f() {
+            assert!(t0.elapsed() < Duration::from_secs(10), "timed out");
+            std::thread::sleep(Duration::from_millis(2));
+        }
+    }
+
+    /// Text is rendered ahead of GO on the worker; starting and editing a showing text cue does
+    /// no rendering on the calling (engine/UI) thread, and colour, placement and animation edits
+    /// neither re-render nor re-upload the picture.
+    #[test]
+    fn text_cues_never_render_on_the_calling_thread() {
+        use crate::animation::AnimProp;
+        use crate::media::text::render_count;
+        let text = "no render on the engine thread";
+        let mut t = TextCue { text: text.into(), outline_width: 4.0, shadow_color: [0, 0, 0, 200], ..Default::default() };
+        let mut out = VideoOutput::new().unwrap();
+        let id = CueId::new_v4();
+        out.set_preloaded_text(&[(id, &t)]);
+        out.text_renders[&id].wait();
+        assert_eq!(render_count(text), 1);
+
+        let t0 = Instant::now();
+        out.start_text(id, &t, Instant::now());
+        out.update(Instant::now());
+        let took = t0.elapsed();
+        assert!(took < Duration::from_millis(5), "start_text took {took:?}");
+        let generation = out.stage_layers()[0].frame.lock().generation;
+        assert!(out.stage_layers()[0].frame.lock().planes.is_some(), "preloaded planes shown at once");
+
+        // 300 live edits that don't change the look: colours, placement, animation.
+        let t0 = Instant::now();
+        for i in 0..300 {
+            let f = i as f32 / 300.0;
+            t.color = [255, (f * 255.0) as u8, 0, 255];
+            t.shadow_color[3] = 100 + (i % 100) as u8;
+            t.geometry.x = f;
+            t.opacity = 1.0 - f / 2.0;
+            t.animation.set_key(AnimProp::Rotation, f as f64, [f * 90.0, 0.0, 0.0, 0.0]);
+            out.update_text(id, &t);
+            out.update(Instant::now());
+            let _ = out.stage_layers();
+        }
+        let took = t0.elapsed();
+        assert!(took < Duration::from_millis(150), "300 edits took {took:?}");
+        assert_eq!(render_count(text), 1, "a colour/placement/animation edit re-rendered the text");
+        assert_eq!(out.stage_layers()[0].frame.lock().generation, generation, "the picture was re-uploaded");
+
+        // A new look renders in the background; the old picture stays up until it is ready.
+        t.size = 50.0;
+        let t0 = Instant::now();
+        out.update_text(id, &t);
+        assert!(t0.elapsed() < Duration::from_millis(5), "update_text blocked");
+        eventually(|| {
+            out.update(Instant::now());
+            out.stage_layers()[0].frame.lock().generation != generation
+        });
+        assert_eq!(render_count(text), 2);
+
+        // Without a preload, starting still doesn't block: the text appears when rendered.
+        let other = TextCue { text: "started cold".into(), outline_width: 6.0, ..Default::default() };
+        let id2 = CueId::new_v4();
+        let t0 = Instant::now();
+        out.start_text(id2, &other, Instant::now());
+        assert!(t0.elapsed() < Duration::from_millis(5), "cold start_text blocked");
+        eventually(|| {
+            out.update(Instant::now());
+            out.stage_layers().iter().any(|l| l.id == id2 && l.frame.lock().planes.is_some())
+        });
+    }
 
     #[test]
     fn camera_capture_publishes_mirrored_frames() {

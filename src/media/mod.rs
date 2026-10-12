@@ -3,6 +3,7 @@
 pub mod audio;
 pub mod decoder;
 pub mod input;
+pub mod still;
 pub mod tcio;
 pub mod text;
 #[cfg(feature = "video")]
@@ -17,6 +18,19 @@ use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::time::Instant;
+
+/// Largest texture side the GPU takes (set by the UI from its renderer; 8192 until then).
+static MAX_TEXTURE_SIDE: std::sync::atomic::AtomicU32 = std::sync::atomic::AtomicU32::new(8192);
+
+/// Tell the media code the renderer's largest texture side, so pictures are made to fit it.
+pub fn set_max_texture_side(px: usize) {
+    MAX_TEXTURE_SIDE.store(px.clamp(256, 1 << 15) as u32, std::sync::atomic::Ordering::Relaxed);
+}
+
+/// Largest texture side the renderer accepts, in pixels.
+pub fn max_texture_side() -> u32 {
+    MAX_TEXTURE_SIDE.load(std::sync::atomic::Ordering::Relaxed)
+}
 
 /// What the prober learned about a media file.
 #[derive(Clone, Debug, Default, serde::Serialize, serde::Deserialize)]
@@ -58,7 +72,7 @@ pub fn is_audio_path(p: &Path) -> bool {
 pub fn is_image_path(p: &Path) -> bool {
     matches!(
         p.extension().and_then(|e| e.to_str()).map(|e| e.to_ascii_lowercase()).as_deref(),
-        Some("png" | "jpg" | "jpeg" | "bmp" | "gif" | "webp" | "tif" | "tiff")
+        Some("png" | "jpg" | "jpeg" | "bmp" | "gif" | "webp" | "tif" | "tiff" | "svg" | "svgz")
     )
 }
 
@@ -91,7 +105,7 @@ impl Waveforms {
             .name("openq-waveform".into())
             .spawn(move || {
                 while let Ok(path) = rx.recv() {
-                    let res = decoder::waveform(&path).map(Arc::new).map_err(|e| format!("{e:#}"));
+                    let res = crate::recovery::catch(|| decoder::waveform(&path)).map(Arc::new).map_err(|e| format!("{e:#}"));
                     let Some(w) = weak.upgrade() else { break };
                     w.cache.lock().insert(path, Some(res));
                 }
@@ -150,26 +164,80 @@ pub struct Poster {
 type PosterKey = (PathBuf, u32);
 type PosterResult = Result<Poster, String>;
 
+/// Poster cache contents: entries plus a use counter for least-recently-used eviction.
+#[derive(Default)]
+struct PosterCache {
+    map: HashMap<PosterKey, (Option<PosterResult>, u64)>,
+    clock: u64,
+    bytes: usize,
+}
+
+impl PosterCache {
+    fn size(r: &Option<PosterResult>) -> usize {
+        match r {
+            Some(Ok(p)) => p.rgba.len(),
+            _ => 0,
+        }
+    }
+
+    fn get(&mut self, key: &PosterKey) -> Option<&Option<PosterResult>> {
+        self.clock += 1;
+        let c = self.clock;
+        self.map.get_mut(key).map(|e| {
+            e.1 = c;
+            &e.0
+        })
+    }
+
+    fn insert(&mut self, key: PosterKey, r: Option<PosterResult>) {
+        self.clock += 1;
+        self.bytes += Self::size(&r);
+        if let Some(old) = self.map.insert(key, (r, self.clock)) {
+            self.bytes -= Self::size(&old.0);
+        }
+        // Scrubbing through a long movie asks for a new frame every 10 ms of media: keep
+        // only the most recently used ones.
+        while (self.bytes > Posters::MAX_BYTES || self.map.len() > Posters::MAX_ENTRIES) && self.map.len() > 1 {
+            let Some(oldest) = self.map.iter().filter(|(_, v)| v.0.is_some()).min_by_key(|(_, v)| v.1).map(|(k, _)| k.clone()) else {
+                break;
+            };
+            if let Some(old) = self.map.remove(&oldest) {
+                self.bytes -= Self::size(&old.0);
+            }
+        }
+    }
+}
+
 /// Background poster-frame loader with a cache, keyed by file and time (in 10 ms steps).
+/// The cache is bounded ([`Posters::MAX_BYTES`]); the least recently used posters go first.
 pub struct Posters {
-    cache: Mutex<HashMap<PosterKey, Option<PosterResult>>>,
+    cache: Mutex<PosterCache>,
     tx: Mutex<std::sync::mpsc::Sender<PosterKey>>,
 }
 
 impl Posters {
     /// Longest side of a poster in pixels.
     pub const MAX_SIDE: u32 = 640;
+    /// Most pixel memory the cache keeps.
+    pub const MAX_BYTES: usize = 128 << 20;
+    /// Most posters (and pending requests) the cache keeps.
+    pub const MAX_ENTRIES: usize = 2048;
+
+    /// Pixel memory held by cached posters.
+    pub fn cached_bytes(&self) -> usize {
+        self.cache.lock().bytes
+    }
 
     /// Start the loader thread.
     pub fn new() -> Arc<Self> {
         let (tx, rx) = std::sync::mpsc::channel::<PosterKey>();
-        let p = Arc::new(Self { cache: Mutex::new(HashMap::new()), tx: Mutex::new(tx) });
+        let p = Arc::new(Self { cache: Mutex::new(PosterCache::default()), tx: Mutex::new(tx) });
         let weak = Arc::downgrade(&p);
         std::thread::Builder::new()
             .name("openq-poster".into())
             .spawn(move || {
                 while let Ok(key) = rx.recv() {
-                    let res = load_poster(&key.0, key.1 as f64 / 100.0).map_err(|e| format!("{e:#}"));
+                    let res = crate::recovery::catch(|| load_poster(&key.0, key.1 as f64 / 100.0)).map_err(|e| format!("{e:#}"));
                     let Some(p) = weak.upgrade() else { break };
                     p.cache.lock().insert(key, Some(res));
                 }
@@ -198,10 +266,8 @@ impl Posters {
 
 fn load_poster(path: &Path, at: f64) -> anyhow::Result<Poster> {
     let (width, height, rgba, source_size) = if is_image_path(path) {
-        let img = image::open(path)?;
-        let size = [img.width(), img.height()];
-        let img = img.thumbnail(Posters::MAX_SIDE, Posters::MAX_SIDE).to_rgba8();
-        (img.width(), img.height(), img.into_raw(), size)
+        let s = still::thumbnail(path, Posters::MAX_SIDE)?;
+        (s.width, s.height, s.rgba, s.source_size)
     } else {
         #[cfg(feature = "video")]
         {
@@ -231,8 +297,9 @@ fn probe_now(path: &Path) -> Result<MediaInfo, String> {
         return audio();
     }
     if is_image_path(path) {
-        let (w, h) = image::image_dimensions(path).map_err(|e| format!("{e}"))?;
-        return Ok(MediaInfo { duration: None, detail: format!("{w}×{h} still"), channels: 0, still: true });
+        let (w, h) = still::dimensions(path).map_err(|e| format!("{e:#}"))?;
+        let kind = if still::is_svg(path) { "SVG" } else { "still" };
+        return Ok(MediaInfo { duration: None, detail: format!("{w}×{h} {kind}"), channels: 0, still: true });
     }
     // Anything else goes to FFmpeg, which knows far more containers.
     #[cfg(feature = "video")]
@@ -266,7 +333,11 @@ impl Prober {
                 while let Ok(path) = rx.recv() {
                     let t = std::time::Instant::now();
                     log::debug!("probing {}", path.display());
-                    let res = probe_now(&path);
+                    let res = crate::recovery::catch(|| {
+                        crate::recovery::fault_point(crate::recovery::Fault::Prober);
+                        probe_now(&path).map_err(anyhow::Error::msg)
+                    })
+                    .map_err(|e| format!("{e:#}"));
                     log::debug!("probed {} in {:?}: {}", path.display(), t.elapsed(), res.is_ok());
                     let Some(p) = weak.upgrade() else { break };
                     p.cache.lock().insert(path, Some(res));
@@ -310,7 +381,7 @@ impl Prober {
         if let Some(Some(r)) = self.cache.lock().get(path) {
             return r.clone();
         }
-        let r = probe_now(path);
+        let r = crate::recovery::catch(|| probe_now(path).map_err(anyhow::Error::msg)).map_err(|e| format!("{e:#}"));
         self.cache.lock().insert(path.to_path_buf(), Some(r.clone()));
         r
     }
@@ -360,6 +431,25 @@ pub struct Media {
     net: Option<std::net::UdpSocket>,
     /// Open inputs of running Mic cues.
     mics: HashMap<CueId, input::InputStream>,
+    /// Set while a lost audio output is being reopened.
+    reconnect: Option<Reconnect>,
+    /// Messages for the engine log.
+    notes: Vec<String>,
+    /// Preloading skipped files still being probed: offer the preload set again at this time.
+    preload_retry: Option<Instant>,
+}
+
+/// How often to try reopening a lost audio device.
+pub const AUDIO_RETRY: std::time::Duration = std::time::Duration::from_secs(2);
+
+/// Reopening a lost audio output in the background (opening a device can take a while, and the
+/// engine thread must keep ticking meanwhile).
+struct Reconnect {
+    endpoint: audio::Endpoint,
+    master_db: f32,
+    next_try: Instant,
+    opening: Option<std::sync::mpsc::Receiver<anyhow::Result<audio::AudioOutput>>>,
+    tries: u32,
 }
 
 impl Media {
@@ -391,6 +481,9 @@ impl Media {
             prober,
             net: None,
             mics: HashMap::new(),
+            reconnect: None,
+            notes: Vec::new(),
+            preload_retry: None,
         }
     }
 
@@ -427,9 +520,10 @@ impl Media {
 
     /// Switch audio output device. Running audio cues must be stopped first.
     pub fn reopen_audio(&mut self, device: Option<&str>, master_db: f32) {
-        if self.audio.as_ref().is_some_and(|a| a.device_id.as_deref() == device) {
+        if self.audio.as_ref().is_some_and(|a| a.device_id.as_deref() == device && !a.is_lost()) {
             return;
         }
+        self.reconnect = None;
         self.audio = None; // close the old stream first
         match audio::AudioOutput::open(device) {
             Ok(mut a) => {
@@ -462,6 +556,74 @@ impl Media {
             _ => 2,
         };
         Some(video::AudioTap { rate: a.rate, channels: channels.clamp(1, crate::model::MAX_SRC_CHANNELS) })
+    }
+
+    /// True while a lost audio device is being reconnected.
+    pub fn audio_reconnecting(&self) -> bool {
+        self.reconnect.is_some()
+    }
+
+    /// Notice a lost audio output and keep trying to reopen it, every [`AUDIO_RETRY`].
+    fn watch_audio(&mut self, now: Instant) {
+        if self.audio.as_ref().is_some_and(|a| a.is_lost()) {
+            let a = self.audio.take().expect("checked");
+            self.notes.push(format!("Audio output lost ({}); its sounds stopped. Reconnecting…", a.device_name));
+            self.audio_error = Some("audio device lost; reconnecting".into());
+            self.mics.clear();
+            self.reconnect =
+                Some(Reconnect { endpoint: a.endpoint.clone(), master_db: a.master_db, next_try: now, opening: None, tries: 0 });
+        }
+        let Some(r) = &mut self.reconnect else { return };
+        match &r.opening {
+            Some(rx) => match rx.try_recv() {
+                Ok(Ok(mut a)) => {
+                    a.set_master(r.master_db);
+                    self.notes.push(format!("Audio output back: {}", a.device_name));
+                    self.audio = Some(a);
+                    self.audio_error = None;
+                    self.reconnect = None;
+                }
+                Ok(Err(e)) => {
+                    if r.tries == 0 {
+                        log::warn!("audio reconnect: {e:#}");
+                    }
+                    r.tries += 1;
+                    r.opening = None;
+                    r.next_try = now + AUDIO_RETRY;
+                }
+                Err(std::sync::mpsc::TryRecvError::Empty) => {}
+                Err(std::sync::mpsc::TryRecvError::Disconnected) => {
+                    r.opening = None;
+                    r.next_try = now + AUDIO_RETRY;
+                }
+            },
+            None if now >= r.next_try => {
+                let (tx, rx) = std::sync::mpsc::channel();
+                let ep = r.endpoint.clone();
+                let spawned = std::thread::Builder::new()
+                    .name("openq-audio-reopen".into())
+                    .spawn(move || {
+                        let _ = tx.send(crate::recovery::catch(|| audio::AudioOutput::open_endpoint(&ep, None)));
+                    });
+                match spawned {
+                    Ok(_) => r.opening = Some(rx),
+                    Err(_) => r.next_try = now + AUDIO_RETRY,
+                }
+            }
+            None => {}
+        }
+    }
+
+    /// Silence everything at once: every voice, layer and live input (last-resort recovery).
+    pub fn stop_everything(&mut self) {
+        if let Some(a) = &mut self.audio {
+            a.stop_all();
+        }
+        self.mics.clear();
+        #[cfg(feature = "video")]
+        if let Some(v) = &mut self.video {
+            v.stop_all();
+        }
     }
 
     /// Push inspector edits to a cue that is playing right now.
@@ -604,14 +766,26 @@ pub fn parse_osc_args(s: &str) -> Vec<rosc::OscType> {
 
 impl Backend for Media {
     fn set_preloaded(&mut self, cues: &[&Cue]) {
+        // This runs on the engine thread with the show locked: never probe a file here (that can
+        // take long, or hang on a stalled network share). Files still being probed in the
+        // background are preloaded on a later retry.
+        let mut waiting = false;
         let list: Vec<_> = cues
             .iter()
             .filter(|c| c.armed)
             .filter_map(|c| match &c.kind {
-                CueKind::Audio(p) if p.path.exists() => Some((c.id, p, self.audio_channels(&p.path))),
+                CueKind::Audio(p) if !p.path.as_os_str().is_empty() => match self.prober.get(&p.path) {
+                    Some(Ok(i)) => Some((c.id, p, i.channels.max(1))),
+                    Some(Err(_)) => None,
+                    None => {
+                        waiting = true;
+                        None
+                    }
+                },
                 _ => None,
             })
             .collect();
+        self.preload_retry = waiting.then(|| Instant::now() + std::time::Duration::from_millis(50));
         if let Some(a) = &mut self.audio {
             a.set_preloaded(&list);
         }
@@ -627,8 +801,22 @@ impl Backend for Media {
                 .collect();
             if let Some(v) = &mut self.video {
                 v.set_preloaded(&list);
+                // Text is rendered in the background now, so GO renders nothing.
+                let texts: Vec<_> = cues
+                    .iter()
+                    .filter(|c| c.armed)
+                    .filter_map(|c| match &c.kind {
+                        CueKind::Text(t) => Some((c.id, t)),
+                        _ => None,
+                    })
+                    .collect();
+                v.set_preloaded_text(&texts);
             }
         }
+    }
+
+    fn preload_retry(&mut self, now: Instant) -> bool {
+        self.preload_retry.is_some_and(|t| now >= t)
     }
 
     fn start(&mut self, cue: &Cue, at: Instant) -> Result<(), String> {
@@ -774,7 +962,8 @@ impl Backend for Media {
 
     fn drain_errors(&mut self) -> Vec<String> {
         #[cfg_attr(not(feature = "video"), allow(unused_mut))]
-        let mut out = self.audio.as_mut().map(|a| a.drain_errors()).unwrap_or_default();
+        let mut out = std::mem::take(&mut self.notes);
+        out.extend(self.audio.as_mut().map(|a| a.drain_errors()).unwrap_or_default());
         #[cfg(feature = "video")]
         if let Some(v) = &mut self.video {
             out.extend(v.drain_errors());
@@ -783,6 +972,7 @@ impl Backend for Media {
     }
 
     fn update(&mut self, now: Instant) {
+        self.watch_audio(now);
         if let Some(a) = &mut self.audio {
             a.update();
             // Close the inputs of Mic cues whose voice has ended.
@@ -814,5 +1004,27 @@ mod tests {
                 OscType::Int(-3)
             ]
         );
+    }
+
+    /// Preloading runs on the engine thread with the show locked, so it must never probe a
+    /// file itself: a file that can't be read yet (here a FIFO, which blocks like a stalled
+    /// network share) is left to the background prober and offered again later.
+    #[cfg(unix)]
+    #[test]
+    fn preloading_never_blocks_on_a_file() {
+        use crate::engine::Backend;
+        let dir = std::env::temp_dir().join(format!("openq-preload-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let fifo = dir.join("stalled.wav");
+        let _ = std::fs::remove_file(&fifo);
+        assert!(std::process::Command::new("mkfifo").arg(&fifo).status().unwrap().success());
+        let mut media = Media::new(Prober::new());
+        let cue = Cue::new(CueKind::Audio(crate::model::AudioCue { path: fifo.clone(), ..Default::default() }));
+        let t0 = Instant::now();
+        media.set_preloaded(&[&cue]);
+        assert!(t0.elapsed() < std::time::Duration::from_millis(100), "set_preloaded blocked for {:?}", t0.elapsed());
+        assert!(!media.preload_retry(t0), "retries are throttled");
+        assert!(media.preload_retry(t0 + std::time::Duration::from_millis(60)), "a retry is asked for");
+        let _ = std::fs::remove_file(&fifo);
     }
 }

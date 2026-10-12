@@ -7,6 +7,8 @@ use std::path::{Path, PathBuf};
 /// Every file of the manual, by its path relative to `index.html`.
 const FILES: &[(&str, &[u8])] = &[
     ("index.html", include_bytes!("../../docs/manual/index.html")),
+    ("img/animation.webp", include_bytes!("../../docs/manual/img/animation.webp")),
+    ("img/animation-stage.webp", include_bytes!("../../docs/manual/img/animation-stage.webp")),
     ("img/edit-mode.webp", include_bytes!("../../docs/manual/img/edit-mode.webp")),
     ("img/eq.webp", include_bytes!("../../docs/manual/img/eq.webp")),
     ("img/geometry-preview.webp", include_bytes!("../../docs/manual/img/geometry-preview.webp")),
@@ -14,6 +16,7 @@ const FILES: &[(&str, &[u8])] = &[
     ("img/levels.webp", include_bytes!("../../docs/manual/img/levels.webp")),
     ("img/mapping.webp", include_bytes!("../../docs/manual/img/mapping.webp")),
     ("img/mic.webp", include_bytes!("../../docs/manual/img/mic.webp")),
+    ("img/recovery.webp", include_bytes!("../../docs/manual/img/recovery.webp")),
     ("img/remote-share.webp", include_bytes!("../../docs/manual/img/remote-share.webp")),
     ("img/show-mode.webp", include_bytes!("../../docs/manual/img/show-mode.webp")),
     ("img/text-cue.webp", include_bytes!("../../docs/manual/img/text-cue.webp")),

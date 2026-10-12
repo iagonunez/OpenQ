@@ -212,7 +212,9 @@ fn accept_loop(shared: Arc<Shared>, listener: TcpListener) {
                 let (sh, act) = (shared.clone(), active.clone());
                 act.fetch_add(1, Ordering::Relaxed);
                 let _ = std::thread::Builder::new().name("openq-remote-conn".into()).spawn(move || {
-                    if let Err(e) = serve(&sh, stream, addr) {
+                    // Even a connection that fails in an unexpected way gives its slot back,
+                    // or the server would end up refusing everyone.
+                    if let Err(e) = crate::recovery::catch(|| serve(&sh, stream, addr)) {
                         log::debug!("remote connection {addr}: {e:#}");
                     }
                     act.fetch_sub(1, Ordering::Relaxed);

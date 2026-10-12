@@ -1,13 +1,50 @@
 //! Geometry preview: a small picture of a video or text cue's stage showing where the layer
 //! lands (position, scale, rotation, crop), so geometry can be set up without the projector.
+//! While the Animation tab is open, it shows the layer as it looks at the animation playhead,
+//! with the cue's own placement as a dashed outline.
 
-use super::stage::layer_mesh;
+use super::stage::{LayerTextures, layer_mesh, paint_layer};
 use super::{App, Mode, icons, theme};
+use crate::animation::{AnimState, Animation};
+use crate::media::text::TextRender;
+use crate::media::video::{Frame, FrameSlot, StageLayer};
 use crate::geometry::{LayerQuad, layer_quad};
 use crate::model::{CueId, CueKind, Geometry, StageId, TextCue, VideoFit};
 use crate::show::Show;
 use egui::{Color32, Pos2, Rect, RichText, Sense, Shape, Stroke, pos2, vec2};
 use std::path::PathBuf;
+
+/// A Text cue's planes for the preview: rendered in the background once per look, then drawn
+/// like on stage with the current (or animated) colours, so scrubbing and colour edits cost
+/// nothing.
+#[derive(Default)]
+pub(super) struct PreviewText {
+    job: Option<TextRender>,
+    frame: FrameSlot,
+    textures: LayerTextures,
+}
+
+impl PreviewText {
+    /// The frame for `tc`, starting a render when its look changed. Empty until the first render.
+    fn frame_for(&mut self, tc: &TextCue, ctx: &egui::Context) -> FrameSlot {
+        let look = crate::media::text::look(tc);
+        if self.job.as_ref().is_none_or(|j| j.look != look) {
+            self.job = Some(TextRender::spawn(tc));
+        }
+        if let Some(job) = &self.job {
+            match job.ready() {
+                Some(p) if !self.frame.lock().planes.as_ref().is_some_and(|q| std::sync::Arc::ptr_eq(q, &p)) => {
+                    let mut f = self.frame.lock();
+                    let generation = f.generation.wrapping_add(1);
+                    *f = Frame { width: p.width, height: p.height, density: p.density, planes: Some(p), generation, data: Vec::new() };
+                }
+                Some(_) => {}
+                None => ctx.request_repaint_after(std::time::Duration::from_millis(15)),
+            }
+        }
+        self.frame.clone()
+    }
+}
 
 /// What the layer shows.
 #[derive(Clone)]
@@ -28,6 +65,8 @@ struct Target {
     opacity: f32,
     source: Source,
     ghost: Option<Geometry>,
+    /// The layer's animation (empty for a fade's target).
+    anim: Animation,
 }
 
 fn target_of(show: &Show, id: CueId) -> Option<Target> {
@@ -41,6 +80,7 @@ fn target_of(show: &Show, id: CueId) -> Option<Target> {
             opacity: v.opacity,
             source: Source::Poster(v.path.clone(), v.start_time),
             ghost: None,
+            anim: v.animation.clone(),
         }),
         CueKind::Camera(c) => Some(Target {
             layer,
@@ -50,6 +90,7 @@ fn target_of(show: &Show, id: CueId) -> Option<Target> {
             opacity: c.opacity,
             source: Source::Camera(c.size.unwrap_or([1280, 720])),
             ghost: None,
+            anim: Animation::default(),
         }),
         CueKind::Text(t) => Some(Target {
             layer,
@@ -59,6 +100,7 @@ fn target_of(show: &Show, id: CueId) -> Option<Target> {
             opacity: t.opacity,
             source: Source::Text(t.clone()),
             ghost: None,
+            anim: t.animation.clone(),
         }),
         _ => None,
     };
@@ -66,7 +108,7 @@ fn target_of(show: &Show, id: CueId) -> Option<Target> {
         CueKind::Fade(f) => {
             let g = f.geometry?;
             let t = show.ws.cue_list.find(f.target?)?;
-            own(t.id, &t.kind).map(|tg| Target { ghost: Some(tg.geometry), geometry: g, ..tg })
+            own(t.id, &t.kind).map(|tg| Target { ghost: Some(tg.geometry), geometry: g, anim: Animation::default(), ..tg })
         }
         k => own(id, k),
     }
@@ -94,13 +136,13 @@ impl App {
     /// Texture and source size for the layer: the live frame while it plays, else a poster.
     fn preview_texture(&mut self, ctx: &egui::Context, t: &Target) -> Result<Option<(egui::TextureId, [f32; 2])>, String> {
         // Movies show their live frame; text is re-rendered here (its live texture is supersampled).
-        if let (Source::Poster(..) | Source::Camera(_), Some((tex, _))) = (&t.source, self.textures.get(&t.layer)) {
+        if let (Source::Poster(..) | Source::Camera(_), Some((tex, _))) = (&t.source, self.textures.get(&(t.layer, 0))) {
             let s = tex.size();
             return Ok(Some((tex.id(), [s[0] as f32, s[1] as f32])));
         }
         let key = match &t.source {
             Source::Poster(p, at) => format!("{}@{at:.2}", p.display()),
-            Source::Text(tc) => serde_json::to_string(tc).unwrap_or_default(),
+            Source::Text(_) => return Ok(None),
             Source::Camera([w, h]) => format!("camera {w}x{h}"),
         };
         if let Some((k, tex, size)) = &self.preview_tex
@@ -117,11 +159,7 @@ impl App {
                 Some(Err(e)) => return Err(e),
                 Some(Ok(p)) => (p.width, p.height, p.rgba, p.source_size.map(|v| v as f32)),
             },
-            Source::Text(tc) => {
-                let img = crate::media::text::render(tc);
-                let size = [img.width as f32 / img.density, img.height as f32 / img.density];
-                (img.width, img.height, std::sync::Arc::new(img.rgba), size)
-            }
+            Source::Text(_) => return Ok(None),
             Source::Camera([w, h]) => {
                 // A 16 × 9 checkerboard of greys, stretched to the capture size.
                 let rgba: Vec<u8> = (0..16 * 9).flat_map(|i| {
@@ -131,7 +169,7 @@ impl App {
                 (16, 9, std::sync::Arc::new(rgba), [*w as f32, *h as f32])
             }
         };
-        let density = if matches!(t.source, Source::Text(_)) { 2.0 } else { 1.0 };
+        let density = 1.0;
         if w == 0 || h == 0 {
             return Ok(None);
         }
@@ -149,7 +187,29 @@ impl App {
             });
             return;
         };
-        let tex = self.preview_texture(ui.ctx(), &t);
+        // The animation at the editor playhead, while the Animation tab is open.
+        let anim = (self.inspector_tab == super::inspector::Tab::Animation && !t.anim.is_empty())
+            .then(|| self.anim_edit.time_for(t.layer))
+            .flatten()
+            .map(|time| t.anim.sample(time));
+        let st = anim.unwrap_or_default();
+        // Text: cached planes, coloured as they are drawn.
+        let text = match &t.source {
+            Source::Text(tc) => {
+                let frame = self.preview_text.frame_for(tc, ui.ctx());
+                let base = [tc.bg_color, tc.shadow_color, tc.outline_color, tc.color];
+                let colors: [[f32; 4]; 4] = std::array::from_fn(|i| st.text[i].unwrap_or(base[i].map(|c| c as f32 / 255.0)));
+                Some((frame, colors))
+            }
+            _ => None,
+        };
+        let tex = match &text {
+            Some((frame, _)) => {
+                let f = frame.lock();
+                Ok((f.width > 0).then(|| (egui::TextureId::default(), f.stage_size())))
+            }
+            None => self.preview_texture(ui.ctx(), &t),
+        };
         let stage = show
             .ws
             .stages
@@ -198,10 +258,34 @@ impl App {
             pts.push(pts[0]);
             painter.extend(Shape::dashed_line(&pts, Stroke::new(1.0, theme::TEXT_FAINT), 4.0, 4.0));
         }
-        let q = layer_quad(canvas, img, t.fit, &g);
-        match &tex {
-            Ok(Some((id, _))) => {
-                painter.add(layer_mesh(*id, &q, Color32::WHITE.gamma_multiply(t.opacity.clamp(0.0, 1.0)), place));
+        let shown = st.geometry(&g);
+        if anim.is_some() && shown != g {
+            let mut pts = outline(&layer_quad(canvas, img, t.fit, &g));
+            pts.push(pts[0]);
+            painter.extend(Shape::dashed_line(&pts, Stroke::new(1.0, theme::TEXT_DIM), 5.0, 4.0));
+        }
+        let q = layer_quad(canvas, img, t.fit, &shown);
+        match (&tex, &text) {
+            (Ok(Some(_)), Some((frame, colors))) => {
+                let layer = StageLayer {
+                    id: t.layer,
+                    stage: None,
+                    frame: frame.clone(),
+                    opacity: t.opacity * st.opacity,
+                    geometry: shown,
+                    layer: 0,
+                    blend_mode: Default::default(),
+                    fit: t.fit,
+                    order: 0,
+                    tint: st.tint,
+                    text_colors: *colors,
+                    animated: false,
+                };
+                self.preview_text.textures.retain(|(id, _), _| *id == t.layer);
+                painter.extend(paint_layer(ui.ctx(), &mut self.preview_text.textures, &layer, canvas, place));
+            }
+            (Ok(Some((id, _))), None) => {
+                painter.add(layer_mesh(*id, &q, tint(&st, t.opacity), place));
             }
             _ => {
                 painter.add(Shape::convex_polygon(outline(&q), Color32::from_rgb(0x22, 0x2a, 0x3a), Stroke::NONE));
@@ -292,4 +376,11 @@ impl App {
         }
         show.edited();
     }
+}
+
+/// Vertex colour for the previewed layer: its opacity and the animation's tint and opacity.
+fn tint(st: &AnimState, opacity: f32) -> Color32 {
+    let b = |v: f32| (v.clamp(0.0, 1.0) * 255.0).round() as u8;
+    let t = st.tint;
+    Color32::from_rgba_unmultiplied(b(t[0]), b(t[1]), b(t[2]), b(t[3] * st.opacity * opacity))
 }

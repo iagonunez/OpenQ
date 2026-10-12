@@ -17,16 +17,26 @@ use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::{Duration, Instant};
 
-/// A running OSC listener; stops when dropped.
+/// How long the listener blocks on the socket between checks of its stop flag (bounds how long
+/// dropping an [`OscServer`] waits).
+const POLL: Duration = Duration::from_millis(50);
+
+/// A running OSC listener. Dropping it stops the thread and waits for it, so the port is free
+/// again (to re-enable or move the listener) as soon as the drop returns.
 pub struct OscServer {
     /// UDP port being listened on.
     pub port: u16,
     stop: Arc<AtomicBool>,
+    thread: Option<std::thread::JoinHandle<()>>,
 }
 
 impl Drop for OscServer {
     fn drop(&mut self) {
         self.stop.store(true, Ordering::Release);
+        if let Some(t) = self.thread.take() {
+            let _ = t.join();
+        }
+        log::info!("OSC stopped listening on UDP {}", self.port);
     }
 }
 
@@ -34,10 +44,10 @@ impl OscServer {
     /// Listen on `port` on all interfaces; `repaint` is called after each handled message.
     pub fn start(port: u16, show: SharedShow, repaint: impl Fn() + Send + 'static) -> std::io::Result<Self> {
         let sock = UdpSocket::bind(("0.0.0.0", port))?;
-        sock.set_read_timeout(Some(Duration::from_millis(200)))?;
+        sock.set_read_timeout(Some(POLL))?;
         let stop = Arc::new(AtomicBool::new(false));
         let stop2 = stop.clone();
-        std::thread::Builder::new().name("openq-osc".into()).spawn(move || {
+        let thread = std::thread::Builder::new().name("openq-osc".into()).spawn(move || {
             let mut buf = [0u8; rosc::decoder::MTU];
             while !stop2.load(Ordering::Acquire) {
                 let Ok((n, from)) = sock.recv_from(&mut buf) else { continue };
@@ -46,7 +56,9 @@ impl OscServer {
                         let mut msgs = Vec::new();
                         flatten(packet, &mut msgs);
                         for m in msgs {
-                            let res = handle(&show, &m.addr);
+                            // A failure handling one message must not end the listener.
+                            let res = crate::recovery::catch(|| handle(&show, &m.addr).map_err(anyhow::Error::msg))
+                                .map_err(|e| format!("{e:#}"));
                             match res {
                                 Ok(()) => log::info!("OSC {} from {from}", m.addr),
                                 Err(e) => log::warn!("OSC {} from {from}: {e}", m.addr),
@@ -59,7 +71,7 @@ impl OscServer {
             }
         })?;
         log::info!("OSC listening on UDP {port}");
-        Ok(Self { port, stop })
+        Ok(Self { port, stop, thread: Some(thread) })
     }
 }
 
@@ -108,4 +120,22 @@ pub fn handle(show: &SharedShow, addr: &str) -> Result<(), String> {
         _ => return Err("unknown address".into()),
     };
     crate::control::apply(&mut guard, cmd, Instant::now())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// Turning OSC off must really close the port: it can be bound again right away (re-enabling
+    /// the listener, or another program taking the port).
+    #[test]
+    fn dropping_the_server_frees_the_port() {
+        let show: SharedShow = Arc::new(parking_lot::Mutex::new(crate::show::Show::new(crate::media::Prober::new())));
+        let port = UdpSocket::bind(("0.0.0.0", 0)).unwrap().local_addr().unwrap().port();
+        let server = OscServer::start(port, show.clone(), || {}).unwrap();
+        assert!(UdpSocket::bind(("0.0.0.0", port)).is_err(), "the listener holds the port");
+        drop(server);
+        UdpSocket::bind(("0.0.0.0", port)).expect("port still taken after the listener was dropped");
+        drop(OscServer::start(port, show, || {}).expect("re-enabling on the same port"));
+    }
 }
