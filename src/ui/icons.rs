@@ -95,3 +95,6 @@ pub const MONITOR: &str = "\u{ef5b}";
 pub const PREVIEW: &str = "\u{f1c5}";
 pub const CROP: &str = "\u{e3be}";
 pub const VISIBILITY: &str = "\u{e8f4}";
+pub const MIC: &str = "\u{e31d}";
+pub const PHOTO_CAMERA: &str = "\u{e412}";
+pub const TIMER_PLAY: &str = "\u{f4ba}";

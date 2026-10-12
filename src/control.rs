@@ -43,6 +43,9 @@ pub enum Command {
     SetPlayhead(Option<CueId>),
     /// Act on one cue.
     Cue(CueId, CueAction),
+    /// Bring cue list `n` (tab order, from 0) forward: GO and the playhead then work on it, while
+    /// cues already running in other lists carry on.
+    SwitchList(usize),
 }
 
 /// Apply a command to the show.
@@ -72,6 +75,14 @@ pub fn apply(show: &mut Show, cmd: Command, now: Instant) -> Result<(), String> 
                 return Err("no such cue".into());
             }
             engine.set_playhead(id);
+        }
+        Command::SwitchList(tab) => {
+            if tab >= ws.cue_list.list_count() {
+                return Err("no such cue list".into());
+            }
+            let ph = ws.cue_list.switch_to(tab, engine.playhead);
+            engine.set_playhead(ph.or(ws.cue_list.first()));
+            show.edited();
         }
         Command::Cue(id, action) => {
             if ws.cue_list.find(id).is_none() {

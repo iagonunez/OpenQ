@@ -88,24 +88,39 @@ impl App {
     /// Cue-type palette (toolbox): icon tiles grouped by kind, plus edit actions.
     pub(super) fn toolbar(&mut self, ui: &mut Ui, show: &mut Show) {
         use KindTag::*;
-        let groups: [&[KindTag]; 4] = [&[Audio, Video, Text], &[Group, Wait, Memo], &[Fade, Start, Stop, Pause, Goto, Devamp], &[Network]];
+        let groups: [&[KindTag]; 4] = [
+            &[Audio, Mic, Video, Camera, Text],
+            &[Group, Wait, Memo],
+            &[Fade, Start, Stop, Pause, Goto, Devamp],
+            &[Network, Timecode],
+        ];
+        // Room kept for the edit buttons on the right; the palette scrolls if the window is narrow.
+        const EDIT_BUTTONS_W: f32 = 200.0;
         ui.horizontal(|ui| {
-            ui.spacing_mut().item_spacing.x = 2.0;
-            for (gi, group) in groups.iter().enumerate() {
-                if gi > 0 {
-                    ui.add_space(6.0);
-                    let (r, _) = ui.allocate_exact_size(vec2(1.0, 40.0), Sense::hover());
-                    ui.painter().rect_filled(r, 0.0, theme::BORDER);
-                    ui.add_space(6.0);
-                }
-                for tag in *group {
-                    let i = KindTag::ALL.iter().position(|t| t == tag).unwrap_or(99);
-                    let key = if i < 10 { format!("  ·  Ctrl+{}", (i + 1) % 10) } else { String::new() };
-                    if tile(ui, theme::kind_icon(*tag), tag.label()).on_hover_text(format!("New {} cue{key}", tag.label())).clicked() {
-                        self.add_cue(show, *tag);
+            let palette_w = (ui.available_width() - EDIT_BUTTONS_W).max(120.0);
+            egui::ScrollArea::horizontal().id_salt("palette").max_width(palette_w).scroll_bar_visibility(egui::scroll_area::ScrollBarVisibility::AlwaysHidden).show(ui, |ui| {
+                ui.horizontal(|ui| {
+                    ui.spacing_mut().item_spacing.x = 2.0;
+                    for (gi, group) in groups.iter().enumerate() {
+                        if gi > 0 {
+                            ui.add_space(5.0);
+                            let (r, _) = ui.allocate_exact_size(vec2(1.0, 40.0), Sense::hover());
+                            ui.painter().rect_filled(r, 0.0, theme::BORDER);
+                            ui.add_space(5.0);
+                        }
+                        for tag in *group {
+                            let i = KindTag::ALL.iter().position(|t| t == tag).unwrap_or(99);
+                            let key = if i < 10 { format!("  ·  Ctrl+{}", (i + 1) % 10) } else { String::new() };
+                            if tile(ui, theme::kind_icon(*tag), tag.label())
+                                .on_hover_text(format!("New {} cue{key}", tag.label()))
+                                .clicked()
+                            {
+                                self.add_cue(show, *tag);
+                            }
+                        }
                     }
-                }
-            }
+                });
+            });
             ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                 if theme::icon_button(ui, icons::DELETE, "Delete (Del)").clicked() {
                     self.delete_selected(show);
@@ -125,6 +140,225 @@ impl App {
                 }
             });
         });
+    }
+
+    /// Tabs for the workspace's cue lists: click to bring one forward; in edit mode, + adds a list
+    /// and right-click renames, moves or deletes one.
+    pub(super) fn list_tabs(&mut self, ui: &mut Ui, show: &mut Show) {
+        let (names, current) = show.ws.cue_list.list_names();
+        let editing = self.mode == super::Mode::Edit && self.can_edit_show();
+        let mut switch = None;
+        let mut edited = false;
+        ui.horizontal(|ui| {
+            ui.spacing_mut().item_spacing.x = 4.0;
+            for (i, name) in names.iter().enumerate() {
+                if editing && i == current && let Some(text) = &mut self.list_rename {
+                    let r = ui.add(egui::TextEdit::singleline(text).desired_width(160.0));
+                    if !r.has_focus() && !r.lost_focus() {
+                        r.request_focus();
+                    }
+                    if r.lost_focus() {
+                        let t = text.trim().to_string();
+                        if !t.is_empty() && !ui.input(|i| i.key_pressed(egui::Key::Escape)) && t != show.ws.cue_list.info.name {
+                            show.ws.cue_list.info.name = t;
+                            edited = true;
+                        }
+                        self.list_rename = None;
+                    }
+                    continue;
+                }
+                let mut sel = current;
+                let r = theme::tab(ui, &mut sel, i, icons::RECEIPT_LONG, name);
+                if sel != current {
+                    switch = Some(i);
+                }
+                if editing {
+                    if r.double_clicked() && i == current {
+                        self.list_rename = Some(name.clone());
+                    }
+                    r.context_menu(|ui| {
+                        if i != current {
+                            if ui.button("Bring forward").clicked() {
+                                switch = Some(i);
+                            }
+                            return;
+                        }
+                        if ui.button(theme::with_icon(icons::EDIT, "Rename")).clicked() {
+                            self.list_rename = Some(name.clone());
+                        }
+                        if ui.button(theme::with_icon(icons::TIMER_PLAY, "Timecode…")).clicked() {
+                            self.show_list_timecode = true;
+                        }
+                        ui.add_enabled_ui(i > 0, |ui| {
+                            if ui.button("Move left").clicked() {
+                                show.ws.cue_list.move_current_list(-1);
+                                edited = true;
+                            }
+                        });
+                        ui.add_enabled_ui(i + 1 < names.len(), |ui| {
+                            if ui.button("Move right").clicked() {
+                                show.ws.cue_list.move_current_list(1);
+                                edited = true;
+                            }
+                        });
+                        ui.separator();
+                        let n = show.ws.cue_list.cues.len();
+                        ui.add_enabled_ui(names.len() > 1, |ui| {
+                            let label = if n == 0 { "Delete list".to_string() } else { format!("Delete list and its {n} cues") };
+                            if ui.button(theme::with_icon(icons::DELETE, &label)).clicked() {
+                                self.delete_current_list(show);
+                            }
+                        });
+                    });
+                }
+            }
+            if editing && theme::icon_button(ui, icons::ADD, "New cue list").clicked() {
+                let name = format!("Cue List {}", names.len() + 1);
+                show.ws.cue_list.add_list(&name, show.engine.playhead);
+                self.selection.clear();
+                self.control(show, Command::SetPlayhead(None));
+                edited = true;
+            }
+        });
+        if edited {
+            show.edited();
+        }
+        if let Some(tab) = switch {
+            self.selection.clear();
+            self.list_rename = None;
+            self.control(show, Command::SwitchList(tab));
+        }
+    }
+
+    /// The current cue list's timecode input: source, rate and device, with what it receives.
+    pub(super) fn list_timecode_window(&mut self, ctx: &egui::Context, show: &mut Show) {
+        use crate::model::{TimecodeRate, TimecodeSource};
+        if !self.show_list_timecode {
+            return;
+        }
+        super::devices::ensure(&self.inputs, ctx);
+        let devs = self.inputs.lock().clone();
+        let mut open = true;
+        let mut sync = show.ws.cue_list.info.timecode.clone();
+        let name = show.ws.cue_list.info.name.clone();
+        let mut refresh = false;
+        egui::Window::new(format!("Timecode · {name}")).open(&mut open).resizable(false).default_width(420.0).show(ctx, |ui| {
+            ui.add_enabled_ui(self.can_edit_show(), |ui| {
+                egui::Grid::new("list-tc").num_columns(2).spacing([10.0, 8.0]).show(ui, |ui| {
+                    ui.label("Follow");
+                    ui.horizontal(|ui| {
+                        ui.selectable_value(&mut sync.source, TimecodeSource::Off, "Off");
+                        ui.selectable_value(&mut sync.source, TimecodeSource::Ltc, "LTC (audio in)");
+                        ui.selectable_value(&mut sync.source, TimecodeSource::Mtc, "MTC (MIDI in)");
+                    });
+                    ui.end_row();
+                    ui.label("Rate");
+                    egui::ComboBox::from_id_salt("list-tc-rate").selected_text(sync.rate.label()).show_ui(ui, |ui| {
+                        for r in TimecodeRate::ALL {
+                            ui.selectable_value(&mut sync.rate, r, r.label());
+                        }
+                    });
+                    ui.end_row();
+                    match sync.source {
+                        TimecodeSource::Off => {}
+                        TimecodeSource::Ltc => {
+                            ui.label("Input");
+                            ui.horizontal(|ui| {
+                                let label = sync.ltc_device.as_ref().map_or("System default input".to_string(), |d| {
+                                    devs.audio_in.iter().find(|x| &x.id == d).map_or(d.clone(), |x| x.name.clone())
+                                });
+                                egui::ComboBox::from_id_salt("list-tc-dev").width(240.0).selected_text(label).show_ui(ui, |ui| {
+                                    ui.selectable_value(&mut sync.ltc_device, None, "System default input");
+                                    for d in &devs.audio_in {
+                                        ui.selectable_value(&mut sync.ltc_device, Some(d.id.clone()), &d.name);
+                                    }
+                                });
+                                if theme::icon_button(ui, icons::REFRESH, "Look for devices again").clicked() {
+                                    refresh = true;
+                                }
+                            });
+                            ui.end_row();
+                            ui.label("Channel");
+                            let mut ch = sync.ltc_channel + 1;
+                            ui.add(egui::DragValue::new(&mut ch).range(1..=64));
+                            sync.ltc_channel = ch - 1;
+                            ui.end_row();
+                        }
+                        TimecodeSource::Mtc => {
+                            ui.label("MIDI port");
+                            ui.horizontal(|ui| {
+                                let label = sync.mtc_port.clone().unwrap_or_else(|| "First MIDI input".into());
+                                egui::ComboBox::from_id_salt("list-tc-port").width(240.0).selected_text(label).show_ui(ui, |ui| {
+                                    ui.selectable_value(&mut sync.mtc_port, None, "First MIDI input");
+                                    for p in &devs.midi_in {
+                                        ui.selectable_value(&mut sync.mtc_port, Some(p.clone()), p);
+                                    }
+                                });
+                                if theme::icon_button(ui, icons::REFRESH, "Look for devices again").clicked() {
+                                    refresh = true;
+                                }
+                            });
+                            ui.end_row();
+                        }
+                    }
+                    if sync.source != TimecodeSource::Off {
+                        ui.label("Receiving");
+                        let now = Instant::now();
+                        match (show.timecode.position(&sync, now), show.timecode.error(&sync)) {
+                            (Some(r), _) => {
+                                ui.label(
+                                    RichText::new(crate::timecode::format_secs(r.secs, r.rate))
+                                        .font(theme::mono(16.0))
+                                        .color(GREEN),
+                                );
+                                ui.ctx().request_repaint_after(std::time::Duration::from_millis(40));
+                            }
+                            (None, Some(e)) => {
+                                ui.label(RichText::new(e).color(RED));
+                            }
+                            (None, None) => {
+                                ui.label(RichText::new("no signal").color(AMBER));
+                                ui.ctx().request_repaint_after(std::time::Duration::from_millis(200));
+                            }
+                        }
+                        ui.end_row();
+                    }
+                });
+            });
+            ui.add_space(6.0);
+            ui.label(
+                RichText::new(
+                    "Cues in this list with a timecode trigger (Basics tab) fire as the timecode runs past their time. \
+                     Jumps and dropouts don't fire cues.",
+                )
+                .weak()
+                .small(),
+            );
+        });
+        if refresh {
+            super::devices::refresh(&self.inputs, ctx);
+        }
+        if sync != show.ws.cue_list.info.timecode && self.can_edit_show() {
+            show.ws.cue_list.info.timecode = sync;
+            show.edited();
+        }
+        self.show_list_timecode = open;
+    }
+
+    fn delete_current_list(&mut self, show: &mut Show) {
+        // Stop what is running from the list before its cues go.
+        let doomed: Vec<CueId> = show.ws.cue_list.cues.iter().map(|c| c.id).collect();
+        for id in doomed {
+            if show.engine.instances.contains_key(&id) {
+                self.control(show, Command::Cue(id, crate::control::CueAction::Stop));
+            }
+        }
+        if let Some((_, ph)) = show.ws.cue_list.remove_current_list() {
+            self.selection.clear();
+            show.edited();
+            let ph = ph.or(show.ws.cue_list.first());
+            self.control(show, Command::SetPlayhead(ph));
+        }
     }
 
     pub(super) fn cue_list(&mut self, ui: &mut Ui, show: &mut Show) {
@@ -543,6 +777,29 @@ impl App {
             },
             CueKind::Network(n) => format!("{}:{} {}", n.host, n.port, n.address),
             CueKind::Text(t) => format!("“{}”", t.text.lines().next().unwrap_or("")),
+            CueKind::Mic(m) => {
+                let ch = match m.channels {
+                    1 => format!("in {}", m.first_channel + 1),
+                    n => format!("in {}–{}", m.first_channel + 1, m.first_channel + n),
+                };
+                let dev = m.device.as_ref().map_or("default input".to_string(), |d| {
+                    self.inputs.lock().audio_in.iter().find(|x| &x.id == d).map_or(d.clone(), |x| x.name.clone())
+                });
+                format!("{dev} · {ch}")
+            }
+            CueKind::Camera(c) => match &c.device {
+                None => "first camera".into(),
+                Some(d) => self.inputs.lock().cameras.iter().find(|x| &x.0 == d).map_or(d.clone(), |x| x.1.clone()),
+            },
+            CueKind::Timecode(t) => format!(
+                "{} {} from {}",
+                match t.output {
+                    crate::model::TimecodeOutput::Ltc => "LTC",
+                    crate::model::TimecodeOutput::Mtc => "MTC",
+                },
+                t.rate.label(),
+                crate::timecode::format_secs(t.start, t.rate)
+            ),
             k => match k.target() {
                 Some(t) => match show.ws.cue_list.find(t) {
                     Some(tc) => format!("{} {}", tc.number, tc.display_name()),
@@ -649,7 +906,7 @@ impl App {
 
 /// Toolbox tile: icon over a small label.
 fn tile(ui: &mut Ui, glyph: &str, label: &str) -> egui::Response {
-    let (rect, resp) = ui.allocate_exact_size(vec2(58.0, 46.0), Sense::click());
+    let (rect, resp) = ui.allocate_exact_size(vec2(54.0, 46.0), Sense::click());
     let p = ui.painter();
     if resp.hovered() {
         p.rect_filled(rect, 8.0, theme::BG_HOVER);
@@ -839,7 +1096,7 @@ mod tests {
     fn multi_drop_after_keeps_order() {
         let (a, b, c, d) = (memo(), memo(), memo(), memo());
         let (ai, bi, ci, di) = (a.id, b.id, c.id, d.id);
-        let mut l = CueList { cues: vec![a, b, c, d] };
+        let mut l = CueList { cues: vec![a, b, c, d], ..Default::default() };
         apply_drop(&mut l, &[ai, bi], DropTarget::After(ci));
         assert_eq!(ids(&l.cues), vec![ci, ai, bi, di]);
         apply_drop(&mut l, &[di], DropTarget::Before(ci));

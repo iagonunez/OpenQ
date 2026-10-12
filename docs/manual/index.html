@@ -190,6 +190,7 @@ footer { margin-top: 56px; padding-top: 18px; border-top: 1px solid var(--border
     <li><a href="#audio">Audio cues</a></li>
     <li><a href="#video">Video and text cues</a></li>
     <li><a href="#fades">Fades</a></li>
+    <li><a href="#timecode">Timecode</a></li>
     <li><a href="#stages">Stages and projection</a></li>
     <li><a href="#remote">Remote devices</a></li>
     <li><a href="#osc">OSC and network cues</a></li>
@@ -249,13 +250,16 @@ cargo run --release -- show.openq    # open a saved show</code></pre>
     <figcaption>Edit mode with the first cue selected and the inspector showing its Time &amp; Loops tab.</figcaption>
   </figure>
   <ul>
-    <li><strong>Title bar:</strong> the show's name (a dot means unsaved changes).</li>
+    <li><strong>Title bar:</strong> the show's name (a dot means unsaved changes). On Windows it also holds the
+    minimise, maximise and close buttons: drag the bar to move the window, double-click it to maximise, and drag any
+    window edge to resize.</li>
     <li><strong>Menus:</strong> File, Edit, Cue, Show, Video (stages and outputs), Remote, View
     (geometry preview, engine log) and Help (this manual, about and licences).</li>
     <li><strong>GO</strong> fires the cue at the playhead. The <strong>standby</strong> card shows that cue,
     with its notes underneath so the operator can read them before pressing GO.</li>
     <li><strong>Transport:</strong> <span class="ms" aria-hidden="true">&#xe034;</span> pause all, <span class="ms" aria-hidden="true">&#xe037;</span> resume all,
     <span class="ms" aria-hidden="true">&#xe047;</span> stop all. Next to them, the output meters show each device channel in dB.</li>
+    <li><strong>Cue list tabs:</strong> one tab per cue list (see below).</li>
     <li><strong>Cue list:</strong> number, name, target (file details or the target cue), pre-wait,
     action time, post-wait and the continue arrow. Running cues turn green, and their action column
     counts down. A red <span class="ms" style="color:var(--red)" aria-hidden="true">&#xf8b6;</span> icon marks a missing file or target.</li>
@@ -275,6 +279,17 @@ cargo run --release -- show.openq    # open a saved show</code></pre>
     commits and <kbd>Esc</kbd> cancels.</li>
     <li>Click the continue column to cycle <em>do not continue → auto-continue → auto-follow</em>.</li>
     <li>Right-click a row for start, stop, duplicate, delete and more.</li>
+  </ul>
+  <h3>Cue lists</h3>
+  <p>A show can have several cue lists, for example the main sequence and a list of sound effects to fire by hand.
+  Each list has a tab above the toolbar; click a tab to bring that list forward. GO, the playhead and the standby card
+  work on the list in front, and each list remembers where its playhead was.</p>
+  <ul>
+    <li>Click <span class="ms" aria-hidden="true">&#xe145;</span> to add a list. Right-click the current list's tab to
+    rename it (or double-click it), move it, set its <a href="#timecode">timecode</a>, or delete it.</li>
+    <li>Cues keep playing when you switch lists, and Start, Stop, Fade and other cues can target cues in any list.
+    In the target menu, cues from other lists show the list's name.</li>
+    <li>Cue numbers are shared by all lists, so OSC and hotkeys reach cues in every list.</li>
   </ul>
 </section>
 
@@ -311,12 +326,15 @@ cargo run --release -- show.openq    # open a saved show</code></pre>
     <div class="type"><b><span class="ms" aria-hidden="true">&#xe5da;</span>Go To</b><span class="d">Moves the playhead to another cue.</span></div>
     <div class="type"><b><span class="ms" aria-hidden="true">&#xe044;</span>Devamp</b><span class="d">Lets a looping audio slice finish its pass and play on.</span></div>
     <div class="type"><b><span class="ms" aria-hidden="true">&#xeb2f;</span>Network</b><span class="d">Sends an OSC message to other gear, such as a lighting desk.</span></div>
+    <div class="type"><b><span class="ms" aria-hidden="true">&#xe31d;</span>Mic</b><span class="d">Plays a live audio input, such as a microphone, through the mixer.</span></div>
+    <div class="type"><b><span class="ms" aria-hidden="true">&#xe412;</span>Camera</b><span class="d">Shows a live camera or capture card on a stage.</span></div>
+    <div class="type"><b><span class="ms" aria-hidden="true">&#xf4ba;</span>Timecode</b><span class="d">Sends running timecode (LTC or MTC) to other gear.</span></div>
   </div>
   <p>Every cue has a <strong>number</strong> (free text, like <code>4.2</code>), a <strong>name</strong>, <strong>notes</strong>,
   a <strong>colour</strong> and an <strong>armed</strong> switch, all on the Basics tab. A disarmed cue is skipped by GO. Basics also
   sets an optional <strong>hotkey</strong>: a key that fires the cue directly, whatever the playhead is on, the cue's
-  <strong>pre-wait</strong>, <strong>continue</strong> mode and <strong>post-wait</strong>, and, for audio and video
-  cues, the <strong>media file</strong>.</p>
+  <strong>pre-wait</strong>, <strong>continue</strong> mode and <strong>post-wait</strong>, an optional
+  <a href="#timecode">timecode trigger</a>, and, for audio and video cues, the <strong>media file</strong>.</p>
 </section>
 
 <section id="timing">
@@ -409,6 +427,17 @@ cargo run --release -- show.openq    # open a saved show</code></pre>
   whole EQ on and off.</p>
   <div class="note tip"><span class="label">Live changes</span><p>Level, output fader, pan, EQ and routing changes are heard straight away
   on a playing cue, so you can tune them during a run.</p></div>
+  <h3>Mic cues</h3>
+  <figure>
+    <img src="img/mic.webp" width="1400" height="312" alt="Mic cue I/O tab: input device, channels and level meter, timing, and routing.">
+    <figcaption>A Mic cue's I/O tab. The level bar moves while the cue runs.</figcaption>
+  </figure>
+  <p>A Mic cue sends a live input (a microphone, a line input, a playback machine) through the OpenQ mixer, so it gets
+  the same <strong>Levels</strong> faders, pan, <strong>EQ</strong> and routing as an audio cue, and Fade cues can fade
+  it. On the <strong>I/O</strong> tab choose the input device and which of its channels to use, for example inputs
+  3–4 for a stereo pair. A <strong>duration</strong> of 0 keeps the input open until the cue is stopped, and the
+  <strong>fade in</strong> brings it up from silence. The input reaches the outputs about 30 ms late, which is too
+  little to hear as an echo in most rooms.</p>
 </section>
 
 <section id="video">
@@ -436,6 +465,12 @@ cargo run --release -- show.openq    # open a saved show</code></pre>
   draws the selected cue's stage with the picture in place, without opening a projector output. In edit
   mode, drag in the preview to move the picture, scroll to scale it, and double-click to centre it. For a Fade cue that
   changes geometry, the preview shows where the fade ends, with the starting position as a dashed outline.</p>
+  <h3>Camera cues</h3>
+  <p>A Camera cue shows a live camera (a webcam, a USB or HDMI capture card) as a layer on a stage, with the same
+  <strong>Geometry</strong> tab as video: position, scale, rotation, crop, opacity and layer, and Fade cues can move
+  and fade it. On the <strong>Camera</strong> tab pick the device and, if you need it, the capture size; <em>Mirror</em>
+  flips the picture like a selfie view. <em>Show for</em> 0 keeps it on until stopped. The device and size are used
+  the next time the cue starts.</p>
   <h3>Text cues</h3>
   <p>Text cues show typed text on a stage: titles, surtitles, captions, or a countdown for the crew.
   The <strong>Geometry</strong> tab works as it does for video, and Fade cues can move and fade text. Changes on the
@@ -480,8 +515,31 @@ cargo run --release -- show.openq    # open a saved show</code></pre>
   with the time that was left.</p>
 </section>
 
+<section id="timecode">
+  <h2><span class="n">09</span>Timecode</h2>
+  <p>OpenQ reads and sends SMPTE timecode at 24, 25, 29.97 drop-frame or 30 fps, as <strong>LTC</strong> (an audio
+  signal) or <strong>MTC</strong> (MIDI Time Code).</p>
+  <h3>Following timecode</h3>
+  <p>Each cue list can follow timecode: right-click its tab and choose <em>Timecode…</em>. Pick LTC and the audio input
+  and channel it arrives on, or MTC and the MIDI input, and the frame rate. The window shows what is coming in, and the
+  standby card shows it too while that list is in front.</p>
+  <p>Then give cues a <strong>timecode trigger</strong> on their Basics tab. A cue fires when the incoming timecode runs
+  past its time, whatever the playhead is on, and its continues run as usual. Only timecode that is running forward
+  fires cues: when the source jumps (a locate or rewind) or stops, nothing fires, and triggering picks up again from the
+  new position.</p>
+  <h3>Sending timecode</h3>
+  <figure>
+    <img src="img/timecode-cue.webp" width="1400" height="241" alt="Timecode cue settings: format, rate, start time, duration and the LTC output channel and level.">
+    <figcaption>A Timecode cue sending LTC on output 1.</figcaption>
+  </figure>
+  <p>A <strong>Timecode cue</strong> sends running timecode from its <em>start</em> time, for its duration or until it is
+  stopped; pausing it holds the time. <strong>LTC</strong> goes out on one output of the audio device at the level you
+  set, so it can be wired to a lighting desk or video server. <strong>MTC</strong> goes to a MIDI output: a locate message
+  first, then quarter-frame messages. While it runs, the tab shows the time being sent.</p>
+</section>
+
 <section id="stages">
-  <h2><span class="n">09</span>Stages and projection</h2>
+  <h2><span class="n">10</span>Stages and projection</h2>
   <p>A <strong>stage</strong> is one video output, such as a projector or a screen. Add stages in
   <span class="menu">Settings → Stages</span>. Each has a name and a canvas size in pixels.</p>
   <h3>Sending a stage to a display</h3>
@@ -490,13 +548,18 @@ cargo run --release -- show.openq    # open a saved show</code></pre>
   opens there again when the show is loaded. If a display isn't listed, use <em>Refresh displays</em>. In a stage window,
   double-click or press <kbd>F11</kbd> to toggle fullscreen.</p>
   <h3>Mapping</h3>
-  <p><em>Edit mapping</em> shows a test pattern on the stage with four corner pins. Drag the corners
-  to fit the picture onto the screen (keystone correction), or hover a corner and nudge it one pixel at a time with the
-  arrow keys. <em>Reset mapping</em> puts the corners back.</p>
+  <figure>
+    <img src="img/mapping.webp" width="1100" height="551" alt="Mapping test pattern on a keystoned stage: white canvas with a grid, pixel rulers along every edge, circles and numbered corner pins.">
+    <figcaption>The mapping test pattern. Circles that look like ovals, or grid squares that aren't square, show what is still off.</figcaption>
+  </figure>
+  <p><em>Edit mapping</em> shows a test pattern on the stage: a white canvas with a square grid, pixel rulers along
+  every edge, circles, diagonals and a centre cross, all drawn through the mapping, plus four numbered corner pins.
+  Drag the corners to fit the picture onto the screen (keystone correction), or hover a corner and nudge it with the
+  arrow keys: one pixel at a time, or ten with <kbd>Shift</kbd>. <em>Reset mapping</em> puts the corners back.</p>
 </section>
 
 <section id="remote">
-  <h2><span class="n">10</span>Remote devices</h2>
+  <h2><span class="n">11</span>Remote devices</h2>
   <p>A second computer running OpenQ on the same network can follow the show and run it. This could be the stage manager's laptop
   or a tablet at the tech table. The computer running the show is the <strong>main device</strong>, and it does all the playback.
   The other device shows its cue list, playhead, running cues and meters, and sends GO and other commands to it.</p>
@@ -534,7 +597,7 @@ cargo run --release -- show.openq    # open a saved show</code></pre>
 </section>
 
 <section id="osc">
-  <h2><span class="n">11</span>OSC and network cues</h2>
+  <h2><span class="n">12</span>OSC and network cues</h2>
   <p>Turn on <strong>OSC remote control</strong> in <span class="menu">Settings → General</span>. It listens on UDP port 53000
   by default. Cues are addressed by their number.</p>
   <div class="table-wrap"><table>
@@ -554,7 +617,7 @@ cargo run --release -- show.openq    # open a saved show</code></pre>
 </section>
 
 <section id="settings">
-  <h2><span class="n">12</span>Settings</h2>
+  <h2><span class="n">13</span>Settings</h2>
   <p><span class="menu">Edit → Settings…</span>, or the <span class="ms" aria-hidden="true">&#xe8b8;</span> button at the
   right of the status bar. These are saved with the show.</p>
   <div class="table-wrap"><table>
@@ -570,7 +633,7 @@ cargo run --release -- show.openq    # open a saved show</code></pre>
 </section>
 
 <section id="keys">
-  <h2><span class="n">13</span>Keyboard shortcuts</h2>
+  <h2><span class="n">14</span>Keyboard shortcuts</h2>
   <div class="table-wrap"><table>
     <thead><tr><th>Keys</th><th>Action</th></tr></thead>
     <tbody>
@@ -587,18 +650,25 @@ cargo run --release -- show.openq    # open a saved show</code></pre>
       <tr><td><kbd>Ctrl</kbd>+<kbd>N</kbd> / <kbd>O</kbd> / <kbd>S</kbd> / <kbd>Shift</kbd>+<kbd>S</kbd></td><td>New / open / save / save as</td></tr>
       <tr><td><kbd>F1</kbd></td><td>Open this user manual</td></tr>
       <tr><td><kbd>F11</kbd></td><td>Fullscreen, in a stage window</td></tr>
+      <tr><td><kbd>←</kbd> <kbd>→</kbd> <kbd>↑</kbd> <kbd>↓</kbd> (+<kbd>Shift</kbd>)</td><td>Nudge the hovered corner pin 1 (10) pixels while mapping</td></tr>
       <tr><td>Cue hotkey</td><td>Fires that cue directly (set on the Basics tab)</td></tr>
     </tbody>
   </table></div>
 </section>
 
 <section id="trouble">
-  <h2><span class="n">14</span>Troubleshooting</h2>
+  <h2><span class="n">15</span>Troubleshooting</h2>
   <div class="table-wrap"><table>
     <thead><tr><th>Problem</th><th>Try</th></tr></thead>
     <tbody>
       <tr><td>No sound</td><td>Check the status bar. If it says <em>no audio</em>, pick another device in Settings → Audio.
       Check the master volume and the cue's level and routing.</td></tr>
+      <tr><td>A Mic cue is silent</td><td>Check the input device and channels on its I/O tab; the level bar shows whether
+      anything arrives. On macOS and Windows, OpenQ needs permission to use the microphone.</td></tr>
+      <tr><td>Timecode cues don't fire</td><td>Open the list's <em>Timecode…</em> window and check that it receives
+      timecode at the right rate. Cues only fire while timecode runs forward through their trigger time.</td></tr>
+      <tr><td>A Camera cue shows nothing</td><td>Check the device on its Camera tab (use <span class="ms" aria-hidden="true">&#xe5d5;</span>
+      to look again) and the engine log. Another program using the camera can block it.</td></tr>
       <tr><td>A cue shows a red <span class="ms" style="color:var(--red)" aria-hidden="true">&#xf8b6;</span> icon</td><td>Its media file is missing or unreadable, or its target cue was deleted. If the file has moved, click <em>Browse…</em> on the cue's
       Time tab to find it again.</td></tr>
       <tr><td>A video doesn't appear</td><td>Open the stage window from the Video menu. Check the cue's stage, opacity
@@ -615,7 +685,7 @@ cargo run --release -- show.openq    # open a saved show</code></pre>
 </section>
 
 <section id="licence">
-  <h2><span class="n">15</span>Licence and credits</h2>
+  <h2><span class="n">16</span>Licence and credits</h2>
   <p>OpenQ is licensed under the <a href="https://www.apache.org/licenses/LICENSE-2.0">Apache License 2.0</a>.</p>
   <div class="table-wrap"><table>
     <thead><tr><th>You may</th><th>You must</th></tr></thead>

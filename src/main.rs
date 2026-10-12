@@ -25,7 +25,9 @@ fn main() -> eframe::Result {
             .with_title("OpenQ")
             .with_inner_size([1280.0, 820.0])
             .with_min_inner_size([900.0, 560.0])
-            .with_drag_and_drop(true),
+            .with_drag_and_drop(true)
+            // On Windows OpenQ draws its own title bar with the window buttons.
+            .with_decorations(!ui::custom_window_frame()),
         ..Default::default()
     };
 

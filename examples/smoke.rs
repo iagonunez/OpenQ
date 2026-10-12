@@ -245,6 +245,86 @@ fn main() {
         assert!(!show.engine.instances.contains_key(&avi), "{name} didn't finish");
     }
 
+    // --- Mic cue: the default input feeds a mixer voice (skipped without an input device).
+    if !openq::media::input::list_input_devices().is_empty() {
+        let mic = Cue::new(CueKind::Mic(openq::model::MicCue { channels: 2, ..Default::default() }));
+        let mi = mic.id;
+        show.ws.cue_list.cues.push(mic);
+        show.edited();
+        let now = Instant::now();
+        let ws = show.ws.clone();
+        show.engine.start_cue(&ws, &mut show.media, mi, now);
+        run(&mut show, 0.6);
+        let played = show.media.audio.as_ref().unwrap().elapsed(mi).unwrap_or(0.0);
+        println!("mic: {played:.2}s through the mixer after 0.6 s; log {:?}", show.engine.log);
+        assert!(played > 0.3 || !show.engine.log.is_empty(), "mic voice didn't run");
+        show.engine.stop_cue(&ws, &mut show.media, mi);
+        run(&mut show, 0.2);
+        assert!(!show.engine.instances.contains_key(&mi), "mic didn't stop");
+    }
+
+    // --- Timecode cue sending LTC for one second.
+    let tc = openq::model::TimecodeCue { duration: 1.0, ..Default::default() };
+    let tcc = Cue::new(CueKind::Timecode(tc));
+    let tci = tcc.id;
+    show.ws.cue_list.cues.push(tcc);
+    show.edited();
+    let ws = show.ws.clone();
+    show.engine.start_cue(&ws, &mut show.media, tci, Instant::now());
+    run(&mut show, 0.6);
+    let (label, rate) = show.media.timecode_out(tci).expect("LTC running");
+    println!("LTC after 0.6 s: {}", label.format(rate));
+    assert!(label.s == 0 && (13..=17).contains(&label.f), "LTC position off: {}", label.format(rate));
+    run(&mut show, 0.8);
+    assert!(!show.engine.instances.contains_key(&tci), "LTC cue didn't end");
+
+    // --- MTC loopback through ALSA's "Midi Through": a Timecode cue sends MTC, a second cue list
+    // follows it and fires its cue at 01:00:01:00.
+    let through = |ports: Vec<String>| ports.into_iter().find(|p| p.contains("Midi Through"));
+    if let (Some(out), Some(inp)) =
+        (through(openq::media::tcio::list_midi_outputs()), through(openq::media::tcio::list_midi_inputs()))
+    {
+        use openq::model::{TimecodeOutput, TimecodeSource};
+        let gen_cue = Cue::new(CueKind::Timecode(openq::model::TimecodeCue {
+            output: TimecodeOutput::Mtc,
+            mtc_port: Some(out),
+            duration: 2.5,
+            ..Default::default()
+        }));
+        let gi = gen_cue.id;
+        show.ws.cue_list.cues.push(gen_cue);
+        show.ws.cue_list.add_list("Follows MTC", None);
+        show.ws.cue_list.info.timecode.source = TimecodeSource::Mtc;
+        show.ws.cue_list.info.timecode.mtc_port = Some(inp);
+        let mut hit = Cue::new(CueKind::Wait { duration: 0.2 });
+        hit.timecode_trigger = Some(3601.0);
+        let hi = hit.id;
+        show.ws.cue_list.cues.push(hit);
+        show.edited();
+        // Give the follower time to open the port.
+        run(&mut show, 0.6);
+        let ws = show.ws.clone();
+        let t = Instant::now();
+        show.engine.start_cue(&ws, &mut show.media, gi, t);
+        let mut fired = None;
+        while t.elapsed() < Duration::from_millis(2600) {
+            show.tick(Instant::now());
+            if fired.is_none() && show.engine.instances.contains_key(&hi) {
+                fired = Some(t.elapsed().as_secs_f64());
+            }
+            std::thread::sleep(Duration::from_millis(1));
+        }
+        println!("MTC-triggered cue fired at {fired:?} (expected ≈1.0 s)");
+        let f = fired.expect("timecode trigger didn't fire");
+        assert!((0.9..1.2).contains(&f), "timecode trigger timing off: {f}");
+        run(&mut show, 0.3);
+        // Switching back to the first list brings its playhead along.
+        assert_eq!(show.ws.cue_list.list_count(), 2);
+        assert!(show.ws.cue_list.find(gi).is_some());
+    } else {
+        println!("no Midi Through port: MTC loopback skipped");
+    }
+
     // --- OSC remote control.
     let mut w = Cue::new(CueKind::Wait { duration: 1.0 });
     w.number = "osc".into();

@@ -30,6 +30,7 @@ cd "$work/ffmpeg-${version}"
   --disable-programs --disable-doc \
   --disable-autodetect \
   --enable-videotoolbox --enable-audiotoolbox \
+  --enable-avfoundation \
   --enable-zlib --enable-bzlib \
   --enable-pic \
   | tee "$prefix/src/configure-output.txt"

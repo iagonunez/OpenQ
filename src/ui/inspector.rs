@@ -42,6 +42,9 @@ fn tabs_for(kind: &CueKind) -> &'static [(Tab, &'static str)] {
             (Tab::Io, "I/O"),
             (Tab::Levels, "Audio"),
         ],
+        CueKind::Mic(_) => &[(Tab::Basics, "Basics"), (Tab::Io, "I/O"), (Tab::Levels, "Levels"), (Tab::Eq, "EQ")],
+        CueKind::Camera(_) => &[(Tab::Basics, "Basics"), (Tab::Settings, "Camera"), (Tab::Geometry, "Geometry")],
+        CueKind::Timecode(_) => &[(Tab::Basics, "Basics"), (Tab::Settings, "Timecode")],
         CueKind::Memo => &[(Tab::Basics, "Basics")],
         CueKind::Text(_) => &[(Tab::Basics, "Basics"), (Tab::Settings, "Text"), (Tab::Geometry, "Geometry")],
         _ => &[(Tab::Basics, "Basics"), (Tab::Settings, "Settings")],
@@ -60,6 +63,14 @@ struct Ctx<'a> {
     waveforms: &'a Waveforms,
     /// Wall-clock seconds this cue has been playing, if it is.
     elapsed: Option<f64>,
+    /// Input devices, cameras and MIDI ports.
+    devices: super::devices::Devices,
+    /// Timecode settings of the list holding the cue (for its trigger time).
+    list_tc: crate::model::TimecodeSync,
+    /// Input level of a running Mic cue (linear peak).
+    mic_level: Option<f32>,
+    /// What a running Timecode cue is sending.
+    tc_out: Option<String>,
 }
 
 impl App {
@@ -73,7 +84,14 @@ impl App {
             .iter_all()
             .iter()
             .filter(|c| c.id != id)
-            .map(|c| (c.id, format!("{} {}", c.number, c.display_name()).trim().to_string()))
+            .map(|c| {
+                let label = format!("{} {}", c.number, c.display_name()).trim().to_string();
+                // Cues in a background list say which list they're in.
+                match list.list_name_of(c.id).filter(|_| !list.in_current(c.id)) {
+                    Some(l) => (c.id, format!("{label}  ({l})")),
+                    None => (c.id, label),
+                }
+            })
             .collect();
         let geometries: HashMap<CueId, Geometry> = list
             .iter_all()
@@ -94,9 +112,20 @@ impl App {
             prober: &self.prober,
             waveforms: &self.waveforms,
             elapsed,
+            devices: self.inputs.lock().clone(),
+            list_tc: show.ws.cue_list.timecode_of(id).clone(),
+            mic_level: show.media.mic_peak(id),
+            tc_out: show.media.timecode_out(id).map(|(t, r)| t.format(r)),
         };
+        if ctx.mic_level.is_some() || ctx.tc_out.is_some() {
+            ui.ctx().request_repaint_after(std::time::Duration::from_millis(50));
+        }
         let Some(cue) = show.ws.cue_list.find_mut(id) else { return };
+        if matches!(cue.kind, CueKind::Mic(_) | CueKind::Camera(_) | CueKind::Timecode(_)) {
+            super::devices::ensure(&self.inputs, ui.ctx());
+        }
         let before = cue.clone();
+        let mut refresh_devices = false;
         let mut pick_media = false;
 
         let tabs = tabs_for(&cue.kind);
@@ -131,9 +160,10 @@ impl App {
             Tab::Io => match &mut cue.kind {
                 CueKind::Audio(a) => io_tab(ui, &a.path, &mut a.routing, None, &ctx, &mut pick_media),
                 CueKind::Video(v) => io_tab(ui, &v.path, &mut v.routing, Some(v.stage), &ctx, &mut pick_media),
+                CueKind::Mic(m) => mic_io(ui, m, &ctx, &mut refresh_devices),
                 _ => {}
             },
-            Tab::Settings => settings_tab(ui, cue, &ctx),
+            Tab::Settings => settings_tab(ui, cue, &ctx, &mut refresh_devices),
             Tab::Time => match &mut cue.kind {
                 CueKind::Audio(a) => audio_time(ui, id, a, &ctx, &mut pick_media),
                 CueKind::Video(v) => video_time(ui, v, &ctx, &mut pick_media),
@@ -142,12 +172,18 @@ impl App {
             Tab::Levels => match &mut cue.kind {
                 CueKind::Audio(a) => audio_levels(ui, a, ctx.out_channels.min(crate::model::MAX_OUT_CHANNELS)),
                 CueKind::Video(v) => video_levels(ui, v, ctx.out_channels.min(crate::model::MAX_OUT_CHANNELS)),
+                CueKind::Mic(m) => mic_levels(ui, m, ctx.out_channels.min(crate::model::MAX_OUT_CHANNELS)),
                 _ => {}
             },
             Tab::Eq => {
-                if let CueKind::Audio(a) = &mut cue.kind {
+                let eq = match &mut cue.kind {
+                    CueKind::Audio(a) => Some(&mut a.eq),
+                    CueKind::Mic(m) => Some(&mut m.eq),
+                    _ => None,
+                };
+                if let Some(eq) = eq {
                     let specs = [super::theme::Card::new(super::icons::GRAPHIC_EQ, "Equaliser", f32::INFINITY)];
-                    super::theme::cards(ui, "eq", &specs, |ui, _| eq_editor(ui, ui.id().with(("eq", id)), &mut a.eq));
+                    super::theme::cards(ui, "eq", &specs, |ui, _| eq_editor(ui, ui.id().with(("eq", id)), eq));
                 }
             }
             Tab::Geometry => match &mut cue.kind {
@@ -160,6 +196,16 @@ impl App {
                         geometry: &mut v.geometry,
                     };
                     layer_geometry(ui, "vgeo", refs, &ctx, &mut self.show_preview);
+                }
+                CueKind::Camera(c) => {
+                    let refs = LayerRefs {
+                        stage: &mut c.stage,
+                        fit: Some(&mut c.fit),
+                        layer: &mut c.layer,
+                        opacity: &mut c.opacity,
+                        geometry: &mut c.geometry,
+                    };
+                    layer_geometry(ui, "cgeo", refs, &ctx, &mut self.show_preview);
                 }
                 CueKind::Text(t) => {
                     let refs = LayerRefs {
@@ -177,6 +223,9 @@ impl App {
 
         if pick_media {
             self.deferred.push(Deferred::PickMedia(id));
+        }
+        if refresh_devices {
+            super::devices::refresh(&self.inputs, ui.ctx());
         }
         if *cue != before {
             let cue = cue.clone();
@@ -257,6 +306,23 @@ fn basics(ui: &mut Ui, cue: &mut Cue, ctx: &Ctx, pick: &mut bool) {
                 ui.add_enabled_ui(cue.continue_mode != ContinueMode::AutoFollow, |ui| {
                     time_edit(ui, &mut cue.post_wait)
                         .on_hover_text("Time after the action starts before the next cue auto-continues");
+                });
+                ui.end_row();
+
+                ui.label("Timecode");
+                ui.horizontal(|ui| {
+                    let rate = ctx.list_tc.rate;
+                    let mut on = cue.timecode_trigger.is_some();
+                    if ui.checkbox(&mut on, "").on_hover_text("Fire when the cue list's timecode reaches this time").changed() {
+                        cue.timecode_trigger = on.then_some(3600.0);
+                    }
+                    if let Some(t) = &mut cue.timecode_trigger {
+                        timecode_edit(ui, t, rate);
+                        if ctx.list_tc.source == crate::model::TimecodeSource::Off {
+                            ui.label(RichText::new("list ignores timecode").color(super::widgets::AMBER).small())
+                                .on_hover_text("Turn timecode on for this cue list: right-click its tab → Timecode…");
+                        }
+                    }
                 });
                 ui.end_row();
             });
@@ -667,17 +733,7 @@ fn audio_levels(ui: &mut Ui, a: &mut AudioCue, outs: usize) {
     let specs = [Card::new(ic::TUNE, "Levels", fader_bank_width(outs)), Card::new(ic::CONTROL_CAMERA, "Pan", 260.0)];
     super::theme::cards(ui, "alevels", &specs, |ui, i| match i {
         0 => fader_bank(ui, &mut a.volume_db, &mut a.out_levels, outs),
-        _ => {
-            ui.horizontal(|ui| {
-                ui.add(Slider::new(&mut a.pan, -1.0..=1.0).show_value(false));
-                ui.label(RichText::new(pan_label(a.pan)).font(super::theme::mono(12.5)));
-            });
-            if ui.add_enabled(a.pan != 0.0, egui::Button::new("Centre").small()).clicked() {
-                a.pan = 0.0;
-            }
-            ui.add_space(4.0);
-            ui.label(RichText::new("Pans between outputs 1 and 2 when the routing is automatic.").weak().small());
-        }
+        _ => pan_card(ui, &mut a.pan),
     });
 }
 
@@ -934,7 +990,7 @@ fn parse_pct(s: &str) -> Option<f64> {
     s.trim().trim_end_matches('%').trim().parse::<f64>().ok().map(|v| v / 100.0)
 }
 
-fn settings_tab(ui: &mut Ui, cue: &mut Cue, ctx: &Ctx) {
+fn settings_tab(ui: &mut Ui, cue: &mut Cue, ctx: &Ctx, refresh: &mut bool) {
     use super::icons as ic;
     use super::theme::{Card, cards};
     let options = ctx.options;
@@ -1067,6 +1123,8 @@ fn settings_tab(ui: &mut Ui, cue: &mut Cue, ctx: &Ctx) {
             Some("Lets the target's looping slice finish its current pass, then play on to the next slice."),
         ),
         CueKind::Text(t) => text_settings(ui, t),
+        CueKind::Camera(c) => camera_settings(ui, c, ctx, refresh),
+        CueKind::Timecode(t) => timecode_settings(ui, t, ctx, refresh),
         CueKind::Network(n) => {
             let specs = [Card::new(ic::SETTINGS_REMOTE, "OSC message", 480.0)];
             cards(ui, "net", &specs, |ui, _| {
@@ -1296,5 +1354,276 @@ fn text_sample(ui: &mut Ui, t: &crate::model::TextCue) {
     let size = size * (max_w / size.x).min(64.0 / size.y).min(1.0);
     egui::Frame::new().fill(super::theme::BG_INPUT).corner_radius(6).inner_margin(8).show(ui, |ui| {
         ui.add(egui::Image::new((tex.id(), size)));
+    });
+}
+
+/// Edit label-seconds as "hh:mm:ss:ff" at `rate`; drag to step by frames.
+pub(super) fn timecode_edit(ui: &mut Ui, secs: &mut f64, rate: crate::model::TimecodeRate) -> egui::Response {
+    use crate::timecode::{format_secs, parse_secs};
+    let frame = 1.0 / rate.nominal() as f64;
+    ui.add(
+        DragValue::new(secs)
+            .range(0.0..=86_400.0 - frame)
+            .speed(frame)
+            .custom_formatter(move |v, _| format_secs(v, rate))
+            .custom_parser(move |t| parse_secs(t, rate)),
+    )
+    .on_hover_text(format!("Timecode at {} (type hh:mm:ss:ff)", rate.label()))
+}
+
+/// Combo of choices by (value, label), with a first "default" entry for None.
+fn device_combo(ui: &mut Ui, salt: &str, value: &mut Option<String>, choices: &[(String, String)], default: &str) {
+    let label = match value {
+        None => default.to_string(),
+        Some(v) => choices.iter().find(|c| &c.0 == v).map_or_else(|| format!("{v} (not found)"), |c| c.1.clone()),
+    };
+    ComboBox::from_id_salt(salt).width(260.0).selected_text(label).show_ui(ui, |ui| {
+        ui.selectable_value(value, None, default);
+        for (v, l) in choices {
+            ui.selectable_value(value, Some(v.clone()), l);
+        }
+    });
+}
+
+fn refresh_button(ui: &mut Ui, ctx: &Ctx, refresh: &mut bool) {
+    if ctx.devices.loading {
+        ui.spinner();
+    } else if super::theme::icon_button(ui, super::icons::REFRESH, "Look for devices again").clicked() {
+        *refresh = true;
+    }
+}
+
+/// A horizontal input level bar (linear peak).
+fn level_bar(ui: &mut Ui, peak: Option<f32>) {
+    let (rect, _) = ui.allocate_exact_size(egui::vec2(160.0, 8.0), egui::Sense::hover());
+    let db = peak.map_or(MIN_DB, gain_to_db);
+    let frac = ((db - MIN_DB) / -MIN_DB).clamp(0.0, 1.0);
+    let color = if db > -3.0 { RED } else if db > -12.0 { super::widgets::AMBER } else { super::widgets::GREEN };
+    super::widgets::paint_progress(ui, rect, frac, color);
+}
+
+fn mic_io(ui: &mut Ui, m: &mut crate::model::MicCue, ctx: &Ctx, refresh: &mut bool) {
+    use super::icons as ic;
+    use super::theme::Card;
+    let specs = [
+        Card::new(ic::MIC, "Input", 420.0),
+        Card::new(ic::SCHEDULE, "Timing", 260.0),
+        Card::new(ic::GRID_VIEW, "Routing", f32::INFINITY),
+    ];
+    let inputs: Vec<(String, String)> = ctx.devices.audio_in.iter().map(|d| (d.id.clone(), d.name.clone())).collect();
+    super::theme::cards(ui, "mic", &specs, |ui, i| match i {
+        0 => {
+            egui::Grid::new("mic-in").num_columns(2).spacing([10.0, 6.0]).show(ui, |ui| {
+                ui.label("Device");
+                ui.horizontal(|ui| {
+                    device_combo(ui, "mic-dev", &mut m.device, &inputs, "System default input");
+                    refresh_button(ui, ctx, refresh);
+                });
+                ui.end_row();
+                ui.label("Channels");
+                ui.horizontal(|ui| {
+                    let mut first = m.first_channel + 1;
+                    ui.add(DragValue::new(&mut first).range(1..=64).prefix("from "));
+                    m.first_channel = first - 1;
+                    ui.add(DragValue::new(&mut m.channels).range(1..=crate::model::MAX_SRC_CHANNELS as u16).suffix(" ch"));
+                    ui.label(RichText::new(match m.channels {
+                        1 => format!("input {}", m.first_channel + 1),
+                        n => format!("inputs {}–{}", m.first_channel + 1, m.first_channel + n),
+                    }).weak());
+                });
+                ui.end_row();
+                ui.label("Level");
+                ui.horizontal(|ui| {
+                    level_bar(ui, ctx.mic_level);
+                    if ctx.mic_level.is_none() {
+                        ui.label(RichText::new("shown while the cue runs").weak().small());
+                    }
+                });
+                ui.end_row();
+            });
+            ui.add_space(4.0);
+            ui.label(RichText::new("Live input is delayed by about 30 ms on its way through the mixer.").weak().small());
+        }
+        1 => {
+            egui::Grid::new("mic-time").num_columns(2).spacing([10.0, 6.0]).show(ui, |ui| {
+                ui.label("Duration");
+                ui.horizontal(|ui| {
+                    time_edit(ui, &mut m.duration);
+                    ui.label(RichText::new(if m.duration <= 0.0 { "until stopped" } else { "" }).weak());
+                });
+                ui.end_row();
+                ui.label("Fade in");
+                time_edit(ui, &mut m.fade_in).on_hover_text("Fades up from silence when the cue starts");
+                ui.end_row();
+            });
+        }
+        _ => routing_editor(ui, &mut m.routing, m.channels as usize, ctx.out_channels.min(crate::model::MAX_OUT_CHANNELS)),
+    });
+}
+
+fn mic_levels(ui: &mut Ui, m: &mut crate::model::MicCue, outs: usize) {
+    use super::icons as ic;
+    use super::theme::Card;
+    let specs = [Card::new(ic::TUNE, "Levels", fader_bank_width(outs)), Card::new(ic::CONTROL_CAMERA, "Pan", 260.0)];
+    super::theme::cards(ui, "miclevels", &specs, |ui, i| match i {
+        0 => fader_bank(ui, &mut m.volume_db, &mut m.out_levels, outs),
+        _ => pan_card(ui, &mut m.pan),
+    });
+}
+
+fn pan_card(ui: &mut Ui, pan: &mut f32) {
+    ui.horizontal(|ui| {
+        ui.add(Slider::new(pan, -1.0..=1.0).show_value(false));
+        ui.label(RichText::new(pan_label(*pan)).font(super::theme::mono(12.5)));
+    });
+    if ui.add_enabled(*pan != 0.0, egui::Button::new("Centre").small()).clicked() {
+        *pan = 0.0;
+    }
+    ui.add_space(4.0);
+    ui.label(RichText::new("Pans between outputs 1 and 2 when the routing is automatic.").weak().small());
+}
+
+/// Capture sizes offered for cameras.
+const CAMERA_SIZES: [[u32; 2]; 4] = [[640, 480], [1280, 720], [1920, 1080], [3840, 2160]];
+
+fn camera_settings(ui: &mut Ui, c: &mut crate::model::CameraCue, ctx: &Ctx, refresh: &mut bool) {
+    use super::icons as ic;
+    use super::theme::Card;
+    let specs = [Card::new(ic::PHOTO_CAMERA, "Camera", 460.0), Card::new(ic::SCHEDULE, "Timing", 300.0)];
+    super::theme::cards(ui, "camera", &specs, |ui, i| match i {
+        0 => {
+            egui::Grid::new("cam").num_columns(2).spacing([10.0, 6.0]).show(ui, |ui| {
+                ui.label("Device");
+                ui.horizontal(|ui| {
+                    if c.format.is_some() {
+                        // A source typed by hand (e.g. a test pattern): show it as text.
+                        let mut text = c.device.clone().unwrap_or_default();
+                        if ui.add(TextEdit::singleline(&mut text).desired_width(260.0)).changed() {
+                            c.device = (!text.is_empty()).then_some(text);
+                        }
+                    } else {
+                        device_combo(ui, "cam-dev", &mut c.device, &ctx.devices.cameras, "First camera found");
+                    }
+                    refresh_button(ui, ctx, refresh);
+                });
+                ui.end_row();
+                if ctx.devices.loaded && ctx.devices.cameras.is_empty() && c.format.is_none() {
+                    ui.label("");
+                    ui.label(RichText::new("No cameras found.").color(super::widgets::AMBER));
+                    ui.end_row();
+                }
+                ui.label("Size");
+                let label = c.size.map_or_else(|| "Camera default".to_string(), |[w, h]| format!("{w} × {h}"));
+                ComboBox::from_id_salt("cam-size").selected_text(label).show_ui(ui, |ui| {
+                    ui.selectable_value(&mut c.size, None, "Camera default");
+                    for s in CAMERA_SIZES {
+                        ui.selectable_value(&mut c.size, Some(s), format!("{} × {}", s[0], s[1]));
+                    }
+                });
+                ui.end_row();
+                ui.label("Mirror");
+                ui.checkbox(&mut c.mirror, "Flip left to right");
+                ui.end_row();
+            });
+            ui.add_space(4.0);
+            ui.label(RichText::new("Device and size changes apply the next time the cue starts.").weak().small());
+        }
+        _ => {
+            egui::Grid::new("cam-time").num_columns(2).spacing([10.0, 6.0]).show(ui, |ui| {
+                ui.label("Show for");
+                ui.horizontal(|ui| {
+                    time_edit(ui, &mut c.duration);
+                    ui.label(RichText::new(if c.duration <= 0.0 { "until stopped" } else { "" }).weak());
+                });
+                ui.end_row();
+            });
+        }
+    });
+}
+
+fn timecode_settings(ui: &mut Ui, t: &mut crate::model::TimecodeCue, ctx: &Ctx, refresh: &mut bool) {
+    use super::icons as ic;
+    use super::theme::Card;
+    use crate::model::{TimecodeOutput, TimecodeRate};
+    let specs = [Card::new(ic::TIMER_PLAY, "Timecode", 380.0), Card::new(ic::SPEAKER, "Output", 420.0)];
+    super::theme::cards(ui, "tc", &specs, |ui, i| match i {
+        0 => {
+            egui::Grid::new("tc-gen").num_columns(2).spacing([10.0, 6.0]).show(ui, |ui| {
+                ui.label("Format");
+                ui.horizontal(|ui| {
+                    ui.selectable_value(&mut t.output, TimecodeOutput::Ltc, "LTC (audio)");
+                    ui.selectable_value(&mut t.output, TimecodeOutput::Mtc, "MTC (MIDI)");
+                });
+                ui.end_row();
+                ui.label("Rate");
+                ComboBox::from_id_salt("tc-rate").selected_text(t.rate.label()).show_ui(ui, |ui| {
+                    for r in TimecodeRate::ALL {
+                        ui.selectable_value(&mut t.rate, r, r.label());
+                    }
+                });
+                ui.end_row();
+                ui.label("Start at");
+                timecode_edit(ui, &mut t.start, t.rate);
+                ui.end_row();
+                ui.label("Duration");
+                ui.horizontal(|ui| {
+                    time_edit(ui, &mut t.duration);
+                    ui.label(RichText::new(if t.duration <= 0.0 { "until stopped" } else { "" }).weak());
+                });
+                ui.end_row();
+                ui.label("Sending");
+                ui.label(
+                    RichText::new(ctx.tc_out.clone().unwrap_or_else(|| "–".into()))
+                        .font(super::theme::mono(14.0))
+                        .color(if ctx.tc_out.is_some() { super::theme::GREEN } else { super::theme::TEXT_FAINT }),
+                );
+                ui.end_row();
+            });
+        }
+        _ => {
+            egui::Grid::new("tc-out").num_columns(2).spacing([10.0, 6.0]).show(ui, |ui| match t.output {
+                TimecodeOutput::Ltc => {
+                    ui.label("Device");
+                    ui.label(ctx.device.as_deref().unwrap_or("no audio device"));
+                    ui.end_row();
+                    ui.label("Output");
+                    let outs = ctx.out_channels.max(1) as u16;
+                    ComboBox::from_id_salt("tc-ch")
+                        .selected_text(format!("Output {}", t.ltc_channel + 1))
+                        .show_ui(ui, |ui| {
+                            for o in 0..outs {
+                                ui.selectable_value(&mut t.ltc_channel, o, format!("Output {}", o + 1));
+                            }
+                        });
+                    ui.end_row();
+                    ui.label("Level");
+                    db_edit(ui, &mut t.volume_db);
+                    ui.end_row();
+                }
+                TimecodeOutput::Mtc => {
+                    ui.label("MIDI port");
+                    ui.horizontal(|ui| {
+                        let ports: Vec<(String, String)> = ctx.devices.midi_out.iter().map(|p| (p.clone(), p.clone())).collect();
+                        device_combo(ui, "tc-port", &mut t.mtc_port, &ports, "First MIDI output");
+                        refresh_button(ui, ctx, refresh);
+                    });
+                    ui.end_row();
+                    if ctx.devices.loaded && ctx.devices.midi_out.is_empty() {
+                        ui.label("");
+                        ui.label(RichText::new("No MIDI outputs found.").color(super::widgets::AMBER));
+                        ui.end_row();
+                    }
+                }
+            });
+            ui.add_space(4.0);
+            ui.label(
+                RichText::new(match t.output {
+                    TimecodeOutput::Ltc => "LTC goes only to the chosen output, not through the cue's routing.",
+                    TimecodeOutput::Mtc => "Sends a full-frame locate at the start, then quarter frames.",
+                })
+                .weak()
+                .small(),
+            );
+        }
     });
 }

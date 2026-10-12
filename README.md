@@ -44,7 +44,11 @@ compiled by `tools/build_ffmpeg_macos.sh`. It then attaches the matching FFmpeg 
 
 ## Cues
 
-Audio, Video, Text, Group (folder), Wait, Memo, Fade, Start, Stop, Pause, Go To, Devamp, Network.
+Audio, Mic (live input), Video, Camera (live video), Text, Group (folder), Wait, Memo, Fade, Start,
+Stop, Pause, Go To, Devamp, Network, Timecode.
+
+A show can hold several **cue lists** (tabs above the cue list). GO works on the list in front;
+cues in other lists keep playing and can be targeted from any list.
 
 **Text cues** use any font installed on the system (plus the built-in Inter), with weight,
 italic, letter spacing, line height, outline and drop shadow. They get proper shaping (kerning,
@@ -61,7 +65,13 @@ Every cue has a number, name, notes, color, armed flag, **pre-wait**, **post-wai
 Group modes: start first child and enter the group, playlist (start the first child and skip past
 the group), start all children at once, start a random child.
 
-Cues can also have a **hotkey** (Basics tab) that fires them directly.
+Cues can also have a **hotkey** (Basics tab) that fires them directly, and a **timecode trigger**.
+
+## Timecode
+
+Each cue list can follow **LTC** (from an audio input) or **MTC** (from a MIDI input) at 24, 25,
+29.97 drop-frame or 30 fps; cues fire as running timecode passes their trigger time. **Timecode
+cues** send LTC on an audio output or MTC to a MIDI port.
 
 ## Edit and show mode
 
@@ -86,6 +96,8 @@ Cues can also have a **hotkey** (Basics tab) that fires them directly.
   frequency/gain, scroll on a handle for Q.
 - Level, pan, EQ and routing changes apply live to a playing cue. Pick the output device in
   Settings → Audio.
+- **Mic cues** play a live input (device and channels on the I/O tab) through the same mixer,
+  with levels, EQ, routing and fades; about 30 ms of latency.
 
 ### Video cues
 
@@ -96,8 +108,11 @@ Cues can also have a **hotkey** (Basics tab) that fires them directly.
 - The **soundtrack** plays through the OpenQ mixer (stereo), so it has level, fades and a routing
   matrix like an audio cue.
 - **Stages**: any number of outputs (Settings → Video stages), each with its own canvas size and
-  window. *Edit mapping* shows a test pattern and four corner pins; drag them (or nudge with the
-  arrow keys) for keystone correction / projection mapping. Double-click or F11 for fullscreen.
+  window. *Edit mapping* shows a white test pattern with a grid, pixel rulers and circles, plus
+  four corner pins; drag them (or nudge with the arrow keys, Shift for 10 px) for keystone
+  correction / projection mapping. Double-click or F11 for fullscreen.
+- **Camera cues** show a live camera or capture card (v4l2 / DirectShow / AVFoundation) as a layer
+  with the same geometry, opacity and fades.
 
 ## Remote control and network cues
 
@@ -164,7 +179,11 @@ src/engine.rs       cue state machine (GO, waits, continues, groups, fades, paus
 src/media/audio.rs  cpal output + lock-free real-time mixer (sample-accurate starts, gain ramps,
                     per-voice EQ and routing matrix)
 src/media/decoder.rs  per-voice symphonia decode → trim/loop → rubato resample → ring buffer
-src/media/video.rs  FFmpeg decode threads / still images → RGBA frames + soundtrack to the mixer
+src/media/video.rs  FFmpeg decode threads / still images / cameras → RGBA frames + soundtrack to
+                    the mixer
+src/media/input.rs  live audio inputs (Mic cues)
+src/media/tcio.rs   timecode in (LTC/MTC readers for cue lists) and out (Timecode cues)
+src/timecode.rs     SMPTE labels, LTC encoder/decoder, MIDI Time Code
 src/show.rs         shared state + 1 kHz engine thread
 src/osc.rs          OSC remote-control listener
 src/control.rs      show-control commands shared by UI, OSC and remote devices

@@ -27,12 +27,11 @@ Settings UI in `settings_stages`: a "span of" combo, crop, blend edges and gamma
 - A midir input thread maps incoming messages to `control::Command`, then calls
   `control::apply` (the same path as OSC).
 
-## 3. Timecode triggers
-- **MTC:** decode quarter-frame messages via midir.
-- **LTC:** read a cpal input; biphase-mark decode, sync word 0x3FFD.
-- Model: `Cue.timecode_trigger`. A cue fires when timecode crosses its time and re-arms after a
-  backwards jump.
-- Settings: timecode source and frame rate.
+## 3. Timecode (done: LTC/MTC in per cue list, cue timecode triggers, Timecode cues sending LTC/MTC)
+Still open:
+- Chase mode: on a jump, start the cues that would be running at the new time, at the right offset.
+- Per-list timecode offset, and an optional "fire cues skipped by a jump".
+- Read the rate from LTC itself (bit 10 and frame counting) instead of the configured rate.
 
 ## 4. Lighting / DMX mode (large; target is the user's own console hardware)
 - **Mode:** a new `Mode::Lighting`.

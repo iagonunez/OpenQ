@@ -2,7 +2,7 @@
 //! onto the window through four corner pins (keystone / projection mapping).
 
 use super::App;
-use super::widgets::{AMBER, GREEN};
+use super::widgets::AMBER;
 use crate::geometry::{Homography, layer_quad};
 use crate::model::{Stage, StageId};
 use crate::show::Show;
@@ -118,20 +118,23 @@ impl App {
                                 c[0] += d.x / rect.width();
                                 c[1] += d.y / rect.height();
                             }
-                            let col = if r.hovered() || r.dragged() { AMBER } else { GREEN };
-                            painter.circle_stroke(p, 10.0, Stroke::new(2.0, col));
-                            painter.circle_filled(p, 3.0, col);
+                            paint_pin(&painter, p, k, r.hovered() || r.dragged());
                             if r.hovered() || r.dragged() {
                                 ctx.set_cursor_icon(egui::CursorIcon::Move);
                             }
                         }
-                        painter.text(
-                            rect.center_top() + vec2(0.0, 12.0),
-                            egui::Align2::CENTER_TOP,
-                            format!("Mapping {} — drag the corners · arrow keys nudge the hovered corner", stage.name),
-                            egui::FontId::proportional(14.0),
-                            Color32::WHITE,
+                        // Instructions on a dark pill so they read over the white pattern.
+                        let msg = format!(
+                            "Mapping {} — drag the corners · arrow keys nudge the hovered corner (Shift: 10 px)",
+                            stage.name
                         );
+                        let galley = painter.layout_no_wrap(msg, egui::FontId::proportional(14.0), Color32::WHITE);
+                        let pill = Rect::from_center_size(
+                            rect.center_top() + vec2(0.0, 24.0),
+                            galley.size() + vec2(24.0, 12.0),
+                        );
+                        painter.rect_filled(pill, 8.0, Color32::from_black_alpha(200));
+                        painter.galley(pill.min + vec2(12.0, 6.0), galley, Color32::WHITE);
                         // Keyboard nudge for the corner nearest the pointer.
                         if let Some(ptr) = ctx.input(|i| i.pointer.hover_pos()) {
                             let near = (0..4).min_by(|a, b| {
@@ -142,13 +145,14 @@ impl App {
                                 d(*a).total_cmp(&d(*b))
                             });
                             if let Some(k) = near {
-                                let step = 1.0 / rect.width().max(1.0);
+                                let px = if ctx.input(|i| i.modifiers.shift) { 10.0 } else { 1.0 };
+                                let (sx, sy) = (px / rect.width().max(1.0), px / rect.height().max(1.0));
                                 let (dx, dy) = ctx.input(|i| {
                                     let mut d = (0.0, 0.0);
-                                    if i.key_pressed(egui::Key::ArrowLeft) { d.0 -= step; }
-                                    if i.key_pressed(egui::Key::ArrowRight) { d.0 += step; }
-                                    if i.key_pressed(egui::Key::ArrowUp) { d.1 -= step; }
-                                    if i.key_pressed(egui::Key::ArrowDown) { d.1 += step; }
+                                    if i.key_pressed(egui::Key::ArrowLeft) { d.0 -= sx; }
+                                    if i.key_pressed(egui::Key::ArrowRight) { d.0 += sx; }
+                                    if i.key_pressed(egui::Key::ArrowUp) { d.1 -= sy; }
+                                    if i.key_pressed(egui::Key::ArrowDown) { d.1 += sy; }
                                     d
                                 });
                                 corners[k][0] += dx;
@@ -255,47 +259,122 @@ pub(super) fn layer_mesh(
     Shape::mesh(mesh)
 }
 
-/// Grid, border and diagonals drawn through the mapping, for lining up a projector.
+/// The mapping test pattern: a white canvas with a grid, pixel rulers along every
+/// edge, circles and a centre cross, all drawn through the corner-pin warp, so keystone and
+/// straightness can be judged on the real screen. Circles that come out as ellipses or grid
+/// squares that aren't square show what is still off.
 fn paint_test_pattern(p: &egui::Painter, h: &Homography, rect: Rect, stage: &Stage) {
+    let (w, ht) = (stage.width.max(1) as f32, stage.height.max(1) as f32);
+    let at = |x: f32, y: f32| to_screen(h, rect, x / w, y / ht);
+    // A straight canvas line, subdivided so the perspective warp keeps it straight on screen.
     let line = |a: [f32; 2], b: [f32; 2], stroke: Stroke| {
-        let pts: Vec<Pos2> = (0..=24)
-            .map(|i| {
-                let t = i as f32 / 24.0;
-                to_screen(h, rect, a[0] + (b[0] - a[0]) * t, a[1] + (b[1] - a[1]) * t)
-            })
-            .collect();
+        let pts: Vec<Pos2> = (0..=16).map(|i| {
+            let t = i as f32 / 16.0;
+            at(a[0] + (b[0] - a[0]) * t, a[1] + (b[1] - a[1]) * t)
+        }).collect();
         p.add(Shape::line(pts, stroke));
     };
-    // Canvas fill.
+    let circle = |c: [f32; 2], r: f32, stroke: Stroke| {
+        let pts: Vec<Pos2> = (0..=96).map(|i| {
+            let a = i as f32 / 96.0 * std::f32::consts::TAU;
+            at(c[0] + r * a.cos(), c[1] + r * a.sin())
+        }).collect();
+        p.add(Shape::line(pts, stroke));
+    };
+    let black = Color32::from_gray(20);
+    let ink = |width: f32, gray: u8| Stroke::new(width, Color32::from_gray(gray));
+
+    // White canvas.
     let mut mesh = Mesh::default();
-    for [u, v] in [[0.0, 0.0], [1.0, 0.0], [1.0, 1.0], [0.0, 1.0]] {
-        mesh.colored_vertex(to_screen(h, rect, u, v), Color32::from_gray(25));
+    for [x, y] in [[0.0, 0.0], [w, 0.0], [w, ht], [0.0, ht]] {
+        mesh.colored_vertex(at(x, y), Color32::WHITE);
     }
     mesh.add_triangle(0, 1, 2);
     mesh.add_triangle(0, 2, 3);
     p.add(Shape::mesh(mesh));
-    let thin = Stroke::new(1.0, Color32::from_gray(110));
-    let n = 8;
-    for i in 1..n {
-        let t = i as f32 / n as f32;
-        line([t, 0.0], [t, 1.0], thin);
-        line([0.0, t], [1.0, t], thin);
+
+    // Grid: square cells, a tenth of the height, centred on the canvas.
+    let cell = ht / 10.0;
+    let (cx, cy) = (w / 2.0, ht / 2.0);
+    let n = (w / cell / 2.0).ceil() as i32;
+    for k in -n..=n {
+        let x = cx + k as f32 * cell;
+        if x > 0.0 && x < w {
+            line([x, 0.0], [x, ht], ink(1.0, if k % 5 == 0 { 120 } else { 190 }));
+        }
     }
-    let bold = Stroke::new(2.0, Color32::WHITE);
-    line([0.0, 0.0], [1.0, 0.0], bold);
-    line([1.0, 0.0], [1.0, 1.0], bold);
-    line([1.0, 1.0], [0.0, 1.0], bold);
-    line([0.0, 1.0], [0.0, 0.0], bold);
-    let diag = Stroke::new(1.0, AMBER);
-    line([0.0, 0.0], [1.0, 1.0], diag);
-    line([1.0, 0.0], [0.0, 1.0], diag);
-    let c = to_screen(h, rect, 0.5, 0.5);
-    p.circle_stroke(c, 30.0, Stroke::new(1.5, AMBER));
+    for k in -5..=5 {
+        let y = cy + k as f32 * cell;
+        if y > 0.0 && y < ht {
+            line([0.0, y], [w, y], ink(1.0, if k % 5 == 0 { 120 } else { 190 }));
+        }
+    }
+    // Diagonals, circles and the centre cross.
+    line([0.0, 0.0], [w, ht], ink(1.0, 160));
+    line([w, 0.0], [0.0, ht], ink(1.0, 160));
+    let r = ht.min(w) / 2.0;
+    circle([cx, cy], r * 0.92, ink(2.5, 20));
+    circle([cx, cy], r * 0.5, ink(1.5, 60));
+    for (qx, qy) in [(0.25, 0.25), (0.75, 0.25), (0.25, 0.75), (0.75, 0.75)] {
+        circle([w * qx, ht * qy], r * 0.22, ink(1.5, 60));
+    }
+    line([cx - cell, cy], [cx + cell, cy], ink(2.0, 20));
+    line([cx, cy - cell], [cx, cy + cell], ink(2.0, 20));
+
+    // Rulers: ticks every 10 px, longer every 50 and 100 px, numbered as often as the screen allows.
+    let scale = rect.width() / w; // screen points per canvas pixel (roughly)
+    let label_every = [100.0, 200.0, 500.0, 1000.0].into_iter().find(|s| s * scale >= 46.0).unwrap_or(1000.0);
+    let font = egui::FontId::monospace(10.0);
+    let mut x = 0.0;
+    while x <= w {
+        let len = if x % 100.0 == 0.0 { 24.0 } else if x % 50.0 == 0.0 { 14.0 } else { 7.0 };
+        let stroke = ink(1.0, 20);
+        line([x, 0.0], [x, len], stroke);
+        line([x, ht], [x, ht - len], stroke);
+        if x % label_every == 0.0 && x > 150.0 && x < w - 150.0 {
+            p.text(at(x + 3.0, 26.0), egui::Align2::LEFT_TOP, format!("{x}"), font.clone(), black);
+            p.text(at(x + 3.0, ht - 26.0), egui::Align2::LEFT_BOTTOM, format!("{x}"), font.clone(), black);
+        }
+        x += 10.0;
+    }
+    let mut y = 0.0;
+    while y <= ht {
+        let len = if y % 100.0 == 0.0 { 24.0 } else if y % 50.0 == 0.0 { 14.0 } else { 7.0 };
+        let stroke = ink(1.0, 20);
+        line([0.0, y], [len, y], stroke);
+        line([w, y], [w - len, y], stroke);
+        if y % label_every == 0.0 && y > 120.0 && y < ht - 120.0 {
+            p.text(at(27.0, y + 2.0), egui::Align2::LEFT_TOP, format!("{y}"), font.clone(), black);
+            p.text(at(w - 27.0, y + 2.0), egui::Align2::RIGHT_TOP, format!("{y}"), font.clone(), black);
+        }
+        y += 10.0;
+    }
+    // Border.
+    let border = ink(3.0, 20);
+    line([0.0, 0.0], [w, 0.0], border);
+    line([w, 0.0], [w, ht], border);
+    line([w, ht], [0.0, ht], border);
+    line([0.0, ht], [0.0, 0.0], border);
+
+    // Name and size under the centre.
     p.text(
-        to_screen(h, rect, 0.5, 0.58),
+        at(cx, cy + cell * 1.4),
         egui::Align2::CENTER_TOP,
-        format!("{} · {}×{}", stage.name, stage.width, stage.height),
-        egui::FontId::proportional(16.0),
-        Color32::WHITE,
+        format!("{}  ·  {} × {}", stage.name, stage.width, stage.height),
+        egui::FontId::proportional(18.0),
+        black,
     );
+}
+
+/// A corner pin handle: a ring with a cross and the corner's number.
+fn paint_pin(p: &egui::Painter, at: Pos2, k: usize, hot: bool) {
+    let col = if hot { AMBER } else { Color32::from_rgb(0x4a, 0x7c, 0xf0) };
+    p.circle_filled(at, 16.0, col.gamma_multiply(0.25));
+    p.circle_stroke(at, 16.0, Stroke::new(2.5, col));
+    p.line_segment([at - vec2(24.0, 0.0), at + vec2(24.0, 0.0)], Stroke::new(1.5, col));
+    p.line_segment([at - vec2(0.0, 24.0), at + vec2(0.0, 24.0)], Stroke::new(1.5, col));
+    // The number sits on the side facing into the picture.
+    let off = vec2(if k == 1 || k == 2 { -26.0 } else { 26.0 }, if k >= 2 { -26.0 } else { 26.0 });
+    p.circle_filled(at + off, 10.0, col);
+    p.text(at + off, egui::Align2::CENTER_CENTER, format!("{}", k + 1), egui::FontId::proportional(12.0), Color32::WHITE);
 }

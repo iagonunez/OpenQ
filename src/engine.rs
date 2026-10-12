@@ -658,7 +658,12 @@ impl Engine {
             return Some(0.0);
         }
         match &cue.kind {
-            CueKind::Audio(_) | CueKind::Video(_) | CueKind::Text(_) => match be.start(cue, at) {
+            CueKind::Audio(_)
+            | CueKind::Video(_)
+            | CueKind::Text(_)
+            | CueKind::Mic(_)
+            | CueKind::Camera(_)
+            | CueKind::Timecode(_) => match be.start(cue, at) {
                 Ok(()) => be.duration(cue),
                 Err(e) => {
                     self.log(format!("Cue {} '{}': {e}", cue.number, cue.display_name()));

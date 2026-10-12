@@ -800,6 +800,138 @@ impl Default for NetworkCue {
     }
 }
 
+/// Plays a live audio input (microphones, line inputs) through the mixer.
+#[derive(Serialize, Deserialize, Clone, PartialEq, Debug)]
+#[serde(default)]
+pub struct MicCue {
+    /// cpal input device id (None = the system's default input).
+    pub device: Option<String>,
+    /// First input channel used, from 0.
+    pub first_channel: u16,
+    /// Number of input channels, from `first_channel` on (1..=`MAX_SRC_CHANNELS`).
+    pub channels: u16,
+    /// Level in dB.
+    pub volume_db: f32,
+    /// -1 (left) .. 1 (right).
+    pub pan: f32,
+    /// Equaliser.
+    pub eq: Eq,
+    /// Custom routing in dB, `[input channel][output channel]`; None = automatic.
+    pub routing: Option<Vec<Vec<f32>>>,
+    /// Output fader levels in dB, one per device output.
+    pub out_levels: Vec<f32>,
+    /// Seconds the input stays open (0 = until stopped).
+    pub duration: f64,
+    /// Fade up from silence when the cue starts, in seconds.
+    pub fade_in: f64,
+}
+
+impl Default for MicCue {
+    fn default() -> Self {
+        Self {
+            device: None,
+            first_channel: 0,
+            channels: 1,
+            volume_db: 0.0,
+            pan: 0.0,
+            eq: Eq::default(),
+            routing: None,
+            out_levels: Vec::new(),
+            duration: 0.0,
+            fade_in: 0.0,
+        }
+    }
+}
+
+/// Shows a live camera (webcam, capture card) as a layer on a stage.
+#[derive(Serialize, Deserialize, Clone, PartialEq, Debug)]
+#[serde(default)]
+pub struct CameraCue {
+    /// Capture device as FFmpeg names it (None = the first camera found): `/dev/video0` (Linux),
+    /// `video=Name` (Windows), a device index or name (macOS).
+    pub device: Option<String>,
+    /// FFmpeg input format to open it with (None = this system's camera driver: v4l2, dshow or
+    /// avfoundation). `lavfi` with a device like `testsrc` gives a test pattern.
+    pub format: Option<String>,
+    /// Requested capture size in pixels (None = the camera's default).
+    pub size: Option<[u32; 2]>,
+    /// 0..1
+    pub opacity: f32,
+    /// Higher layers draw on top.
+    pub layer: i32,
+    /// How the picture fits the stage.
+    pub fit: VideoFit,
+    /// Output stage (None = the first stage).
+    pub stage: Option<StageId>,
+    /// Position, scale, rotation and crop on the stage.
+    pub geometry: Geometry,
+    /// Mirror the picture left to right (as a selfie view).
+    pub mirror: bool,
+    /// Seconds the camera shows (0 = until stopped).
+    pub duration: f64,
+}
+
+impl Default for CameraCue {
+    fn default() -> Self {
+        Self {
+            device: None,
+            format: None,
+            size: None,
+            opacity: 1.0,
+            layer: 0,
+            fit: VideoFit::Fit,
+            stage: None,
+            geometry: Geometry::default(),
+            mirror: false,
+            duration: 0.0,
+        }
+    }
+}
+
+/// What a Timecode cue sends.
+#[derive(Serialize, Deserialize, Clone, Copy, PartialEq, Eq, Debug, Default)]
+pub enum TimecodeOutput {
+    /// LTC (SMPTE audio) on one output of the audio device.
+    #[default]
+    Ltc,
+    /// MIDI Time Code to a MIDI output port.
+    Mtc,
+}
+
+/// Generates running timecode, e.g. to drive a lighting desk.
+#[derive(Serialize, Deserialize, Clone, PartialEq, Debug)]
+#[serde(default)]
+pub struct TimecodeCue {
+    /// LTC or MTC.
+    pub output: TimecodeOutput,
+    /// Frame rate.
+    pub rate: TimecodeRate,
+    /// Timecode at the start, in seconds (e.g. 3600 = 01:00:00:00).
+    pub start: f64,
+    /// Seconds to run (0 = until stopped).
+    pub duration: f64,
+    /// LTC: level in dB.
+    pub volume_db: f32,
+    /// LTC: device output channel, from 0.
+    pub ltc_channel: u16,
+    /// MTC: MIDI output port name (None = the first port).
+    pub mtc_port: Option<String>,
+}
+
+impl Default for TimecodeCue {
+    fn default() -> Self {
+        Self {
+            output: TimecodeOutput::Ltc,
+            rate: TimecodeRate::Fps25,
+            start: 3600.0,
+            duration: 0.0,
+            volume_db: -12.0,
+            ltc_channel: 0,
+            mtc_port: None,
+        }
+    }
+}
+
 /// What a cue does.
 #[derive(Serialize, Deserialize, Clone, PartialEq, Debug)]
 pub enum CueKind {
@@ -857,6 +989,12 @@ pub enum CueKind {
     Network(NetworkCue),
     /// Show text on a stage.
     Text(TextCue),
+    /// Play a live audio input.
+    Mic(MicCue),
+    /// Show a live camera on a stage.
+    Camera(CameraCue),
+    /// Generate timecode.
+    Timecode(TimecodeCue),
 }
 
 /// The type of a cue without its settings (for menus, icons and display).
@@ -888,16 +1026,22 @@ pub enum KindTag {
     Network,
     /// Text cue.
     Text,
+    /// Mic cue.
+    Mic,
+    /// Camera cue.
+    Camera,
+    /// Timecode cue.
+    Timecode,
 }
 
 impl KindTag {
     /// Cues whose action is media playback handled by the media backend.
     pub fn is_media(self) -> bool {
-        matches!(self, KindTag::Audio | KindTag::Video | KindTag::Text)
+        matches!(self, KindTag::Audio | KindTag::Video | KindTag::Text | KindTag::Mic | KindTag::Camera | KindTag::Timecode)
     }
 
-    /// Every type, in toolbox order.
-    pub const ALL: [KindTag; 13] = [
+    /// Every type, in toolbox order (the first ten match Ctrl+1…0).
+    pub const ALL: [KindTag; 16] = [
         KindTag::Audio,
         KindTag::Video,
         KindTag::Group,
@@ -911,6 +1055,9 @@ impl KindTag {
         KindTag::Devamp,
         KindTag::Network,
         KindTag::Text,
+        KindTag::Mic,
+        KindTag::Camera,
+        KindTag::Timecode,
     ];
 
     /// Name shown in the UI.
@@ -929,6 +1076,9 @@ impl KindTag {
             KindTag::Devamp => "Devamp",
             KindTag::Network => "Network",
             KindTag::Text => "Text",
+            KindTag::Mic => "Mic",
+            KindTag::Camera => "Camera",
+            KindTag::Timecode => "Timecode",
         }
     }
 
@@ -948,6 +1098,9 @@ impl KindTag {
             KindTag::Devamp => CueKind::Devamp { target: None },
             KindTag::Network => CueKind::Network(NetworkCue::default()),
             KindTag::Text => CueKind::Text(TextCue::default()),
+            KindTag::Mic => CueKind::Mic(MicCue::default()),
+            KindTag::Camera => CueKind::Camera(CameraCue::default()),
+            KindTag::Timecode => CueKind::Timecode(TimecodeCue::default()),
         }
     }
 }
@@ -969,6 +1122,9 @@ impl CueKind {
             CueKind::Devamp { .. } => KindTag::Devamp,
             CueKind::Network(_) => KindTag::Network,
             CueKind::Text(_) => KindTag::Text,
+            CueKind::Mic(_) => KindTag::Mic,
+            CueKind::Camera(_) => KindTag::Camera,
+            CueKind::Timecode(_) => KindTag::Timecode,
         }
     }
 
@@ -1040,6 +1196,9 @@ pub struct Cue {
     /// Keyboard key that fires this cue in show mode (e.g. "F1", "A").
     #[serde(default)]
     pub hotkey: Option<String>,
+    /// Fire when the list's incoming timecode reaches this time, in seconds of timecode.
+    #[serde(default)]
+    pub timecode_trigger: Option<f64>,
     /// Type and type-specific settings.
     pub kind: CueKind,
 }
@@ -1062,6 +1221,7 @@ impl Cue {
             post_wait: 0.0,
             continue_mode: ContinueMode::DoNotContinue,
             hotkey: None,
+            timecode_trigger: None,
             kind,
         }
     }
@@ -1130,14 +1290,277 @@ pub struct Location {
     pub index: usize,
 }
 
-/// The cue tree. Top-level list plus nested groups.
-#[derive(Serialize, Deserialize, Clone, Default, Debug, PartialEq)]
-pub struct CueList {
-    /// Top-level cues in order (groups hold their own children).
+/// Timecode frame rate.
+#[derive(Serialize, Deserialize, Clone, Copy, PartialEq, Eq, Debug, Default)]
+pub enum TimecodeRate {
+    /// 24 fps (film).
+    Fps24,
+    /// 25 fps (PAL).
+    #[default]
+    Fps25,
+    /// 29.97 fps drop-frame (NTSC).
+    Fps2997Df,
+    /// 30 fps non-drop.
+    Fps30,
+}
+
+impl TimecodeRate {
+    /// Every rate, for menus.
+    pub const ALL: [TimecodeRate; 4] = [TimecodeRate::Fps24, TimecodeRate::Fps25, TimecodeRate::Fps2997Df, TimecodeRate::Fps30];
+
+    /// Name shown in the UI.
+    pub fn label(self) -> &'static str {
+        match self {
+            TimecodeRate::Fps24 => "24 fps",
+            TimecodeRate::Fps25 => "25 fps",
+            TimecodeRate::Fps2997Df => "29.97 drop",
+            TimecodeRate::Fps30 => "30 fps",
+        }
+    }
+
+    /// Frames counted per second (30 for 29.97 drop-frame, which drops frame numbers instead).
+    pub fn nominal(self) -> u32 {
+        match self {
+            TimecodeRate::Fps24 => 24,
+            TimecodeRate::Fps25 => 25,
+            TimecodeRate::Fps2997Df | TimecodeRate::Fps30 => 30,
+        }
+    }
+
+    /// Real frames per second.
+    pub fn fps(self) -> f64 {
+        match self {
+            TimecodeRate::Fps2997Df => 30_000.0 / 1001.0,
+            r => r.nominal() as f64,
+        }
+    }
+
+    /// True for drop-frame counting.
+    pub fn drop_frame(self) -> bool {
+        self == TimecodeRate::Fps2997Df
+    }
+}
+
+/// Where a cue list's timecode comes from.
+#[derive(Serialize, Deserialize, Clone, Copy, PartialEq, Eq, Debug, Default)]
+pub enum TimecodeSource {
+    /// The list ignores timecode.
+    #[default]
+    Off,
+    /// LTC (SMPTE audio) on an audio input channel.
+    Ltc,
+    /// MIDI Time Code from a MIDI input port.
+    Mtc,
+}
+
+/// A cue list's timecode input: cues with a timecode trigger fire when it passes their time.
+#[derive(Serialize, Deserialize, Clone, PartialEq, Debug, Default)]
+#[serde(default)]
+pub struct TimecodeSync {
+    /// Off, LTC or MTC.
+    pub source: TimecodeSource,
+    /// Expected frame rate (LTC also reports its own).
+    pub rate: TimecodeRate,
+    /// LTC: audio input device name (None = system default input).
+    pub ltc_device: Option<String>,
+    /// LTC: input channel, from 0.
+    pub ltc_channel: u16,
+    /// MTC: MIDI input port name (None = the first port).
+    pub mtc_port: Option<String>,
+}
+
+/// Name and per-list state of one cue list.
+#[derive(Serialize, Deserialize, Clone, Debug)]
+#[serde(default)]
+pub struct ListInfo {
+    /// Shown on the list's tab.
+    pub name: String,
+    /// Stands in for "the top level of this list" as a parent id while the list isn't the current
+    /// one. Not saved: a fresh one is made on load.
+    #[serde(skip, default = "Uuid::new_v4")]
+    pub id: CueId,
+    /// Where the playhead was when another list was brought forward.
+    pub playhead: Option<CueId>,
+    /// Timecode this list follows.
+    pub timecode: TimecodeSync,
+}
+
+// The id is per-session scaffolding, not part of the list.
+impl PartialEq for ListInfo {
+    fn eq(&self, o: &Self) -> bool {
+        self.name == o.name && self.playhead == o.playhead && self.timecode == o.timecode
+    }
+}
+
+impl Default for ListInfo {
+    fn default() -> Self {
+        Self { name: "Main Cue List".into(), id: Uuid::new_v4(), playhead: None, timecode: TimecodeSync::default() }
+    }
+}
+
+/// A cue list that is not the current one. Its cues keep running and can be targeted.
+#[derive(Serialize, Deserialize, Clone, Debug, PartialEq, Default)]
+#[serde(default)]
+pub struct OtherList {
+    /// Name and state.
+    pub info: ListInfo,
+    /// Top-level cues.
     pub cues: Vec<Cue>,
 }
 
+/// The cue lists of a workspace: the current one, shown and driven by GO, in
+/// `cues`, and the others in `others`. Lookups (`find`, `location`, `next_sibling`, `iter_all`, …)
+/// span every list so cues in background lists keep running and can be targeted; display and
+/// navigation (`visible_rows`, `first`, …) use the current list. The top level of a background list
+/// has its `ListInfo::id` as parent.
+#[derive(Serialize, Deserialize, Clone, Default, Debug, PartialEq)]
+pub struct CueList {
+    /// Top-level cues of the current list in order (groups hold their own children).
+    pub cues: Vec<Cue>,
+    /// Name and state of the current list.
+    #[serde(default)]
+    pub info: ListInfo,
+    /// The other lists, in tab order without the current one.
+    #[serde(default)]
+    pub others: Vec<OtherList>,
+    /// Tab position of the current list among all lists.
+    #[serde(default)]
+    pub pos: usize,
+}
+
 impl CueList {
+    /// Every list's top level with its parent id (None for the current list).
+    fn roots(&self) -> impl Iterator<Item = (Option<CueId>, &[Cue])> {
+        std::iter::once((None, self.cues.as_slice())).chain(self.others.iter().map(|o| (Some(o.info.id), o.cues.as_slice())))
+    }
+
+    /// Every list's state and top-level cues, the current one first.
+    pub fn lists(&self) -> Vec<(&ListInfo, &[Cue])> {
+        std::iter::once((&self.info, self.cues.as_slice())).chain(self.others.iter().map(|o| (&o.info, o.cues.as_slice()))).collect()
+    }
+
+    /// Cues with a timecode trigger in `(from, to]` (label-seconds) among `cues`, at any depth.
+    pub fn timecode_due(cues: &[Cue], from: f64, to: f64) -> Vec<CueId> {
+        let mut out = Vec::new();
+        for c in cues {
+            c.visit(&mut |c| {
+                if c.armed && c.timecode_trigger.is_some_and(|t| t > from && t <= to) {
+                    out.push(c.id);
+                }
+            });
+        }
+        out
+    }
+
+    /// The timecode settings of the list holding `id`.
+    pub fn timecode_of(&self, id: CueId) -> &TimecodeSync {
+        let mut top = id;
+        while let Some(p) = self.parent_of(top) {
+            if let Some(o) = self.others.iter().find(|o| o.info.id == p) {
+                return &o.info.timecode;
+            }
+            top = p;
+        }
+        &self.info.timecode
+    }
+
+    /// Number of cue lists.
+    pub fn list_count(&self) -> usize {
+        self.others.len() + 1
+    }
+
+    /// Names of all lists in tab order, and the tab of the current one.
+    pub fn list_names(&self) -> (Vec<String>, usize) {
+        let mut names: Vec<String> = self.others.iter().map(|o| o.info.name.clone()).collect();
+        let pos = self.pos.min(names.len());
+        names.insert(pos, self.info.name.clone());
+        (names, pos)
+    }
+
+    /// Every list as an [`OtherList`] in tab order (the current one included), consuming `self`'s lists.
+    fn take_all(&mut self) -> Vec<OtherList> {
+        let mut all = std::mem::take(&mut self.others);
+        let cur = OtherList { info: std::mem::take(&mut self.info), cues: std::mem::take(&mut self.cues) };
+        all.insert(self.pos.min(all.len()), cur);
+        all
+    }
+
+    /// Make the list at tab `tab` current from a tab-ordered set of lists.
+    fn put_all(&mut self, mut all: Vec<OtherList>, tab: usize) {
+        let tab = tab.min(all.len() - 1);
+        let cur = all.remove(tab);
+        self.cues = cur.cues;
+        self.info = cur.info;
+        self.others = all;
+        self.pos = tab;
+    }
+
+    /// Bring list `tab` forward. `playhead` is the outgoing list's playhead, kept with it; returns
+    /// the incoming list's saved playhead.
+    pub fn switch_to(&mut self, tab: usize, playhead: Option<CueId>) -> Option<CueId> {
+        if tab >= self.list_count() || tab == self.pos.min(self.others.len()) {
+            return playhead;
+        }
+        self.info.playhead = playhead;
+        let all = self.take_all();
+        self.put_all(all, tab);
+        // A saved playhead may point at a cue that was since moved or deleted.
+        self.info.playhead.filter(|p| self.in_current(*p))
+    }
+
+    /// True if `id` is in the current list (at any depth).
+    pub fn in_current(&self, id: CueId) -> bool {
+        let mut cur = id;
+        loop {
+            match self.location(cur) {
+                None => return false,
+                Some(Location { parent: None, .. }) => return true,
+                Some(Location { parent: Some(p), .. }) => cur = p,
+            }
+        }
+    }
+
+    /// Add an empty list after the current one and make it current; returns its tab.
+    pub fn add_list(&mut self, name: &str, playhead: Option<CueId>) -> usize {
+        self.info.playhead = playhead;
+        let mut all = self.take_all();
+        let tab = self.pos.min(all.len() - 1) + 1;
+        all.insert(tab, OtherList { info: ListInfo { name: name.into(), ..ListInfo::default() }, cues: Vec::new() });
+        self.put_all(all, tab);
+        tab
+    }
+
+    /// Delete the current list (not the last one) and bring the neighbouring list forward.
+    /// Returns the deleted cues and the new list's saved playhead.
+    pub fn remove_current_list(&mut self) -> Option<(Vec<Cue>, Option<CueId>)> {
+        if self.others.is_empty() {
+            return None;
+        }
+        let mut all = self.take_all();
+        let tab = self.pos.min(all.len() - 1);
+        let gone = all.remove(tab);
+        self.put_all(all, tab.saturating_sub(1));
+        Some((gone.cues, self.info.playhead))
+    }
+
+    /// Move the current list's tab by `delta` places.
+    pub fn move_current_list(&mut self, delta: isize) {
+        let n = self.list_count() as isize;
+        self.pos = (self.pos as isize + delta).clamp(0, n - 1) as usize;
+    }
+
+    /// Name of the list holding `id` (any list).
+    pub fn list_name_of(&self, id: CueId) -> Option<&str> {
+        let mut top = id;
+        while let Some(p) = self.parent_of(top) {
+            if let Some(o) = self.others.iter().find(|o| o.info.id == p) {
+                return Some(&o.info.name);
+            }
+            top = p;
+        }
+        self.find(id).map(|_| self.info.name.as_str())
+    }
+
     /// Find a cue anywhere in the tree.
     pub fn find(&self, id: CueId) -> Option<&Cue> {
         fn rec(list: &[Cue], id: CueId) -> Option<&Cue> {
@@ -1151,7 +1574,7 @@ impl CueList {
             }
             None
         }
-        rec(&self.cues, id)
+        self.roots().find_map(|(_, l)| rec(l, id))
     }
 
     /// Find a cue anywhere in the tree, mutably.
@@ -1169,7 +1592,10 @@ impl CueList {
             }
             None
         }
-        rec(&mut self.cues, id)
+        if let Some(c) = rec(&mut self.cues, id) {
+            return Some(c);
+        }
+        self.others.iter_mut().find_map(|o| rec(&mut o.cues, id))
     }
 
     /// Where a cue sits in the tree.
@@ -1185,7 +1611,7 @@ impl CueList {
             }
             None
         }
-        rec(&self.cues, None, id)
+        self.roots().find_map(|(parent, l)| rec(l, parent, id))
     }
 
     /// Group containing a cue.
@@ -1197,14 +1623,20 @@ impl CueList {
     pub fn list(&self, parent: Option<CueId>) -> &[Cue] {
         match parent {
             None => &self.cues,
-            Some(p) => self.find(p).map(|c| c.children()).unwrap_or(&[]),
+            Some(p) => match self.others.iter().find(|o| o.info.id == p) {
+                Some(o) => &o.cues,
+                None => self.find(p).map(|c| c.children()).unwrap_or(&[]),
+            },
         }
     }
 
     fn list_mut(&mut self, parent: Option<CueId>) -> Option<&mut Vec<Cue>> {
         match parent {
             None => Some(&mut self.cues),
-            Some(p) => self.find_mut(p).and_then(|c| c.children_mut()),
+            Some(p) => match self.others.iter().position(|o| o.info.id == p) {
+                Some(i) => Some(&mut self.others[i].cues),
+                None => self.find_mut(p).and_then(|c| c.children_mut()),
+            },
         }
     }
 
@@ -1271,13 +1703,20 @@ impl CueList {
         true
     }
 
-    /// All cues in depth-first display order.
+    /// All cues of every list in depth-first display order, the current list first.
     pub fn iter_all(&self) -> Vec<&Cue> {
         let mut out = Vec::new();
-        for c in &self.cues {
-            c.visit(&mut |c| out.push(c));
+        for (_, l) in self.roots() {
+            for c in l {
+                c.visit(&mut |c| out.push(c));
+            }
         }
         out
+    }
+
+    /// Top-level cues of every list (for walking the whole tree).
+    pub fn all_roots_mut(&mut self) -> impl Iterator<Item = &mut Vec<Cue>> {
+        std::iter::once(&mut self.cues).chain(self.others.iter_mut().map(|o| &mut o.cues))
     }
 
     /// All ids nested inside `id` (not including itself).
@@ -1408,11 +1847,13 @@ impl Workspace {
         }
         // Resolve media paths stored relative to the workspace file.
         if let Some(dir) = path.parent() {
-            for_each_media_path(&mut ws.cue_list.cues, &mut |p| {
-                if p.is_relative() && !p.as_os_str().is_empty() {
-                    *p = dir.join(&*p);
-                }
-            });
+            for list in ws.cue_list.all_roots_mut() {
+                for_each_media_path(list, &mut |p| {
+                    if p.is_relative() && !p.as_os_str().is_empty() {
+                        *p = dir.join(&*p);
+                    }
+                });
+            }
         }
         Ok(ws)
     }
@@ -1423,11 +1864,13 @@ impl Workspace {
         ws.format_version = Self::FORMAT_VERSION;
         // Store media next to (or below) the workspace as relative paths so shows are portable.
         if let Some(dir) = path.parent() {
-            for_each_media_path(&mut ws.cue_list.cues, &mut |p| {
-                if let Ok(rel) = p.strip_prefix(dir) {
-                    *p = rel.to_path_buf();
-                }
-            });
+            for list in ws.cue_list.all_roots_mut() {
+                for_each_media_path(list, &mut |p| {
+                    if let Ok(rel) = p.strip_prefix(dir) {
+                        *p = rel.to_path_buf();
+                    }
+                });
+            }
         }
         let s = serde_json::to_string_pretty(&ws)?;
         let tmp = path.with_extension("openq.tmp");
@@ -1464,7 +1907,7 @@ mod tests {
         let (ai, bi, ci) = (a.id, b.id, c.id);
         let g = group(vec![b]);
         let gi = g.id;
-        let mut l = CueList { cues: vec![a, g, c] };
+        let mut l = CueList { cues: vec![a, g, c], ..Default::default() };
 
         assert_eq!(l.parent_of(bi), Some(gi));
         assert_eq!(l.next_sibling(ai), Some(gi));
@@ -1516,7 +1959,7 @@ mod tests {
         a.number = "3.5".into();
         let mut b = Cue::new(CueKind::Memo);
         b.number = "x".into();
-        let l = CueList { cues: vec![a, b] };
+        let l = CueList { cues: vec![a, b], ..Default::default() };
         assert_eq!(l.next_number(), "4");
     }
 
@@ -1546,5 +1989,35 @@ mod tests {
         let loaded = Workspace::load(&file).unwrap();
         assert_eq!(loaded.cue_list, ws.cue_list);
         std::fs::remove_dir_all(&dir).ok();
+    }
+
+    #[test]
+    fn several_lists_share_lookups_but_not_display() {
+        let a = Cue::new(CueKind::Memo);
+        let (b, c) = (Cue::new(CueKind::Memo), Cue::new(CueKind::Memo));
+        let (ai, bi, ci) = (a.id, b.id, c.id);
+        let mut l = CueList { cues: vec![a], ..Default::default() };
+        assert_eq!(l.add_list("FX", Some(ai)), 1);
+        assert!(l.cues.is_empty());
+        l.cues.push(b);
+        l.cues.push(c);
+        // The first list is in the background now: still found, targetable and walkable.
+        assert!(l.find(ai).is_some());
+        assert!(!l.in_current(ai) && l.in_current(bi));
+        assert_eq!(l.next_sibling(bi), Some(ci));
+        assert_eq!(l.next_sibling(ai), None);
+        assert_eq!(l.iter_all().len(), 3);
+        assert_eq!(l.list_name_of(ai), Some("Main Cue List"));
+        assert_eq!(l.visible_rows(&|_| false).len(), 2);
+        // Switching back restores its playhead and tab order stays put.
+        assert_eq!(l.switch_to(0, Some(ci)), Some(ai));
+        assert_eq!(l.list_names(), (vec!["Main Cue List".to_string(), "FX".to_string()], 0));
+        assert_eq!(l.switch_to(1, None), Some(ci));
+        // Removing a background cue works through its list.
+        assert!(l.remove(ai).is_some());
+        let (gone, _) = l.remove_current_list().unwrap();
+        assert_eq!(gone.len(), 2);
+        assert_eq!(l.list_count(), 1);
+        assert!(l.remove_current_list().is_none());
     }
 }

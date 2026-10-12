@@ -29,6 +29,10 @@ pub struct Show {
     pub edit_gen: u64,
     /// This instance mirrors a remote main device: the engine is display-only and never ticks.
     pub replica: bool,
+    /// Incoming timecode for the cue lists that follow it.
+    pub timecode: crate::media::tcio::Follower,
+    /// Last timecode position seen by each following list (by name).
+    tc_last: std::collections::HashMap<String, f64>,
 }
 
 /// The show as shared between threads.
@@ -37,7 +41,18 @@ pub type SharedShow = Arc<Mutex<Show>>;
 impl Show {
     /// An empty show with the default audio device opened.
     pub fn new(prober: Arc<Prober>) -> Self {
-        Self { ws: Workspace::default(), engine: Engine::new(), media: Media::new(prober), path: None, dirty: false, shut_down: false, edit_gen: 0, replica: false }
+        Self {
+            ws: Workspace::default(),
+            engine: Engine::new(),
+            media: Media::new(prober),
+            path: None,
+            dirty: false,
+            shut_down: false,
+            edit_gen: 0,
+            replica: false,
+            timecode: Default::default(),
+            tc_last: Default::default(),
+        }
     }
 
     /// Advance the engine to `now` (called at ~1 kHz by the engine thread).
@@ -45,8 +60,44 @@ impl Show {
         if self.shut_down || self.replica {
             return;
         }
+        self.follow_timecode(now);
         let Show { ws, engine, media, .. } = self;
         engine.tick(ws, media, now);
+    }
+
+    /// Fire cues whose timecode trigger the incoming timecode has just passed. Only a steady
+    /// forward run fires cues; a jump (relocate, rewind) or dropout just moves the reference.
+    fn follow_timecode(&mut self, now: Instant) {
+        use crate::model::{CueList, TimecodeSource};
+        let lists = self.ws.cue_list.lists();
+        let syncs: Vec<_> = lists.iter().map(|l| l.0.timecode.clone()).filter(|t| t.source != TimecodeSource::Off).collect();
+        if syncs.is_empty() && self.tc_last.is_empty() {
+            return;
+        }
+        self.timecode.set_wanted(syncs);
+        let mut due = Vec::new();
+        let mut seen = Vec::new();
+        for (info, cues) in lists {
+            if info.timecode.source == TimecodeSource::Off {
+                continue;
+            }
+            let Some(pos) = self.timecode.position(&info.timecode, now) else {
+                continue;
+            };
+            seen.push(info.name.clone());
+            if let Some(&last) = self.tc_last.get(&info.name)
+                && pos.secs > last
+                && pos.secs - last < 1.0
+            {
+                due.extend(CueList::timecode_due(cues, last, pos.secs));
+            }
+            self.tc_last.insert(info.name.clone(), pos.secs);
+        }
+        self.tc_last.retain(|k, _| seen.contains(k));
+        let Show { ws, engine, media, .. } = self;
+        for id in due {
+            engine.start_cue(ws, media, id, now);
+        }
     }
 
     /// GO: fire the cue at the playhead.

@@ -2,6 +2,7 @@
 
 mod about;
 mod cue_list;
+mod devices;
 mod eq;
 mod icons;
 mod inspector;
@@ -89,6 +90,12 @@ pub struct App {
     show_preview: bool,
     /// The user has dragged the inspector's edge; until then it keeps its default height.
     inspector_resized: bool,
+    /// Text of the current cue list's name while it is being renamed.
+    list_rename: Option<String>,
+    /// Audio inputs, cameras and MIDI ports, loaded in the background.
+    inputs: devices::SharedDevices,
+    /// The current list's Timecode window is open.
+    show_list_timecode: bool,
     show_about: bool,
     remote: remote::RemoteUi,
     #[cfg(feature = "video")]
@@ -143,6 +150,9 @@ impl App {
             stage_monitor: Default::default(),
             show_preview: false,
             inspector_resized: false,
+            list_rename: None,
+            inputs: Default::default(),
+            show_list_timecode: false,
             show_about: false,
             remote: Default::default(),
             #[cfg(feature = "video")]
@@ -928,12 +938,29 @@ impl App {
                         ui.spacing_mut().item_spacing.y = 2.0;
                         ui.horizontal(|ui| {
                             ui.label(theme::caption("Standby"));
+                            if show.ws.cue_list.list_count() > 1 {
+                                ui.label(theme::caption(&format!("·  {}", show.ws.cue_list.info.name)));
+                            }
                             if self.mode == Mode::Show {
                                 ui.label(
                                     RichText::new("SHOW MODE")
                                         .font(theme::semibold(10.0))
                                         .color(theme::RED),
                                 );
+                            }
+                            // The current list's incoming timecode.
+                            let sync = &show.ws.cue_list.info.timecode;
+                            if sync.source != crate::model::TimecodeSource::Off {
+                                ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                                    let (text, color) = match show.timecode.position(sync, std::time::Instant::now()) {
+                                        Some(r) => (crate::timecode::format_secs(r.secs, r.rate), theme::GREEN),
+                                        None => ("no timecode".to_string(), AMBER),
+                                    };
+                                    ui.label(RichText::new(text).font(theme::mono(13.0)).color(color))
+                                        .on_hover_text("Timecode this cue list follows (right-click its tab → Timecode…)");
+                                    ui.label(theme::icon(icons::TIMER_PLAY, 15.0).color(color));
+                                    ui.ctx().request_repaint_after(std::time::Duration::from_millis(40));
+                                });
                             }
                         });
                         match show
@@ -1116,7 +1143,10 @@ impl App {
     /// Branding strip above the menu bar.
     fn title_bar(&mut self, ui: &mut egui::Ui, show: &Show) {
         use egui::text::{LayoutJob, TextFormat};
-        let (rect, _) = ui.allocate_exact_size(egui::vec2(ui.available_width(), 30.0), egui::Sense::hover());
+        let custom = custom_window_frame();
+        let h = if custom { CAPTION_H } else { 30.0 };
+        let sense = if custom { egui::Sense::click_and_drag() } else { egui::Sense::hover() };
+        let (rect, bar) = ui.allocate_exact_size(egui::vec2(ui.available_width(), h), sense);
         let mut job = LayoutJob::default();
         job.append("Open", 0.0, TextFormat::simple(theme::title(26.0), theme::TEXT));
         job.append("Q", 0.0, TextFormat::simple(theme::title(26.0), theme::GREEN));
@@ -1132,6 +1162,95 @@ impl App {
         let (name, dirty) = self.remote.title().unwrap_or((name, show.dirty));
         let label = format!("{name}{}", if dirty { "  •" } else { "" });
         ui.painter().text(rect.center(), egui::Align2::CENTER_CENTER, label, egui::FontId::proportional(14.0), theme::TEXT_DIM);
+        if custom {
+            // The bar moves the window; a double-click maximises or restores it.
+            let maximized = ui.ctx().input(|i| i.viewport().maximized.unwrap_or(false));
+            if bar.double_clicked() {
+                ui.ctx().send_viewport_cmd(egui::ViewportCommand::Maximized(!maximized));
+            } else if bar.drag_started() {
+                ui.ctx().send_viewport_cmd(egui::ViewportCommand::StartDrag);
+            }
+            self.caption_buttons(ui, rect, maximized);
+        }
+    }
+
+    /// Windows-style minimise / maximise / close buttons at the right end of the title bar.
+    fn caption_buttons(&mut self, ui: &mut egui::Ui, bar: egui::Rect, maximized: bool) {
+        use egui::{Rect, Sense, pos2, vec2};
+        let w = 46.0;
+        let tips = ["Minimise", if maximized { "Restore" } else { "Maximise" }, "Close"];
+        for (k, tip) in tips.into_iter().enumerate() {
+            let close = k == 2;
+            let r = Rect::from_min_size(pos2(bar.right() - w * (3 - k) as f32, bar.top()), vec2(w, bar.height()));
+            let resp = ui.interact(r, ui.id().with(("caption", k)), Sense::click()).on_hover_text(tip);
+            let (fill, fg) = match (resp.hovered(), close) {
+                (true, true) => (Color32::from_rgb(0xc4, 0x2b, 0x1c), Color32::WHITE),
+                (true, false) => (theme::BG_HOVER, Color32::WHITE),
+                _ => (Color32::TRANSPARENT, theme::TEXT_DIM),
+            };
+            let p = ui.painter();
+            p.rect_filled(r, 0.0, fill);
+            // Thin 10 pt glyphs drawn like the system's own caption buttons.
+            let c = r.center();
+            let st = egui::Stroke::new(1.0, fg);
+            let g = Rect::from_center_size(c, vec2(10.0, 10.0));
+            match k {
+                0 => {
+                    p.line_segment([pos2(g.left(), c.y), pos2(g.right(), c.y)], st);
+                }
+                1 if maximized => {
+                    let back = g.translate(vec2(2.0, -2.0)).shrink(1.0);
+                    p.line_segment([back.left_top(), back.right_top()], st);
+                    p.line_segment([back.right_top(), back.right_bottom()], st);
+                    p.rect_stroke(g.translate(vec2(-1.0, 1.0)).shrink(1.0), 1.0, st, egui::StrokeKind::Middle);
+                }
+                1 => {
+                    p.rect_stroke(g, 1.0, st, egui::StrokeKind::Middle);
+                }
+                _ => {
+                    p.line_segment([g.left_top(), g.right_bottom()], st);
+                    p.line_segment([g.right_top(), g.left_bottom()], st);
+                }
+            }
+            if resp.clicked() {
+                let cmd = match k {
+                    0 => egui::ViewportCommand::Minimized(true),
+                    1 => egui::ViewportCommand::Maximized(!maximized),
+                    _ => egui::ViewportCommand::Close,
+                };
+                ui.ctx().send_viewport_cmd(cmd);
+            }
+        }
+    }
+
+    /// Without a system frame the window edges don't resize it, so thin zones along them do.
+    fn resize_edges(&self, ui: &mut egui::Ui) {
+        use egui::{CursorIcon as C, Rect, ResizeDirection as D, Sense, pos2, vec2};
+        let ctx = ui.ctx().clone();
+        if ctx.input(|i| i.viewport().maximized.unwrap_or(false) || i.viewport().fullscreen.unwrap_or(false)) {
+            return;
+        }
+        let s = ctx.content_rect();
+        let (t, c) = (5.0, 12.0); // edge thickness, corner size
+        let zones = [
+            (Rect::from_min_size(s.left_top(), vec2(c, c)), D::NorthWest, C::ResizeNorthWest),
+            (Rect::from_min_size(pos2(s.right() - c, s.top()), vec2(c, c)), D::NorthEast, C::ResizeNorthEast),
+            (Rect::from_min_size(pos2(s.left(), s.bottom() - c), vec2(c, c)), D::SouthWest, C::ResizeSouthWest),
+            (Rect::from_min_size(s.right_bottom() - vec2(c, c), vec2(c, c)), D::SouthEast, C::ResizeSouthEast),
+            (Rect::from_min_size(pos2(s.left() + c, s.top()), vec2(s.width() - 2.0 * c, t)), D::North, C::ResizeVertical),
+            (Rect::from_min_size(pos2(s.left() + c, s.bottom() - t), vec2(s.width() - 2.0 * c, t)), D::South, C::ResizeVertical),
+            (Rect::from_min_size(pos2(s.left(), s.top() + c), vec2(t, s.height() - 2.0 * c)), D::West, C::ResizeHorizontal),
+            (Rect::from_min_size(pos2(s.right() - t, s.top() + c), vec2(t, s.height() - 2.0 * c)), D::East, C::ResizeHorizontal),
+        ];
+        for (k, (r, dir, cursor)) in zones.into_iter().enumerate() {
+            let resp = ui.interact(r, egui::Id::new(("window-resize", k)), Sense::drag());
+            if resp.hovered() || resp.dragged() {
+                ctx.set_cursor_icon(cursor);
+            }
+            if resp.drag_started() {
+                ctx.send_viewport_cmd(egui::ViewportCommand::BeginResize(dir));
+            }
+        }
     }
 
     /// Output level meter with a dB scale (one bar per device channel, up to 8).
@@ -2036,6 +2155,16 @@ fn round_button(ui: &mut egui::Ui, glyph: &str, fill: Color32, size: f32) -> egu
     resp.on_hover_cursor(egui::CursorIcon::PointingHand)
 }
 
+/// True when OpenQ draws its own window frame: the system title bar is hidden and the OpenQ title
+/// bar carries minimise, maximise and close (always on Windows; `OPENQ_CUSTOM_FRAME=1` elsewhere,
+/// for testing).
+pub fn custom_window_frame() -> bool {
+    cfg!(target_os = "windows") || std::env::var_os("OPENQ_CUSTOM_FRAME").is_some()
+}
+
+/// Height of the title bar in a custom window frame (the caption buttons fill it).
+const CAPTION_H: f32 = 34.0;
+
 /// Fonts and visuals; call once at startup.
 pub fn install_theme(ctx: &egui::Context) {
     theme::install(ctx);
@@ -2075,12 +2204,11 @@ impl eframe::App for App {
                     .fill(fill)
                     .inner_margin(egui::Margin::symmetric(10, 4))
             };
+            // In a custom frame the caption buttons sit flush with the window's top-right corner.
+            let title_margin =
+                if custom_window_frame() { egui::Margin { left: 14, right: 0, top: 0, bottom: 0 } } else { egui::Margin::symmetric(14, 6) };
             egui::Panel::top("titlebar")
-                .frame(
-                    egui::Frame::new()
-                        .fill(Color32::from_rgb(0x0e, 0x0f, 0x12))
-                        .inner_margin(egui::Margin::symmetric(14, 6)),
-                )
+                .frame(egui::Frame::new().fill(Color32::from_rgb(0x0e, 0x0f, 0x12)).inner_margin(title_margin))
                 .show_separator_line(false)
                 .show(ui, |ui| self.title_bar(ui, show));
             egui::Panel::top("menu")
@@ -2130,6 +2258,9 @@ impl eframe::App for App {
                         .inner_margin(egui::Margin::symmetric(10, 8)),
                 )
                 .show(ui, |ui| {
+                    if show.ws.cue_list.list_count() > 1 || self.mode == Mode::Edit {
+                        self.list_tabs(ui, show);
+                    }
                     if self.mode == Mode::Edit {
                         self.toolbar(ui, show);
                         ui.separator();
@@ -2139,6 +2270,10 @@ impl eframe::App for App {
 
             if self.show_settings {
                 self.settings_window(&ctx, show);
+            }
+            self.list_timecode_window(&ctx, show);
+            if custom_window_frame() {
+                self.resize_edges(ui);
             }
             #[cfg(feature = "video")]
             self.geometry_preview(&ctx, show);

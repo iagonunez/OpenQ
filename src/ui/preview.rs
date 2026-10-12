@@ -14,6 +14,8 @@ use std::path::PathBuf;
 enum Source {
     Poster(PathBuf, f64),
     Text(TextCue),
+    /// A live camera: a grey stand-in of its capture size until it runs.
+    Camera([u32; 2]),
 }
 
 /// The layer being previewed. For a Fade cue it is the fade's target, drawn at the geometry the
@@ -38,6 +40,15 @@ fn target_of(show: &Show, id: CueId) -> Option<Target> {
             geometry: v.geometry,
             opacity: v.opacity,
             source: Source::Poster(v.path.clone(), v.start_time),
+            ghost: None,
+        }),
+        CueKind::Camera(c) => Some(Target {
+            layer,
+            stage: c.stage,
+            fit: c.fit,
+            geometry: c.geometry,
+            opacity: c.opacity,
+            source: Source::Camera(c.size.unwrap_or([1280, 720])),
             ghost: None,
         }),
         CueKind::Text(t) => Some(Target {
@@ -83,13 +94,14 @@ impl App {
     /// Texture and source size for the layer: the live frame while it plays, else a poster.
     fn preview_texture(&mut self, ctx: &egui::Context, t: &Target) -> Result<Option<(egui::TextureId, [f32; 2])>, String> {
         // Movies show their live frame; text is re-rendered here (its live texture is supersampled).
-        if let (Source::Poster(..), Some((tex, _))) = (&t.source, self.textures.get(&t.layer)) {
+        if let (Source::Poster(..) | Source::Camera(_), Some((tex, _))) = (&t.source, self.textures.get(&t.layer)) {
             let s = tex.size();
             return Ok(Some((tex.id(), [s[0] as f32, s[1] as f32])));
         }
         let key = match &t.source {
             Source::Poster(p, at) => format!("{}@{at:.2}", p.display()),
             Source::Text(tc) => serde_json::to_string(tc).unwrap_or_default(),
+            Source::Camera([w, h]) => format!("camera {w}x{h}"),
         };
         if let Some((k, tex, size)) = &self.preview_tex
             && *k == key
@@ -109,6 +121,14 @@ impl App {
                 let img = crate::media::text::render(tc);
                 let size = [img.width as f32 / img.density, img.height as f32 / img.density];
                 (img.width, img.height, std::sync::Arc::new(img.rgba), size)
+            }
+            Source::Camera([w, h]) => {
+                // A 16 × 9 checkerboard of greys, stretched to the capture size.
+                let rgba: Vec<u8> = (0..16 * 9).flat_map(|i| {
+                    let v = if (i % 16 + i / 16) % 2 == 0 { 70 } else { 90 };
+                    [v, v, v, 255]
+                }).collect();
+                (16, 9, std::sync::Arc::new(rgba), [*w as f32, *h as f32])
             }
         };
         let density = if matches!(t.source, Source::Text(_)) { 2.0 } else { 1.0 };
@@ -262,6 +282,7 @@ impl App {
         match &mut cue.kind {
             CueKind::Video(v) => v.geometry = g,
             CueKind::Text(t) => t.geometry = g,
+            CueKind::Camera(c) => c.geometry = g,
             CueKind::Fade(f) => f.geometry = Some(g),
             _ => return,
         }

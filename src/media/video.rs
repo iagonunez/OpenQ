@@ -8,7 +8,7 @@
 
 use super::audio::VoiceShared;
 use crate::engine::FadeRequest;
-use crate::model::{CueId, FadeCurve, Geometry, MIN_DB, StageId, TextCue, VideoCue, VideoFit};
+use crate::model::{CameraCue, CueId, FadeCurve, Geometry, MIN_DB, StageId, TextCue, VideoCue, VideoFit};
 use anyhow::{Context, anyhow};
 use ffmpeg_next as ff;
 use parking_lot::{Condvar, Mutex};
@@ -437,33 +437,7 @@ impl DecodeJob {
         f: &ff::util::frame::video::Video,
         scaler: &mut Option<(ff::software::scaling::Context, u32, u32, ff::format::Pixel)>,
     ) -> anyhow::Result<()> {
-        let (w, h, fmt) = (f.width(), f.height(), f.format());
-        if scaler.as_ref().is_none_or(|s| s.1 != w || s.2 != h || s.3 != fmt) {
-            let ctx = ff::software::scaling::Context::get(
-                fmt,
-                w,
-                h,
-                ff::format::Pixel::RGBA,
-                w,
-                h,
-                ff::software::scaling::Flags::BILINEAR,
-            )?;
-            *scaler = Some((ctx, w, h, fmt));
-        }
-        let mut rgba = ff::util::frame::video::Video::empty();
-        scaler.as_mut().unwrap().0.run(f, &mut rgba)?;
-        let stride = rgba.stride(0);
-        let row = w as usize * 4;
-        let src = rgba.data(0);
-        let mut slot = self.frame.lock();
-        slot.data.resize(row * h as usize, 0);
-        for y in 0..h as usize {
-            slot.data[y * row..(y + 1) * row].copy_from_slice(&src[y * stride..y * stride + row]);
-        }
-        slot.width = w;
-        slot.height = h;
-        slot.generation = slot.generation.wrapping_add(1);
-        Ok(())
+        publish_rgba(&self.frame, f, scaler, false)
     }
 
     /// Convert a decoded audio frame to interleaved f32 at the mixer rate; `skip` seconds at the
@@ -503,9 +477,215 @@ impl DecodeJob {
 
 // ---------------------------------------------------------------- players
 
+/// A cached pixel converter and the input it was made for.
+type Scaler = Option<(ff::software::scaling::Context, u32, u32, ff::format::Pixel)>;
+
+/// Scale/convert a decoded picture to RGBA into `slot` (optionally mirrored left to right).
+fn publish_rgba(slot: &FrameSlot, f: &ff::util::frame::video::Video, scaler: &mut Scaler, mirror: bool) -> anyhow::Result<()> {
+    let (w, h, fmt) = (f.width(), f.height(), f.format());
+    if scaler.as_ref().is_none_or(|s| s.1 != w || s.2 != h || s.3 != fmt) {
+        let ctx = ff::software::scaling::Context::get(fmt, w, h, ff::format::Pixel::RGBA, w, h, ff::software::scaling::Flags::BILINEAR)?;
+        *scaler = Some((ctx, w, h, fmt));
+    }
+    let mut rgba = ff::util::frame::video::Video::empty();
+    scaler.as_mut().expect("scaler").0.run(f, &mut rgba)?;
+    let stride = rgba.stride(0);
+    let row = w as usize * 4;
+    let src = rgba.data(0);
+    let mut slot = slot.lock();
+    slot.data.resize(row * h as usize, 0);
+    for y in 0..h as usize {
+        let dst = &mut slot.data[y * row..(y + 1) * row];
+        dst.copy_from_slice(&src[y * stride..y * stride + row]);
+        if mirror {
+            for x in 0..w as usize / 2 {
+                for c in 0..4 {
+                    dst.swap(x * 4 + c, (w as usize - 1 - x) * 4 + c);
+                }
+            }
+        }
+    }
+    slot.width = w;
+    slot.height = h;
+    slot.generation = slot.generation.wrapping_add(1);
+    Ok(())
+}
+
+// ---------------------------------------------------------------- live cameras
+
+/// This system's camera driver in FFmpeg.
+fn camera_format_name() -> &'static str {
+    if cfg!(target_os = "windows") {
+        "dshow"
+    } else if cfg!(target_os = "macos") {
+        "avfoundation"
+    } else {
+        "v4l2"
+    }
+}
+
+fn find_input_format(name: &str) -> Option<ff::format::format::Input> {
+    ff::device::register_all();
+    ff::device::input::video().find_map(|f| match f {
+        ff::format::format::Format::Input(i) if i.name() == name => Some(i),
+        _ => None,
+    })
+}
+
+/// Cameras this system offers: (device string for [`CameraCue::device`], readable name).
+pub fn list_cameras() -> Vec<(String, String)> {
+    if init().is_err() {
+        return Vec::new();
+    }
+    let mut out = Vec::new();
+    if let Some(fmt) = find_input_format(camera_format_name()) {
+        // SAFETY: FFmpeg fills a list we free with the matching call; strings are copied out.
+        unsafe {
+            let mut list: *mut ff::ffi::AVDeviceInfoList = std::ptr::null_mut();
+            if ff::ffi::avdevice_list_input_sources(fmt.as_ptr(), std::ptr::null(), std::ptr::null_mut(), &mut list) >= 0
+                && !list.is_null()
+            {
+                for i in 0..(*list).nb_devices as usize {
+                    let d = *(*list).devices.add(i);
+                    let cstr = |p: *mut std::ffi::c_char| {
+                        if p.is_null() { String::new() } else { std::ffi::CStr::from_ptr(p).to_string_lossy().into_owned() }
+                    };
+                    let (name, desc) = (cstr((*d).device_name), cstr((*d).device_description));
+                    let id = if cfg!(target_os = "windows") { format!("video={desc}") } else { name.clone() };
+                    out.push((id, if desc.is_empty() { name } else { desc }));
+                }
+            }
+            if !list.is_null() {
+                ff::ffi::avdevice_free_list_devices(&mut list);
+            }
+        }
+    }
+    if out.is_empty() && cfg!(target_os = "linux") {
+        // Not every driver lists its devices; video nodes are the cameras.
+        let mut nodes: Vec<String> = std::fs::read_dir("/dev")
+            .into_iter()
+            .flatten()
+            .flatten()
+            .map(|e| e.path().display().to_string())
+            .filter(|p| p.starts_with("/dev/video"))
+            .collect();
+        nodes.sort();
+        out.extend(nodes.into_iter().map(|n| (n.clone(), n)));
+    }
+    out
+}
+
+/// The default device string when a Camera cue names none.
+fn default_camera() -> String {
+    list_cameras().into_iter().next().map(|c| c.0).unwrap_or_else(|| {
+        if cfg!(target_os = "macos") { "0".into() } else if cfg!(target_os = "windows") { "video=0".into() } else { "/dev/video0".into() }
+    })
+}
+
+/// The capture thread of a Camera cue.
+struct Capture {
+    quit: Arc<std::sync::atomic::AtomicBool>,
+    paused: Arc<std::sync::atomic::AtomicBool>,
+    finished: Arc<std::sync::atomic::AtomicBool>,
+    error: Arc<Mutex<Option<String>>>,
+    thread: Option<std::thread::JoinHandle<()>>,
+}
+
+impl Drop for Capture {
+    fn drop(&mut self) {
+        self.quit.store(true, Ordering::Release);
+        if let Some(t) = self.thread.take() {
+            let _ = t.join();
+        }
+    }
+}
+
+impl Capture {
+    fn start(c: &CameraCue, frame: FrameSlot) -> Self {
+        let quit = Arc::new(std::sync::atomic::AtomicBool::new(false));
+        let paused = Arc::new(std::sync::atomic::AtomicBool::new(false));
+        let finished = Arc::new(std::sync::atomic::AtomicBool::new(false));
+        let error = Arc::new(Mutex::new(None));
+        let c = c.clone();
+        let (q, p, f, e) = (quit.clone(), paused.clone(), finished.clone(), error.clone());
+        let thread = std::thread::Builder::new()
+            .name("openq-camera".into())
+            .spawn(move || {
+                if let Err(err) = capture(&c, &frame, &q, &p) {
+                    log::error!("camera: {err:#}");
+                    *e.lock() = Some(format!("{err:#}"));
+                }
+                *frame.lock() = Frame::default();
+                f.store(true, Ordering::Release);
+            })
+            .ok();
+        Self { quit, paused, finished, error, thread }
+    }
+}
+
+fn capture(c: &CameraCue, slot: &FrameSlot, quit: &std::sync::atomic::AtomicBool, paused: &std::sync::atomic::AtomicBool) -> anyhow::Result<()> {
+    let fmt_name = c.format.clone().unwrap_or_else(|| camera_format_name().to_string());
+    let fmt = find_input_format(&fmt_name).with_context(|| format!("FFmpeg has no {fmt_name} input"))?;
+    let url = c.device.clone().unwrap_or_else(default_camera);
+    let mut opts = ff::Dictionary::new();
+    if let Some([w, h]) = c.size {
+        opts.set("video_size", &format!("{w}x{h}"));
+    }
+    if fmt_name == "avfoundation" {
+        // avfoundation refuses to open without a frame rate it supports; 30 is near universal.
+        opts.set("framerate", "30");
+    }
+    let mut ictx = match ff::format::open_with(&url, &ff::format::format::Format::Input(fmt), opts)
+        .with_context(|| format!("cannot open camera {url}"))?
+    {
+        ff::format::context::Context::Input(i) => i,
+        _ => return Err(anyhow!("{url} is not an input")),
+    };
+    let stream = ictx.streams().best(ff::media::Type::Video).context("the camera sends no video")?;
+    let idx = stream.index();
+    let mut dec = ff::codec::context::Context::from_parameters(stream.parameters())?.decoder().video()?;
+    let mut scaler: Scaler = None;
+    let mut decoded = ff::util::frame::video::Video::empty();
+    for (s, packet) in ictx.packets() {
+        if quit.load(Ordering::Acquire) {
+            break;
+        }
+        if s.index() != idx {
+            continue;
+        }
+        dec.send_packet(&packet)?;
+        while dec.receive_frame(&mut decoded).is_ok() {
+            // Paused: keep capturing (so the camera doesn't lag on resume) but hold the picture.
+            if !paused.load(Ordering::Acquire) {
+                publish_rgba(slot, &decoded, &mut scaler, c.mirror)?;
+            }
+        }
+        // Test sources run as fast as they can; real cameras pace themselves.
+        if fmt_name == "lavfi" {
+            std::thread::sleep(Duration::from_millis(30));
+        }
+    }
+    Ok(())
+}
+
+/// The video-layer settings a Camera cue plays with.
+pub fn camera_layer_params(c: &CameraCue) -> VideoCue {
+    VideoCue {
+        volume_db: MIN_DB,
+        opacity: c.opacity,
+        layer: c.layer,
+        fit: c.fit,
+        stage: c.stage,
+        geometry: c.geometry,
+        still_duration: c.duration,
+        ..Default::default()
+    }
+}
+
 enum Source {
     Movie(Movie),
     Still,
+    Camera(Capture),
 }
 
 struct Player {
@@ -635,7 +815,9 @@ impl Player {
     fn position(&self) -> Option<f64> {
         match &self.source {
             Source::Movie(m) => Some(m.ctl.state.lock().position),
-            Source::Still => self.started_at.map(|s| (self.paused_at.unwrap_or_else(Instant::now) - s).as_secs_f64()),
+            Source::Still | Source::Camera(_) => {
+                self.started_at.map(|s| (self.paused_at.unwrap_or_else(Instant::now) - s).as_secs_f64())
+            }
         }
     }
 
@@ -648,6 +830,13 @@ impl Player {
                     self.error = Some(e);
                 }
             }
+        }
+        if let Source::Camera(c) = &self.source
+            && c.finished.load(Ordering::Acquire)
+            && !self.finished
+        {
+            self.finished = true;
+            self.error = c.error.lock().take();
         }
         if self.paused_at.is_some() || self.finished {
             return;
@@ -664,7 +853,7 @@ impl Player {
             }
         }
         if self.playing
-            && let Source::Still = self.source
+            && matches!(self.source, Source::Still | Source::Camera(_))
         {
             let d = self.params.still_duration;
             if d > 0.0 && self.started_at.is_some_and(|s| now.saturating_duration_since(s).as_secs_f64() >= d) {
@@ -698,6 +887,9 @@ impl Player {
         if let Source::Movie(m) = &self.source {
             m.ctl.state.lock().paused_at = Some(now);
         }
+        if let Source::Camera(c) = &self.source {
+            c.paused.store(true, Ordering::Release);
+        }
     }
 
     fn resume(&mut self, at: Instant) {
@@ -711,6 +903,9 @@ impl Player {
         }
         for t in [&mut self.play_at, &mut self.started_at].into_iter().flatten() {
             *t += shift;
+        }
+        if let Source::Camera(c) = &self.source {
+            c.paused.store(false, Ordering::Release);
         }
         if let Source::Movie(m) = &self.source {
             let mut st = m.ctl.state.lock();
@@ -779,6 +974,17 @@ impl VideoOutput {
     /// Remove a layer.
     pub fn stop(&mut self, cue: CueId) {
         self.players.remove(&cue);
+    }
+
+    /// Show a live camera as a layer.
+    pub fn start_camera(&mut self, cue: CueId, c: &CameraCue, at: Instant) {
+        self.order += 1;
+        let frame: FrameSlot = Arc::new(Mutex::new(Frame::default()));
+        let mut p = Player::from_frame(camera_layer_params(c), self.order, frame.clone());
+        p.source = Source::Camera(Capture::start(c, frame));
+        p.play_at = Some(at);
+        p.update(Instant::now());
+        self.players.insert(cue, p);
     }
 
     /// Show a Text cue as a layer.
@@ -1012,4 +1218,46 @@ pub fn poster(path: &Path, at: f64, max_side: u32) -> anyhow::Result<(u32, u32, 
         data.extend_from_slice(&src[y * stride..y * stride + row]);
     }
     Ok((tw, th, data, [w, h]))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn camera_capture_publishes_mirrored_frames() {
+        init().unwrap();
+        if find_input_format("lavfi").is_none() {
+            return; // FFmpeg built without libavfilter devices
+        }
+        // A test pattern stands in for a camera: left half red, right half blue.
+        let c = CameraCue {
+            format: Some("lavfi".into()),
+            device: Some("color=red:size=64x16[a];color=blue:size=64x16[b];[a][b]hstack".into()),
+            mirror: true,
+            ..Default::default()
+        };
+        let mut out = VideoOutput::new().unwrap();
+        let id = CueId::new_v4();
+        out.start_camera(id, &c, Instant::now());
+        let t0 = Instant::now();
+        let frame = loop {
+            out.update(Instant::now());
+            let layers = out.stage_layers();
+            let f = layers.first().map(|l| l.frame.clone());
+            if let Some(f) = f {
+                let f = f.lock();
+                if f.width > 0 {
+                    break (f.width, f.data[..4].to_vec());
+                }
+            }
+            assert!(t0.elapsed() < Duration::from_secs(5), "no camera frame");
+            std::thread::sleep(Duration::from_millis(10));
+        };
+        assert_eq!(frame.0, 128);
+        // Mirrored: the first pixel is blue.
+        assert!(frame.1[2] > 200 && frame.1[0] < 50, "{:?}", frame.1);
+        out.stop(id);
+        assert!(!out.has(id));
+    }
 }

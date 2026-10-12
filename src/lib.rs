@@ -1,7 +1,7 @@
 //! OpenQ — an open-source show control / cue playback system.
 //!
-//! A show is a [`model::Workspace`]: a tree of [`model::Cue`]s, workspace
-//! [`model::Settings`] and video [`model::Stage`]s. Pressing GO fires the cue at the
+//! A show is a [`model::Workspace`]: one or more cue lists ([`model::CueList`]), each a tree of
+//! [`model::Cue`]s, plus workspace [`model::Settings`] and video [`model::Stage`]s. Pressing GO fires the cue at the
 //! playhead; the [`engine::Engine`] then runs pre-waits, actions, post-waits and
 //! auto-continues, and drives the media backends.
 //!
@@ -22,8 +22,10 @@
 //!   [`show::SharedShow`] by the UI, the engine thread, OSC and remote connections.
 //! * [`control`] — every transport action (GO, stop, pause, playhead, single cues) as a
 //!   [`control::Command`]; the one entry point used by the UI, OSC and remote devices.
-//! * [`media`] — audio mixer and decoders, video/image/text layers, media probing, waveform
-//!   and poster caches.
+//! * [`media`] — audio mixer and decoders, live inputs (Mic cues), video/image/text/camera
+//!   layers, timecode in and out ([`media::tcio`]), media probing, waveform and poster caches.
+//! * [`timecode`] — SMPTE labels, the LTC encoder/decoder and MIDI Time Code. Cue lists can
+//!   follow LTC or MTC and fire cues at their timecode trigger; Timecode cues send it.
 //! * [`geometry`] — layer placement, crop, corner-pin homography, edge-blend curve.
 //! * [`dsp`] — EQ filter design and processing.
 //! * [`osc`] — OSC input. [`remote`] — paired remote devices (encrypted, authenticated).
@@ -32,7 +34,8 @@
 //! # Threads
 //!
 //! The audio callback never locks: the UI/engine talk to it through lock-free ring buffers.
-//! Decoding (audio and video) runs on one thread per playing file. Everything else that touches
+//! Decoding (audio and video) runs on one thread per playing file; live inputs, cameras and MIDI
+//! connections each run on a thread that owns them. Everything else that touches
 //! the show takes the [`show::SharedShow`] mutex briefly.
 //!
 //! # Example: drive a show without a UI
@@ -64,4 +67,5 @@ pub mod model;
 pub mod osc;
 pub mod remote;
 pub mod show;
+pub mod timecode;
 pub mod ui;

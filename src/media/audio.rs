@@ -196,6 +196,12 @@ impl From<&AudioCue> for MixParams {
     }
 }
 
+impl From<&crate::model::MicCue> for MixParams {
+    fn from(m: &crate::model::MicCue) -> Self {
+        Self { volume_db: m.volume_db, pan: m.pan, eq: m.eq.clone(), routing: m.routing.clone(), out_levels: m.out_levels.clone() }
+    }
+}
+
 impl From<&VideoCue> for MixParams {
     fn from(v: &VideoCue) -> Self {
         Self { volume_db: v.volume_db, pan: 0.0, eq: Eq::default(), routing: v.routing.clone(), out_levels: v.out_levels.clone() }
@@ -651,15 +657,23 @@ impl AudioOutput {
         self.send(Cmd::Add(voice));
     }
 
-    /// A voice fed by someone else (a video's soundtrack). Samples pushed into the returned
-    /// producer are interleaved `channels`-channel f32 at the device rate; set `eof` on the
-    /// returned state when done. Plays as soon as data arrives.
-    pub fn add_external(&mut self, cue: CueId, mix: &MixParams, channels: usize, label: &str) -> (rtrb::Producer<f32>, Arc<VoiceShared>) {
+    /// A voice fed by someone else (a video's soundtrack, a live input). Samples pushed into the
+    /// returned producer are interleaved `channels`-channel f32 at the device rate; set `eof` on
+    /// the returned state when done. Plays as soon as data arrives. The buffer holds
+    /// `buffer_secs` of audio.
+    pub fn add_external(
+        &mut self,
+        cue: CueId,
+        mix: &MixParams,
+        channels: usize,
+        label: &str,
+        buffer_secs: f64,
+    ) -> (rtrb::Producer<f32>, Arc<VoiceShared>) {
         self.stop(cue);
         let id = self.next_id;
         self.next_id += 1;
         let src = channels.clamp(1, MAX_SRC_CHANNELS);
-        let (tx, rx) = rtrb::RingBuffer::<f32>::new(self.rate as usize * src);
+        let (tx, rx) = rtrb::RingBuffer::<f32>::new(((self.rate as f64 * buffer_secs) as usize).max(1024) * src);
         let shared = Arc::new(VoiceShared::default());
         self.add_voice(id, rx, shared.clone(), mix, src, VoiceState::Playing);
         self.voices.insert(

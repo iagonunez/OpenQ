@@ -93,3 +93,6 @@ monitor
 preview
 crop
 visibility
+mic
+photo_camera
+timer_play

@@ -12,9 +12,12 @@ const FILES: &[(&str, &[u8])] = &[
     ("img/geometry-preview.webp", include_bytes!("../../docs/manual/img/geometry-preview.webp")),
     ("img/io.webp", include_bytes!("../../docs/manual/img/io.webp")),
     ("img/levels.webp", include_bytes!("../../docs/manual/img/levels.webp")),
+    ("img/mapping.webp", include_bytes!("../../docs/manual/img/mapping.webp")),
+    ("img/mic.webp", include_bytes!("../../docs/manual/img/mic.webp")),
     ("img/remote-share.webp", include_bytes!("../../docs/manual/img/remote-share.webp")),
     ("img/show-mode.webp", include_bytes!("../../docs/manual/img/show-mode.webp")),
     ("img/text-cue.webp", include_bytes!("../../docs/manual/img/text-cue.webp")),
+    ("img/timecode-cue.webp", include_bytes!("../../docs/manual/img/timecode-cue.webp")),
     ("img/waveform.webp", include_bytes!("../../docs/manual/img/waveform.webp")),
     // Icons in the manual use the app's own Material Symbols subset.
     ("fonts/MaterialSymbolsRounded.ttf", include_bytes!("../../assets/fonts/MaterialSymbolsRounded.ttf")),
