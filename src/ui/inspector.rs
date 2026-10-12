@@ -403,7 +403,7 @@ fn file_row(ui: &mut Ui, path: &Path, prober: &Prober, pick: &mut bool) -> Optio
             ui.label(RichText::new("none").weak());
         } else {
             let name = path.file_name().map(|f| f.to_string_lossy().into_owned()).unwrap_or_default();
-            let color = if path.exists() { ui.visuals().text_color() } else { RED };
+            let color = if prober.exists(path) { ui.visuals().text_color() } else { RED };
             ui.label(RichText::new(name).color(color)).on_hover_text(path.display().to_string());
         }
     });
@@ -426,7 +426,7 @@ fn file_row(ui: &mut Ui, path: &Path, prober: &Prober, pick: &mut bool) -> Optio
                 ui.label(RichText::new(e).color(RED));
             }
             None => {
-                ui.label(RichText::new(if path.exists() { "reading…" } else { "file not found" }).weak());
+                ui.label(RichText::new(if prober.exists(path) { "reading…" } else { "file not found" }).weak());
             }
         }
         ui.end_row();
@@ -557,7 +557,7 @@ fn audio_time(ui: &mut Ui, id: CueId, a: &mut AudioCue, ctx: &Ctx, pick: &mut bo
 
 /// The waveform with trim/slice markers and the fades drawn over it (or a way to pick a file).
 fn audio_waveform(ui: &mut Ui, id: CueId, a: &mut AudioCue, ctx: &Ctx, file_dur: Option<f64>, pick: &mut bool) {
-    if a.path.as_os_str().is_empty() || !a.path.exists() {
+    if a.path.as_os_str().is_empty() || !ctx.prober.exists(&a.path) {
         missing_file(ui, &a.path, pick);
         return;
     }
@@ -659,7 +659,7 @@ fn io_tab(
                 }
                 ui.label("Location");
                 ui.horizontal(|ui| {
-                    if let Some(dir) = path.parent().filter(|d| d.is_dir())
+                    if let Some(dir) = path.parent().filter(|_| ctx.prober.exists(path))
                         && super::theme::icon_button(ui, ic::FOLDER_OPEN, "Show in folder").clicked()
                     {
                         let _ = super::manual::open_with_default_app(dir);
@@ -668,10 +668,10 @@ fn io_tab(
                         .on_hover_text(path.display().to_string());
                 });
                 ui.end_row();
-                if let Ok(meta) = std::fs::metadata(path) {
+                if let Some(Some(len)) = ctx.prober.stat(path) {
                     ui.label("Size");
-                    let mb = meta.len() as f64 / 1_048_576.0;
-                    ui.label(if mb >= 1.0 { format!("{mb:.1} MB") } else { format!("{:.0} KB", meta.len() as f64 / 1024.0) });
+                    let mb = len as f64 / 1_048_576.0;
+                    ui.label(if mb >= 1.0 { format!("{mb:.1} MB") } else { format!("{:.0} KB", len as f64 / 1024.0) });
                     ui.end_row();
                 }
                 if let Some(i) = &info {
@@ -869,7 +869,7 @@ fn routing_editor(ui: &mut Ui, routing: &mut Option<Vec<Vec<f32>>>, src: usize, 
 fn video_time(ui: &mut Ui, v: &mut VideoCue, ctx: &Ctx, pick: &mut bool) {
     use super::icons as ic;
     use super::theme::Card;
-    if v.path.as_os_str().is_empty() || !v.path.exists() {
+    if v.path.as_os_str().is_empty() || !ctx.prober.exists(&v.path) {
         missing_file(ui, &v.path, pick);
     }
     let file_dur = ctx.prober.get(&v.path).and_then(|r| r.ok()).and_then(|i| i.duration);

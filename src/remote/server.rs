@@ -441,6 +441,11 @@ fn send_loop(
     notices: std::sync::mpsc::Receiver<ServerMsg>,
 ) -> anyhow::Result<()> {
     let mut last_ws: Option<Workspace> = None;
+    // Comparing whole workspaces under the show lock every 50 ms (per replica) costs real time on
+    // big shows, so it's done when the edit generation moves, or once per heartbeat for changes
+    // that don't bump it (loading another show).
+    let mut last_gen = None;
+    let mut last_compare = Instant::now();
     let mut last_state: Option<LiveState> = None;
     let mut last_sent = Instant::now();
     let mut media_sent: HashSet<PathBuf> = HashSet::new();
@@ -463,8 +468,15 @@ fn send_loop(
         let meters = shared.meters();
         let (ws, title, state, prober) = {
             let show = shared.show.lock();
-            let ws = (last_ws.as_ref() != Some(&show.ws)).then(|| show.ws.clone());
             let now = Instant::now();
+            let compare = last_gen != Some(show.edit_gen) || now.duration_since(last_compare) >= HEARTBEAT;
+            let ws = if compare {
+                last_gen = Some(show.edit_gen);
+                last_compare = now;
+                (last_ws.as_ref() != Some(&show.ws)).then(|| show.ws.clone())
+            } else {
+                None
+            };
             let state = LiveState {
                 playhead: show.engine.playhead,
                 panicking: show.engine.is_panicking(),

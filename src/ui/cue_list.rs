@@ -710,7 +710,7 @@ impl App {
         let probe = media_path.and_then(|path| self.prober.get(path));
         let broken = match (&cue.kind, media_path) {
             (CueKind::Audio(_) | CueKind::Video(_), None) => true,
-            (_, Some(path)) => !path.exists() || matches!(probe, Some(Err(_))),
+            (_, Some(path)) => !self.prober.exists(path) || matches!(probe, Some(Err(_))),
             _ => cue.kind.target_missing(&show.ws),
         };
         let state = match inst {

@@ -51,7 +51,17 @@ pub struct Prober {
     tx: Mutex<std::sync::mpsc::Sender<PathBuf>>,
     /// Replica mode: the main device pushes media info, nothing is probed locally.
     remote: std::sync::atomic::AtomicBool,
+    /// File sizes (`Some(None)`: missing, None: first check pending) and when they were
+    /// checked; see [`Prober::stat`].
+    stats: Mutex<HashMap<PathBuf, StatEntry>>,
+    stat_tx: Mutex<std::sync::mpsc::Sender<PathBuf>>,
 }
+
+/// A cached [`Prober::stat`] answer and when it was (last asked to be) checked.
+type StatEntry = (Option<Option<u64>>, std::time::Instant);
+
+/// How long a [`Prober::stat`] answer is trusted before it is checked again.
+pub const STAT_TTL: std::time::Duration = std::time::Duration::from_secs(2);
 
 fn is_video_path(p: &Path) -> bool {
     matches!(
@@ -325,7 +335,25 @@ impl Prober {
     /// Start the probe thread.
     pub fn new() -> Arc<Self> {
         let (tx, rx) = std::sync::mpsc::channel::<PathBuf>();
-        let p = Arc::new(Self { cache: Mutex::new(HashMap::new()), tx: Mutex::new(tx), remote: Default::default() });
+        let (stat_tx, stat_rx) = std::sync::mpsc::channel::<PathBuf>();
+        let p = Arc::new(Self {
+            cache: Mutex::new(HashMap::new()),
+            tx: Mutex::new(tx),
+            remote: Default::default(),
+            stats: Mutex::new(HashMap::new()),
+            stat_tx: Mutex::new(stat_tx),
+        });
+        let weak = Arc::downgrade(&p);
+        std::thread::Builder::new()
+            .name("openq-stat".into())
+            .spawn(move || {
+                while let Ok(path) = stat_rx.recv() {
+                    let size = std::fs::metadata(&path).ok().filter(|m| m.is_file()).map(|m| m.len());
+                    let Some(p) = weak.upgrade() else { break };
+                    p.stats.lock().insert(path, (Some(size), std::time::Instant::now()));
+                }
+            })
+            .expect("spawn stat thread");
         let weak = Arc::downgrade(&p);
         std::thread::Builder::new()
             .name("openq-probe".into())
@@ -363,6 +391,41 @@ impl Prober {
                 None
             }
         }
+    }
+
+    /// A file's size, or `Some(None)` if it doesn't exist; None until first checked. Never
+    /// touches the disk: the UI asks for every visible cue each frame while holding the show
+    /// lock, and a stat on a network share or a sleeping drive can take seconds. Checks run on
+    /// a background thread and are repeated after [`STAT_TTL`], so files that come and go
+    /// (a drive plugged back in) are noticed.
+    pub fn stat(&self, path: &Path) -> Option<Option<u64>> {
+        if path.as_os_str().is_empty() {
+            return Some(None);
+        }
+        let mut c = self.stats.lock();
+        let now = std::time::Instant::now();
+        match c.get_mut(path) {
+            Some((size, checked)) => {
+                if now.duration_since(*checked) > STAT_TTL {
+                    // Mark it fresh so it's queued once, not every frame until the answer.
+                    *checked = now;
+                    let _ = self.stat_tx.lock().send(path.to_path_buf());
+                }
+                *size
+            }
+            None => {
+                // A pending entry, so the first check is queued once.
+                c.insert(path.to_path_buf(), (None, now));
+                let _ = self.stat_tx.lock().send(path.to_path_buf());
+                None
+            }
+        }
+    }
+
+    /// Whether a file exists, as far as [`Prober::stat`] knows (unknown counts as present, so
+    /// nothing flashes red before the first check).
+    pub fn exists(&self, path: &Path) -> bool {
+        !matches!(self.stat(path), Some(None))
     }
 
     /// Store media info (e.g. received from a main device).
@@ -990,6 +1053,36 @@ impl Backend for Media {
 mod tests {
     use super::*;
     use rosc::OscType;
+
+    /// `Prober::stat` answers from its cache without touching the disk (the UI calls it per
+    /// visible cue per frame under the show lock), and notices files appearing and changing.
+    #[test]
+    fn stat_is_cached_and_refreshed_in_the_background() {
+        let p = Prober::new();
+        let dir = std::env::temp_dir().join(format!("openq-stat-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let file = dir.join("a.wav");
+        let _ = std::fs::remove_file(&file);
+        let wait = |want: Option<Option<u64>>| {
+            let t0 = std::time::Instant::now();
+            loop {
+                if p.stat(&file) == want {
+                    return;
+                }
+                assert!(t0.elapsed() < STAT_TTL * 3, "stat never became {want:?}");
+                std::thread::sleep(std::time::Duration::from_millis(20));
+            }
+        };
+        assert_eq!(p.stat(&file), None, "first ask is unknown, not a blocking check");
+        assert!(p.exists(&file), "unknown counts as present");
+        wait(Some(None));
+        assert!(!p.exists(&file));
+        std::fs::write(&file, [0u8; 10]).unwrap();
+        wait(Some(Some(10)));
+        assert!(p.exists(&file));
+        assert_eq!(p.stat(Path::new("")), Some(None));
+        let _ = std::fs::remove_dir_all(&dir);
+    }
 
     #[test]
     fn osc_args_parse_numbers_and_quoted_strings() {

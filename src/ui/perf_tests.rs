@@ -7,7 +7,7 @@ use super::{App, inspector};
 use crate::animation::{AnimProp, Animation};
 use crate::control::Command;
 use crate::media::Prober;
-use crate::model::{Cue, CueKind, TextCue};
+use crate::model::{AudioCue, Cue, CueKind, FadeCue, TextCue};
 use crate::show::{SharedShow, Show};
 use std::sync::Arc;
 use std::time::{Duration, Instant};
@@ -40,7 +40,9 @@ fn median(mut v: Vec<Duration>) -> Duration {
     v[v.len() / 2]
 }
 
-/// A show with an animated text cue (first) plus `extra` memo cues.
+/// A show with an animated text cue (first) plus `extra` cues: memos, audio cues whose files
+/// are missing (their status is looked up per row) and fades targeting the last cue (a target
+/// lookup per row).
 fn show_with(text: &str, extra: usize) -> (SharedShow, Arc<Prober>) {
     let prober = Prober::new();
     let mut show = Show::new(prober.clone());
@@ -60,12 +62,19 @@ fn show_with(text: &str, extra: usize) -> (SharedShow, Arc<Prober>) {
     let mut cue = Cue::new(CueKind::Text(t));
     cue.number = "1".into();
     show.ws.cue_list.cues.push(cue);
+    let last = Cue::new(CueKind::Memo);
     for i in 0..extra {
-        let mut c = Cue::new(CueKind::Memo);
+        let kind = match i % 3 {
+            0 => CueKind::Memo,
+            1 => CueKind::Audio(AudioCue { path: format!("/nonexistent/openq-perf/{i}.wav").into(), ..Default::default() }),
+            _ => CueKind::Fade(FadeCue { target: Some(last.id), ..Default::default() }),
+        };
+        let mut c = Cue::new(kind);
         c.number = format!("{}", i + 2);
-        c.name = format!("Memo {i}");
+        c.name = format!("Cue {i}");
         show.ws.cue_list.cues.push(c);
     }
+    show.ws.cue_list.cues.push(last);
     (Arc::new(parking_lot::Mutex::new(show)), prober)
 }
 
@@ -197,6 +206,7 @@ fn frame_time_scales_with_cue_count() {
     for tab in [inspector::Tab::Basics, inspector::Tab::Settings, inspector::Tab::Animation] {
         let small = run(20, tab);
         let large = run(3000, tab);
+        eprintln!("{tab:?}: 20 cues {small:?}, 3000 cues {large:?} per frame");
         assert!(large <= small * 3 + Duration::from_millis(3), "{tab:?}: 3000 cues take {large:?} per frame; 20 cues {small:?}");
     }
 }

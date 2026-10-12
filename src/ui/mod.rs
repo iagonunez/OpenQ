@@ -62,7 +62,35 @@ pub(crate) enum Mode {
 struct UndoState {
     cues: crate::model::CueList,
     stages: Vec<Stage>,
+    /// Cues in `cues` (for the history's memory budget).
+    size: usize,
 }
+
+impl UndoState {
+    fn of(show: &Show) -> Self {
+        let cues = show.ws.cue_list.clone();
+        Self { size: cues.iter_all().len(), cues, stages: show.ws.stages.clone() }
+    }
+}
+
+/// Drop the oldest steps of an undo (or redo) stack beyond [`UNDO_STEPS`] or the cue budget.
+fn trim_undo(stack: &mut Vec<UndoState>) {
+    let mut total: usize = stack.iter().map(|s| s.size).sum();
+    let mut drop = 0;
+    while stack.len() - drop > UNDO_STEPS || (stack.len() - drop > UNDO_MIN_STEPS && total > UNDO_CUE_BUDGET) {
+        total -= stack[drop].size;
+        drop += 1;
+    }
+    stack.drain(..drop);
+}
+
+/// Undo steps kept at most.
+const UNDO_STEPS: usize = 200;
+/// Cues kept across all undo steps. Every step is a full copy of the cue lists (~0.5 KB per
+/// cue), so 200 steps of a 5000-cue show would hold ~500 MB; big shows keep fewer steps.
+const UNDO_CUE_BUDGET: usize = 100_000;
+/// Steps kept whatever the budget says.
+const UNDO_MIN_STEPS: usize = 10;
 
 #[derive(Clone, Copy, PartialEq, Eq)]
 enum SettingsTab {
@@ -575,12 +603,8 @@ impl App {
     /// Record undo points: an edit becomes one step once things settle (no button held,
     /// 400 ms since the last change), so a slider drag or typing burst undoes in one go.
     fn track_undo(&mut self, ctx: &egui::Context, show: &Show) {
-        let snap = || UndoState {
-            cues: show.ws.cue_list.clone(),
-            stages: show.ws.stages.clone(),
-        };
         if self.undo_base.is_none() {
-            self.undo_base = Some(snap());
+            self.undo_base = Some(UndoState::of(show));
             self.undo_seen_gen = show.edit_gen;
             return;
         }
@@ -601,17 +625,12 @@ impl App {
 
     fn commit_undo(&mut self, show: &Show) {
         self.undo_pending = None;
-        let now = UndoState {
-            cues: show.ws.cue_list.clone(),
-            stages: show.ws.stages.clone(),
-        };
+        let now = UndoState::of(show);
         if self.undo_base.as_ref() != Some(&now)
             && let Some(prev) = self.undo_base.replace(now)
         {
             self.undo.push(prev);
-            if self.undo.len() > 200 {
-                self.undo.remove(0);
-            }
+            trim_undo(&mut self.undo);
             self.redo.clear();
         }
     }
@@ -629,10 +648,8 @@ impl App {
     fn undo(&mut self, show: &mut Show) {
         self.commit_undo(show);
         if let Some(prev) = self.undo.pop() {
-            self.redo.push(UndoState {
-                cues: show.ws.cue_list.clone(),
-                stages: show.ws.stages.clone(),
-            });
+            self.redo.push(UndoState::of(show));
+            trim_undo(&mut self.redo);
             self.apply_undo_state(show, prev);
             self.notify("Undo");
         }
@@ -641,10 +658,8 @@ impl App {
     fn redo(&mut self, show: &mut Show) {
         self.commit_undo(show);
         if let Some(next) = self.redo.pop() {
-            self.undo.push(UndoState {
-                cues: show.ws.cue_list.clone(),
-                stages: show.ws.stages.clone(),
-            });
+            self.undo.push(UndoState::of(show));
+            trim_undo(&mut self.undo);
             self.apply_undo_state(show, next);
             self.notify("Redo");
         }
@@ -2498,6 +2513,22 @@ impl App {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// Undo keeps full copies of the cue lists: a big show must keep fewer steps instead of
+    /// holding hundreds of megabytes, a small one keeps the full history.
+    #[test]
+    fn undo_history_has_a_memory_budget() {
+        let step = |size| UndoState { cues: Default::default(), stages: Vec::new(), size };
+        let mut small: Vec<UndoState> = (0..UNDO_STEPS + 50).map(|_| step(50)).collect();
+        trim_undo(&mut small);
+        assert_eq!(small.len(), UNDO_STEPS);
+        let mut big: Vec<UndoState> = (0..UNDO_STEPS).map(|_| step(5000)).collect();
+        trim_undo(&mut big);
+        assert_eq!(big.len(), UNDO_CUE_BUDGET / 5000);
+        let mut huge: Vec<UndoState> = (0..UNDO_STEPS).map(|_| step(UNDO_CUE_BUDGET)).collect();
+        trim_undo(&mut huge);
+        assert_eq!(huge.len(), UNDO_MIN_STEPS, "a few steps stay whatever the size");
+    }
 
     /// The OSC checkbox: on starts the listener, off stops it (it once stayed running, and shown
     /// in the status bar, after being turned off), on again restarts it on the same port.

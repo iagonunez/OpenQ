@@ -179,6 +179,9 @@ pub fn render_planes(cue: &TextCue) -> TextPlanes {
 /// rare, so the lock costs nothing).
 static RENDERS: OnceLock<Mutex<std::collections::HashMap<String, u64>>> = OnceLock::new();
 
+/// Distinct strings [`render_count`] remembers before it starts over.
+const MAX_COUNTED: usize = 4096;
+
 /// How many times a Text cue showing `text` has been rasterised in this process (planes or
 /// composite), on any thread.
 pub fn render_count(text: &str) -> u64 {
@@ -306,7 +309,13 @@ pub struct TextPlanes {
 
 /// Coverage masks of every part the cue shows or animates.
 fn masks(cue: &TextCue, density: f32) -> TextPlanes {
-    *RENDERS.get_or_init(Default::default).lock().entry(cue.text.clone()).or_default() += 1;
+    let mut renders = RENDERS.get_or_init(Default::default).lock();
+    // Every edit of a text is a new key: keep a long session's map from growing without end.
+    if renders.len() >= MAX_COUNTED && !renders.contains_key(&cue.text) {
+        renders.clear();
+    }
+    *renders.entry(cue.text.clone()).or_default() += 1;
+    drop(renders);
     let anim = &cue.animation;
     let want_bg = cue.bg_color[3] > 0 || anim.has(AnimProp::Background);
     let want_shadow = cue.shadow_color[3] > 0 || anim.has(AnimProp::ShadowColor);

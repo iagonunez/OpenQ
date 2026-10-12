@@ -357,7 +357,13 @@ pub(super) fn paint_layer(
     let mut out = Vec::new();
     match &f.planes {
         None => {
-            let id = tex(0, &|| egui::ColorImage::from_rgba_unmultiplied(size, &f.data));
+            let id = tex(0, &|| {
+                if f.premultiplied {
+                    egui::ColorImage::from_rgba_premultiplied(size, &f.data)
+                } else {
+                    egui::ColorImage::from_rgba_unmultiplied(size, &f.data)
+                }
+            });
             out.push(layer_mesh(id, &q, layer_color(l, [1.0; 4]), &place));
         }
         Some(p) => {

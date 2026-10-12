@@ -36,7 +36,7 @@ impl PreviewText {
                 Some(p) if !self.frame.lock().planes.as_ref().is_some_and(|q| std::sync::Arc::ptr_eq(q, &p)) => {
                     let mut f = self.frame.lock();
                     let generation = f.generation.wrapping_add(1);
-                    *f = Frame { width: p.width, height: p.height, density: p.density, planes: Some(p), generation, data: Vec::new() };
+                    *f = Frame { width: p.width, height: p.height, density: p.density, planes: Some(p), generation, data: Vec::new(), premultiplied: false };
                 }
                 Some(_) => {}
                 None => ctx.request_repaint_after(std::time::Duration::from_millis(15)),

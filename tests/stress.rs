@@ -967,3 +967,38 @@ mod faults {
         let _ = std::fs::remove_dir_all(&dir);
     }
 }
+
+/// A long cue list with only a few cues running (the usual show): the tick must not walk the
+/// whole tree for every running cue.
+#[test]
+#[ignore]
+fn stress_long_list_few_running() {
+    let n = 10_000 * scale();
+    let mut ws = Workspace::default();
+    for i in 0..n {
+        let mut c = Cue::new(CueKind::Wait { duration: 30.0 });
+        c.number = format!("{i}");
+        ws.cue_list.cues.push(c);
+    }
+    // The last cues of the list are the worst case for a tree walk.
+    let running: Vec<CueId> = ws.cue_list.cues[n - 4..].iter().map(|c| c.id).collect();
+    let mut e = Engine::new();
+    let mut m = Mock::default();
+    let t0 = Instant::now();
+    for id in &running {
+        e.start_cue(&ws, &mut m, *id, t0);
+    }
+    let mut now = t0;
+    let mut ticks = Vec::new();
+    for _ in 0..2000 {
+        now += Duration::from_millis(1);
+        let t = Instant::now();
+        e.tick(&ws, &mut m, now);
+        ticks.push(t.elapsed());
+    }
+    ticks.sort();
+    let p50 = ticks[ticks.len() / 2];
+    let p99 = ticks[ticks.len() * 99 / 100];
+    eprintln!("{n} cues, 4 running: p50 {p50:?}, p99 {p99:?}");
+    assert!(p50 < Duration::from_micros(500), "p50 tick {p50:?}");
+}

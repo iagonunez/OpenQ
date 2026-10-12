@@ -96,6 +96,12 @@ impl Show {
     /// forward run fires cues; a jump (relocate, rewind) or dropout just moves the reference.
     fn follow_timecode(&mut self, now: Instant) {
         use crate::model::{CueList, TimecodeSource};
+        // Runs every millisecond: bail out before allocating when no list follows timecode.
+        let cl = &self.ws.cue_list;
+        let follows = |i: &crate::model::ListInfo| i.timecode.source != TimecodeSource::Off;
+        if self.tc_last.is_empty() && !follows(&cl.info) && !cl.others.iter().any(|o| follows(&o.info)) {
+            return;
+        }
         let lists = self.ws.cue_list.lists();
         let syncs: Vec<_> = lists.iter().map(|l| l.0.timecode.clone()).filter(|t| t.source != TimecodeSource::Off).collect();
         if syncs.is_empty() && self.tc_last.is_empty() {

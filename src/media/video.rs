@@ -56,6 +56,9 @@ pub struct Frame {
     pub generation: u64,
     /// Image pixels per stage pixel (rendered text is supersampled); 0 means 1.
     pub density: f32,
+    /// `data` is premultiplied RGBA (decoded movies and cameras: the stage uploads it without a
+    /// per-pixel conversion, which took milliseconds per frame under the show lock).
+    pub premultiplied: bool,
     /// Text cues: coverage planes coloured as they are drawn (`data` is then empty). Shared with
     /// the render cache, so firing a text cue again costs no copy.
     pub planes: Option<Arc<TextPlanes>>,
@@ -291,7 +294,7 @@ impl DecodeJob {
             (e, _) => e,
         };
 
-        let mut scaler: Option<(ff::software::scaling::Context, u32, u32, ff::format::Pixel)> = None;
+        let mut conv = Converter::default();
         let mut resampler: Option<ff::software::resampling::Context> = None;
         let mut pending: VecDeque<f32> = VecDeque::new();
         let mut plays = 0u32;
@@ -323,7 +326,7 @@ impl DecodeJob {
                     }
                     while dec.receive_frame(&mut decoded).is_ok() {
                         let pts = decoded.timestamp().or(decoded.pts()).unwrap_or(0) as f64 * vtb;
-                        match self.show_frame(&decoded, pts, start, end, pass_offset, &mut pass_len, &mut scaler, &mut pending)? {
+                        match self.show_frame(&decoded, pts, start, end, pass_offset, &mut pass_len, &mut conv, &mut pending)? {
                             FrameResult::Quit => return Ok(()),
                             FrameResult::End => {
                                 reached_end = true;
@@ -373,7 +376,7 @@ impl DecodeJob {
                 let _ = dec.send_eof();
                 while dec.receive_frame(&mut decoded).is_ok() {
                     let pts = decoded.timestamp().or(decoded.pts()).unwrap_or(0) as f64 * vtb;
-                    match self.show_frame(&decoded, pts, start, end, pass_offset, &mut pass_len, &mut scaler, &mut pending)? {
+                    match self.show_frame(&decoded, pts, start, end, pass_offset, &mut pass_len, &mut conv, &mut pending)? {
                         FrameResult::Quit => return Ok(()),
                         FrameResult::End => break,
                         FrameResult::Shown => {}
@@ -420,7 +423,7 @@ impl DecodeJob {
         end: Option<f64>,
         pass_offset: f64,
         pass_len: &mut f64,
-        scaler: &mut Option<(ff::software::scaling::Context, u32, u32, ff::format::Pixel)>,
+        conv: &mut Converter,
         pending: &mut VecDeque<f32>,
     ) -> anyhow::Result<FrameResult> {
         if pts + 1e-6 < start {
@@ -435,20 +438,13 @@ impl DecodeJob {
             self.ctl.state.lock().prerolled = true;
             self.ctl.wake.notify_all();
         }
+        conv.convert(decoded, false)?;
         if let Flow::Quit = self.wait_until(t, pending) {
             return Ok(FrameResult::Quit);
         }
-        self.publish(decoded, scaler)?;
+        conv.publish(&self.frame);
         self.ctl.state.lock().position = pts;
         Ok(FrameResult::Shown)
-    }
-
-    fn publish(
-        &self,
-        f: &ff::util::frame::video::Video,
-        scaler: &mut Option<(ff::software::scaling::Context, u32, u32, ff::format::Pixel)>,
-    ) -> anyhow::Result<()> {
-        publish_rgba(&self.frame, f, scaler, false)
     }
 
     /// Convert a decoded audio frame to interleaved f32 at the mixer rate; `skip` seconds at the
@@ -488,38 +484,74 @@ impl DecodeJob {
 
 // ---------------------------------------------------------------- players
 
-/// A cached pixel converter and the input it was made for.
-type Scaler = Option<(ff::software::scaling::Context, u32, u32, ff::format::Pixel)>;
+/// Turns decoded pictures into tightly packed RGBA, keeping its pixel converter and buffers
+/// between frames (a 4K frame is 33 MB; allocating it per frame showed up in profiles).
+#[derive(Default)]
+struct Converter {
+    /// The converter and the input it was made for.
+    scaler: Option<(ff::software::scaling::Context, u32, u32, ff::format::Pixel)>,
+    /// swscale's output, reused while the size stays the same.
+    rgba: Option<ff::util::frame::video::Video>,
+    /// The converted picture, swapped into the frame slot by [`Converter::publish`].
+    buf: Vec<u8>,
+    size: (u32, u32),
+}
 
-/// Scale/convert a decoded picture to RGBA into `slot` (optionally mirrored left to right).
-fn publish_rgba(slot: &FrameSlot, f: &ff::util::frame::video::Video, scaler: &mut Scaler, mirror: bool) -> anyhow::Result<()> {
-    let (w, h, fmt) = (f.width(), f.height(), f.format());
-    if scaler.as_ref().is_none_or(|s| s.1 != w || s.2 != h || s.3 != fmt) {
-        let ctx = ff::software::scaling::Context::get(fmt, w, h, ff::format::Pixel::RGBA, w, h, ff::software::scaling::Flags::BILINEAR)?;
-        *scaler = Some((ctx, w, h, fmt));
-    }
-    let mut rgba = ff::util::frame::video::Video::empty();
-    scaler.as_mut().expect("scaler").0.run(f, &mut rgba)?;
-    let stride = rgba.stride(0);
-    let row = w as usize * 4;
-    let src = rgba.data(0);
-    let mut slot = slot.lock();
-    slot.data.resize(row * h as usize, 0);
-    for y in 0..h as usize {
-        let dst = &mut slot.data[y * row..(y + 1) * row];
-        dst.copy_from_slice(&src[y * stride..y * stride + row]);
-        if mirror {
-            for x in 0..w as usize / 2 {
-                for c in 0..4 {
-                    dst.swap(x * 4 + c, (w as usize - 1 - x) * 4 + c);
-                }
+/// Premultiply straight RGBA in place (gamma space, as egui's colours are).
+fn premultiply(rgba: &mut [u8]) {
+    for px in rgba.chunks_exact_mut(4) {
+        let a = px[3] as u32;
+        if a < 255 {
+            for c in &mut px[..3] {
+                *c = ((*c as u32 * a + 127) / 255) as u8;
             }
         }
     }
-    slot.width = w;
-    slot.height = h;
-    slot.generation = slot.generation.wrapping_add(1);
-    Ok(())
+}
+
+impl Converter {
+    /// Convert `f` (optionally mirrored left to right). Done before waiting for the frame's
+    /// presentation time, so publishing it on time costs only a buffer swap.
+    fn convert(&mut self, f: &ff::util::frame::video::Video, mirror: bool) -> anyhow::Result<()> {
+        let (w, h, fmt) = (f.width(), f.height(), f.format());
+        if self.scaler.as_ref().is_none_or(|s| s.1 != w || s.2 != h || s.3 != fmt) {
+            let ctx = ff::software::scaling::Context::get(fmt, w, h, ff::format::Pixel::RGBA, w, h, ff::software::scaling::Flags::BILINEAR)?;
+            self.scaler = Some((ctx, w, h, fmt));
+            self.rgba = None;
+        }
+        let rgba = self.rgba.get_or_insert_with(ff::util::frame::video::Video::empty);
+        self.scaler.as_mut().expect("scaler").0.run(f, rgba)?;
+        let stride = rgba.stride(0);
+        let row = w as usize * 4;
+        let src = rgba.data(0);
+        self.buf.resize(row * h as usize, 0);
+        for y in 0..h as usize {
+            let dst = &mut self.buf[y * row..(y + 1) * row];
+            dst.copy_from_slice(&src[y * stride..y * stride + row]);
+            if mirror {
+                for x in 0..w as usize / 2 {
+                    for c in 0..4 {
+                        dst.swap(x * 4 + c, (w as usize - 1 - x) * 4 + c);
+                    }
+                }
+            }
+        }
+        // Only pictures with an alpha channel need it; opaque RGBA is already premultiplied.
+        if fmt.descriptor().is_some_and(|d| matches!(d.nb_components(), 2 | 4)) {
+            premultiply(&mut self.buf);
+        }
+        self.size = (w, h);
+        Ok(())
+    }
+
+    /// Show the last converted picture in `slot` (its old pixels become the next buffer).
+    fn publish(&mut self, slot: &FrameSlot) {
+        let mut slot = slot.lock();
+        std::mem::swap(&mut slot.data, &mut self.buf);
+        (slot.width, slot.height) = self.size;
+        slot.premultiplied = true;
+        slot.generation = slot.generation.wrapping_add(1);
+    }
 }
 
 // ---------------------------------------------------------------- live cameras
@@ -655,7 +687,7 @@ fn capture(c: &CameraCue, slot: &FrameSlot, quit: &std::sync::atomic::AtomicBool
     let stream = ictx.streams().best(ff::media::Type::Video).context("the camera sends no video")?;
     let idx = stream.index();
     let mut dec = ff::codec::context::Context::from_parameters(stream.parameters())?.decoder().video()?;
-    let mut scaler: Scaler = None;
+    let mut conv = Converter::default();
     let mut decoded = ff::util::frame::video::Video::empty();
     for (s, packet) in ictx.packets() {
         if quit.load(Ordering::Acquire) {
@@ -668,7 +700,8 @@ fn capture(c: &CameraCue, slot: &FrameSlot, quit: &std::sync::atomic::AtomicBool
         while dec.receive_frame(&mut decoded).is_ok() {
             // Paused: keep capturing (so the camera doesn't lag on resume) but hold the picture.
             if !paused.load(Ordering::Acquire) {
-                publish_rgba(slot, &decoded, &mut scaler, c.mirror)?;
+                conv.convert(&decoded, c.mirror)?;
+                conv.publish(slot);
             }
         }
         // Test sources run as fast as they can; real cameras pace themselves.
@@ -758,6 +791,7 @@ fn load_still(params: &VideoCue, slot: FrameSlot) -> Arc<Mutex<Option<String>>> 
                 f.width = img.width;
                 f.height = img.height;
                 f.data = img.rgba;
+                f.premultiplied = false;
                 f.density = img.density;
                 f.generation = f.generation.wrapping_add(1);
             }
@@ -1450,6 +1484,21 @@ mod tests {
         });
     }
 
+    /// Movie pictures with alpha are premultiplied on the decode thread (gamma space, matching
+    /// egui's `Color32::from_rgba_unmultiplied`), so the stage can upload them as they are.
+    #[test]
+    fn premultiply_matches_egui() {
+        let mut px = vec![200, 100, 50, 128, 10, 20, 30, 255, 255, 255, 255, 0];
+        let want: Vec<u8> = px
+            .chunks_exact(4)
+            .flat_map(|p| egui::Color32::from_rgba_unmultiplied(p[0], p[1], p[2], p[3]).to_array())
+            .collect();
+        premultiply(&mut px);
+        for (a, b) in px.iter().zip(&want) {
+            assert!(a.abs_diff(*b) <= 1, "{px:?} vs {want:?}");
+        }
+    }
+
     #[test]
     fn camera_capture_publishes_mirrored_frames() {
         init().unwrap();
@@ -1474,7 +1523,7 @@ mod tests {
             if let Some(f) = f {
                 let f = f.lock();
                 if f.width > 0 {
-                    break (f.width, f.data[..4].to_vec());
+                    break (f.width, f.data[..4].to_vec(), f.generation, f.premultiplied);
                 }
             }
             assert!(t0.elapsed() < Duration::from_secs(5), "no camera frame");
@@ -1483,6 +1532,19 @@ mod tests {
         assert_eq!(frame.0, 128);
         // Mirrored: the first pixel is blue.
         assert!(frame.1[2] > 200 && frame.1[0] < 50, "{:?}", frame.1);
+        assert!(frame.3, "camera frames are published premultiplied");
+        // Later frames reuse the swapped buffers: still whole and still mirrored.
+        let slot = out.stage_layers()[0].frame.clone();
+        let t0 = Instant::now();
+        while slot.lock().generation < frame.2 + 3 {
+            assert!(t0.elapsed() < Duration::from_secs(5), "no further camera frames");
+            std::thread::sleep(Duration::from_millis(10));
+        }
+        {
+            let f = slot.lock();
+            assert_eq!(f.data.len(), 128 * 16 * 4);
+            assert!(f.data[2] > 200 && f.data[0] < 50 && f.data[f.data.len() - 4] > 200, "{:?}", &f.data[..8]);
+        }
         out.stop(id);
         assert!(!out.has(id));
     }
