@@ -9,7 +9,7 @@
 use super::decoder::{self, DecodeParams};
 use crate::dsp::{BiquadState, Coeffs, eq_coeffs};
 use crate::model::{
-    AudioCue, CueId, Eq, FadeCurve, MAX_EQ_BANDS, MAX_OUT_CHANNELS, MAX_SRC_CHANNELS, VideoCue, db_to_gain, routing_gains,
+    AudioCue, CueId, Eq, FadeCurve, MAX_EQ_BANDS, MAX_OUT_CHANNELS, MAX_SRC_CHANNELS, VideoCue, db_to_gain, out_level_gain, routing_gains,
 };
 use anyhow::{Context, anyhow};
 use cpal::traits::{DeviceTrait, HostTrait, StreamTrait};
@@ -186,17 +186,19 @@ pub struct MixParams {
     pub eq: Eq,
     /// Gain matrix `[source][output]`; None = default routing.
     pub routing: Option<Vec<Vec<f32>>>,
+    /// Output fader levels in dB, folded into the matrix.
+    pub out_levels: Vec<f32>,
 }
 
 impl From<&AudioCue> for MixParams {
     fn from(a: &AudioCue) -> Self {
-        Self { volume_db: a.volume_db, pan: a.pan, eq: a.eq.clone(), routing: a.routing.clone() }
+        Self { volume_db: a.volume_db, pan: a.pan, eq: a.eq.clone(), routing: a.routing.clone(), out_levels: a.out_levels.clone() }
     }
 }
 
 impl From<&VideoCue> for MixParams {
     fn from(v: &VideoCue) -> Self {
-        Self { volume_db: v.volume_db, pan: 0.0, eq: Eq::default(), routing: v.routing.clone() }
+        Self { volume_db: v.volume_db, pan: 0.0, eq: Eq::default(), routing: v.routing.clone(), out_levels: v.out_levels.clone() }
     }
 }
 
@@ -204,7 +206,7 @@ fn build_matrix(params: &MixParams, src: usize, out: usize) -> Matrix {
     let mut m = [0.0; MAX_SRC_CHANNELS * MAX_OUT_CHANNELS];
     for (s, row) in routing_gains(&params.routing, src, out).iter().enumerate().take(MAX_SRC_CHANNELS) {
         for (o, g) in row.iter().enumerate().take(MAX_OUT_CHANNELS) {
-            m[s * MAX_OUT_CHANNELS + o] = *g;
+            m[s * MAX_OUT_CHANNELS + o] = *g * out_level_gain(&params.out_levels, o);
         }
     }
     m
@@ -603,7 +605,14 @@ impl AudioOutput {
         let shared = Arc::new(VoiceShared::default());
         decoder::spawn(
             params.path.clone(),
-            DecodeParams { segments: params.segments(), rate: params.rate as f64, channels: src },
+            DecodeParams {
+                segments: params.segments(),
+                rate: params.rate as f64,
+                channels: src,
+                fade_in: params.fade_in,
+                fade_out: params.fade_out,
+                fade_curve: params.fade_curve,
+            },
             self.rate,
             tx,
             shared.clone(),
@@ -783,7 +792,7 @@ impl AudioOutput {
             let (coeffs, bands) = eq_coeffs(&params.eq, self.rate as f32);
             self.send(Cmd::Eq { id, coeffs, bands });
         }
-        if old.routing != params.routing {
+        if old.routing != params.routing || old.out_levels != params.out_levels {
             let matrix = Box::new(build_matrix(params, src, self.channels));
             self.send(Cmd::Matrix { id, matrix });
         }
@@ -917,6 +926,20 @@ mod tests {
         assert!(out[0].abs() < 1e-5);
         assert!((out[1] - 0.501).abs() < 0.01, "{out:?}");
         assert_eq!(out[2], 0.0);
+    }
+
+    #[test]
+    fn output_faders_scale_their_output_only() {
+        // Mono into stereo; output 2 down 6 dB, output 1 untouched (missing entries are 0 dB).
+        let p = AudioCue { out_levels: vec![0.0, -6.0], ..Default::default() };
+        let out = render_once(&p, 1, 2, &[1.0; 4]);
+        assert!((out[0] - 1.0).abs() < 1e-5, "{out:?}");
+        assert!((out[1] - 0.501).abs() < 0.01, "{out:?}");
+        // At the bottom of the fader the output is silent.
+        let p = AudioCue { out_levels: vec![crate::model::MIN_DB], ..Default::default() };
+        let out = render_once(&p, 1, 2, &[1.0; 4]);
+        assert_eq!(out[0], 0.0);
+        assert!((out[1] - 1.0).abs() < 1e-5);
     }
 
     #[test]

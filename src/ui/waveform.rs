@@ -3,9 +3,9 @@
 use super::widgets::{AMBER, BLUE, GREEN, RED, fmt_time};
 use crate::model::SliceMarker;
 use crate::media::decoder::Waveform;
-use egui::{Align2, Color32, CursorIcon, FontId, Id, Rect, Sense, Stroke, Ui, pos2, vec2};
+use egui::{Align2, Color32, CursorIcon, FontId, Id, Pos2, Rect, Sense, Stroke, Ui, pos2, vec2};
 
-const HEIGHT: f32 = 130.0;
+const HEIGHT: f32 = 104.0;
 const RULER: f32 = 16.0;
 const MIN_REGION: f64 = 0.01;
 
@@ -14,6 +14,15 @@ const MIN_REGION: f64 = 0.01;
 struct View {
     t0: f64,
     t1: f64,
+}
+
+/// What is drawn over the waveform: the live playhead and the integrated fades (file seconds).
+#[derive(Clone, Copy)]
+pub struct Overlay {
+    pub playhead: Option<f64>,
+    pub fade_in: f64,
+    pub fade_out: f64,
+    pub curve: crate::model::FadeCurve,
 }
 
 /// Returns true if `start`/`end`/slices changed.
@@ -26,8 +35,9 @@ pub fn waveform_editor(
     start: &mut f64,
     end: &mut Option<f64>,
     slices: &mut Vec<SliceMarker>,
-    playhead: Option<f64>,
+    overlay: Overlay,
 ) -> bool {
+    let (playhead, fades) = (overlay.playhead, overlay);
     let duration = duration.max(MIN_REGION);
     let mut view = ui.data(|d| d.get_temp::<View>(id)).unwrap_or(View { t0: 0.0, t1: duration });
     let mut changed = false;
@@ -51,6 +61,18 @@ pub fn waveform_editor(
             view = View { t0: (*start - pad).max(0.0), t1: (e + pad).min(duration) };
         }
         ui.label(egui::RichText::new(format!("view {} – {}  ({:.0}×)", fmt_time(view.t0), fmt_time(view.t1), duration / span)).weak().small());
+        ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+            ui.add(
+                egui::Label::new(
+                    egui::RichText::new(
+                        "Drag green/red markers to trim · double-click to add a slice · drag to pan · Ctrl+scroll to zoom",
+                    )
+                    .weak()
+                    .small(),
+                )
+                .truncate(),
+            );
+        });
     });
 
     let (rect, resp) = ui.allocate_exact_size(vec2(ui.available_width(), HEIGHT), Sense::click_and_drag());
@@ -104,6 +126,27 @@ pub fn waveform_editor(
     let xe = x_of(end_t).clamp(wave.left(), wave.right());
     p.rect_filled(Rect::from_x_y_ranges(wave.left()..=xs, wave.y_range()), 0.0, shade);
     p.rect_filled(Rect::from_x_y_ranges(xe..=wave.right(), wave.y_range()), 0.0, shade);
+
+    // Integrated fades: the gain curve, with the cut-away part shaded above it.
+    const STEPS: usize = 32;
+    for (len, rising) in [(fades.fade_in.min(end_t - *start), true), (fades.fade_out.min(end_t - *start), false)] {
+        if len <= 0.0 {
+            continue;
+        }
+        let t0 = if rising { *start } else { end_t - len };
+        let pts: Vec<Pos2> = (0..=STEPS)
+            .map(|i| {
+                let f = i as f32 / STEPS as f32;
+                let g = fades.curve.gain(if rising { f } else { 1.0 - f });
+                pos2(x_of(t0 + len * f as f64), wave.bottom() - g * wave.height())
+            })
+            .collect();
+        for w in pts.windows(2) {
+            let r = Rect::from_x_y_ranges(w[0].x..=w[1].x, wave.top()..=w[0].y.min(w[1].y));
+            p.rect_filled(r.intersect(wave), 0.0, Color32::from_black_alpha(90));
+        }
+        p.add(egui::Shape::line(pts, Stroke::new(1.5, AMBER)));
+    }
 
     // Markers + handles.
     let handle = |x: f32| Rect::from_center_size(pos2(x, wave.center().y), vec2(12.0, wave.height()));

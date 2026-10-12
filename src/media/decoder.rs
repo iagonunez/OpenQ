@@ -24,6 +24,12 @@ pub struct DecodeParams {
     pub rate: f64,
     /// Channels to emit (source channels, padded/truncated). The mixer does the routing.
     pub channels: usize,
+    /// Integrated fade-in at the start, in seconds of output.
+    pub fade_in: f64,
+    /// Integrated fade-out before the end, in seconds of output (only when the end is known).
+    pub fade_out: f64,
+    /// Shape of both fades.
+    pub fade_curve: crate::model::FadeCurve,
 }
 
 /// Peak overview of a file for waveform display.
@@ -175,8 +181,20 @@ pub fn spawn(path: PathBuf, params: DecodeParams, out_rate: u32, tx: rtrb::Produ
     let name = format!("openq-dec-{}", path.file_name().map(|f| f.to_string_lossy()).unwrap_or_default());
     let sh = shared.clone();
     let res = std::thread::Builder::new().name(name).spawn(move || {
-        let mut sink =
-            Sink { tx, shared: sh.clone(), out_channels: channels, resampler: None, scratch: Vec::new(), fill_limit };
+        let mut sink = Sink {
+            tx,
+            shared: sh.clone(),
+            out_channels: channels,
+            resampler: None,
+            scratch: Vec::new(),
+            fill_limit,
+            envelope: Envelope {
+                written: 0,
+                fade_in: (params.fade_in.max(0.0) * out_rate as f64) as u64,
+                fade_out: None,
+                curve: params.fade_curve,
+            },
+        };
         if let Err(e) = run(&path, &params, out_rate, &mut sink)
             && e.downcast_ref::<Stopped>().is_none()
         {
@@ -203,9 +221,19 @@ impl std::error::Error for Stopped {}
 
 fn run(path: &Path, p: &DecodeParams, out_rate: u32, sink: &mut Sink) -> anyhow::Result<()> {
     let rate = if p.rate.is_finite() && p.rate > 0.0 { p.rate.clamp(0.05, 8.0) } else { 1.0 };
-    for seg in &p.segments {
+    let file_len = if p.fade_out > 0.0 { open(path).ok().and_then(|o| o.duration) } else { None };
+    for (si, seg) in p.segments.iter().enumerate() {
         let mut passes = 0u32;
         loop {
+            // Once the rest of the playback has a known length, place the integrated fade-out.
+            if sink.envelope.fade_out.is_none()
+                && let Some(len) = file_len
+                && let Some(rest) = remaining_file_time(&p.segments[si..], passes, len)
+            {
+                let out_frames = (rest / rate * out_rate as f64) as u64;
+                let fade = ((p.fade_out * out_rate as f64) as u64).min(out_frames);
+                sink.envelope.fade_out = Some((sink.envelope.written + out_frames - fade, fade));
+            }
             play_pass(path, seg.start, seg.end, rate, out_rate, sink)?;
             passes += 1;
             if sink.shared.stop.load(Ordering::Acquire) {
@@ -221,6 +249,52 @@ fn run(path: &Path, p: &DecodeParams, out_rate: u32, sink: &mut Sink) -> anyhow:
         }
     }
     sink.finish()
+}
+
+/// File time left to play from the start of pass `done` of `segs[0]` through the end, if that is
+/// known (None while a pass count is unlimited).
+fn remaining_file_time(segs: &[crate::model::Segment], done: u32, file_len: f64) -> Option<f64> {
+    let mut total = 0.0;
+    for (i, s) in segs.iter().enumerate() {
+        let len = (s.end.unwrap_or(file_len).min(file_len) - s.start).max(0.0);
+        let plays = s.plays? as f64 - if i == 0 { done as f64 } else { 0.0 };
+        total += len * plays.max(1.0);
+    }
+    Some(total)
+}
+
+/// Integrated fade-in / fade-out applied to the decoded output.
+struct Envelope {
+    /// Output frames written so far.
+    written: u64,
+    /// Fade-in length in output frames.
+    fade_in: u64,
+    /// Fade-out (first frame, length) in output frames, once the end is known.
+    fade_out: Option<(u64, u64)>,
+    curve: crate::model::FadeCurve,
+}
+
+impl Envelope {
+    /// Gain for the next output frame (and advance).
+    fn next(&mut self) -> f32 {
+        let n = self.written;
+        self.written += 1;
+        let mut g = 1.0;
+        if n < self.fade_in {
+            g *= self.curve.gain(n as f32 / self.fade_in as f32);
+        }
+        if let Some((start, len)) = self.fade_out
+            && n >= start
+        {
+            let t = if len == 0 { 1.0 } else { (n - start) as f32 / len as f32 };
+            g *= self.curve.gain(1.0 - t);
+        }
+        g
+    }
+
+    fn active(&self) -> bool {
+        self.written < self.fade_in || self.fade_out.is_some()
+    }
 }
 
 /// Decode [start, end) once into the sink.
@@ -337,6 +411,7 @@ struct Sink {
     scratch: Vec<f32>,
     /// Most samples to keep buffered ahead of playback.
     fill_limit: usize,
+    envelope: Envelope,
 }
 
 impl Sink {
@@ -417,9 +492,19 @@ impl Sink {
         }
         self.scratch.clear();
         self.scratch.reserve((hi - lo) * out_ch);
-        for f in lo..hi {
-            for o in 0..out_ch {
-                self.scratch.push(planar.get(o).map_or(0.0, |c| c[f]));
+        if self.envelope.active() {
+            for f in lo..hi {
+                let g = self.envelope.next();
+                for o in 0..out_ch {
+                    self.scratch.push(planar.get(o).map_or(0.0, |c| c[f]) * g);
+                }
+            }
+        } else {
+            self.envelope.written += (hi - lo) as u64;
+            for f in lo..hi {
+                for o in 0..out_ch {
+                    self.scratch.push(planar.get(o).map_or(0.0, |c| c[f]));
+                }
             }
         }
         let mut off = 0;
@@ -444,5 +529,79 @@ impl Sink {
             off += n;
         }
         Ok(())
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::model::{FadeCurve, Segment};
+
+    /// A mono 16-bit WAV of a full-scale square-ish signal (constant ±0.5).
+    fn write_wav(path: &Path, rate: u32, secs: f32) {
+        let n = (rate as f32 * secs) as u32;
+        let mut b = Vec::new();
+        b.extend_from_slice(b"RIFF");
+        b.extend_from_slice(&(36 + n * 2).to_le_bytes());
+        b.extend_from_slice(b"WAVEfmt ");
+        b.extend_from_slice(&16u32.to_le_bytes());
+        b.extend_from_slice(&1u16.to_le_bytes()); // PCM
+        b.extend_from_slice(&1u16.to_le_bytes()); // mono
+        b.extend_from_slice(&rate.to_le_bytes());
+        b.extend_from_slice(&(rate * 2).to_le_bytes());
+        b.extend_from_slice(&2u16.to_le_bytes());
+        b.extend_from_slice(&16u16.to_le_bytes());
+        b.extend_from_slice(b"data");
+        b.extend_from_slice(&(n * 2).to_le_bytes());
+        for i in 0..n {
+            let v: i16 = if (i / 50) % 2 == 0 { 16384 } else { -16384 };
+            b.extend_from_slice(&v.to_le_bytes());
+        }
+        std::fs::write(path, b).unwrap();
+    }
+
+    fn decode_all(path: &Path, params: DecodeParams, rate: u32) -> Vec<f32> {
+        let (tx, mut rx) = rtrb::RingBuffer::<f32>::new(rate as usize * 4);
+        let shared = Arc::new(VoiceShared::default());
+        spawn(path.to_path_buf(), params, rate, tx, shared.clone());
+        let mut out = Vec::new();
+        let t0 = std::time::Instant::now();
+        while !(shared.eof.load(Ordering::Acquire) && rx.slots() == 0) && t0.elapsed() < Duration::from_secs(10) {
+            while let Ok(s) = rx.pop() {
+                out.push(s);
+            }
+            std::thread::sleep(Duration::from_millis(2));
+        }
+        out
+    }
+
+    fn peak(s: &[f32]) -> f32 {
+        s.iter().fold(0.0f32, |m, v| m.max(v.abs()))
+    }
+
+    #[test]
+    fn integrated_fades_shape_start_and_end() {
+        let path = std::env::temp_dir().join(format!("openq-fade-{}.wav", std::process::id()));
+        write_wav(&path, 48000, 2.0);
+        let seg = |plays| vec![Segment { start: 0.0, end: None, plays }];
+        let params = |fade_in, fade_out, plays| DecodeParams {
+            segments: seg(plays),
+            rate: 1.0,
+            channels: 1,
+            fade_in,
+            fade_out,
+            fade_curve: FadeCurve::Linear,
+        };
+        let out = decode_all(&path, params(0.5, 0.5, Some(1)), 48000);
+        assert!((out.len() as i64 - 96000).abs() < 100, "{} samples", out.len());
+        assert!(peak(&out[..480]) < 0.02, "start not silent: {}", peak(&out[..480]));
+        assert!((peak(&out[11500..12500]) - 0.25).abs() < 0.02, "quarter-way: {}", peak(&out[11500..12500]));
+        assert!((peak(&out[40000..56000]) - 0.5).abs() < 0.01, "middle not full level");
+        assert!(peak(&out[out.len() - 480..]) < 0.02, "end not silent");
+        // Two plays: the fade-out is on the second pass only.
+        let out = decode_all(&path, params(0.0, 0.5, Some(2)), 48000);
+        assert!((peak(&out[94000..98000]) - 0.5).abs() < 0.01, "faded at the loop point");
+        assert!(peak(&out[out.len() - 480..]) < 0.02);
+        std::fs::remove_file(path).unwrap();
     }
 }

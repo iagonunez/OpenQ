@@ -63,6 +63,10 @@ enum SettingsTab {
     Stages,
 }
 
+/// Default height of the inspector panel: room for the tallest tab (the waveform plus a row of
+/// cards, or the level faders) without scrolling.
+const INSPECTOR_HEIGHT: f32 = 420.0;
+
 /// The egui application: owns all UI state and draws the main window, stage windows and dialogs.
 pub struct App {
     show: SharedShow,
@@ -83,6 +87,8 @@ pub struct App {
     #[cfg(feature = "video")]
     stage_monitor: std::collections::HashMap<StageId, Option<usize>>,
     show_preview: bool,
+    /// The user has dragged the inspector's edge; until then it keeps its default height.
+    inspector_resized: bool,
     show_about: bool,
     remote: remote::RemoteUi,
     #[cfg(feature = "video")]
@@ -136,6 +142,7 @@ impl App {
             #[cfg(feature = "video")]
             stage_monitor: Default::default(),
             show_preview: false,
+            inspector_resized: false,
             show_about: false,
             remote: Default::default(),
             #[cfg(feature = "video")]
@@ -1023,7 +1030,7 @@ impl App {
         });
     }
 
-    /// Edit / Show segmented control: two halves side by side that fill `rect` exactly.
+        /// Edit / Show segmented control: two halves side by side that fill `rect` exactly.
     fn mode_toggle(&mut self, ui: &mut egui::Ui, rect: egui::Rect) {
         use egui::{CornerRadius, Rect, Sense, Stroke, StrokeKind, pos2, vec2};
         let p = ui.painter();
@@ -1036,6 +1043,9 @@ impl App {
         );
         let inner = rect.shrink(3.0);
         let gap = 3.0;
+        // Sized for a 26 pt tall control; smaller ones scale the type down.
+        let k = (rect.height() / 26.0).min(1.0);
+        let (icon_size, text_size) = (16.0 * k, 12.5 * k.max(0.9));
         let w = (inner.width() - gap) / 2.0;
         let halves = [
             (
@@ -1076,8 +1086,8 @@ impl App {
                 theme::TEXT_DIM
             };
             // Icon and label laid out as one centred group.
-            let icon_g = p.layout_no_wrap(glyph.to_string(), theme::icon_font(16.0), fg);
-            let text_g = p.layout_no_wrap(label.to_string(), theme::semibold(12.5), fg);
+            let icon_g = p.layout_no_wrap(glyph.to_string(), theme::icon_font(icon_size), fg);
+            let text_g = p.layout_no_wrap(label.to_string(), theme::semibold(text_size), fg);
             let total = icon_g.size().x + 6.0 + text_g.size().x;
             let x0 = r.center().x - total / 2.0;
             p.galley(
@@ -1122,11 +1132,6 @@ impl App {
         let (name, dirty) = self.remote.title().unwrap_or((name, show.dirty));
         let label = format!("{name}{}", if dirty { "  •" } else { "" });
         ui.painter().text(rect.center(), egui::Align2::CENTER_CENTER, label, egui::FontId::proportional(14.0), theme::TEXT_DIM);
-        let toggle = egui::Rect::from_min_size(
-            egui::pos2(rect.right() - 168.0, rect.center().y - 13.0),
-            egui::vec2(168.0, 26.0),
-        );
-        self.mode_toggle(ui, toggle);
     }
 
     /// Output level meter with a dB scale (one bar per device channel, up to 8).
@@ -1363,6 +1368,7 @@ impl App {
         }
     }
 
+    /// Bottom bar: the Edit/Show toggle, show status, the engine log's last line and Settings.
     fn status_bar(&mut self, ui: &mut egui::Ui, show: &Show) {
         let item = |ui: &mut egui::Ui, glyph: &str, text: String, color: Color32| {
             ui.label(theme::icon(glyph, 15.0).color(color));
@@ -1370,6 +1376,9 @@ impl App {
         };
         ui.horizontal(|ui| {
             ui.spacing_mut().item_spacing.x = 5.0;
+            let (toggle, _) = ui.allocate_exact_size(egui::vec2(148.0, 24.0), egui::Sense::hover());
+            self.mode_toggle(ui, toggle);
+            ui.add_space(12.0);
             let file = if let Some((t, _)) = self.remote.title() {
                 t
             } else {
@@ -1445,20 +1454,25 @@ impl App {
                     self.status = None;
                 }
             }
-            if let Some(l) = show.engine.log.last() {
-                ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                    if ui
-                        .link(
-                            RichText::new(theme::with_icon(icons::WARNING, l))
-                                .color(AMBER)
-                                .small(),
-                        )
-                        .clicked()
-                    {
+            ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                let open = self.show_settings;
+                let r = ui
+                    .add(
+                        egui::Button::new(theme::icon(icons::SETTINGS, 18.0).color(if open { theme::BLUE } else { theme::TEXT_DIM }))
+                            .frame(false)
+                            .min_size(egui::vec2(26.0, 24.0)),
+                    )
+                    .on_hover_text("Settings");
+                if r.on_hover_cursor(egui::CursorIcon::PointingHand).clicked() {
+                    self.show_settings = !open;
+                }
+                if let Some(l) = show.engine.log.last() {
+                    ui.add_space(8.0);
+                    if ui.link(RichText::new(theme::with_icon(icons::WARNING, l)).color(AMBER).small()).clicked() {
                         self.show_log = true;
                     }
-                });
-            }
+                }
+            });
         });
     }
 
@@ -1469,21 +1483,9 @@ impl App {
             .default_width(560.0)
             .show(ctx, |ui| {
                 ui.horizontal(|ui| {
-                    ui.selectable_value(
-                        &mut self.settings_tab,
-                        SettingsTab::General,
-                        theme::with_icon(icons::SETTINGS, "General"),
-                    );
-                    ui.selectable_value(
-                        &mut self.settings_tab,
-                        SettingsTab::Audio,
-                        theme::with_icon(icons::SPEAKER, "Audio"),
-                    );
-                    ui.selectable_value(
-                        &mut self.settings_tab,
-                        SettingsTab::Stages,
-                        theme::with_icon(icons::DESKTOP_WINDOWS, "Video stages"),
-                    );
+                    theme::tab(ui, &mut self.settings_tab, SettingsTab::General, icons::SETTINGS, "General");
+                    theme::tab(ui, &mut self.settings_tab, SettingsTab::Audio, icons::SPEAKER, "Audio");
+                    theme::tab(ui, &mut self.settings_tab, SettingsTab::Stages, icons::DESKTOP_WINDOWS, "Video stages");
                 });
                 ui.separator();
                 match self.settings_tab {
@@ -1921,6 +1923,7 @@ impl App {
             }
             self.inspector_tab = match std::env::var("OPENQ_SCREENSHOT_TAB").as_deref() {
                 Ok("time") => inspector::Tab::Time,
+                Ok("io") => inspector::Tab::Io,
                 Ok("levels") => inspector::Tab::Levels,
                 Ok("eq") => inspector::Tab::Eq,
                 Ok("geometry") => inspector::Tab::Geometry,
@@ -2094,9 +2097,20 @@ impl eframe::App for App {
                 .frame(bar(theme::BG_APP))
                 .show(ui, |ui| self.status_bar(ui, show));
             if self.mode == Mode::Edit {
-                egui::Panel::bottom("inspector")
+                // Tall enough for every tab's cards without scrolling. Until the user drags the edge,
+                // forget the stored height so a tiny first frame (or a window resize) can't shrink it.
+                let id = egui::Id::new("inspector");
+                if !self.inspector_resized {
+                    if ctx.read_response(id.with("__resize")).is_some_and(|r| r.dragged()) {
+                        self.inspector_resized = true;
+                    } else {
+                        ctx.data_mut(|d| d.remove::<egui::containers::panel::PanelState>(id));
+                    }
+                }
+                egui::Panel::bottom(id)
+                    .frame(egui::Frame::new().fill(theme::BG_APP).inner_margin(egui::Margin::symmetric(10, 6)))
                     .resizable(true)
-                    .default_size(340.0)
+                    .default_size(INSPECTOR_HEIGHT)
                     .min_size(120.0)
                     .show(ui, |ui| self.inspector(ui, show));
             }

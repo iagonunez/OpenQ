@@ -365,8 +365,8 @@ impl App {
             .collapsible(false)
             .show(ctx, |ui| {
                 ui.horizontal(|ui| {
-                    ui.selectable_value(&mut self.remote.tab, RemoteTab::Share, theme::with_icon(icons::LAN, "Share this OpenQ"));
-                    ui.selectable_value(&mut self.remote.tab, RemoteTab::Connect, theme::with_icon(icons::CABLE, "Connect to another"));
+                    theme::tab(ui, &mut self.remote.tab, RemoteTab::Share, icons::LAN, "Share this OpenQ");
+                    theme::tab(ui, &mut self.remote.tab, RemoteTab::Connect, icons::CABLE, "Connect to another");
                 });
                 ui.separator();
                 egui::ScrollArea::vertical().auto_shrink([false, false]).show(ui, |ui| match self.remote.tab {

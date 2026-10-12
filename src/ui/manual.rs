@@ -10,6 +10,8 @@ const FILES: &[(&str, &[u8])] = &[
     ("img/edit-mode.webp", include_bytes!("../../docs/manual/img/edit-mode.webp")),
     ("img/eq.webp", include_bytes!("../../docs/manual/img/eq.webp")),
     ("img/geometry-preview.webp", include_bytes!("../../docs/manual/img/geometry-preview.webp")),
+    ("img/io.webp", include_bytes!("../../docs/manual/img/io.webp")),
+    ("img/levels.webp", include_bytes!("../../docs/manual/img/levels.webp")),
     ("img/remote-share.webp", include_bytes!("../../docs/manual/img/remote-share.webp")),
     ("img/show-mode.webp", include_bytes!("../../docs/manual/img/show-mode.webp")),
     ("img/text-cue.webp", include_bytes!("../../docs/manual/img/text-cue.webp")),
@@ -31,7 +33,7 @@ fn extract(dir: &Path) -> std::io::Result<PathBuf> {
 }
 
 /// Ask the operating system to open a file with its default application.
-fn open_with_default_app(path: &Path) -> std::io::Result<()> {
+pub(super) fn open_with_default_app(path: &Path) -> std::io::Result<()> {
     #[cfg(target_os = "windows")]
     let mut cmd = std::process::Command::new("explorer");
     #[cfg(target_os = "macos")]

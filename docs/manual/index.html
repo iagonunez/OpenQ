@@ -245,12 +245,11 @@ cargo run --release -- show.openq    # open a saved show</code></pre>
 <section id="window">
   <h2><span class="n">02</span>The main window</h2>
   <figure>
-    <img src="img/edit-mode.webp" width="1400" height="1075" alt="OpenQ main window in edit mode: GO button, standby card, transport, meters, toolbar, cue list and inspector.">
+    <img src="img/edit-mode.webp" width="1400" height="1533" alt="OpenQ main window in edit mode: GO button, standby card, transport, meters, toolbar, cue list and inspector.">
     <figcaption>Edit mode with the first cue selected and the inspector showing its Time &amp; Loops tab.</figcaption>
   </figure>
   <ul>
-    <li><strong>Title bar:</strong> the show's name (a dot means unsaved changes) and the
-    <strong>Edit / Show</strong> switch at the right.</li>
+    <li><strong>Title bar:</strong> the show's name (a dot means unsaved changes).</li>
     <li><strong>Menus:</strong> File, Edit, Cue, Show, Video (stages and outputs), Remote, View
     (geometry preview, engine log) and Help (this manual, about and licences).</li>
     <li><strong>GO</strong> fires the cue at the playhead. The <strong>standby</strong> card shows that cue,
@@ -261,9 +260,11 @@ cargo run --release -- show.openq    # open a saved show</code></pre>
     action time, post-wait and the continue arrow. Running cues turn green, and their action column
     counts down. A red <span class="ms" style="color:var(--red)" aria-hidden="true">&#xf8b6;</span> icon marks a missing file or target.</li>
     <li><strong>Active cues:</strong> every running cue with elapsed and remaining time, plus its own pause and stop buttons.</li>
-    <li><strong>Inspector:</strong> the settings of the selected cue, in tabs.</li>
-    <li><strong>Status bar:</strong> audio device, video status, OSC, remote connections and messages.
-    A warning from the engine appears at the right and opens the engine log.</li>
+    <li><strong>Inspector:</strong> the settings of the selected cue, in tabs. Each tab groups its settings in
+    cards. It opens tall enough to show a whole tab; drag its top edge to resize it.</li>
+    <li><strong>Status bar:</strong> the <strong>Edit / Show</strong> switch at the left, then the audio device, video
+    status, OSC, remote connections and messages. The <span class="ms" aria-hidden="true">&#xe8b8;</span> button at the
+    right opens <a href="#settings">Settings</a>. A warning from the engine appears next to it and opens the engine log.</li>
   </ul>
   <h3>Working with the cue list</h3>
   <ul>
@@ -282,7 +283,7 @@ cargo run --release -- show.openq    # open a saved show</code></pre>
   <p><strong>Edit mode</strong> is for building the show: everything can be changed. <strong>Show mode</strong> is for
   running it. The list is locked, the toolbar and inspector are hidden, and rows get bigger so they are easy to read
   in a dark booth. GO, stop, pause, hotkeys and moving the playhead all work in both modes.</p>
-  <p>Switch with the switch in the title bar, <span class="menu">Show → Enter show mode</span>, or <kbd>Ctrl</kbd>+<kbd>E</kbd>.</p>
+  <p>Switch with the switch at the left of the status bar, <span class="menu">Show → Enter show mode</span>, or <kbd>Ctrl</kbd>+<kbd>E</kbd>.</p>
   <figure>
     <img src="img/show-mode.webp" width="1400" height="736" alt="Show mode: large rows, several cues running with countdowns, active cues panel on the right.">
     <figcaption>Show mode while a sequence runs. Green rows are playing, and the action column counts down.</figcaption>
@@ -313,7 +314,9 @@ cargo run --release -- show.openq    # open a saved show</code></pre>
   </div>
   <p>Every cue has a <strong>number</strong> (free text, like <code>4.2</code>), a <strong>name</strong>, <strong>notes</strong>,
   a <strong>colour</strong> and an <strong>armed</strong> switch, all on the Basics tab. A disarmed cue is skipped by GO. Basics also
-  sets an optional <strong>hotkey</strong>: a key that fires the cue directly, whatever the playhead is on.</p>
+  sets an optional <strong>hotkey</strong>: a key that fires the cue directly, whatever the playhead is on, the cue's
+  <strong>pre-wait</strong>, <strong>continue</strong> mode and <strong>post-wait</strong>, and, for audio and video
+  cues, the <strong>media file</strong>.</p>
 </section>
 
 <section id="timing">
@@ -359,22 +362,44 @@ cargo run --release -- show.openq    # open a saved show</code></pre>
   <h2><span class="n">06</span>Audio cues</h2>
   <h3>Time &amp; Loops</h3>
   <figure>
-    <img src="img/waveform.webp" width="1400" height="390" alt="Waveform editor with start and end trim markers.">
-    <figcaption>The waveform editor. Drag the green and red markers to trim; double-click to add a slice.</figcaption>
+    <img src="img/waveform.webp" width="1400" height="369" alt="Time and Loops tab: waveform with trim markers and fade curves, then Trim, Loops, Playback and Fades cards.">
+    <figcaption>The Time &amp; Loops tab. Drag the green and red markers to trim; double-click to add a slice.
+    The orange curves are the cue's fade-in and fade-out.</figcaption>
   </figure>
   <ul>
     <li><strong>Trim:</strong> drag the start and end markers, or type the times. Drag the waveform to pan, and use
     <kbd>Ctrl</kbd>+scroll to zoom. A line shows the playback position while the cue runs.</li>
     <li><strong>Loops:</strong> set a play count, or loop until stopped.</li>
-    <li><strong>Rate:</strong> varispeed. The pitch changes with the speed, like a tape machine.</li>
+    <li><strong>Playback:</strong> the rate is varispeed. The pitch changes with the speed, like a tape machine.</li>
+    <li><strong>Fades:</strong> a fade-in from silence when the cue starts and a fade-out to silence at its end, with a
+    choice of curve, without a separate Fade cue. The fade-out needs a known end, so it doesn't happen while the cue
+    loops forever; with a vamping slice it plays after the Devamp.</li>
     <li><strong>Slices:</strong> double-click the waveform to add a slice marker. Drag it to move it, and right-click to
     delete it. Each slice plays a set number of times, or loops until a <strong>Devamp</strong> cue (or the OSC
     message <code>/cue/&lt;n&gt;/devamp</code>) releases it. The current pass then finishes and playback carries on.
     Use this for music that has to vamp until an actor's line.</li>
   </ul>
-  <h3>Levels &amp; Routing</h3>
-  <p>Level and pan, plus a <strong>routing matrix</strong> from the file's channels to the outputs of the audio
-  device. Each crosspoint has its own level in dB, so a stereo file can feed eight speakers.</p>
+  <h3>I/O</h3>
+  <figure>
+    <img src="img/io.webp" width="1400" height="348" alt="I/O tab: input file details, output device and the routing card.">
+    <figcaption>Where the sound comes from and where it goes.</figcaption>
+  </figure>
+  <ul>
+    <li><strong>Input:</strong> the media file, with its length, format, location on disk (and a button to show it in
+    the file manager), size and channel count. <em>Browse…</em> replaces the file.</li>
+    <li><strong>Output:</strong> the audio device the cue plays on and its number of outputs (set in Settings → Audio).</li>
+    <li><strong>Routing:</strong> automatic, or a <strong>crosspoint matrix</strong> from the file's channels to the
+    device outputs. Each crosspoint has its own level in dB, so a stereo file can feed eight speakers.</li>
+  </ul>
+  <h3>Levels</h3>
+  <figure>
+    <img src="img/levels.webp" width="1400" height="314" alt="Levels tab: vertical faders for the main level and outputs 1 and 2, and a pan card.">
+    <figcaption>Faders for the cue's main level and each device output.</figcaption>
+  </figure>
+  <p>The <strong>Main</strong> fader sets the cue's level. Next to it there is a fader for each output of the audio
+  device, which trims that output after the routing matrix. Drag a fader, or type a value in the box above it;
+  double-click a fader to return it to 0 dB. <strong>Pan</strong> moves the sound between outputs 1 and 2 while the
+  routing is automatic.</p>
   <h3>EQ</h3>
   <figure>
     <img src="img/eq.webp" width="1400" height="421" alt="Equaliser with a response curve and a list of bands.">
@@ -382,7 +407,7 @@ cargo run --release -- show.openq    # open a saved show</code></pre>
   </figure>
   <p>Band types are high-pass, low shelf, peak, high shelf and low-pass. <strong>EQ enabled</strong> turns the
   whole EQ on and off.</p>
-  <div class="note tip"><span class="label">Live changes</span><p>Level, pan, EQ and routing changes are heard straight away
+  <div class="note tip"><span class="label">Live changes</span><p>Level, output fader, pan, EQ and routing changes are heard straight away
   on a playing cue, so you can tune them during a run.</p></div>
 </section>
 
@@ -390,8 +415,8 @@ cargo run --release -- show.openq    # open a saved show</code></pre>
   <h2><span class="n">07</span>Video and text cues</h2>
   <p>A video cue plays a movie (anything FFmpeg can play) or a still image. Stills show for a set time,
   or until stopped. <strong>Time &amp; Loops</strong> has start and end trims, loops and <em>hold last frame</em>.
-  The <strong>Audio</strong> tab sets the soundtrack's level and routing; the soundtrack plays through the
-  mixer like an audio cue.</p>
+  The <strong>Audio</strong> tab has the soundtrack's main and output faders, and <strong>I/O</strong> its file and
+  routing; the soundtrack plays through the mixer like an audio cue.</p>
   <h3>Geometry</h3>
   <ul>
     <li><strong>Stage:</strong> which output the picture goes to. Without one, the first stage is used.</li>
@@ -416,7 +441,7 @@ cargo run --release -- show.openq    # open a saved show</code></pre>
   The <strong>Geometry</strong> tab works as it does for video, and Fade cues can move and fade text. Changes on the
   <strong>Text</strong> tab appear at once on a cue that is showing.</p>
   <figure>
-    <img src="img/text-cue.webp" width="1000" height="523" alt="Text tab with font, weight, size, line height, spacing, colour, outline and shadow settings.">
+    <img src="img/text-cue.webp" width="1400" height="342" alt="Text tab in cards: the text, font (weight, size, line height, spacing), look (colour, alignment, outline, shadow) and a rendered sample.">
     <figcaption>The Text tab. A preview of the first line in the chosen style appears under the settings.</figcaption>
   </figure>
   <div class="table-wrap"><table>
@@ -530,7 +555,8 @@ cargo run --release -- show.openq    # open a saved show</code></pre>
 
 <section id="settings">
   <h2><span class="n">12</span>Settings</h2>
-  <p><span class="menu">Edit → Settings…</span> These are saved with the show.</p>
+  <p><span class="menu">Edit → Settings…</span>, or the <span class="ms" aria-hidden="true">&#xe8b8;</span> button at the
+  right of the status bar. These are saved with the show.</p>
   <div class="table-wrap"><table>
     <thead><tr><th>Tab</th><th>Settings</th></tr></thead>
     <tbody>

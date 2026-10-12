@@ -81,6 +81,19 @@ impl GroupMode {
     }
 }
 
+impl FadeCurve {
+    /// Gain (0..1) of a fade-in at `t` (0..1) of the way through; a fade-out uses `1 - t`.
+    pub fn gain(self, t: f32) -> f32 {
+        let t = t.clamp(0.0, 1.0);
+        match self {
+            FadeCurve::Linear => t,
+            FadeCurve::SCurve => t * t * (3.0 - 2.0 * t),
+            FadeCurve::Logarithmic if t <= 0.0 => 0.0,
+            FadeCurve::Logarithmic => db_to_gain(MIN_DB * (1.0 - t)),
+        }
+    }
+}
+
 /// Shape of a fade over time.
 #[derive(Serialize, Deserialize, Clone, Copy, PartialEq, Eq, Debug, Default)]
 pub enum FadeCurve {
@@ -471,6 +484,16 @@ pub struct AudioCue {
     pub routing: Option<Vec<Vec<f32>>>,
     /// Slice markers between start and end; the last slice uses the cue's play count.
     pub slices: Vec<SliceMarker>,
+    /// Integrated fade-in from silence at the start, in seconds of playback (0 = none).
+    pub fade_in: f64,
+    /// Integrated fade-out to silence at the end, in seconds of playback (0 = none). Applies when
+    /// the end is known: not while the cue loops forever or a slice vamps.
+    pub fade_out: f64,
+    /// Shape of the integrated fades.
+    pub fade_curve: FadeCurve,
+    /// Output fader levels in dB, one per device output, applied after the
+    /// routing matrix. Missing entries are 0 dB.
+    pub out_levels: Vec<f32>,
 }
 
 impl AudioCue {
@@ -541,6 +564,11 @@ pub fn routing_gains(routing: &Option<Vec<Vec<f32>>>, src: usize, out: usize) ->
     }
 }
 
+/// Linear gain of output `o` from per-output fader levels in dB (missing = 0 dB).
+pub fn out_level_gain(out_levels: &[f32], o: usize) -> f32 {
+    out_levels.get(o).map_or(1.0, |db| db_to_gain(*db))
+}
+
 impl Default for AudioCue {
     fn default() -> Self {
         Self {
@@ -555,6 +583,10 @@ impl Default for AudioCue {
             eq: Eq::default(),
             routing: None,
             slices: Vec::new(),
+            fade_in: 0.0,
+            fade_out: 0.0,
+            fade_curve: FadeCurve::SCurve,
+            out_levels: Vec::new(),
         }
     }
 }
@@ -591,6 +623,8 @@ pub struct VideoCue {
     pub still_duration: f64,
     /// Soundtrack routing in dB `[source channel][output channel]`; None = automatic.
     pub routing: Option<Vec<Vec<f32>>>,
+    /// Soundtrack output fader levels in dB, one per device output; missing entries are 0 dB.
+    pub out_levels: Vec<f32>,
 }
 
 impl Default for VideoCue {
@@ -610,6 +644,7 @@ impl Default for VideoCue {
             geometry: Geometry::default(),
             still_duration: 0.0,
             routing: None,
+            out_levels: Vec::new(),
         }
     }
 }

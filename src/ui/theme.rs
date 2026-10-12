@@ -274,3 +274,139 @@ pub fn caption(text: &str) -> RichText {
         .font(semibold(10.5))
         .color(TEXT_FAINT)
 }
+
+/// A tab: icon and label laid out as one group, each centred on the tab's vertical middle
+/// (mixing icons into the text font puts them on the text baseline instead). Sets `current` to
+/// `value` when clicked.
+pub fn tab<T: PartialEq + Copy>(ui: &mut Ui, current: &mut T, value: T, glyph: &str, label: &str) -> Response {
+    use egui::{Sense, pos2};
+    let selected = *current == value;
+    let painter = ui.painter();
+    let icon_g = painter.layout_no_wrap(glyph.to_owned(), icon_font(17.0), TEXT);
+    let text_g = painter.layout_no_wrap(label.to_owned(), FontId::proportional(13.5), TEXT);
+    let (pad, gap) = (10.0, 6.0);
+    let height = ui.spacing().interact_size.y.max(icon_g.size().y.max(text_g.size().y) + 6.0);
+    let size = vec2(pad * 2.0 + icon_g.size().x + gap + text_g.size().x, height);
+    let (rect, resp) = ui.allocate_exact_size(size, Sense::click());
+    let resp = resp.on_hover_cursor(egui::CursorIcon::PointingHand);
+    if resp.clicked() {
+        *current = value;
+    }
+    resp.widget_info(|| egui::WidgetInfo::selected(egui::WidgetType::SelectableLabel, true, selected, label));
+    let fill = if selected {
+        accent_bg()
+    } else if resp.hovered() {
+        BG_HOVER
+    } else {
+        Color32::TRANSPARENT
+    };
+    let fg = if selected {
+        BLUE
+    } else if resp.hovered() {
+        Color32::WHITE
+    } else {
+        TEXT
+    };
+    let p = ui.painter();
+    p.rect_filled(rect, CornerRadius::same(6), fill);
+    if resp.has_focus() {
+        p.rect_stroke(rect, CornerRadius::same(6), Stroke::new(1.0, ACCENT), egui::StrokeKind::Inside);
+    }
+    let x = rect.left() + pad;
+    let cy = rect.center().y;
+    p.galley_with_override_text_color(pos2(x, cy - icon_g.size().y / 2.0), icon_g.clone(), fg);
+    p.galley_with_override_text_color(pos2(x + icon_g.size().x + gap, cy - text_g.size().y / 2.0), text_g, fg);
+    resp
+}
+
+/// One card in a [`cards`] layout: an icon, a title and the width it wants.
+pub struct Card<'a> {
+    /// Icon glyph shown before the title.
+    pub glyph: &'a str,
+    /// Title, shown in small capitals.
+    pub title: &'a str,
+    /// Preferred width; the last card of a row also takes the row's spare width.
+    pub width: f32,
+}
+
+impl<'a> Card<'a> {
+    /// A card that prefers `width` points.
+    pub fn new(glyph: &'a str, title: &'a str, width: f32) -> Self {
+        Self { glyph, title, width }
+    }
+}
+
+/// Lays titled cards out in rows: left to right, wrapping when the next one doesn't fit, each
+/// row stretched to the full width by its last card, and its cards made equally tall. `add(ui, i)` fills card `i`.
+pub fn cards(ui: &mut Ui, salt: &str, specs: &[Card], mut add: impl FnMut(&mut Ui, usize)) {
+    const GAP: f32 = 8.0;
+    let avail = ui.available_width();
+    // A card wider than the line (e.g. `f32::INFINITY`) takes a row of its own.
+    let widths: Vec<f32> = specs.iter().map(|c| c.width.clamp(1.0, avail.max(1.0))).collect();
+    let mut rows: Vec<Vec<usize>> = vec![Vec::new()];
+    let mut x = 0.0;
+    for (i, &w) in widths.iter().enumerate() {
+        let row = rows.last_mut().expect("at least one row");
+        if !row.is_empty() && x + w > avail {
+            rows.push(Vec::new());
+            x = 0.0;
+        }
+        rows.last_mut().expect("at least one row").push(i);
+        x += w + GAP;
+    }
+    let base = ui.id().with(salt);
+    for (r, row) in rows.iter().enumerate() {
+        // Equal heights: every card is as tall as the row's tallest content in the last frame.
+        let h_id = base.with(r);
+        let target = ui.data(|d| d.get_temp::<f32>(h_id)).unwrap_or(0.0);
+        let mut tallest = 0.0f32;
+        ui.horizontal_top(|ui| {
+            ui.spacing_mut().item_spacing.x = GAP;
+            for (k, &i) in row.iter().enumerate() {
+                // The last card takes whatever is left of the line, even if a card before it grew.
+                let w = if k + 1 == row.len() { ui.available_width() } else { widths[i] }.floor();
+                ui.allocate_ui_with_layout(vec2(w, 0.0), egui::Layout::top_down(egui::Align::Min), |ui| {
+                    ui.set_width(w);
+                    card_frame().show(ui, |ui| {
+                        ui.set_width(ui.available_width());
+                        let top = ui.min_rect().top();
+                        card_header(ui, specs[i].glyph, specs[i].title);
+                        add(ui, i);
+                        tallest = tallest.max(ui.min_rect().bottom() - top);
+                        ui.expand_to_include_y(top + target);
+                    });
+                });
+            }
+        });
+        if (tallest - target).abs() > 0.5 {
+            ui.data_mut(|d| d.insert_temp(h_id, tallest));
+            ui.ctx().request_repaint();
+        }
+        ui.add_space(GAP);
+    }
+}
+
+/// The frame of an inspector card.
+/// Cards sit on the darker app background, so widgets (filled with `BG_RAISED`) stand out on them.
+pub fn card_frame() -> egui::Frame {
+    egui::Frame::new()
+        .fill(BG_PANEL)
+        .stroke(Stroke::new(1.0, BORDER))
+        .corner_radius(8)
+        .inner_margin(Margin::symmetric(12, 10))
+}
+
+/// A card's heading: icon and small-caps title, both centred on one line.
+pub fn card_header(ui: &mut Ui, glyph: &str, title: &str) {
+    use egui::{Sense, pos2};
+    let p = ui.painter();
+    let icon_g = p.layout_no_wrap(glyph.to_owned(), icon_font(15.0), TEXT_DIM);
+    let text_g = p.layout_no_wrap(title.to_uppercase(), semibold(10.5), TEXT_DIM);
+    let h = icon_g.size().y.max(text_g.size().y);
+    let (rect, _) = ui.allocate_exact_size(vec2(ui.available_width(), h), Sense::hover());
+    let cy = rect.center().y;
+    let p = ui.painter();
+    p.galley(pos2(rect.left(), cy - icon_g.size().y / 2.0), icon_g.clone(), TEXT_DIM);
+    p.galley(pos2(rect.left() + icon_g.size().x + 6.0, cy - text_g.size().y / 2.0), text_g, TEXT_DIM);
+    ui.add_space(4.0);
+}
