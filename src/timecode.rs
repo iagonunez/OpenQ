@@ -144,7 +144,8 @@ pub fn ltc_decode(b: &[bool; 80]) -> Option<(Timecode, bool)> {
     (tc.f < 30 && tc.s < 60 && tc.m < 60 && tc.h < 24).then_some((tc, b[10]))
 }
 
-/// Generates the LTC audio signal, sample by sample.
+/// Generates the LTC audio signal, sample by sample (a test signal for the decoder and for checking
+/// an LTC input).
 pub struct LtcEncoder {
     rate: TimecodeRate,
     sample_rate: f64,

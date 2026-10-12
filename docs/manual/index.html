@@ -246,7 +246,7 @@ cargo run --release -- show.openq    # open a saved show</code></pre>
 <section id="window">
   <h2><span class="n">02</span>The main window</h2>
   <figure>
-    <img src="img/edit-mode.webp" width="1400" height="1533" alt="OpenQ main window in edit mode: GO button, standby card, transport, meters, toolbar, cue list and inspector.">
+    <img src="img/edit-mode.webp" width="1400" height="1525" alt="OpenQ main window in edit mode: GO button, standby card, transport, meters, toolbar, cue list and inspector.">
     <figcaption>Edit mode with the first cue selected and the inspector showing its Time &amp; Loops tab.</figcaption>
   </figure>
   <ul>
@@ -328,13 +328,13 @@ cargo run --release -- show.openq    # open a saved show</code></pre>
     <div class="type"><b><span class="ms" aria-hidden="true">&#xeb2f;</span>Network</b><span class="d">Sends an OSC message to other gear, such as a lighting desk.</span></div>
     <div class="type"><b><span class="ms" aria-hidden="true">&#xe31d;</span>Mic</b><span class="d">Plays a live audio input, such as a microphone, through the mixer.</span></div>
     <div class="type"><b><span class="ms" aria-hidden="true">&#xe412;</span>Camera</b><span class="d">Shows a live camera or capture card on a stage.</span></div>
-    <div class="type"><b><span class="ms" aria-hidden="true">&#xf4ba;</span>Timecode</b><span class="d">Sends running timecode (LTC or MTC) to other gear.</span></div>
   </div>
   <p>Every cue has a <strong>number</strong> (free text, like <code>4.2</code>), a <strong>name</strong>, <strong>notes</strong>,
   a <strong>colour</strong> and an <strong>armed</strong> switch, all on the Basics tab. A disarmed cue is skipped by GO. Basics also
-  sets an optional <strong>hotkey</strong>: a key that fires the cue directly, whatever the playhead is on, the cue's
-  <strong>pre-wait</strong>, <strong>continue</strong> mode and <strong>post-wait</strong>, an optional
-  <a href="#timecode">timecode trigger</a>, and, for audio and video cues, the <strong>media file</strong>.</p>
+  sets the cue's <strong>pre-wait</strong>, <strong>continue</strong> mode and <strong>post-wait</strong>, and, for audio
+  and video cues, the <strong>media file</strong>.</p>
+  <p>The <strong>Triggers</strong> tab holds the ways to fire a cue besides GO: a <strong>hotkey</strong>, a key that
+  fires the cue directly whatever the playhead is on, and a <a href="#timecode">timecode trigger</a>.</p>
 </section>
 
 <section id="timing">
@@ -517,25 +517,24 @@ cargo run --release -- show.openq    # open a saved show</code></pre>
 
 <section id="timecode">
   <h2><span class="n">09</span>Timecode</h2>
-  <p>OpenQ reads and sends SMPTE timecode at 24, 25, 29.97 drop-frame or 30 fps, as <strong>LTC</strong> (an audio
-  signal) or <strong>MTC</strong> (MIDI Time Code).</p>
-  <h3>Following timecode</h3>
-  <p>Each cue list can follow timecode: right-click its tab and choose <em>Timecode…</em>. Pick LTC and the audio input
-  and channel it arrives on, or MTC and the MIDI input, and the frame rate. The window shows what is coming in, and the
-  standby card shows it too while that list is in front.</p>
-  <p>Then give cues a <strong>timecode trigger</strong> on their Basics tab. A cue fires when the incoming timecode runs
-  past its time, whatever the playhead is on, and its continues run as usual. Only timecode that is running forward
-  fires cues: when the source jumps (a locate or rewind) or stops, nothing fires, and triggering picks up again from the
-  new position.</p>
-  <h3>Sending timecode</h3>
+  <p>OpenQ can run a cue list from incoming SMPTE timecode, for a show locked to a video, a band's
+  click track or a lighting desk. It reads <strong>LTC</strong> (timecode as an audio signal) on an audio input or
+  <strong>MTC</strong> (MIDI Time Code) on a MIDI input, at 24, 25, 29.97 drop-frame or 30 fps.</p>
+  <h3>Setting up a cue list</h3>
+  <p>Right-click the cue list's tab and choose <em>Timecode…</em>. Choose what the list follows (LTC or MTC), the
+  audio input and channel or the MIDI input it arrives on, and the frame rate. The window shows the timecode coming in,
+  and while that list is in front the standby card shows it too. Each cue list follows its own source, so one list can
+  follow the band's LTC while another is run by hand.</p>
+  <h3>Timecode triggers</h3>
   <figure>
-    <img src="img/timecode-cue.webp" width="1400" height="241" alt="Timecode cue settings: format, rate, start time, duration and the LTC output channel and level.">
-    <figcaption>A Timecode cue sending LTC on output 1.</figcaption>
+    <img src="img/triggers.webp" width="1400" height="255" alt="Triggers tab: a hotkey card, and a timecode card with the trigger time, the list's timecode source and what it is receiving.">
+    <figcaption>The Triggers tab of a cue that fires at 01:00:05:00.</figcaption>
   </figure>
-  <p>A <strong>Timecode cue</strong> sends running timecode from its <em>start</em> time, for its duration or until it is
-  stopped; pausing it holds the time. <strong>LTC</strong> goes out on one output of the audio device at the level you
-  set, so it can be wired to a lighting desk or video server. <strong>MTC</strong> goes to a MIDI output: a locate message
-  first, then quarter-frame messages. While it runs, the tab shows the time being sent.</p>
+  <p>On a cue's <strong>Triggers</strong> tab, tick <em>Fire at</em> and type the time (hh:mm:ss:ff). When the list's
+  timecode runs past that time the cue fires, whatever the playhead is on, and its continues run as usual. The tab
+  shows what the list follows and what it is receiving; <em>Set up…</em> opens the list's timecode settings.</p>
+  <p>Only timecode running forward fires cues. When the source jumps (a locate or a rewind) or stops, nothing fires,
+  and triggering picks up again from the new position, so rehearsing a section by rolling back the source is safe.</p>
 </section>
 
 <section id="stages">
@@ -651,7 +650,7 @@ cargo run --release -- show.openq    # open a saved show</code></pre>
       <tr><td><kbd>F1</kbd></td><td>Open this user manual</td></tr>
       <tr><td><kbd>F11</kbd></td><td>Fullscreen, in a stage window</td></tr>
       <tr><td><kbd>←</kbd> <kbd>→</kbd> <kbd>↑</kbd> <kbd>↓</kbd> (+<kbd>Shift</kbd>)</td><td>Nudge the hovered corner pin 1 (10) pixels while mapping</td></tr>
-      <tr><td>Cue hotkey</td><td>Fires that cue directly (set on the Basics tab)</td></tr>
+      <tr><td>Cue hotkey</td><td>Fires that cue directly (set on the Triggers tab)</td></tr>
     </tbody>
   </table></div>
 </section>
@@ -665,7 +664,7 @@ cargo run --release -- show.openq    # open a saved show</code></pre>
       Check the master volume and the cue's level and routing.</td></tr>
       <tr><td>A Mic cue is silent</td><td>Check the input device and channels on its I/O tab; the level bar shows whether
       anything arrives. On macOS and Windows, OpenQ needs permission to use the microphone.</td></tr>
-      <tr><td>Timecode cues don't fire</td><td>Open the list's <em>Timecode…</em> window and check that it receives
+      <tr><td>Timecode triggers don't fire</td><td>Open the list's <em>Timecode…</em> window and check that it receives
       timecode at the right rate. Cues only fire while timecode runs forward through their trigger time.</td></tr>
       <tr><td>A Camera cue shows nothing</td><td>Check the device on its Camera tab (use <span class="ms" aria-hidden="true">&#xe5d5;</span>
       to look again) and the engine log. Another program using the camera can block it.</td></tr>

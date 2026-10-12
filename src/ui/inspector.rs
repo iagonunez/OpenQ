@@ -18,6 +18,7 @@ use std::path::Path;
 pub(super) enum Tab {
     #[default]
     Basics,
+    Triggers,
     Time,
     Io,
     Levels,
@@ -30,6 +31,7 @@ fn tabs_for(kind: &CueKind) -> &'static [(Tab, &'static str)] {
     match kind {
         CueKind::Audio(_) => &[
             (Tab::Basics, "Basics"),
+            (Tab::Triggers, "Triggers"),
             (Tab::Time, "Time & Loops"),
             (Tab::Io, "I/O"),
             (Tab::Levels, "Levels"),
@@ -37,17 +39,17 @@ fn tabs_for(kind: &CueKind) -> &'static [(Tab, &'static str)] {
         ],
         CueKind::Video(_) => &[
             (Tab::Basics, "Basics"),
+            (Tab::Triggers, "Triggers"),
             (Tab::Time, "Time & Loops"),
             (Tab::Geometry, "Geometry"),
             (Tab::Io, "I/O"),
             (Tab::Levels, "Audio"),
         ],
-        CueKind::Mic(_) => &[(Tab::Basics, "Basics"), (Tab::Io, "I/O"), (Tab::Levels, "Levels"), (Tab::Eq, "EQ")],
-        CueKind::Camera(_) => &[(Tab::Basics, "Basics"), (Tab::Settings, "Camera"), (Tab::Geometry, "Geometry")],
-        CueKind::Timecode(_) => &[(Tab::Basics, "Basics"), (Tab::Settings, "Timecode")],
-        CueKind::Memo => &[(Tab::Basics, "Basics")],
-        CueKind::Text(_) => &[(Tab::Basics, "Basics"), (Tab::Settings, "Text"), (Tab::Geometry, "Geometry")],
-        _ => &[(Tab::Basics, "Basics"), (Tab::Settings, "Settings")],
+        CueKind::Mic(_) => &[(Tab::Basics, "Basics"), (Tab::Triggers, "Triggers"), (Tab::Io, "I/O"), (Tab::Levels, "Levels"), (Tab::Eq, "EQ")],
+        CueKind::Camera(_) => &[(Tab::Basics, "Basics"), (Tab::Triggers, "Triggers"), (Tab::Settings, "Camera"), (Tab::Geometry, "Geometry")],
+        CueKind::Memo => &[(Tab::Basics, "Basics"), (Tab::Triggers, "Triggers")],
+        CueKind::Text(_) => &[(Tab::Basics, "Basics"), (Tab::Triggers, "Triggers"), (Tab::Settings, "Text"), (Tab::Geometry, "Geometry")],
+        _ => &[(Tab::Basics, "Basics"), (Tab::Triggers, "Triggers"), (Tab::Settings, "Settings")],
     }
 }
 
@@ -67,10 +69,10 @@ struct Ctx<'a> {
     devices: super::devices::Devices,
     /// Timecode settings of the list holding the cue (for its trigger time).
     list_tc: crate::model::TimecodeSync,
+    /// What the cue's list receives right now, if it follows timecode.
+    tc_in: Option<String>,
     /// Input level of a running Mic cue (linear peak).
     mic_level: Option<f32>,
-    /// What a running Timecode cue is sending.
-    tc_out: Option<String>,
 }
 
 impl App {
@@ -115,13 +117,16 @@ impl App {
             devices: self.inputs.lock().clone(),
             list_tc: show.ws.cue_list.timecode_of(id).clone(),
             mic_level: show.media.mic_peak(id),
-            tc_out: show.media.timecode_out(id).map(|(t, r)| t.format(r)),
+            tc_in: {
+                let sync = show.ws.cue_list.timecode_of(id);
+                show.timecode.position(sync, std::time::Instant::now()).map(|r| crate::timecode::format_secs(r.secs, r.rate))
+            },
         };
-        if ctx.mic_level.is_some() || ctx.tc_out.is_some() {
+        if ctx.mic_level.is_some() || ctx.tc_in.is_some() {
             ui.ctx().request_repaint_after(std::time::Duration::from_millis(50));
         }
         let Some(cue) = show.ws.cue_list.find_mut(id) else { return };
-        if matches!(cue.kind, CueKind::Mic(_) | CueKind::Camera(_) | CueKind::Timecode(_)) {
+        if matches!(cue.kind, CueKind::Mic(_) | CueKind::Camera(_)) {
             super::devices::ensure(&self.inputs, ui.ctx());
         }
         let before = cue.clone();
@@ -145,6 +150,7 @@ impl App {
                     Tab::Eq => super::icons::GRAPHIC_EQ,
                     Tab::Geometry => super::icons::OPEN_WITH,
                     Tab::Settings => super::icons::SETTINGS,
+                    Tab::Triggers => super::icons::KEYBOARD,
                 };
                 super::theme::tab(ui, &mut self.inspector_tab, *t, glyph, label);
             }
@@ -157,6 +163,11 @@ impl App {
         let tab = self.inspector_tab;
         egui::ScrollArea::vertical().id_salt("inspector").auto_shrink([false, false]).show(ui, |ui| match tab {
             Tab::Basics => basics(ui, cue, &ctx, &mut pick_media),
+            Tab::Triggers => {
+                if triggers(ui, cue, &ctx) {
+                    self.show_list_timecode = true;
+                }
+            }
             Tab::Io => match &mut cue.kind {
                 CueKind::Audio(a) => io_tab(ui, &a.path, &mut a.routing, None, &ctx, &mut pick_media),
                 CueKind::Video(v) => io_tab(ui, &v.path, &mut v.routing, Some(v.stage), &ctx, &mut pick_media),
@@ -267,21 +278,6 @@ fn basics(ui: &mut Ui, cue: &mut Cue, ctx: &Ctx, pick: &mut bool) {
                 });
                 ui.end_row();
 
-                ui.label("Hotkey");
-                let mut text = cue.hotkey.clone().unwrap_or_default();
-                let valid = text.is_empty() || egui::Key::from_name(&text).is_some();
-                let r = ui.add(
-                    TextEdit::singleline(&mut text)
-                        .desired_width(60.0)
-                        .hint_text("none")
-                        .text_color_opt((!valid).then_some(super::widgets::RED)),
-                );
-                if r.changed() {
-                    cue.hotkey = (!text.trim().is_empty()).then(|| text.trim().to_string());
-                }
-                r.on_hover_text("Key that fires this cue (e.g. F1, A, Num5). Not Space/P/R/Esc.");
-                ui.end_row();
-
                 ui.label("Armed");
                 ui.checkbox(&mut cue.armed, "")
                     .on_hover_text("Disarmed cues skip their action but still run waits and continues");
@@ -309,22 +305,6 @@ fn basics(ui: &mut Ui, cue: &mut Cue, ctx: &Ctx, pick: &mut bool) {
                 });
                 ui.end_row();
 
-                ui.label("Timecode");
-                ui.horizontal(|ui| {
-                    let rate = ctx.list_tc.rate;
-                    let mut on = cue.timecode_trigger.is_some();
-                    if ui.checkbox(&mut on, "").on_hover_text("Fire when the cue list's timecode reaches this time").changed() {
-                        cue.timecode_trigger = on.then_some(3600.0);
-                    }
-                    if let Some(t) = &mut cue.timecode_trigger {
-                        timecode_edit(ui, t, rate);
-                        if ctx.list_tc.source == crate::model::TimecodeSource::Off {
-                            ui.label(RichText::new("list ignores timecode").color(super::widgets::AMBER).small())
-                                .on_hover_text("Turn timecode on for this cue list: right-click its tab → Timecode…");
-                        }
-                    }
-                });
-                ui.end_row();
             });
         }
         i if i == notes => {
@@ -1124,7 +1104,6 @@ fn settings_tab(ui: &mut Ui, cue: &mut Cue, ctx: &Ctx, refresh: &mut bool) {
         ),
         CueKind::Text(t) => text_settings(ui, t),
         CueKind::Camera(c) => camera_settings(ui, c, ctx, refresh),
-        CueKind::Timecode(t) => timecode_settings(ui, t, ctx, refresh),
         CueKind::Network(n) => {
             let specs = [Card::new(ic::SETTINGS_REMOTE, "OSC message", 480.0)];
             cards(ui, "net", &specs, |ui, _| {
@@ -1541,89 +1520,88 @@ fn camera_settings(ui: &mut Ui, c: &mut crate::model::CameraCue, ctx: &Ctx, refr
     });
 }
 
-fn timecode_settings(ui: &mut Ui, t: &mut crate::model::TimecodeCue, ctx: &Ctx, refresh: &mut bool) {
+/// Triggers: ways to fire the cue besides GO. Returns true when the user asks to set
+/// up the list's timecode.
+fn triggers(ui: &mut Ui, cue: &mut Cue, ctx: &Ctx) -> bool {
     use super::icons as ic;
     use super::theme::Card;
-    use crate::model::{TimecodeOutput, TimecodeRate};
-    let specs = [Card::new(ic::TIMER_PLAY, "Timecode", 380.0), Card::new(ic::SPEAKER, "Output", 420.0)];
-    super::theme::cards(ui, "tc", &specs, |ui, i| match i {
+    use crate::model::TimecodeSource;
+    let mut setup = false;
+    let specs = [Card::new(ic::KEYBOARD, "Hotkey", 340.0), Card::new(ic::TIMER_PLAY, "Timecode", 460.0)];
+    super::theme::cards(ui, "triggers", &specs, |ui, i| match i {
         0 => {
-            egui::Grid::new("tc-gen").num_columns(2).spacing([10.0, 6.0]).show(ui, |ui| {
-                ui.label("Format");
-                ui.horizontal(|ui| {
-                    ui.selectable_value(&mut t.output, TimecodeOutput::Ltc, "LTC (audio)");
-                    ui.selectable_value(&mut t.output, TimecodeOutput::Mtc, "MTC (MIDI)");
-                });
-                ui.end_row();
-                ui.label("Rate");
-                ComboBox::from_id_salt("tc-rate").selected_text(t.rate.label()).show_ui(ui, |ui| {
-                    for r in TimecodeRate::ALL {
-                        ui.selectable_value(&mut t.rate, r, r.label());
-                    }
-                });
-                ui.end_row();
-                ui.label("Start at");
-                timecode_edit(ui, &mut t.start, t.rate);
-                ui.end_row();
-                ui.label("Duration");
-                ui.horizontal(|ui| {
-                    time_edit(ui, &mut t.duration);
-                    ui.label(RichText::new(if t.duration <= 0.0 { "until stopped" } else { "" }).weak());
-                });
-                ui.end_row();
-                ui.label("Sending");
-                ui.label(
-                    RichText::new(ctx.tc_out.clone().unwrap_or_else(|| "–".into()))
-                        .font(super::theme::mono(14.0))
-                        .color(if ctx.tc_out.is_some() { super::theme::GREEN } else { super::theme::TEXT_FAINT }),
+            egui::Grid::new("trig-key").num_columns(2).spacing([10.0, 6.0]).show(ui, |ui| {
+                ui.label("Key");
+                let mut text = cue.hotkey.clone().unwrap_or_default();
+                let valid = text.is_empty() || egui::Key::from_name(&text).is_some();
+                let r = ui.add(
+                    TextEdit::singleline(&mut text)
+                        .desired_width(80.0)
+                        .hint_text("none")
+                        .text_color_opt((!valid).then_some(RED)),
                 );
+                if r.changed() {
+                    cue.hotkey = (!text.trim().is_empty()).then(|| text.trim().to_string());
+                }
+                r.on_hover_text("Key that fires this cue (e.g. F1, A, Num5). Not Space/P/R/Esc.");
                 ui.end_row();
             });
+            ui.add_space(4.0);
+            ui.label(RichText::new("Fires the cue directly, whatever the playhead is on.").weak().small());
         }
         _ => {
-            egui::Grid::new("tc-out").num_columns(2).spacing([10.0, 6.0]).show(ui, |ui| match t.output {
-                TimecodeOutput::Ltc => {
-                    ui.label("Device");
-                    ui.label(ctx.device.as_deref().unwrap_or("no audio device"));
-                    ui.end_row();
-                    ui.label("Output");
-                    let outs = ctx.out_channels.max(1) as u16;
-                    ComboBox::from_id_salt("tc-ch")
-                        .selected_text(format!("Output {}", t.ltc_channel + 1))
-                        .show_ui(ui, |ui| {
-                            for o in 0..outs {
-                                ui.selectable_value(&mut t.ltc_channel, o, format!("Output {}", o + 1));
-                            }
-                        });
-                    ui.end_row();
-                    ui.label("Level");
-                    db_edit(ui, &mut t.volume_db);
-                    ui.end_row();
-                }
-                TimecodeOutput::Mtc => {
-                    ui.label("MIDI port");
-                    ui.horizontal(|ui| {
-                        let ports: Vec<(String, String)> = ctx.devices.midi_out.iter().map(|p| (p.clone(), p.clone())).collect();
-                        device_combo(ui, "tc-port", &mut t.mtc_port, &ports, "First MIDI output");
-                        refresh_button(ui, ctx, refresh);
-                    });
-                    ui.end_row();
-                    if ctx.devices.loaded && ctx.devices.midi_out.is_empty() {
-                        ui.label("");
-                        ui.label(RichText::new("No MIDI outputs found.").color(super::widgets::AMBER));
-                        ui.end_row();
+            let sync = &ctx.list_tc;
+            egui::Grid::new("trig-tc").num_columns(2).spacing([10.0, 6.0]).show(ui, |ui| {
+                ui.label("Fire at");
+                ui.horizontal(|ui| {
+                    let mut on = cue.timecode_trigger.is_some();
+                    if ui.checkbox(&mut on, "").on_hover_text("Fire when the cue list's timecode reaches this time").changed() {
+                        cue.timecode_trigger = on.then_some(3600.0);
                     }
+                    match &mut cue.timecode_trigger {
+                        Some(t) => {
+                            timecode_edit(ui, t, sync.rate);
+                        }
+                        None => {
+                            ui.label(RichText::new("off").weak());
+                        }
+                    }
+                });
+                ui.end_row();
+                ui.label("Cue list");
+                ui.horizontal(|ui| {
+                    let text = match sync.source {
+                        TimecodeSource::Off => "doesn't follow timecode".to_string(),
+                        TimecodeSource::Ltc => format!("follows LTC at {}", sync.rate.label()),
+                        TimecodeSource::Mtc => format!("follows MTC at {}", sync.rate.label()),
+                    };
+                    let color = if sync.source == TimecodeSource::Off && cue.timecode_trigger.is_some() {
+                        super::widgets::AMBER
+                    } else {
+                        ui.visuals().weak_text_color()
+                    };
+                    ui.label(RichText::new(text).color(color));
+                    if ui.small_button("Set up…").on_hover_text("The cue list's timecode settings").clicked() {
+                        setup = true;
+                    }
+                });
+                ui.end_row();
+                if sync.source != TimecodeSource::Off {
+                    ui.label("Receiving");
+                    match &ctx.tc_in {
+                        Some(t) => ui.label(RichText::new(t).font(super::theme::mono(13.0)).color(super::theme::GREEN)),
+                        None => ui.label(RichText::new("no timecode").color(super::widgets::AMBER)),
+                    };
+                    ui.end_row();
                 }
             });
             ui.add_space(4.0);
             ui.label(
-                RichText::new(match t.output {
-                    TimecodeOutput::Ltc => "LTC goes only to the chosen output, not through the cue's routing.",
-                    TimecodeOutput::Mtc => "Sends a full-frame locate at the start, then quarter frames.",
-                })
-                .weak()
-                .small(),
+                RichText::new("The cue fires as running timecode passes this time. Jumps and dropouts don't fire cues.")
+                    .weak()
+                    .small(),
             );
         }
     });
+    setup
 }

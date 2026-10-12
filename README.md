@@ -45,7 +45,7 @@ compiled by `tools/build_ffmpeg_macos.sh`. It then attaches the matching FFmpeg 
 ## Cues
 
 Audio, Mic (live input), Video, Camera (live video), Text, Group (folder), Wait, Memo, Fade, Start,
-Stop, Pause, Go To, Devamp, Network, Timecode.
+Stop, Pause, Go To, Devamp, Network.
 
 A show can hold several **cue lists** (tabs above the cue list). GO works on the list in front;
 cues in other lists keep playing and can be targeted from any list.
@@ -65,13 +65,13 @@ Every cue has a number, name, notes, color, armed flag, **pre-wait**, **post-wai
 Group modes: start first child and enter the group, playlist (start the first child and skip past
 the group), start all children at once, start a random child.
 
-Cues can also have a **hotkey** (Basics tab) that fires them directly, and a **timecode trigger**.
+The **Triggers** tab gives a cue a **hotkey** that fires it directly, and a **timecode trigger**.
 
 ## Timecode
 
 Each cue list can follow **LTC** (from an audio input) or **MTC** (from a MIDI input) at 24, 25,
-29.97 drop-frame or 30 fps; cues fire as running timecode passes their trigger time. **Timecode
-cues** send LTC on an audio output or MTC to a MIDI port.
+29.97 drop-frame or 30 fps; cues fire as running timecode passes their trigger time.
+Jumps and dropouts don't fire cues.
 
 ## Edit and show mode
 
@@ -182,7 +182,7 @@ src/media/decoder.rs  per-voice symphonia decode → trim/loop → rubato resamp
 src/media/video.rs  FFmpeg decode threads / still images / cameras → RGBA frames + soundtrack to
                     the mixer
 src/media/input.rs  live audio inputs (Mic cues)
-src/media/tcio.rs   timecode in (LTC/MTC readers for cue lists) and out (Timecode cues)
+src/media/tcio.rs   timecode input (LTC/MTC readers that cue lists follow)
 src/timecode.rs     SMPTE labels, LTC encoder/decoder, MIDI Time Code
 src/show.rs         shared state + 1 kHz engine thread
 src/osc.rs          OSC remote-control listener

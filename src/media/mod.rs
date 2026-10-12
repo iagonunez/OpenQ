@@ -340,7 +340,6 @@ pub fn effective_duration(cue: &Cue, file_duration: Option<f64>) -> Option<f64> 
         CueKind::Text(t) => (t.duration > 0.0).then_some(t.duration),
         CueKind::Mic(m) => (m.duration > 0.0).then_some(m.duration),
         CueKind::Camera(c) => (c.duration > 0.0).then_some(c.duration),
-        CueKind::Timecode(t) => (t.duration > 0.0).then_some(t.duration),
         _ => None,
     }
 }
@@ -361,8 +360,6 @@ pub struct Media {
     net: Option<std::net::UdpSocket>,
     /// Open inputs of running Mic cues.
     mics: HashMap<CueId, input::InputStream>,
-    /// Running Timecode cues.
-    generators: HashMap<CueId, tcio::Generator>,
 }
 
 impl Media {
@@ -394,7 +391,6 @@ impl Media {
             prober,
             net: None,
             mics: HashMap::new(),
-            generators: HashMap::new(),
         }
     }
 
@@ -504,12 +500,6 @@ impl Media {
             }
             _ => {}
         }
-    }
-
-    /// The label a running Timecode cue is sending.
-    pub fn timecode_out(&self, id: CueId) -> Option<(crate::timecode::Timecode, crate::model::TimecodeRate)> {
-        let played = self.audio.as_ref().and_then(|a| a.elapsed(id));
-        self.generators.get(&id).map(|g| (g.current(played), g.rate()))
     }
 
     /// Input peak of a running Mic cue since the last call (linear).
@@ -665,11 +655,6 @@ impl Backend for Media {
                 Ok(())
             }
             CueKind::Mic(m) => self.start_mic(cue.id, m, at),
-            CueKind::Timecode(t) => {
-                let g = tcio::Generator::start(cue.id, t, self.audio.as_mut())?;
-                self.generators.insert(cue.id, g);
-                Ok(())
-            }
             #[cfg(feature = "video")]
             CueKind::Camera(c) => match &mut self.video {
                 Some(v) => {
@@ -697,7 +682,6 @@ impl Backend for Media {
             a.stop(id);
         }
         self.mics.remove(&id);
-        self.generators.remove(&id);
         #[cfg(feature = "video")]
         if let Some(v) = &mut self.video {
             v.stop(id);
@@ -708,9 +692,6 @@ impl Backend for Media {
         if let Some(a) = &mut self.audio {
             a.pause(id);
         }
-        if let Some(g) = self.generators.get(&id) {
-            g.set_paused(true);
-        }
         #[cfg(feature = "video")]
         if let Some(v) = &mut self.video {
             v.pause(id);
@@ -720,9 +701,6 @@ impl Backend for Media {
     fn resume(&mut self, id: CueId, at: Instant) {
         if let Some(a) = &mut self.audio {
             a.resume(id, at);
-        }
-        if let Some(g) = self.generators.get(&id) {
-            g.set_paused(false);
         }
         #[cfg(feature = "video")]
         if let Some(v) = &mut self.video {
@@ -773,9 +751,6 @@ impl Backend for Media {
     }
 
     fn is_finished(&self, id: CueId) -> bool {
-        if self.generators.get(&id).is_some_and(|g| !g.is_done()) {
-            return false;
-        }
         let audio_done = self.audio.as_ref().is_none_or(|a| a.is_finished(id));
         #[cfg(feature = "video")]
         let video_done = self.video.as_ref().is_none_or(|v| v.is_finished(id));
@@ -790,7 +765,6 @@ impl Backend for Media {
             CueKind::Video(v) if is_image_path(&v.path) => None,
             CueKind::Text(t) => return (t.duration > 0.0).then_some(t.duration),
             CueKind::Mic(m) => return (m.duration > 0.0).then_some(m.duration),
-            CueKind::Timecode(t) => return (t.duration > 0.0).then_some(t.duration),
             CueKind::Camera(c) => return (c.duration > 0.0).then_some(c.duration),
             CueKind::Video(v) => self.prober.get(&v.path)?.ok()?.duration,
             _ => return None,
@@ -814,7 +788,6 @@ impl Backend for Media {
             // Close the inputs of Mic cues whose voice has ended.
             self.mics.retain(|id, _| !a.is_finished(*id));
         }
-        self.generators.retain(|_, g| !g.is_done());
         #[cfg(feature = "video")]
         if let Some(v) = &mut self.video {
             v.update(now);

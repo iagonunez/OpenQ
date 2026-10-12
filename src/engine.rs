@@ -662,8 +662,7 @@ impl Engine {
             | CueKind::Video(_)
             | CueKind::Text(_)
             | CueKind::Mic(_)
-            | CueKind::Camera(_)
-            | CueKind::Timecode(_) => match be.start(cue, at) {
+            | CueKind::Camera(_) => match be.start(cue, at) {
                 Ok(()) => be.duration(cue),
                 Err(e) => {
                     self.log(format!("Cue {} '{}': {e}", cue.number, cue.display_name()));

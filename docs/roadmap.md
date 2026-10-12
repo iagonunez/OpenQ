@@ -27,7 +27,7 @@ Settings UI in `settings_stages`: a "span of" combo, crop, blend edges and gamma
 - A midir input thread maps incoming messages to `control::Command`, then calls
   `control::apply` (the same path as OSC).
 
-## 3. Timecode (done: LTC/MTC in per cue list, cue timecode triggers, Timecode cues sending LTC/MTC)
+## 3. Timecode (done: LTC/MTC in per cue list, cue timecode triggers on the Triggers tab)
 Still open:
 - Chase mode: on a jump, start the cues that would be running at the new time, at the right offset.
 - Per-list timecode offset, and an optional "fire cues skipped by a jump".

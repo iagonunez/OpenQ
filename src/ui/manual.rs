@@ -17,7 +17,7 @@ const FILES: &[(&str, &[u8])] = &[
     ("img/remote-share.webp", include_bytes!("../../docs/manual/img/remote-share.webp")),
     ("img/show-mode.webp", include_bytes!("../../docs/manual/img/show-mode.webp")),
     ("img/text-cue.webp", include_bytes!("../../docs/manual/img/text-cue.webp")),
-    ("img/timecode-cue.webp", include_bytes!("../../docs/manual/img/timecode-cue.webp")),
+    ("img/triggers.webp", include_bytes!("../../docs/manual/img/triggers.webp")),
     ("img/waveform.webp", include_bytes!("../../docs/manual/img/waveform.webp")),
     // Icons in the manual use the app's own Material Symbols subset.
     ("fonts/MaterialSymbolsRounded.ttf", include_bytes!("../../assets/fonts/MaterialSymbolsRounded.ttf")),

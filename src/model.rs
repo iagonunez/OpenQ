@@ -888,50 +888,6 @@ impl Default for CameraCue {
     }
 }
 
-/// What a Timecode cue sends.
-#[derive(Serialize, Deserialize, Clone, Copy, PartialEq, Eq, Debug, Default)]
-pub enum TimecodeOutput {
-    /// LTC (SMPTE audio) on one output of the audio device.
-    #[default]
-    Ltc,
-    /// MIDI Time Code to a MIDI output port.
-    Mtc,
-}
-
-/// Generates running timecode, e.g. to drive a lighting desk.
-#[derive(Serialize, Deserialize, Clone, PartialEq, Debug)]
-#[serde(default)]
-pub struct TimecodeCue {
-    /// LTC or MTC.
-    pub output: TimecodeOutput,
-    /// Frame rate.
-    pub rate: TimecodeRate,
-    /// Timecode at the start, in seconds (e.g. 3600 = 01:00:00:00).
-    pub start: f64,
-    /// Seconds to run (0 = until stopped).
-    pub duration: f64,
-    /// LTC: level in dB.
-    pub volume_db: f32,
-    /// LTC: device output channel, from 0.
-    pub ltc_channel: u16,
-    /// MTC: MIDI output port name (None = the first port).
-    pub mtc_port: Option<String>,
-}
-
-impl Default for TimecodeCue {
-    fn default() -> Self {
-        Self {
-            output: TimecodeOutput::Ltc,
-            rate: TimecodeRate::Fps25,
-            start: 3600.0,
-            duration: 0.0,
-            volume_db: -12.0,
-            ltc_channel: 0,
-            mtc_port: None,
-        }
-    }
-}
-
 /// What a cue does.
 #[derive(Serialize, Deserialize, Clone, PartialEq, Debug)]
 pub enum CueKind {
@@ -993,8 +949,6 @@ pub enum CueKind {
     Mic(MicCue),
     /// Show a live camera on a stage.
     Camera(CameraCue),
-    /// Generate timecode.
-    Timecode(TimecodeCue),
 }
 
 /// The type of a cue without its settings (for menus, icons and display).
@@ -1030,18 +984,16 @@ pub enum KindTag {
     Mic,
     /// Camera cue.
     Camera,
-    /// Timecode cue.
-    Timecode,
 }
 
 impl KindTag {
     /// Cues whose action is media playback handled by the media backend.
     pub fn is_media(self) -> bool {
-        matches!(self, KindTag::Audio | KindTag::Video | KindTag::Text | KindTag::Mic | KindTag::Camera | KindTag::Timecode)
+        matches!(self, KindTag::Audio | KindTag::Video | KindTag::Text | KindTag::Mic | KindTag::Camera)
     }
 
     /// Every type, in toolbox order (the first ten match Ctrl+1…0).
-    pub const ALL: [KindTag; 16] = [
+    pub const ALL: [KindTag; 15] = [
         KindTag::Audio,
         KindTag::Video,
         KindTag::Group,
@@ -1057,7 +1009,6 @@ impl KindTag {
         KindTag::Text,
         KindTag::Mic,
         KindTag::Camera,
-        KindTag::Timecode,
     ];
 
     /// Name shown in the UI.
@@ -1078,7 +1029,6 @@ impl KindTag {
             KindTag::Text => "Text",
             KindTag::Mic => "Mic",
             KindTag::Camera => "Camera",
-            KindTag::Timecode => "Timecode",
         }
     }
 
@@ -1100,7 +1050,6 @@ impl KindTag {
             KindTag::Text => CueKind::Text(TextCue::default()),
             KindTag::Mic => CueKind::Mic(MicCue::default()),
             KindTag::Camera => CueKind::Camera(CameraCue::default()),
-            KindTag::Timecode => CueKind::Timecode(TimecodeCue::default()),
         }
     }
 }
@@ -1124,7 +1073,6 @@ impl CueKind {
             CueKind::Text(_) => KindTag::Text,
             CueKind::Mic(_) => KindTag::Mic,
             CueKind::Camera(_) => KindTag::Camera,
-            CueKind::Timecode(_) => KindTag::Timecode,
         }
     }
 

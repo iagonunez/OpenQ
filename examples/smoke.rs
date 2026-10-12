@@ -263,36 +263,16 @@ fn main() {
         assert!(!show.engine.instances.contains_key(&mi), "mic didn't stop");
     }
 
-    // --- Timecode cue sending LTC for one second.
-    let tc = openq::model::TimecodeCue { duration: 1.0, ..Default::default() };
-    let tcc = Cue::new(CueKind::Timecode(tc));
-    let tci = tcc.id;
-    show.ws.cue_list.cues.push(tcc);
-    show.edited();
-    let ws = show.ws.clone();
-    show.engine.start_cue(&ws, &mut show.media, tci, Instant::now());
-    run(&mut show, 0.6);
-    let (label, rate) = show.media.timecode_out(tci).expect("LTC running");
-    println!("LTC after 0.6 s: {}", label.format(rate));
-    assert!(label.s == 0 && (13..=17).contains(&label.f), "LTC position off: {}", label.format(rate));
-    run(&mut show, 0.8);
-    assert!(!show.engine.instances.contains_key(&tci), "LTC cue didn't end");
-
-    // --- MTC loopback through ALSA's "Midi Through": a Timecode cue sends MTC, a second cue list
-    // follows it and fires its cue at 01:00:01:00.
+    // --- MTC loopback through ALSA's "Midi Through": a cue list follows MTC sent by this test and
+    // fires its cue at 01:00:01:00.
     let through = |ports: Vec<String>| ports.into_iter().find(|p| p.contains("Midi Through"));
-    if let (Some(out), Some(inp)) =
-        (through(openq::media::tcio::list_midi_outputs()), through(openq::media::tcio::list_midi_inputs()))
-    {
-        use openq::model::{TimecodeOutput, TimecodeSource};
-        let gen_cue = Cue::new(CueKind::Timecode(openq::model::TimecodeCue {
-            output: TimecodeOutput::Mtc,
-            mtc_port: Some(out),
-            duration: 2.5,
-            ..Default::default()
-        }));
-        let gi = gen_cue.id;
-        show.ws.cue_list.cues.push(gen_cue);
+    let out_ports = {
+        let m = midir::MidiOutput::new("smoke").unwrap();
+        m.ports().iter().filter_map(|p| m.port_name(p).ok()).collect::<Vec<_>>()
+    };
+    if let (Some(out), Some(inp)) = (through(out_ports), through(openq::media::tcio::list_midi_inputs())) {
+        use openq::model::{TimecodeRate, TimecodeSource};
+        use openq::timecode::{Timecode, mtc_full_frame, mtc_quarter_frame};
         show.ws.cue_list.add_list("Follows MTC", None);
         show.ws.cue_list.info.timecode.source = TimecodeSource::Mtc;
         show.ws.cue_list.info.timecode.mtc_port = Some(inp);
@@ -303,9 +283,23 @@ fn main() {
         show.edited();
         // Give the follower time to open the port.
         run(&mut show, 0.6);
-        let ws = show.ws.clone();
+        // Send 2.5 s of 25 fps MTC from 01:00:00:00 on a thread, like a timecode source would.
+        let sender = std::thread::spawn(move || {
+            let m = midir::MidiOutput::new("smoke").unwrap();
+            let port = m.ports().into_iter().find(|p| m.port_name(p).ok().as_deref() == Some(out.as_str())).unwrap();
+            let mut conn = m.connect(&port, "smoke-mtc").unwrap();
+            let rate = TimecodeRate::Fps25;
+            let start = Timecode { h: 1, m: 0, s: 0, f: 0 }.frame_count(rate);
+            conn.send(&mtc_full_frame(Timecode::from_frame_count(start, rate), rate)).unwrap();
+            let t0 = Instant::now();
+            for q in 0..(2.5 * 100.0) as u64 {
+                let due = t0 + Duration::from_secs_f64(q as f64 / 100.0);
+                std::thread::sleep(due.saturating_duration_since(Instant::now()));
+                let tc = Timecode::from_frame_count(start + 2 * (q / 8), rate);
+                conn.send(&mtc_quarter_frame(tc, rate, (q % 8) as u8)).unwrap();
+            }
+        });
         let t = Instant::now();
-        show.engine.start_cue(&ws, &mut show.media, gi, t);
         let mut fired = None;
         while t.elapsed() < Duration::from_millis(2600) {
             show.tick(Instant::now());
@@ -314,13 +308,12 @@ fn main() {
             }
             std::thread::sleep(Duration::from_millis(1));
         }
+        sender.join().unwrap();
         println!("MTC-triggered cue fired at {fired:?} (expected ≈1.0 s)");
         let f = fired.expect("timecode trigger didn't fire");
         assert!((0.9..1.2).contains(&f), "timecode trigger timing off: {f}");
         run(&mut show, 0.3);
-        // Switching back to the first list brings its playhead along.
         assert_eq!(show.ws.cue_list.list_count(), 2);
-        assert!(show.ws.cue_list.find(gi).is_some());
     } else {
         println!("no Midi Through port: MTC loopback skipped");
     }

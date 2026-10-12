@@ -2047,6 +2047,7 @@ impl App {
                 Ok("eq") => inspector::Tab::Eq,
                 Ok("geometry") => inspector::Tab::Geometry,
                 Ok("settings") => inspector::Tab::Settings,
+                Ok("triggers") => inspector::Tab::Triggers,
                 _ => inspector::Tab::Basics,
             };
             if std::env::var("OPENQ_SCREENSHOT_MODE").as_deref() == Ok("show") {

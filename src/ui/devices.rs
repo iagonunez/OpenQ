@@ -15,8 +15,6 @@ pub struct Devices {
     pub cameras: Vec<(String, String)>,
     /// MIDI input ports (MTC in).
     pub midi_in: Vec<String>,
-    /// MIDI output ports (MTC out).
-    pub midi_out: Vec<String>,
     /// The lists have been read at least once.
     pub loaded: bool,
     /// A refresh is running.
@@ -48,8 +46,7 @@ pub fn refresh(d: &SharedDevices, ctx: &egui::Context) {
             #[cfg(not(feature = "video"))]
             let cameras = Vec::new();
             let midi_in = crate::media::tcio::list_midi_inputs();
-            let midi_out = crate::media::tcio::list_midi_outputs();
-            *d.lock() = Devices { audio_in, cameras, midi_in, midi_out, loaded: true, loading: false };
+            *d.lock() = Devices { audio_in, cameras, midi_in, loaded: true, loading: false };
             ctx.request_repaint();
         })
         .ok();

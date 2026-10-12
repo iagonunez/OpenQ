@@ -92,7 +92,7 @@ impl App {
             &[Audio, Mic, Video, Camera, Text],
             &[Group, Wait, Memo],
             &[Fade, Start, Stop, Pause, Goto, Devamp],
-            &[Network, Timecode],
+            &[Network],
         ];
         // Room kept for the edit buttons on the right; the palette scrolls if the window is narrow.
         const EDIT_BUTTONS_W: f32 = 200.0;
@@ -791,15 +791,6 @@ impl App {
                 None => "first camera".into(),
                 Some(d) => self.inputs.lock().cameras.iter().find(|x| &x.0 == d).map_or(d.clone(), |x| x.1.clone()),
             },
-            CueKind::Timecode(t) => format!(
-                "{} {} from {}",
-                match t.output {
-                    crate::model::TimecodeOutput::Ltc => "LTC",
-                    crate::model::TimecodeOutput::Mtc => "MTC",
-                },
-                t.rate.label(),
-                crate::timecode::format_secs(t.start, t.rate)
-            ),
             k => match k.target() {
                 Some(t) => match show.ws.cue_list.find(t) {
                     Some(tc) => format!("{} {}", tc.number, tc.display_name()),

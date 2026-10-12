@@ -25,7 +25,7 @@
 //! * [`media`] — audio mixer and decoders, live inputs (Mic cues), video/image/text/camera
 //!   layers, timecode in and out ([`media::tcio`]), media probing, waveform and poster caches.
 //! * [`timecode`] — SMPTE labels, the LTC encoder/decoder and MIDI Time Code. Cue lists can
-//!   follow LTC or MTC and fire cues at their timecode trigger; Timecode cues send it.
+//!   follow LTC or MTC and fire cues at their timecode trigger.
 //! * [`geometry`] — layer placement, crop, corner-pin homography, edge-blend curve.
 //! * [`dsp`] — EQ filter design and processing.
 //! * [`osc`] — OSC input. [`remote`] — paired remote devices (encrypted, authenticated).
