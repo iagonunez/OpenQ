@@ -38,6 +38,10 @@ uuid = { version = "1.28.0", features = ["v4", "serde"] }
 cosmic-text = "0.19.0"
 resvg = { version = "0.48.1", default-features = false, features = ["text", "system-fonts", "memmap-fonts", "svgz", "raster-images"] }
 
+[build-dependencies]
+# Windows: the icon in the .exe (build.rs).
+winresource = "0.1"
+
 [features]
 default = ["video", "pipewire"]
 video = ["dep:ffmpeg-next"]

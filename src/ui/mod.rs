@@ -2290,6 +2290,17 @@ pub fn custom_window_frame() -> bool {
     cfg!(target_os = "windows") || std::env::var_os("OPENQ_CUSTOM_FRAME").is_some()
 }
 
+/// The app icon (`assets/icon/openq-256.png`) for the main and stage windows: taskbar, Alt-Tab and,
+/// while OpenQ runs, the macOS Dock. Installed apps also carry it in the `.exe` (`build.rs`), the
+/// macOS bundle and the Linux icon theme (openqup).
+pub fn app_icon() -> std::sync::Arc<egui::IconData> {
+    static ICON: std::sync::OnceLock<std::sync::Arc<egui::IconData>> = std::sync::OnceLock::new();
+    ICON.get_or_init(|| {
+        std::sync::Arc::new(eframe::icon_data::from_png_bytes(include_bytes!("../../assets/icon/openq-256.png")).expect("bad app icon"))
+    })
+    .clone()
+}
+
 /// Height of the title bar in a custom window frame (the caption buttons fill it).
 const CAPTION_H: f32 = 34.0;
 

@@ -41,6 +41,9 @@ fn main() -> eframe::Result {
 
     let mut viewport = egui::ViewportBuilder::default()
         .with_title("OpenQ")
+        .with_icon(ui::app_icon())
+        // Wayland app id: matches the installed openq.desktop (and its Icon=openq).
+        .with_app_id("openq")
         .with_inner_size([1280.0, 820.0])
         .with_min_inner_size([900.0, 560.0])
         .with_drag_and_drop(true)

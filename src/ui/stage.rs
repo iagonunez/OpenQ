@@ -94,6 +94,7 @@ impl App {
             let monitor = self.monitor_index(&stage);
             let mut builder = ViewportBuilder::default()
                 .with_title(format!("{} — OpenQ Stage", stage.name))
+                .with_icon(super::app_icon())
                 .with_inner_size([960.0, 960.0 * aspect]);
             if let Some(i) = monitor {
                 builder = builder.with_monitor(i);
