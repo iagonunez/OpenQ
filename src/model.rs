@@ -44,9 +44,9 @@ impl ContinueMode {
     /// Name shown in the UI.
     pub fn label(self) -> &'static str {
         match self {
-            ContinueMode::DoNotContinue => "Do not continue",
-            ContinueMode::AutoContinue => "Auto-continue",
-            ContinueMode::AutoFollow => "Auto-follow",
+            ContinueMode::DoNotContinue => crate::i18n::t("Do not continue"),
+            ContinueMode::AutoContinue => crate::i18n::t("Auto-continue"),
+            ContinueMode::AutoFollow => crate::i18n::t("Auto-follow"),
         }
     }
 }
@@ -77,10 +77,10 @@ impl GroupMode {
     /// Name shown in the UI.
     pub fn label(self) -> &'static str {
         match self {
-            GroupMode::StartFirstAndEnter => "Start first child and enter group",
-            GroupMode::StartFirst => "Start first child and go to next cue (playlist)",
-            GroupMode::StartAll => "Start all children simultaneously",
-            GroupMode::StartRandom => "Start random child and go to next cue",
+            GroupMode::StartFirstAndEnter => crate::i18n::t("Start first child and enter group"),
+            GroupMode::StartFirst => crate::i18n::t("Start first child and go to next cue (playlist)"),
+            GroupMode::StartAll => crate::i18n::t("Start all children simultaneously"),
+            GroupMode::StartRandom => crate::i18n::t("Start random child and go to next cue"),
         }
     }
 }
@@ -153,10 +153,10 @@ impl FadeCurve {
     /// Name shown in the UI.
     pub fn label(self) -> &'static str {
         match self {
-            FadeCurve::Linear => "Linear",
-            FadeCurve::SCurve => "S-curve",
-            FadeCurve::Logarithmic => "Logarithmic",
-            FadeCurve::Custom(_) => "Custom",
+            FadeCurve::Linear => crate::i18n::t("Linear"),
+            FadeCurve::SCurve => crate::i18n::t("S-curve"),
+            FadeCurve::Logarithmic => crate::i18n::t("Logarithmic"),
+            FadeCurve::Custom(_) => crate::i18n::t("Custom"),
         }
     }
 
@@ -218,13 +218,13 @@ impl CueColor {
     /// Name shown in the UI.
     pub fn label(self) -> &'static str {
         match self {
-            CueColor::None => "None",
-            CueColor::Red => "Red",
-            CueColor::Orange => "Orange",
-            CueColor::Yellow => "Yellow",
-            CueColor::Green => "Green",
-            CueColor::Blue => "Blue",
-            CueColor::Purple => "Purple",
+            CueColor::None => crate::i18n::t("None"),
+            CueColor::Red => crate::i18n::t("Red"),
+            CueColor::Orange => crate::i18n::t("Orange"),
+            CueColor::Yellow => crate::i18n::t("Yellow"),
+            CueColor::Green => crate::i18n::t("Green"),
+            CueColor::Blue => crate::i18n::t("Blue"),
+            CueColor::Purple => crate::i18n::t("Purple"),
         }
     }
 
@@ -263,10 +263,10 @@ impl VideoFit {
     /// Name shown in the UI.
     pub fn label(self) -> &'static str {
         match self {
-            VideoFit::Fit => "Fit (letterbox)",
-            VideoFit::Fill => "Fill (crop)",
-            VideoFit::Stretch => "Stretch",
-            VideoFit::Native => "Native size",
+            VideoFit::Fit => crate::i18n::t("Fit (letterbox)"),
+            VideoFit::Fill => crate::i18n::t("Fill (crop)"),
+            VideoFit::Stretch => crate::i18n::t("Stretch"),
+            VideoFit::Native => crate::i18n::t("Native size"),
         }
     }
 }
@@ -306,13 +306,13 @@ impl BlendMode {
     /// Name shown in the UI.
     pub fn label(self) -> &'static str {
         match self {
-            BlendMode::Normal => "Normal",
-            BlendMode::Add => "Add",
-            BlendMode::Screen => "Screen",
-            BlendMode::Multiply => "Multiply",
-            BlendMode::Lighten => "Lighten",
-            BlendMode::Darken => "Darken",
-            BlendMode::Subtract => "Subtract",
+            BlendMode::Normal => crate::i18n::t("Normal"),
+            BlendMode::Add => crate::i18n::t("Add"),
+            BlendMode::Screen => crate::i18n::t("Screen"),
+            BlendMode::Multiply => crate::i18n::t("Multiply"),
+            BlendMode::Lighten => crate::i18n::t("Lighten"),
+            BlendMode::Darken => crate::i18n::t("Darken"),
+            BlendMode::Subtract => crate::i18n::t("Subtract"),
         }
     }
 }
@@ -346,11 +346,11 @@ impl EqKind {
     /// Name shown in the UI.
     pub fn label(self) -> &'static str {
         match self {
-            EqKind::HighPass => "High-pass",
-            EqKind::LowShelf => "Low shelf",
-            EqKind::Peak => "Peak",
-            EqKind::HighShelf => "High shelf",
-            EqKind::LowPass => "Low-pass",
+            EqKind::HighPass => crate::i18n::t("High-pass"),
+            EqKind::LowShelf => crate::i18n::t("Low shelf"),
+            EqKind::Peak => crate::i18n::t("Peak"),
+            EqKind::HighShelf => crate::i18n::t("High shelf"),
+            EqKind::LowPass => crate::i18n::t("Low-pass"),
         }
     }
 
@@ -1170,21 +1170,21 @@ impl KindTag {
     /// Name shown in the UI.
     pub fn label(self) -> &'static str {
         match self {
-            KindTag::Audio => "Audio",
-            KindTag::Video => "Video",
-            KindTag::Group => "Group",
-            KindTag::Wait => "Wait",
-            KindTag::Memo => "Memo",
-            KindTag::Fade => "Fade",
-            KindTag::Start => "Start",
-            KindTag::Stop => "Stop",
-            KindTag::Pause => "Pause",
-            KindTag::Goto => "Go To",
-            KindTag::Devamp => "Devamp",
-            KindTag::Network => "Network",
-            KindTag::Text => "Text",
-            KindTag::Mic => "Mic",
-            KindTag::Camera => "Camera",
+            KindTag::Audio => crate::i18n::t("Audio"),
+            KindTag::Video => crate::i18n::t("Video"),
+            KindTag::Group => crate::i18n::t("Group"),
+            KindTag::Wait => crate::i18n::t("Wait"),
+            KindTag::Memo => crate::i18n::t("Memo"),
+            KindTag::Fade => crate::i18n::t("Fade"),
+            KindTag::Start => crate::i18n::t("Start"),
+            KindTag::Stop => crate::i18n::t("Stop"),
+            KindTag::Pause => crate::i18n::t("Pause"),
+            KindTag::Goto => crate::i18n::t("Go To"),
+            KindTag::Devamp => crate::i18n::t("Devamp"),
+            KindTag::Network => crate::i18n::t("Network"),
+            KindTag::Text => crate::i18n::t("Text"),
+            KindTag::Mic => crate::i18n::t("Mic"),
+            KindTag::Camera => crate::i18n::t("Camera"),
         }
     }
 
@@ -1468,10 +1468,10 @@ impl TimecodeRate {
     /// Name shown in the UI.
     pub fn label(self) -> &'static str {
         match self {
-            TimecodeRate::Fps24 => "24 fps",
-            TimecodeRate::Fps25 => "25 fps",
-            TimecodeRate::Fps2997Df => "29.97 drop",
-            TimecodeRate::Fps30 => "30 fps",
+            TimecodeRate::Fps24 => crate::i18n::t("24 fps"),
+            TimecodeRate::Fps25 => crate::i18n::t("25 fps"),
+            TimecodeRate::Fps2997Df => crate::i18n::t("29.97 drop"),
+            TimecodeRate::Fps30 => crate::i18n::t("30 fps"),
         }
     }
 

@@ -8,6 +8,7 @@ use crate::model::{ContinueMode, Cue, CueId, CueKind, CueList, GroupMode, KindTa
 use crate::show::Show;
 use egui::{Align2, Color32, CursorIcon, FontId, Rect, RichText, Sense, Stroke, StrokeKind, Ui, pos2, vec2};
 use std::time::Instant;
+use crate::i18n::t;
 
 const ROW_H: f32 = 30.0;
 /// Taller rows in show mode, readable from across a booth.
@@ -112,7 +113,7 @@ impl App {
                             let i = KindTag::ALL.iter().position(|t| t == tag).unwrap_or(99);
                             let key = if i < 10 { format!("  ·  Ctrl+{}", (i + 1) % 10) } else { String::new() };
                             if tile(ui, theme::kind_icon(*tag), tag.label())
-                                .on_hover_text(format!("New {} cue{key}", tag.label()))
+                                .on_hover_text(tr!("New {kind} cue", kind = tag.label()) + &key)
                                 .clicked()
                             {
                                 self.add_cue(show, *tag);
@@ -122,20 +123,20 @@ impl App {
                 });
             });
             ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                if theme::icon_button(ui, icons::DELETE, "Delete (Del)").clicked() {
+                if theme::icon_button(ui, icons::DELETE, t("Delete (Del)")).clicked() {
                     self.delete_selected(show);
                 }
-                if theme::icon_button(ui, icons::CONTENT_COPY, "Duplicate (Ctrl+D)").clicked() {
+                if theme::icon_button(ui, icons::CONTENT_COPY, t("Duplicate (Ctrl+D)")).clicked() {
                     self.duplicate_selected(show);
                 }
-                if theme::icon_button(ui, icons::CREATE_NEW_FOLDER, "Group selected (Ctrl+G)").clicked() {
+                if theme::icon_button(ui, icons::CREATE_NEW_FOLDER, t("Group selected (Ctrl+G)")).clicked() {
                     self.group_selected(show);
                 }
                 ui.add_space(8.0);
-                if theme::icon_button(ui, icons::REDO, "Redo (Ctrl+Shift+Z)").clicked() {
+                if theme::icon_button(ui, icons::REDO, t("Redo (Ctrl+Shift+Z)")).clicked() {
                     self.redo(show);
                 }
-                if theme::icon_button(ui, icons::UNDO, "Undo (Ctrl+Z)").clicked() {
+                if theme::icon_button(ui, icons::UNDO, t("Undo (Ctrl+Z)")).clicked() {
                     self.undo(show);
                 }
             });
@@ -178,25 +179,25 @@ impl App {
                     }
                     r.context_menu(|ui| {
                         if i != current {
-                            if ui.button("Bring forward").clicked() {
+                            if ui.button(t("Bring forward")).clicked() {
                                 switch = Some(i);
                             }
                             return;
                         }
-                        if ui.button(theme::with_icon(icons::EDIT, "Rename")).clicked() {
+                        if ui.button(theme::with_icon(icons::EDIT, t("Rename"))).clicked() {
                             self.list_rename = Some(name.clone());
                         }
-                        if ui.button(theme::with_icon(icons::TIMER_PLAY, "Timecode…")).clicked() {
+                        if ui.button(theme::with_icon(icons::TIMER_PLAY, t("Timecode…"))).clicked() {
                             self.show_list_timecode = true;
                         }
                         ui.add_enabled_ui(i > 0, |ui| {
-                            if ui.button("Move left").clicked() {
+                            if ui.button(t("Move left")).clicked() {
                                 show.ws.cue_list.move_current_list(-1);
                                 edited = true;
                             }
                         });
                         ui.add_enabled_ui(i + 1 < names.len(), |ui| {
-                            if ui.button("Move right").clicked() {
+                            if ui.button(t("Move right")).clicked() {
                                 show.ws.cue_list.move_current_list(1);
                                 edited = true;
                             }
@@ -204,7 +205,7 @@ impl App {
                         ui.separator();
                         let n = show.ws.cue_list.cues.len();
                         ui.add_enabled_ui(names.len() > 1, |ui| {
-                            let label = if n == 0 { "Delete list".to_string() } else { format!("Delete list and its {n} cues") };
+                            let label = if n == 0 { t("Delete list").to_string() } else { tr!("Delete list and its {n} cues", n) };
                             if ui.button(theme::with_icon(icons::DELETE, &label)).clicked() {
                                 self.delete_current_list(show);
                             }
@@ -212,8 +213,8 @@ impl App {
                     });
                 }
             }
-            if editing && theme::icon_button(ui, icons::ADD, "New cue list").clicked() {
-                let name = format!("Cue List {}", names.len() + 1);
+            if editing && theme::icon_button(ui, icons::ADD, t("New cue list")).clicked() {
+                let name = tr!("Cue List {n}", n = names.len() + 1);
                 show.ws.cue_list.add_list(&name, show.engine.playhead);
                 self.selection.clear();
                 self.control(show, Command::SetPlayhead(None));
@@ -242,17 +243,17 @@ impl App {
         let mut sync = show.ws.cue_list.info.timecode.clone();
         let name = show.ws.cue_list.info.name.clone();
         let mut refresh = false;
-        egui::Window::new(format!("Timecode · {name}")).open(&mut open).resizable(false).default_width(420.0).show(ctx, |ui| {
+        egui::Window::new(tr!("Timecode · {name}", name)).id(egui::Id::new("list-timecode")).open(&mut open).resizable(false).default_width(420.0).show(ctx, |ui| {
             ui.add_enabled_ui(self.can_edit_show(), |ui| {
                 egui::Grid::new("list-tc").num_columns(2).spacing([10.0, 8.0]).show(ui, |ui| {
-                    ui.label("Follow");
+                    ui.label(t("Follow"));
                     ui.horizontal(|ui| {
-                        ui.selectable_value(&mut sync.source, TimecodeSource::Off, "Off");
-                        ui.selectable_value(&mut sync.source, TimecodeSource::Ltc, "LTC (audio in)");
-                        ui.selectable_value(&mut sync.source, TimecodeSource::Mtc, "MTC (MIDI in)");
+                        ui.selectable_value(&mut sync.source, TimecodeSource::Off, t("Off"));
+                        ui.selectable_value(&mut sync.source, TimecodeSource::Ltc, t("LTC (audio in)"));
+                        ui.selectable_value(&mut sync.source, TimecodeSource::Mtc, t("MTC (MIDI in)"));
                     });
                     ui.end_row();
-                    ui.label("Rate");
+                    ui.label(t("Rate"));
                     egui::ComboBox::from_id_salt("list-tc-rate").selected_text(sync.rate.label()).show_ui(ui, |ui| {
                         for r in TimecodeRate::ALL {
                             ui.selectable_value(&mut sync.rate, r, r.label());
@@ -262,39 +263,39 @@ impl App {
                     match sync.source {
                         TimecodeSource::Off => {}
                         TimecodeSource::Ltc => {
-                            ui.label("Input");
+                            ui.label(t("Input"));
                             ui.horizontal(|ui| {
-                                let label = sync.ltc_device.as_ref().map_or("System default input".to_string(), |d| {
+                                let label = sync.ltc_device.as_ref().map_or(t("System default input").to_string(), |d| {
                                     devs.audio_in.iter().find(|x| &x.id == d).map_or(d.clone(), |x| x.name.clone())
                                 });
                                 egui::ComboBox::from_id_salt("list-tc-dev").width(240.0).selected_text(label).show_ui(ui, |ui| {
-                                    ui.selectable_value(&mut sync.ltc_device, None, "System default input");
+                                    ui.selectable_value(&mut sync.ltc_device, None, t("System default input"));
                                     for d in &devs.audio_in {
                                         ui.selectable_value(&mut sync.ltc_device, Some(d.id.clone()), &d.name);
                                     }
                                 });
-                                if theme::icon_button(ui, icons::REFRESH, "Look for devices again").clicked() {
+                                if theme::icon_button(ui, icons::REFRESH, t("Look for devices again")).clicked() {
                                     refresh = true;
                                 }
                             });
                             ui.end_row();
-                            ui.label("Channel");
+                            ui.label(t("Channel"));
                             let mut ch = sync.ltc_channel + 1;
                             ui.add(egui::DragValue::new(&mut ch).range(1..=64));
                             sync.ltc_channel = ch - 1;
                             ui.end_row();
                         }
                         TimecodeSource::Mtc => {
-                            ui.label("MIDI port");
+                            ui.label(t("MIDI port"));
                             ui.horizontal(|ui| {
-                                let label = sync.mtc_port.clone().unwrap_or_else(|| "First MIDI input".into());
+                                let label = sync.mtc_port.clone().unwrap_or_else(|| t("First MIDI input").into());
                                 egui::ComboBox::from_id_salt("list-tc-port").width(240.0).selected_text(label).show_ui(ui, |ui| {
-                                    ui.selectable_value(&mut sync.mtc_port, None, "First MIDI input");
+                                    ui.selectable_value(&mut sync.mtc_port, None, t("First MIDI input"));
                                     for p in &devs.midi_in {
                                         ui.selectable_value(&mut sync.mtc_port, Some(p.clone()), p);
                                     }
                                 });
-                                if theme::icon_button(ui, icons::REFRESH, "Look for devices again").clicked() {
+                                if theme::icon_button(ui, icons::REFRESH, t("Look for devices again")).clicked() {
                                     refresh = true;
                                 }
                             });
@@ -302,7 +303,7 @@ impl App {
                         }
                     }
                     if sync.source != TimecodeSource::Off {
-                        ui.label("Receiving");
+                        ui.label(t("Receiving"));
                         let now = Instant::now();
                         match (show.timecode.position(&sync, now), show.timecode.error(&sync)) {
                             (Some(r), _) => {
@@ -317,7 +318,7 @@ impl App {
                                 ui.label(RichText::new(e).color(RED));
                             }
                             (None, None) => {
-                                ui.label(RichText::new("no signal").color(AMBER));
+                                ui.label(RichText::new(t("no signal")).color(AMBER));
                                 ui.ctx().request_repaint_after(std::time::Duration::from_millis(200));
                             }
                         }
@@ -328,8 +329,8 @@ impl App {
             ui.add_space(6.0);
             ui.label(
                 RichText::new(
-                    "Cues in this list with a timecode trigger (Basics tab) fire as the timecode runs past their time. \
-                     Jumps and dropouts don't fire cues.",
+                    t("Cues in this list with a timecode trigger (Triggers tab) fire as the timecode runs past their time. \
+                     Jumps and dropouts don't fire cues."),
                 )
                 .weak()
                 .small(),
@@ -373,11 +374,11 @@ impl App {
         let hf = theme::semibold(10.5);
         for (x, t, right) in [
             (cols.num, "#", false),
-            (cols.name, "NAME", false),
-            (cols.target, "TARGET", false),
-            (cols.pre + W_TIME - 8.0, "PRE-WAIT", true),
-            (cols.action + W_TIME - 8.0, "ACTION", true),
-            (cols.post + W_TIME - 8.0, "POST-WAIT", true),
+            (cols.name, t("NAME"), false),
+            (cols.target, t("TARGET"), false),
+            (cols.pre + W_TIME - 8.0, t("PRE-WAIT"), true),
+            (cols.action + W_TIME - 8.0, t("ACTION"), true),
+            (cols.post + W_TIME - 8.0, t("POST-WAIT"), true),
         ] {
             let align = if right { Align2::RIGHT_CENTER } else { Align2::LEFT_CENTER };
             hp.text(pos2(x + if right { 0.0 } else { 4.0 }, hdr.center().y), align, t, hf.clone(), theme::TEXT_FAINT);
@@ -458,7 +459,7 @@ impl App {
                     let cont = Rect::from_x_y_ranges(cols.cont..=cols.cont + W_CONT, y);
                     let r = ui
                         .interact(cont, ui.id().with(("cont", id)), Sense::click())
-                        .on_hover_text("Click to cycle: do not continue → auto-continue → auto-follow");
+                        .on_hover_text(t("Click to cycle: do not continue → auto-continue → auto-follow"));
                     if r.clicked() {
                         cycle_continue = Some(*id);
                     }
@@ -523,7 +524,7 @@ impl App {
                     ui.painter().text(
                         rest.center_top() + vec2(0.0, 40.0),
                         Align2::CENTER_CENTER,
-                        "Empty cue list — add cues from the toolbar or drop media files here",
+                        t("Empty cue list — add cues from the toolbar or drop media files here"),
                         FontId::proportional(15.0),
                         ui.visuals().weak_text_color(),
                     );
@@ -748,10 +749,10 @@ impl App {
             p.text(pos2(x + INDENT / 2.0, cy), Align2::CENTER_CENTER, chev, theme::icon_font(icon_size), theme::TEXT_DIM);
             x += INDENT;
             let tag = match mode {
-                GroupMode::StartFirstAndEnter => "enter",
-                GroupMode::StartFirst => "playlist",
-                GroupMode::StartAll => "all",
-                GroupMode::StartRandom => "random",
+                GroupMode::StartFirstAndEnter => t("enter"),
+                GroupMode::StartFirst => t("playlist"),
+                GroupMode::StartAll => t("all"),
+                GroupMode::StartRandom => t("random"),
             };
             let name_end = clip(x, cols.target).text(pos2(x + 2.0, cy), Align2::LEFT_CENTER, cue.display_name(), font.clone(), text_color).right();
             // Mode pill.
@@ -775,33 +776,33 @@ impl App {
         let target_text = match &cue.kind {
             CueKind::Audio(_) | CueKind::Video(_) => match &probe {
                 Some(Ok(info)) => info.detail.to_string(),
-                Some(Err(_)) => "unreadable".into(),
-                None if media_path.is_none() => "no file".into(),
+                Some(Err(_)) => t("unreadable").into(),
+                None if media_path.is_none() => t("no file").into(),
                 None => "…".into(),
             },
             CueKind::Network(n) => format!("{}:{} {}", n.host, n.port, n.address),
             CueKind::Text(t) => format!("“{}”", t.text.lines().next().unwrap_or("")),
             CueKind::Mic(m) => {
                 let ch = match m.channels {
-                    1 => format!("in {}", m.first_channel + 1),
-                    n => format!("in {}–{}", m.first_channel + 1, m.first_channel + n),
+                    1 => tr!("in {n}", n = m.first_channel + 1),
+                    n => tr!("in {first}–{last}", first = m.first_channel + 1, last = m.first_channel + n),
                 };
-                let dev = m.device.as_ref().map_or("default input".to_string(), |d| {
+                let dev = m.device.as_ref().map_or(t("default input").to_string(), |d| {
                     self.inputs.lock().audio_in.iter().find(|x| &x.id == d).map_or(d.clone(), |x| x.name.clone())
                 });
                 format!("{dev} · {ch}")
             }
             CueKind::Camera(c) => match &c.device {
-                None => "first camera".into(),
+                None => t("first camera").into(),
                 Some(d) => self.inputs.lock().cameras.iter().find(|x| &x.0 == d).map_or(d.clone(), |x| x.1.clone()),
             },
             k => match k.target() {
                 Some(t) => match show.ws.cue_list.find(t) {
                     Some(tc) => format!("{} {}", tc.number, tc.display_name()),
-                    None => "missing target".into(),
+                    None => crate::i18n::t("missing target").into(),
                 },
-                None if matches!(k, CueKind::Stop { .. } | CueKind::Pause { .. }) => "all cues".into(),
-                None if k.needs_target() => "no target".into(),
+                None if matches!(k, CueKind::Stop { .. } | CueKind::Pause { .. }) => t("all cues").into(),
+                None if k.needs_target() => t("no target").into(),
                 None => String::new(),
             },
         };
@@ -924,13 +925,13 @@ fn row_context_menu(ui: &mut Ui, cue: &Cue, editing: bool) -> Option<RowAction> 
     let mut a = None;
     ui.label(RichText::new(format!("{} {}", cue.number, cue.display_name())).strong());
     ui.separator();
-    if ui.button(theme::with_icon(icons::ARROW_RIGHT, "Set playhead here")).clicked() {
+    if ui.button(theme::with_icon(icons::ARROW_RIGHT, t("Set playhead here"))).clicked() {
         a = Some(RowAction::SetPlayhead);
     }
-    if ui.button(theme::with_icon(icons::PLAY_ARROW, "Start this cue")).clicked() {
+    if ui.button(theme::with_icon(icons::PLAY_ARROW, t("Start this cue"))).clicked() {
         a = Some(RowAction::Start);
     }
-    if ui.button(theme::with_icon(icons::STOP, "Stop this cue")).clicked() {
+    if ui.button(theme::with_icon(icons::STOP, t("Stop this cue"))).clicked() {
         a = Some(RowAction::Stop);
     }
     if !editing {
@@ -940,16 +941,16 @@ fn row_context_menu(ui: &mut Ui, cue: &Cue, editing: bool) -> Option<RowAction> 
         return a;
     }
     ui.separator();
-    if ui.button(if cue.armed { theme::with_icon(icons::BLOCK, "Disarm") } else { theme::with_icon(icons::CHECK_CIRCLE, "Arm") }).clicked() {
+    if ui.button(if cue.armed { theme::with_icon(icons::BLOCK, t("Disarm")) } else { theme::with_icon(icons::CHECK_CIRCLE, t("Arm")) }).clicked() {
         a = Some(RowAction::ToggleArmed);
     }
-    if ui.button(theme::with_icon(icons::CONTENT_COPY, "Duplicate")).clicked() {
+    if ui.button(theme::with_icon(icons::CONTENT_COPY, t("Duplicate"))).clicked() {
         a = Some(RowAction::Duplicate);
     }
-    if ui.button(theme::with_icon(icons::CREATE_NEW_FOLDER, "Group selected")).clicked() {
+    if ui.button(theme::with_icon(icons::CREATE_NEW_FOLDER, t("Group selected"))).clicked() {
         a = Some(RowAction::Group);
     }
-    if ui.button(theme::with_icon(icons::DELETE, "Delete")).clicked() {
+    if ui.button(theme::with_icon(icons::DELETE, t("Delete"))).clicked() {
         a = Some(RowAction::Delete);
     }
     if a.is_some() {

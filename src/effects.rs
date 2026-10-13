@@ -76,14 +76,14 @@ impl AudioFxKind {
     /// Name shown in the UI.
     pub fn label(self) -> &'static str {
         match self {
-            AudioFxKind::Delay => "Delay",
-            AudioFxKind::Reverb => "Reverb",
-            AudioFxKind::Compressor => "Compressor",
-            AudioFxKind::Limiter => "Limiter",
-            AudioFxKind::Gate => "Gate",
-            AudioFxKind::Distortion => "Distortion",
-            AudioFxKind::Chorus => "Chorus",
-            AudioFxKind::Bitcrusher => "Bitcrusher",
+            AudioFxKind::Delay => crate::i18n::t("Delay"),
+            AudioFxKind::Reverb => crate::i18n::t("Reverb"),
+            AudioFxKind::Compressor => crate::i18n::t("Compressor"),
+            AudioFxKind::Limiter => crate::i18n::t("Limiter"),
+            AudioFxKind::Gate => crate::i18n::t("Gate"),
+            AudioFxKind::Distortion => crate::i18n::t("Distortion"),
+            AudioFxKind::Chorus => crate::i18n::t("Chorus"),
+            AudioFxKind::Bitcrusher => crate::i18n::t("Bitcrusher"),
         }
     }
 
@@ -230,19 +230,19 @@ impl VideoFxKind {
     /// Name shown in the UI.
     pub fn label(self) -> &'static str {
         match self {
-            VideoFxKind::ColorControls => "Colour controls",
-            VideoFxKind::Exposure => "Exposure",
-            VideoFxKind::Hue => "Hue",
-            VideoFxKind::Colorize => "Colourise",
-            VideoFxKind::Sepia => "Sepia",
-            VideoFxKind::Invert => "Invert",
-            VideoFxKind::Posterize => "Posterise",
-            VideoFxKind::Threshold => "Threshold",
-            VideoFxKind::Vignette => "Vignette",
-            VideoFxKind::Blur => "Blur",
-            VideoFxKind::Pixellate => "Pixellate",
-            VideoFxKind::Sharpen => "Sharpen",
-            VideoFxKind::ChromaKey => "Chroma key",
+            VideoFxKind::ColorControls => crate::i18n::t("Colour controls"),
+            VideoFxKind::Exposure => crate::i18n::t("Exposure"),
+            VideoFxKind::Hue => crate::i18n::t("Hue"),
+            VideoFxKind::Colorize => crate::i18n::t("Colourise"),
+            VideoFxKind::Sepia => crate::i18n::t("Sepia"),
+            VideoFxKind::Invert => crate::i18n::t("Invert"),
+            VideoFxKind::Posterize => crate::i18n::t("Posterise"),
+            VideoFxKind::Threshold => crate::i18n::t("Threshold"),
+            VideoFxKind::Vignette => crate::i18n::t("Vignette"),
+            VideoFxKind::Blur => crate::i18n::t("Blur"),
+            VideoFxKind::Pixellate => crate::i18n::t("Pixellate"),
+            VideoFxKind::Sharpen => crate::i18n::t("Sharpen"),
+            VideoFxKind::ChromaKey => crate::i18n::t("Chroma key"),
         }
     }
 

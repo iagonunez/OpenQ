@@ -14,6 +14,7 @@ use parking_lot::Mutex;
 use std::path::PathBuf;
 use std::sync::Arc;
 use std::time::{Duration, Instant};
+use crate::i18n::t;
 
 /// Edits are sent at most this often while typing.
 const EDIT_INTERVAL: Duration = Duration::from_millis(100);
@@ -107,17 +108,17 @@ impl RemoteUi {
     /// Short status for the status bar: (text, is_replica).
     pub(super) fn status(&self) -> Option<(String, bool)> {
         if let Some(r) = &self.replica {
-            return Some((format!("Remote: {} · {}", r.server, r.role.label()), true));
+            return Some((tr!("Remote: {server} · {role}", server = r.server, role = r.role.label()), true));
         }
         if matches!(self.link.as_ref().map(|l| l.state()), Some(LinkState::Connecting)) {
-            return Some(("Connecting…".into(), true));
+            return Some((t("Connecting…").into(), true));
         }
         self.server.as_ref().map(|s| {
             let n = s.connected().len();
             let text = match n {
-                0 => format!("Sharing on :{}", s.port()),
-                1 => "1 remote device".into(),
-                n => format!("{n} remote devices"),
+                0 => tr!("Sharing on :{port}", port = s.port()),
+                1 => t("1 remote device").into(),
+                n => tr!("{n} remote devices", n),
             };
             (text, false)
         })
@@ -147,7 +148,7 @@ impl App {
     pub(super) fn control(&mut self, show: &mut Show, cmd: Command) {
         if let Some(r) = &self.remote.replica {
             if !r.role.can_control() {
-                self.notify("This device is view-only");
+                self.notify(t("This device is view-only"));
             } else if let Some(l) = &self.remote.link {
                 l.send(ClientMsg::Command(cmd));
             }
@@ -216,7 +217,7 @@ impl App {
         if !role.can_edit() {
             self.mode = Mode::Show;
         }
-        self.notify(format!("Connected to {server} ({})", role.label()));
+        self.notify(tr!("Connected to {server} ({role})", server, role = role.label()));
         self.remote.notice = None;
         self.remote.replica = Some(Replica {
             server,
@@ -250,7 +251,7 @@ impl App {
     pub(super) fn disconnect(&mut self, show: &mut Show) {
         self.remote.link = None;
         self.leave_replica(show);
-        self.notify("Disconnected");
+        self.notify(t("Disconnected"));
     }
 
     pub(super) fn connect(&mut self, ctx: &egui::Context, show: &mut Show, address: String, auth: Auth) {
@@ -322,7 +323,7 @@ impl App {
                 ServerMsg::Waveform(p, w) => self.waveforms.insert(p, w.map(Arc::new)),
                 ServerMsg::Role(role) => {
                     r.role = role;
-                    notices.push(format!("Your role is now: {}", role.label()));
+                    notices.push(tr!("Your role is now: {role}", role = role.label()));
                 }
                 ServerMsg::Refused(why) => notices.push(why),
             }
@@ -370,7 +371,7 @@ impl App {
             return;
         }
         let mut open = true;
-        egui::Window::new(theme::with_icon(icons::ROUTER, "Remote"))
+        egui::Window::new(theme::with_icon(icons::ROUTER, t("Remote")))
             .id(egui::Id::new("remote-window"))
             .open(&mut open)
             .default_size([560.0, 640.0])
@@ -378,8 +379,8 @@ impl App {
             .collapsible(false)
             .show(ctx, |ui| {
                 ui.horizontal(|ui| {
-                    theme::tab(ui, &mut self.remote.tab, RemoteTab::Share, icons::LAN, "Share this OpenQ");
-                    theme::tab(ui, &mut self.remote.tab, RemoteTab::Connect, icons::CABLE, "Connect to another");
+                    theme::tab(ui, &mut self.remote.tab, RemoteTab::Share, icons::LAN, t("Share this OpenQ"));
+                    theme::tab(ui, &mut self.remote.tab, RemoteTab::Connect, icons::CABLE, t("Connect to another"));
                 });
                 ui.separator();
                 egui::ScrollArea::vertical().auto_shrink([false, false]).show(ui, |ui| match self.remote.tab {
@@ -393,7 +394,7 @@ impl App {
     fn share_tab(&mut self, ui: &mut Ui) {
         let ctx = ui.ctx().clone();
         egui::Grid::new("remote-share").num_columns(2).spacing([12.0, 8.0]).show(ui, |ui| {
-            ui.label("This device");
+            ui.label(t("This device"));
             let mut name = self.remote.config.lock().instance_name.clone();
             let r = ui.add(egui::TextEdit::singleline(&mut name).desired_width(220.0));
             if r.changed() {
@@ -404,10 +405,10 @@ impl App {
             }
             ui.end_row();
 
-            ui.label("Remote access");
+            ui.label(t("Remote access"));
             ui.horizontal(|ui| {
                 let mut on = self.remote.server.is_some();
-                if ui.checkbox(&mut on, "Let paired devices connect").changed() {
+                if ui.checkbox(&mut on, t("Let paired devices connect")).changed() {
                     if on {
                         self.remote.start_server(&ctx, self.show.clone());
                     } else {
@@ -418,7 +419,7 @@ impl App {
                 }
                 if self.remote.server.is_none() {
                     let mut port = self.remote.config.lock().port;
-                    ui.label("port");
+                    ui.label(t("port"));
                     if ui.add(egui::DragValue::new(&mut port).range(1024..=65535)).changed() {
                         self.remote.config.lock().port = port;
                         self.remote.save_config();
@@ -432,13 +433,13 @@ impl App {
                 ui.end_row();
             }
             if let Some(s) = &self.remote.server {
-                ui.label("Address");
+                ui.label(t("Address"));
                 let addrs: Vec<String> = self.remote.local_ips.iter().map(|ip| format!("{ip}:{}", s.port())).collect();
-                ui.label(RichText::new(if addrs.is_empty() { format!("port {}", s.port()) } else { addrs.join("  ·  ") }).font(theme::mono(12.0)));
+                ui.label(RichText::new(if addrs.is_empty() { tr!("port {port}", port = s.port()) } else { addrs.join("  ·  ") }).font(theme::mono(12.0)));
                 ui.end_row();
             }
 
-            ui.label("New devices get");
+            ui.label(t("New devices get"));
             let mut role = self.remote.config.lock().default_role;
             if role_combo(ui, "default-role", &mut role) {
                 self.remote.config.lock().default_role = role;
@@ -453,18 +454,18 @@ impl App {
                 Some((code, left, tries)) => {
                     egui::Frame::new().fill(theme::BG_INPUT).corner_radius(8).inner_margin(12).show(ui, |ui| {
                         ui.vertical_centered(|ui| {
-                            ui.label(theme::caption("Pairing code"));
+                            ui.label(theme::caption(t("Pairing code")));
                             ui.label(RichText::new(&code).font(theme::mono(34.0)).color(theme::TEXT));
                             ui.label(
-                                RichText::new(format!(
-                                    "Enter it on the other device (Remote → Connect to another). Valid for {}:{:02} · {tries} tries left",
-                                    left.as_secs() / 60,
-                                    left.as_secs() % 60
+                                RichText::new(tr!(
+                                    "Enter it on the other device (Remote → Connect to another). Valid for {time} · {tries} tries left",
+                                    time = format!("{}:{:02}", left.as_secs() / 60, left.as_secs() % 60),
+                                    tries
                                 ))
                                 .small()
                                 .color(theme::TEXT_DIM),
                             );
-                            if ui.button("Cancel pairing").clicked() {
+                            if ui.button(t("Cancel pairing")).clicked() {
                                 s.close_pairing();
                             }
                         });
@@ -472,22 +473,22 @@ impl App {
                     ctx.request_repaint_after(Duration::from_millis(500));
                 }
                 None => {
-                    if ui.button(theme::with_icon(icons::ADD, "Pair a new device…")).clicked() {
+                    if ui.button(theme::with_icon(icons::ADD, t("Pair a new device…"))).clicked() {
                         s.open_pairing();
                     }
                 }
             }
         } else {
-            ui.label(RichText::new("Turn remote access on to pair devices.").weak());
+            ui.label(RichText::new(t("Turn remote access on to pair devices.")).weak());
         }
 
         ui.add_space(10.0);
-        ui.label(theme::caption("Paired devices"));
+        ui.label(theme::caption(t("Paired devices")));
         let connected: Vec<uuid::Uuid> = self.remote.server.as_ref().map(|s| s.connected().iter().map(|c| c.device).collect()).unwrap_or_default();
         let mut devices = self.remote.config.lock().devices.clone();
         let before = devices.clone();
         if devices.is_empty() {
-            ui.label(RichText::new("None yet.").weak());
+            ui.label(RichText::new(t("None yet.")).weak());
         }
         let mut remove = None;
         egui::Grid::new("remote-devices").num_columns(4).spacing([12.0, 6.0]).show(ui, |ui| {
@@ -498,8 +499,8 @@ impl App {
                     ui.label(&d.name);
                 });
                 role_combo(ui, ("role", d.id), &mut d.role);
-                ui.label(RichText::new(if on { "connected".into() } else { ago(d.last_seen) }).small().color(theme::TEXT_DIM));
-                if theme::icon_button(ui, icons::DELETE, "Remove: disconnects it and it must pair again").clicked() {
+                ui.label(RichText::new(if on { t("connected").into() } else { ago(d.last_seen) }).small().color(theme::TEXT_DIM));
+                if theme::icon_button(ui, icons::DELETE, t("Remove: disconnects it and it must pair again")).clicked() {
                     remove = Some(i);
                 }
                 ui.end_row();
@@ -517,7 +518,7 @@ impl App {
             let events = s.events();
             if !events.is_empty() {
                 ui.add_space(8.0);
-                egui::CollapsingHeader::new(theme::caption("Activity")).show(ui, |ui| {
+                egui::CollapsingHeader::new(theme::caption(t("Activity"))).show(ui, |ui| {
                     for e in events.iter().rev() {
                         ui.label(RichText::new(e).font(theme::mono(11.0)).color(theme::TEXT_DIM));
                     }
@@ -527,8 +528,8 @@ impl App {
         ui.add_space(6.0);
         ui.label(
             RichText::new(
-                "Connections are encrypted end to end. A pairing code works for 5 minutes and 5 tries; \
-                 paired devices then log in with their own key, which Remove revokes.",
+                t("Connections are encrypted end to end. A pairing code works for 5 minutes and 5 tries; \
+                 paired devices then log in with their own key, which Remove revokes."),
             )
             .small()
             .color(theme::TEXT_FAINT),
@@ -541,18 +542,18 @@ impl App {
             Some((LinkState::Connected { server, role }, addr)) => {
                 ui.horizontal(|ui| {
                     ui.label(theme::icon(icons::FIBER_MANUAL_RECORD, 12.0).color(theme::GREEN));
-                    ui.label(RichText::new(format!("Connected to {server}")).strong());
+                    ui.label(RichText::new(tr!("Connected to {server}", server)).strong());
                     ui.label(RichText::new(format!("{addr} · {}", role.label())).color(theme::TEXT_DIM));
                 });
                 ui.label(
                     RichText::new(match role {
-                        Role::View => "You can follow the show here. The main device controls it.",
-                        Role::Control => "GO, stop, pause and the playhead act on the main device.",
-                        Role::Edit => "You can run and edit the show; changes are saved on the main device.",
+                        Role::View => t("You can follow the show here. The main device controls it."),
+                        Role::Control => t("GO, stop, pause and the playhead act on the main device."),
+                        Role::Edit => t("You can run and edit the show; changes are saved on the main device."),
                     })
                     .weak(),
                 );
-                if ui.button(theme::with_icon(icons::CLOSE, "Disconnect")).clicked() {
+                if ui.button(theme::with_icon(icons::CLOSE, t("Disconnect"))).clicked() {
                     self.disconnect(show);
                 }
                 return;
@@ -560,8 +561,8 @@ impl App {
             Some((LinkState::Connecting, addr)) => {
                 ui.horizontal(|ui| {
                     ui.spinner();
-                    ui.label(format!("Connecting to {addr}…"));
-                    if ui.button("Cancel").clicked() {
+                    ui.label(tr!("Connecting to {addr}…", addr));
+                    if ui.button(t("Cancel")).clicked() {
                         self.remote.link = None;
                     }
                 });
@@ -576,11 +577,11 @@ impl App {
 
         // Discovery.
         ui.horizontal(|ui| {
-            ui.label(theme::caption("On this network"));
+            ui.label(theme::caption(t("On this network")));
             let running = self.remote.search.lock().running;
             if running {
                 ui.spinner();
-            } else if ui.small_button(theme::with_icon(icons::REFRESH, "Search")).clicked() {
+            } else if ui.small_button(theme::with_icon(icons::REFRESH, t("Search"))).clicked() {
                 let s = self.remote.search.clone();
                 s.lock().running = true;
                 let c = ctx.clone();
@@ -599,7 +600,7 @@ impl App {
         let mut go: Option<(String, Auth)> = None;
         match found {
             None => {
-                ui.label(RichText::new("Search to list OpenQ devices sharing on this network.").weak());
+                ui.label(RichText::new(t("Search to list OpenQ devices sharing on this network.")).weak());
             }
             Some(Err(e)) => {
                 ui.label(RichText::new(e).color(RED));
@@ -607,7 +608,7 @@ impl App {
             Some(Ok(list)) => {
                 let list: Vec<Found> = list.into_iter().filter(|f| f.id != my_id).collect();
                 if list.is_empty() {
-                    ui.label(RichText::new("Nothing found. Is remote access on there, and are you on the same network?").weak());
+                    ui.label(RichText::new(t("Nothing found. Is remote access on there, and are you on the same network?")).weak());
                 }
                 for f in list {
                     ui.horizontal(|ui| {
@@ -616,14 +617,14 @@ impl App {
                         ui.label(RichText::new(f.address.to_string()).font(theme::mono(11.5)).color(theme::TEXT_DIM));
                         let paired = known_ids.contains(&f.id);
                         if paired {
-                            ui.label(RichText::new("paired").small().color(theme::GREEN));
+                            ui.label(RichText::new(t("paired")).small().color(theme::GREEN));
                         }
                         ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                             if paired {
-                                if ui.button("Connect").clicked() {
+                                if ui.button(t("Connect")).clicked() {
                                     go = Some((f.address.to_string(), Auth::Token));
                                 }
-                            } else if ui.button("Pair…").on_hover_text("Fill in the address; then enter the code shown there").clicked() {
+                            } else if ui.button(t("Pair…")).on_hover_text(t("Fill in the address; then enter the code shown there")).clicked() {
                                 self.remote.address = f.address.to_string();
                             }
                         });
@@ -634,22 +635,22 @@ impl App {
 
         // Manual connection / pairing.
         ui.add_space(8.0);
-        ui.label(theme::caption("Connect"));
+        ui.label(theme::caption(t("Connect")));
         egui::Grid::new("remote-connect").num_columns(2).spacing([12.0, 8.0]).show(ui, |ui| {
-            ui.label("Address");
-            ui.add(egui::TextEdit::singleline(&mut self.remote.address).hint_text("192.168.1.20 or host:port").desired_width(240.0));
+            ui.label(t("Address"));
+            ui.add(egui::TextEdit::singleline(&mut self.remote.address).hint_text(t("192.168.1.20 or host:port")).desired_width(240.0));
             ui.end_row();
-            ui.label("Pairing code");
+            ui.label(t("Pairing code"));
             ui.add(
                 egui::TextEdit::singleline(&mut self.remote.code)
-                    .hint_text("XXXX-XXXX (first time only)")
+                    .hint_text(t("XXXX-XXXX (first time only)"))
                     .font(theme::mono(14.0))
                     .desired_width(160.0),
             );
             ui.end_row();
             ui.label("");
             let ok = !self.remote.address.trim().is_empty();
-            if ui.add_enabled(ok, egui::Button::new(theme::with_icon(icons::CABLE, "Connect"))).clicked() {
+            if ui.add_enabled(ok, egui::Button::new(theme::with_icon(icons::CABLE, t("Connect")))).clicked() {
                 let code = std::mem::take(&mut self.remote.code);
                 let auth = if code.trim().is_empty() { Auth::Token } else { Auth::Pair(code) };
                 go = Some((self.remote.address.trim().to_string(), auth));
@@ -661,17 +662,17 @@ impl App {
         let servers = self.remote.config.lock().servers.clone();
         if !servers.is_empty() {
             ui.add_space(8.0);
-            ui.label(theme::caption("Paired main devices"));
+            ui.label(theme::caption(t("Paired main devices")));
             let mut forget = None;
             for k in &servers {
                 ui.horizontal(|ui| {
                     ui.label(&k.name);
                     ui.label(RichText::new(&k.address).font(theme::mono(11.5)).color(theme::TEXT_DIM));
                     ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                        if theme::icon_button(ui, icons::DELETE, "Forget this device's key").clicked() {
+                        if theme::icon_button(ui, icons::DELETE, t("Forget this device's key")).clicked() {
                             forget = Some(k.id);
                         }
-                        if ui.button("Connect").clicked() {
+                        if ui.button(t("Connect")).clicked() {
                             go = Some((k.address.clone(), Auth::Token));
                         }
                     });
@@ -684,7 +685,7 @@ impl App {
         }
         ui.add_space(6.0);
         ui.label(
-            RichText::new("While connected this window shows the main device's show; yours comes back when you disconnect.")
+            RichText::new(t("While connected this window shows the main device's show; yours comes back when you disconnect."))
                 .small()
                 .color(theme::TEXT_FAINT),
         );
@@ -709,9 +710,9 @@ fn role_combo(ui: &mut Ui, id: impl std::hash::Hash + std::fmt::Debug, role: &mu
 fn ago(unix: u64) -> String {
     let s = crate::remote::unix_now().saturating_sub(unix);
     match s {
-        0..=59 => "just now".into(),
-        60..=3599 => format!("{} min ago", s / 60),
-        3600..=86_399 => format!("{} h ago", s / 3600),
-        _ => format!("{} days ago", s / 86_400),
+        0..=59 => t("just now").into(),
+        60..=3599 => tr!("{n} min ago", n = s / 60),
+        3600..=86_399 => tr!("{n} h ago", n = s / 3600),
+        _ => tr!("{n} days ago", n = s / 86_400),
     }
 }

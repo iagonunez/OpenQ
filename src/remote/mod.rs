@@ -54,9 +54,9 @@ impl Role {
     /// Name shown in the UI.
     pub fn label(self) -> &'static str {
         match self {
-            Role::View => "View only",
-            Role::Control => "Control",
-            Role::Edit => "Control & edit",
+            Role::View => crate::i18n::t("View only"),
+            Role::Control => crate::i18n::t("Control"),
+            Role::Edit => crate::i18n::t("Control & edit"),
         }
     }
 

@@ -68,7 +68,7 @@ TEXT = {
             ("Dispositivos remotos", "Lleva o edita el espectáculo desde un portátil o una tableta con conexión cifrada."),
             ("Hecho para la cabina", "Modo función, autoguardado y recuperación tras fallos, audio que se reconecta solo."),
         ],
-        "more_features": "Todo se explica paso a paso en el <a href=\"{manual}\">manual de usuario</a>, que también viene con la aplicación (Help → User manual, o F1).",
+        "more_features": "Todo se explica paso a paso en el <a href=\"{manual}\">manual de usuario</a>, que también viene con la aplicación (Ayuda → Manual de usuario, o F1).",
         "foot": "Apache 2.0: uso gratuito, también en producciones comerciales; puedes modificarlo, compartirlo y venderlo.",
     },
     "gl": {
@@ -98,7 +98,7 @@ TEXT = {
             ("Dispositivos remotos", "Leva ou edita o espectáculo desde un portátil ou unha tableta cunha conexión cifrada."),
             ("Feito para a cabina", "Modo función, autogardado e recuperación tras fallos, audio que se reconecta só."),
         ],
-        "more_features": "Todo se explica paso a paso no <a href=\"{manual}\">manual de usuario</a>, que tamén vén coa aplicación (Help → User manual, ou F1).",
+        "more_features": "Todo se explica paso a paso no <a href=\"{manual}\">manual de usuario</a>, que tamén vén coa aplicación (Axuda → Manual de usuario, ou F1).",
         "foot": "Apache 2.0: uso de balde, tamén en producións comerciais; podes modificalo, compartilo e vendelo.",
     },
 }

@@ -109,9 +109,9 @@ cargo build --release && ./target/release/openq
 ## 📖 Manual de usuario
 
 Todo o anterior explícase paso a paso, con imaxes, no **manual de usuario**, que vén coa aplicación:
-escolle **Help → User manual** ou preme **F1** e ábrese no teu
-navegador. Funciona sen conexión e sempre corresponde á túa versión de OpenQ. Está en inglés,
-español e galego, e tamén podes lelo [en liña](https://iagonunez.github.io/OpenQ/manual/index.gl.html).
+escolle **Axuda → Manual de usuario** ou preme **F1** e ábrese no teu
+navegador. Funciona sen conexión e sempre corresponde á túa versión de OpenQ. Como a propia aplicación (a lingua escóllese a primeira vez que se abre ou en
+**Axustes → Xeral**), está en galego, español e inglés, e tamén podes lelo [en liña](https://iagonunez.github.io/OpenQ/manual/index.gl.html).
 
 ## 🎨 Aspecto e créditos
 
@@ -139,7 +139,7 @@ Copyright 2026 Iago Núñez. OpenQ distribúese baixo a **Apache License 2.0** (
 
 As fontes, crates e bibliotecas do sistema de terceiros conservan as súas propias licenzas. Están en
 [NOTICE.md](NOTICE.md) e [THIRD_PARTY_LICENSES.md](THIRD_PARTY_LICENSES.md), e tamén na aplicación
-en **Help → About OpenQ and licenses**. Dúas cousas a ter en conta ao distribuír binarios:
+en **Axuda → Acerca de OpenQ e licenzas**. Dúas cousas a ter en conta ao distribuír binarios:
 
 - Inclúe con eles `LICENSE.md`, `NOTICE.md`, `THIRD_PARTY_LICENSES.md` e `assets/fonts/*.txt`.
   A aplicación tamén contén estes textos.

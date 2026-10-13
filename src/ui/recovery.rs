@@ -7,6 +7,7 @@ use egui::RichText;
 use parking_lot::Mutex;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
+use crate::i18n::t;
 
 /// This instance's autosave session and what an earlier crash left behind.
 #[derive(Default)]
@@ -31,10 +32,10 @@ fn age(saved: u64) -> String {
     let now = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map(|d| d.as_secs()).unwrap_or(0);
     let s = now.saturating_sub(saved);
     match s {
-        0..60 => "just now".into(),
-        60..3600 => format!("{} min ago", s / 60),
-        3600..86400 => format!("{} h ago", s / 3600),
-        _ => format!("{} days ago", s / 86400),
+        0..60 => t("just now").into(),
+        60..3600 => tr!("{n} min ago", n = s / 60),
+        3600..86400 => tr!("{n} h ago", n = s / 3600),
+        _ => tr!("{n} days ago", n = s / 86400),
     }
 }
 
@@ -46,14 +47,14 @@ impl App {
         }
         let mut action: Option<(usize, bool)> = None;
         let mut later = false;
-        egui::Window::new(theme::with_icon(icons::WARNING, "Recover unsaved work"))
+        egui::Window::new(theme::with_icon(icons::WARNING, t("Recover unsaved work")))
             .id(egui::Id::new("recovery"))
             .collapsible(false)
             .resizable(false)
             .anchor(egui::Align2::CENTER_CENTER, [0.0, 0.0])
             .fixed_size([540.0, 0.0])
             .show(ctx, |ui| {
-                ui.label("OpenQ didn't quit normally last time. These shows had changes that weren't saved:");
+                ui.label(t("OpenQ didn't quit normally last time. These shows had changes that weren't saved:"));
                 ui.add_space(6.0);
                 for (i, o) in self.recovery.orphans.iter().enumerate() {
                     theme::card_frame().show(ui, |ui| {
@@ -62,18 +63,18 @@ impl App {
                             ui.vertical(|ui| {
                                 ui.set_max_width(ui.available_width() - 170.0);
                                 ui.label(RichText::new(o.name()).font(theme::semibold(14.0)));
-                                let place = o.info.path.as_ref().map(|p| p.display().to_string()).unwrap_or_else(|| "never saved".into());
+                                let place = o.info.path.as_ref().map(|p| p.display().to_string()).unwrap_or_else(|| t("never saved").into());
                                 ui.add(
-                                    egui::Label::new(RichText::new(format!("autosaved {} · {place}", age(o.info.saved))).small().color(theme::TEXT_DIM))
+                                    egui::Label::new(RichText::new(tr!("autosaved {age} · {place}", age = age(o.info.saved), place)).small().color(theme::TEXT_DIM))
                                         .truncate(),
                                 )
                                 .on_hover_text(place.as_str());
                             });
                             ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                                if ui.button("Discard").on_hover_text("Delete this copy for good").clicked() {
+                                if ui.button(t("Discard")).on_hover_text(t("Delete this copy for good")).clicked() {
                                     action = Some((i, false));
                                 }
-                                if ui.button(theme::with_icon(icons::REPLAY, "Recover")).clicked() {
+                                if ui.button(theme::with_icon(icons::REPLAY, t("Recover"))).clicked() {
                                     action = Some((i, true));
                                 }
                             });
@@ -83,9 +84,9 @@ impl App {
                 }
                 ui.add_space(4.0);
                 ui.horizontal(|ui| {
-                    ui.label(RichText::new("Recovered shows open with unsaved changes: save to keep them.").small().color(theme::TEXT_DIM));
+                    ui.label(RichText::new(t("Recovered shows open with unsaved changes: save to keep them.")).small().color(theme::TEXT_DIM));
                     ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                        if ui.button("Later").on_hover_text("Ask again next time OpenQ starts").clicked() {
+                        if ui.button(t("Later")).on_hover_text(t("Ask again next time OpenQ starts")).clicked() {
                             later = true;
                         }
                     });
@@ -132,9 +133,9 @@ impl App {
                 o.discard();
                 // Our own session holds it from now on.
                 self.recovery.save_soon();
-                self.notify(format!("Recovered {} — save to keep it", o.name()));
+                self.notify(tr!("Recovered {name} — save to keep it", name = o.name()));
             }
-            Err(e) => self.notify_error(format!("Cannot recover {}: {e:#}", o.name())),
+            Err(e) => self.notify_error(tr!("Cannot recover {name}: {e}", name = o.name(), e = format!("{e:#}"))),
         }
     }
 }

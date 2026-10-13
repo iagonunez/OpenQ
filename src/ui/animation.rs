@@ -10,6 +10,7 @@ use super::widgets::{fmt_time, time_edit};
 use crate::animation::{AnimProp, Animation, Ease, Key, Repeat, Track};
 use crate::model::CueId;
 use egui::{Color32, ComboBox, DragValue, Pos2, Rect, RichText, Sense, Shape, Stroke, Ui, pos2, vec2};
+use crate::i18n::t;
 
 /// Editor state kept between frames.
 #[derive(Default)]
@@ -43,7 +44,7 @@ pub(super) fn animation_tab(ui: &mut Ui, id: CueId, anim: &mut Animation, base: 
     if ed.sel.is_some_and(|(p, i)| anim.tracks.iter().find(|t| t.prop == p).is_none_or(|t| i >= t.keys.len())) {
         ed.sel = None;
     }
-    let specs = [Card::new(ic::TIMER, "Timeline", f32::INFINITY), Card::new(ic::ANIMATION, "Animation", 330.0), Card::new(ic::DIAMOND, "Keyframe", 360.0)];
+    let specs = [Card::new(ic::TIMER, t("Timeline"), f32::INFINITY), Card::new(ic::ANIMATION, t("Animation"), 330.0), Card::new(ic::DIAMOND, t("Keyframe"), 360.0)];
     theme::cards(ui, "anim", &specs, |ui, i| match i {
         0 => timeline(ui, anim, ed),
         1 => settings(ui, anim, base, ed, preview),
@@ -53,35 +54,35 @@ pub(super) fn animation_tab(ui: &mut Ui, id: CueId, anim: &mut Animation, base: 
 
 fn settings(ui: &mut Ui, anim: &mut Animation, base: Option<[[u8; 4]; 4]>, ed: &mut AnimEdit, preview: &mut bool) {
     egui::Grid::new("anim-settings").num_columns(2).spacing([10.0, 6.0]).show(ui, |ui| {
-        ui.label("Length");
+        ui.label(t("Length"));
         ui.horizontal(|ui| {
-            time_edit(ui, &mut anim.duration).on_hover_text("Length of one pass; 0 = up to the last keyframe");
+            time_edit(ui, &mut anim.duration).on_hover_text(t("Length of one pass; 0 = up to the last keyframe"));
             if anim.duration <= 0.0 {
-                ui.label(RichText::new(format!("auto · {}", fmt_time(anim.length()))).weak());
+                ui.label(RichText::new(tr!("auto · {time}", time = fmt_time(anim.length()))).weak());
             }
         });
         ui.end_row();
 
-        ui.label("Repeat");
+        ui.label(t("Repeat"));
         ui.horizontal(|ui| {
-            ui.selectable_value(&mut anim.repeat, Repeat::Once, "Once").on_hover_text("Play once, then hold the last values");
-            ui.selectable_value(&mut anim.repeat, Repeat::Loop, "Loop");
-            ui.selectable_value(&mut anim.repeat, Repeat::PingPong, "Ping-pong").on_hover_text("Forwards, then backwards");
+            ui.selectable_value(&mut anim.repeat, Repeat::Once, t("Once")).on_hover_text(t("Play once, then hold the last values"));
+            ui.selectable_value(&mut anim.repeat, Repeat::Loop, t("Loop"));
+            ui.selectable_value(&mut anim.repeat, Repeat::PingPong, t("Ping-pong")).on_hover_text(t("Forwards, then backwards"));
         });
         ui.end_row();
 
-        ui.label("Playhead");
+        ui.label(t("Playhead"));
         ui.horizontal(|ui| {
             time_edit(ui, &mut ed.time);
             super::inspector::preview_toggle(ui, preview);
         });
         ui.end_row();
 
-        ui.label("Add track");
+        ui.label(t("Add track"));
         let props: Vec<AnimProp> =
             AnimProp::LAYER.iter().chain(if base.is_some() { &AnimProp::TEXT[..] } else { &[] }).copied().filter(|p| !anim.has(*p)).collect();
         let mut add = None;
-        ComboBox::from_id_salt("anim-add").selected_text("Choose…").width(170.0).show_ui(ui, |ui| {
+        ComboBox::from_id_salt("anim-add").selected_text(t("Choose…")).width(170.0).show_ui(ui, |ui| {
             for p in props {
                 if ui.selectable_label(false, p.label()).clicked() {
                     add = Some(p);
@@ -102,13 +103,13 @@ fn settings(ui: &mut Ui, anim: &mut Animation, base: Option<[[u8; 4]; 4]>, ed: &
     });
     ui.add_space(4.0);
     ui.horizontal(|ui| {
-        if ui.add_enabled(!anim.tracks.is_empty(), egui::Button::new(theme::with_icon(ic::DELETE, "Clear animation"))).clicked() {
+        if ui.add_enabled(!anim.tracks.is_empty(), egui::Button::new(theme::with_icon(ic::DELETE, t("Clear animation")))).clicked() {
             anim.tracks.clear();
             ed.sel = None;
         }
     });
     ui.label(
-        RichText::new("Values are relative: position, rotation and crop add to the Geometry tab, scale and opacity multiply it.")
+        RichText::new(t("Values are relative: position, rotation and crop add to the Geometry tab, scale and opacity multiply it."))
             .weak()
             .small(),
     );
@@ -152,7 +153,7 @@ fn value_edit(ui: &mut Ui, p: AnimProp, v: &mut [f32; 4]) -> bool {
 
 fn key_editor(ui: &mut Ui, anim: &mut Animation, ed: &mut AnimEdit) {
     let Some((prop, i)) = ed.sel else {
-        ui.label(RichText::new("Click a keyframe on the timeline to edit it. Double-click a track to add one.").weak());
+        ui.label(RichText::new(t("Click a keyframe on the timeline to edit it. Double-click a track to add one.")).weak());
         return;
     };
     let Some(ti) = anim.tracks.iter().position(|t| t.prop == prop) else { return };
@@ -163,22 +164,22 @@ fn key_editor(ui: &mut Ui, anim: &mut Animation, ed: &mut AnimEdit) {
         let track = &mut anim.tracks[ti];
         let key = &mut track.keys[i];
         egui::Grid::new("anim-key").num_columns(2).spacing([10.0, 6.0]).show(ui, |ui| {
-            ui.label("Track");
+            ui.label(t("Track"));
             ui.label(RichText::new(prop.label()).strong());
             ui.end_row();
 
-            ui.label("Time");
+            ui.label(t("Time"));
             let mut t = key.t;
             if time_edit(ui, &mut t).changed() {
                 key.t = t;
             }
             ui.end_row();
 
-            ui.label("Value");
+            ui.label(crate::i18n::t("Value"));
             value_edit(ui, prop, &mut key.v);
             ui.end_row();
 
-            ui.label("Then");
+            ui.label(crate::i18n::t("Then"));
             ui.horizontal(|ui| {
                 let custom = matches!(key.ease, Ease::Bezier(_));
                 ComboBox::from_id_salt("anim-ease").selected_text(key.ease.label()).show_ui(ui, |ui| {
@@ -190,11 +191,11 @@ fn key_editor(ui: &mut Ui, anim: &mut Animation, ed: &mut AnimEdit) {
                     }
                 })
                 .response
-                .on_hover_text("How the value moves on to the next keyframe");
+                .on_hover_text(crate::i18n::t("How the value moves on to the next keyframe"));
             });
             ui.end_row();
             if let Ease::Bezier(b) = &mut key.ease {
-                ui.label("Curve");
+                ui.label(crate::i18n::t("Curve"));
                 ui.horizontal(|ui| {
                     for (k, v) in b.iter_mut().enumerate() {
                         let r = if k % 2 == 0 { 0.0..=1.0 } else { -2.0..=3.0 };
@@ -202,7 +203,7 @@ fn key_editor(ui: &mut Ui, anim: &mut Animation, ed: &mut AnimEdit) {
                     }
                 })
                 .response
-                .on_hover_text("Cubic Bézier x1 y1 x2 y2, as in CSS");
+                .on_hover_text(crate::i18n::t("Cubic Bézier x1 y1 x2 y2, as in CSS"));
                 ui.end_row();
             }
         });
@@ -215,9 +216,9 @@ fn key_editor(ui: &mut Ui, anim: &mut Animation, ed: &mut AnimEdit) {
     }
     ui.add_space(4.0);
     ui.horizontal(|ui| {
-        add_here = ui.button(theme::with_icon(ic::ADD, "Key at playhead")).on_hover_text("Add a key with the value at the playhead").clicked();
-        delete_key = ui.button(theme::with_icon(ic::REMOVE, "Delete key")).clicked();
-        delete_track = ui.button(theme::with_icon(ic::DELETE, "Delete track")).clicked();
+        add_here = ui.button(theme::with_icon(ic::ADD, t("Key at playhead"))).on_hover_text(t("Add a key with the value at the playhead")).clicked();
+        delete_key = ui.button(theme::with_icon(ic::REMOVE, t("Delete key"))).clicked();
+        delete_track = ui.button(theme::with_icon(ic::DELETE, t("Delete track"))).clicked();
     });
     if add_here {
         let v = anim.tracks[ti].sample(anim.local_time(ed.time));
@@ -278,7 +279,7 @@ fn timeline(ui: &mut Ui, anim: &mut Animation, ed: &mut AnimEdit) {
         painter.text(
             pos2(rect.center().x, rect.top() + RULER_H + ROW_H / 2.0),
             egui::Align2::CENTER_CENTER,
-            "No tracks yet: pick a property under Add track",
+            crate::i18n::t("No tracks yet: pick a property under Add track"),
             egui::FontId::proportional(12.0),
             theme::TEXT_FAINT,
         );

@@ -218,9 +218,10 @@ footer { margin-top: 56px; padding-top: 18px; border-top: 1px solid var(--border
   <p class="lede">OpenQ leva un espectáculo a partir dunha lista de cues. Cada pulsación de GO dispara a
   seguinte: son, vídeo, texto nunha pantalla, fundidos, esperas ou mensaxes a outros equipos. Este manual
   explica como montar unha lista de cues, levala en directo e controlala desde outros dispositivos.</p>
-  <div class="note tip"><span class="label">Lingua</span><p>A interface de OpenQ está en inglés, así que os
-  nomes de menús, lapelas e botóns aparecen aquí tal e como os verás na pantalla, por exemplo
-  <span class="menu">Help → User manual</span>.</p></div>
+  <div class="note tip"><span class="label">Lingua</span><p>OpenQ fala galego, español e inglés. A primeira vez que se abre
+  pregunta a lingua, e cámbiase cando queiras en <span class="menu">Axustes → Xeral → Lingua</span>. Este manual usa os
+  nomes en galego de menús, lapelas e botóns, por exemplo <span class="menu">Axuda → Manual de usuario</span>; algunhas
+  palabras do oficio, como <em>cue</em>, <em>GO</em> ou <em>Fade</em>, quedan en inglés. As capturas amosan a interface en inglés.</p></div>
 </header>
 
 <section id="start">
@@ -247,12 +248,12 @@ footer { margin-top: 56px; padding-top: 18px; border-top: 1px solid var(--border
   <p>Para executar unha copia na que esteas a traballar desde o código fonte:</p>
 <pre><code>cargo run --release                  # comezar cun espectáculo baleiro
 cargo run --release -- show.openq    # abrir un espectáculo gardado</code></pre>
-  <p>Este manual vén dentro de OpenQ: escolle <span class="menu">Help → User manual</span> ou preme <kbd>F1</kbd>
-  para abrilo no teu navegador. Funciona sen conexión a internet e sempre corresponde á túa versión de OpenQ.</p>
+  <p>Este manual vén dentro de OpenQ: escolle <span class="menu">Axuda → Manual de usuario</span> ou preme <kbd>F1</kbd>
+  para abrilo no teu navegador, na lingua da interface. Funciona sen conexión a internet e sempre corresponde á túa versión de OpenQ.</p>
   <h3>O teu primeiro espectáculo</h3>
   <ol class="steps">
     <li>Arrastra ficheiros de audio ou vídeo desde o teu xestor de ficheiros á xanela. Cada ficheiro convértese nunha cue.
-    Tamén podes usar <span class="menu">File → Import media files…</span>.</li>
+    Tamén podes usar <span class="menu">Ficheiro → Importar ficheiros multimedia…</span>.</li>
     <li>Engade outras cues desde a barra de ferramentas sobre a lista de cues, ou preme <kbd>Ctrl</kbd>+<kbd>1</kbd>…<kbd>0</kbd>.</li>
     <li>Selecciona unha cue e axusta as súas opcións no inspector, na parte inferior da xanela.</li>
     <li>Fai clic na primeira cue para poñer o <strong>cabezal</strong> (playhead) sobre ela e preme <kbd>Espazo</kbd> (GO).</li>
@@ -267,15 +268,15 @@ cargo run --release -- show.openq    # abrir un espectáculo gardado</code></pre
   <h2><span class="n">02</span>A xanela principal</h2>
   <figure>
     <img src="img/edit-mode.webp" width="1400" height="1525" alt="Xanela principal de OpenQ en modo edición: botón GO, tarxeta de espera, transporte, medidores, barra de ferramentas, lista de cues e inspector.">
-    <figcaption>Modo edición coa primeira cue seleccionada e o inspector amosando a súa lapela Time &amp; Loops.</figcaption>
+    <figcaption>Modo edición coa primeira cue seleccionada e o inspector amosando a súa lapela Tempo e bucles.</figcaption>
   </figure>
   <ul>
     <li><strong>Barra de título:</strong> o nome do espectáculo (un punto indica cambios sen gardar). En Windows tamén
     contén os botóns de minimizar, maximizar e pechar: arrastra a barra para mover a xanela, fai dobre clic para
     maximizala e arrastra calquera bordo para cambiar o seu tamaño.</li>
-    <li><strong>Menús:</strong> File, Edit, Cue, Show, Video (escenarios e saídas), Remote, View
-    (vista previa de xeometría, rexistro do motor) e Help (este manual, o rexistro de erros, acerca de e licenzas).</li>
-    <li><strong>GO</strong> dispara a cue que está baixo o cabezal. A tarxeta <strong>standby</strong> amosa esa cue,
+    <li><strong>Menús:</strong> Ficheiro, Edición, Cue, Función, Vídeo (escenarios e saídas), Remoto, Ver
+    (vista previa de xeometría, rexistro do motor) e Axuda (este manual, o rexistro de erros, acerca de e licenzas).</li>
+    <li><strong>GO</strong> dispara a cue que está baixo o cabezal. A tarxeta <strong>Standby</strong> amosa esa cue,
     coas súas notas debaixo para que o operador poida lelas antes de premer GO.</li>
     <li><strong>Transporte:</strong> <span class="ms" aria-hidden="true">&#xe034;</span> pausar todo, <span class="ms" aria-hidden="true">&#xe037;</span> retomar todo,
     <span class="ms" aria-hidden="true">&#xe047;</span> parar todo. Ao lado, os medidores de saída amosan cada canle do dispositivo en dB.</li>
@@ -288,7 +289,7 @@ cargo run --release -- show.openq    # abrir un espectáculo gardado</code></pre
     <li><strong>Cues activas:</strong> cada cue en marcha co seu tempo transcorrido e restante, e os seus propios botóns de pausa e parada.</li>
     <li><strong>Inspector:</strong> os axustes da cue seleccionada, en lapelas. Cada lapela agrupa os seus axustes en
     tarxetas. Ábrese con altura suficiente para amosar unha lapela enteira; arrastra o seu bordo superior para cambiar o seu tamaño.</li>
-    <li><strong>Barra de estado:</strong> o interruptor <strong>Edit / Show</strong> á esquerda, e despois o dispositivo de
+    <li><strong>Barra de estado:</strong> o interruptor <strong>Edición / Función</strong> á esquerda, e despois o dispositivo de
     audio, o estado do vídeo, OSC, as conexións remotas e as mensaxes. O botón <span class="ms" aria-hidden="true">&#xe8b8;</span>
     da dereita abre os <a href="#settings">axustes</a>. Un aviso do motor aparece ao seu lado durante uns segundos e abre o
     rexistro do motor; as mensaxes da parte esquerda da barra tamén desaparecen ao cabo duns segundos.</li>
@@ -311,7 +312,7 @@ cargo run --release -- show.openq    # abrir un espectáculo gardado</code></pre
   <ul>
     <li>Fai clic en <span class="ms" aria-hidden="true">&#xe145;</span> para engadir unha lista. Fai clic dereito na lapela da
     lista actual para renomeala (ou dobre clic), movela, axustar o seu <a href="#timecode">código de tempo</a> ou borrala.</li>
-    <li>As cues seguen a soar ao cambiar de lista, e as cues Start, Stop, Fade e outras poden apuntar a cues de calquera lista.
+    <li>As cues seguen a soar ao cambiar de lista, e as cues Iniciar, Parar, Fade e outras poden apuntar a cues de calquera lista.
     No menú de destino, as cues doutras listas amosan o nome da súa lista.</li>
     <li>Os números de cue son comúns a todas as listas, así que OSC e os atallos chegan a cues de calquera lista.</li>
   </ul>
@@ -319,17 +320,17 @@ cargo run --release -- show.openq    # abrir un espectáculo gardado</code></pre
 
 <section id="modes">
   <h2><span class="n">03</span>Modo edición e modo función</h2>
-  <p>O <strong>modo edición</strong> (Edit) é para montar o espectáculo: todo se pode cambiar. O <strong>modo función</strong>
-  (Show) é para levalo. A lista queda bloqueada, a barra de ferramentas e o inspector ocúltanse, e as filas fanse
+  <p>O <strong>modo edición</strong> (Edición) é para montar o espectáculo: todo se pode cambiar. O <strong>modo función</strong>
+  (Función) é para levalo. A lista queda bloqueada, a barra de ferramentas e o inspector ocúltanse, e as filas fanse
   máis grandes para lelas con facilidade nunha cabina ás escuras. GO, parar, pausa, os atallos e mover o cabezal funcionan
   nos dous modos.</p>
-  <p>Cambia co interruptor á esquerda da barra de estado, <span class="menu">Show → Enter show mode</span>, ou <kbd>Ctrl</kbd>+<kbd>E</kbd>.</p>
+  <p>Cambia co interruptor á esquerda da barra de estado, <span class="menu">Función → Entrar en modo función</span>, ou <kbd>Ctrl</kbd>+<kbd>E</kbd>.</p>
   <figure>
     <img src="img/show-mode.webp" width="1400" height="736" alt="Modo función: filas grandes, varias cues en marcha con conta atrás e o panel de cues activas á dereita.">
     <figcaption>Modo función mentres se executa unha secuencia. As filas verdes están a soar e a columna de acción fai a conta atrás.</figcaption>
   </figure>
   <h3>Parar</h3>
-  <p><kbd>Esc</kbd> ou o botón vermello de parada funde todo a silencio durante o <em>tempo de fundido de parar todo</em>
+  <p><kbd>Esc</kbd> ou o botón vermello de parada funde todo a silencio durante o <em>tempo de fundido de Parar todo</em>
   (ver <a href="#settings">Axustes</a>). Prémeo outra vez durante ese fundido para parar ao instante.</p>
   <p>A <strong>protección contra dobre GO</strong> ignora un segundo GO que chegue moi pouco despois do primeiro, para que
   unha tecla que rebota non salte unha cue.</p>
@@ -339,26 +340,26 @@ cargo run --release -- show.openq    # abrir un espectáculo gardado</code></pre
   <h2><span class="n">04</span>Tipos de cue</h2>
   <div class="types">
     <div class="type"><b><span class="ms" aria-hidden="true">&#xe050;</span>Audio</b><span class="d">Reproduce un ficheiro de son polo mesturador de OpenQ, con recortes, bucles, fragmentos, EQ e enrutado.</span></div>
-    <div class="type"><b><span class="ms" aria-hidden="true">&#xe404;</span>Video</b><span class="d">Reproduce unha película ou unha imaxe fixa nun escenario; a súa banda sonora pasa polo mesturador.</span></div>
-    <div class="type"><b><span class="ms" aria-hidden="true">&#xe262;</span>Text</b><span class="d">Amosa texto nun escenario, como títulos, sobretítulos ou avisos para os intérpretes.</span></div>
-    <div class="type"><b><span class="ms" aria-hidden="true">&#xe2c7;</span>Group</b><span class="d">Contén outras cues e dispáraas dunha de catro maneiras.</span></div>
-    <div class="type"><b><span class="ms" aria-hidden="true">&#xe88b;</span>Wait</b><span class="d">Dura un tempo fixo. Úsaa para espazar unha cadea de autoseguir.</span></div>
+    <div class="type"><b><span class="ms" aria-hidden="true">&#xe404;</span>Vídeo</b><span class="d">Reproduce unha película ou unha imaxe fixa nun escenario; a súa banda sonora pasa polo mesturador.</span></div>
+    <div class="type"><b><span class="ms" aria-hidden="true">&#xe262;</span>Texto</b><span class="d">Amosa texto nun escenario, como títulos, sobretítulos ou avisos para os intérpretes.</span></div>
+    <div class="type"><b><span class="ms" aria-hidden="true">&#xe2c7;</span>Grupo</b><span class="d">Contén outras cues e dispáraas dunha de catro maneiras.</span></div>
+    <div class="type"><b><span class="ms" aria-hidden="true">&#xe88b;</span>Espera</b><span class="d">Dura un tempo fixo. Úsaa para espazar unha cadea de autoseguir.</span></div>
     <div class="type"><b><span class="ms" aria-hidden="true">&#xf1fc;</span>Memo</b><span class="d">Non fai nada. Garda notas e marca lugares do espectáculo.</span></div>
     <div class="type"><b><span class="ms" aria-hidden="true">&#xe8e3;</span>Fade</b><span class="d">Cambia co tempo o nivel, a opacidade, a xeometría, os efectos de vídeo ou as posicións de audio por obxectos doutra cue.</span></div>
-    <div class="type"><b><span class="ms" aria-hidden="true">&#xe1c4;</span>Start</b><span class="d">Dispara outra cue.</span></div>
-    <div class="type"><b><span class="ms" aria-hidden="true">&#xef71;</span>Stop</b><span class="d">Para outra cue.</span></div>
-    <div class="type"><b><span class="ms" aria-hidden="true">&#xe1a2;</span>Pause</b><span class="d">Pausa outra cue.</span></div>
-    <div class="type"><b><span class="ms" aria-hidden="true">&#xe5da;</span>Go To</b><span class="d">Move o cabezal a outra cue.</span></div>
+    <div class="type"><b><span class="ms" aria-hidden="true">&#xe1c4;</span>Iniciar</b><span class="d">Dispara outra cue.</span></div>
+    <div class="type"><b><span class="ms" aria-hidden="true">&#xef71;</span>Parar</b><span class="d">Para outra cue.</span></div>
+    <div class="type"><b><span class="ms" aria-hidden="true">&#xe1a2;</span>Pausa</b><span class="d">Pausa outra cue.</span></div>
+    <div class="type"><b><span class="ms" aria-hidden="true">&#xe5da;</span>Ir a</b><span class="d">Move o cabezal a outra cue.</span></div>
     <div class="type"><b><span class="ms" aria-hidden="true">&#xe044;</span>Devamp</b><span class="d">Deixa que un fragmento de audio en bucle remate a súa pasada e siga adiante.</span></div>
-    <div class="type"><b><span class="ms" aria-hidden="true">&#xeb2f;</span>Network</b><span class="d">Envía unha mensaxe OSC a outros equipos, como unha mesa de luces.</span></div>
-    <div class="type"><b><span class="ms" aria-hidden="true">&#xe31d;</span>Mic</b><span class="d">Reproduce unha entrada de audio en directo, como un micrófono, polo mesturador.</span></div>
-    <div class="type"><b><span class="ms" aria-hidden="true">&#xe412;</span>Camera</b><span class="d">Amosa unha cámara ou unha capturadora en directo nun escenario.</span></div>
+    <div class="type"><b><span class="ms" aria-hidden="true">&#xeb2f;</span>Rede</b><span class="d">Envía unha mensaxe OSC a outros equipos, como unha mesa de luces.</span></div>
+    <div class="type"><b><span class="ms" aria-hidden="true">&#xe31d;</span>Micro</b><span class="d">Reproduce unha entrada de audio en directo, como un micrófono, polo mesturador.</span></div>
+    <div class="type"><b><span class="ms" aria-hidden="true">&#xe412;</span>Cámara</b><span class="d">Amosa unha cámara ou unha capturadora en directo nun escenario.</span></div>
   </div>
   <p>Cada cue ten un <strong>número</strong> (texto libre, como <code>4.2</code>), un <strong>nome</strong>, <strong>notas</strong>,
-  unha <strong>cor</strong> e un interruptor de <strong>armado</strong> (Armed), todo na lapela Basics. GO salta unha cue desarmada.
-  Basics tamén axusta a <strong>pre-espera</strong>, o modo de <strong>continuación</strong> e a <strong>post-espera</strong> da
+  unha <strong>cor</strong> e un interruptor <strong>Armada</strong>, todo na lapela Básico. GO salta unha cue desarmada.
+  Básico tamén axusta a <strong>pre-espera</strong>, o modo de <strong>continuación</strong> e a <strong>post-espera</strong> da
   cue e, para cues de audio e vídeo, o <strong>ficheiro de medios</strong>.</p>
-  <p>A lapela <strong>Triggers</strong> reúne as formas de disparar unha cue ademais de GO: un <strong>atallo</strong> (hotkey), unha tecla
+  <p>A lapela <strong>Disparadores</strong> reúne as formas de disparar unha cue ademais de GO: un <strong>atallo</strong>, unha tecla
   que dispara a cue directamente estea onde estea o cabezal, e un <a href="#timecode">disparador por código de tempo</a>.</p>
 </section>
 
@@ -382,9 +383,9 @@ cargo run --release -- show.openq    # abrir un espectáculo gardado</code></pre
   <div class="table-wrap"><table>
     <thead><tr><th>Modo de continuación</th><th>Que pasa despois</th></tr></thead>
     <tbody>
-      <tr><td>Do not continue</td><td>Nada. O cabezal pasa á seguinte cue e agarda por GO.</td></tr>
-      <tr><td>Auto-continue <span class="ms" aria-hidden="true">&#xe5db;</span></td><td>A seguinte cue dispárase cando se esgota a post-espera desta.</td></tr>
-      <tr><td>Auto-follow <span class="ms" aria-hidden="true">&#xead0;</span></td><td>A seguinte cue dispárase cando remata a acción desta.</td></tr>
+      <tr><td>Non continuar</td><td>Nada. O cabezal pasa á seguinte cue e agarda por GO.</td></tr>
+      <tr><td>Autocontinuar <span class="ms" aria-hidden="true">&#xe5db;</span></td><td>A seguinte cue dispárase cando se esgota a post-espera desta.</td></tr>
+      <tr><td>Autoseguir <span class="ms" aria-hidden="true">&#xead0;</span></td><td>A seguinte cue dispárase cando remata a acción desta.</td></tr>
     </tbody>
   </table></div>
   <p>As cues encadeadas arrancan exactamente no límite dunha mostra, así que unha secuencia mantén o seu tempo por moito que dure.</p>
@@ -392,10 +393,10 @@ cargo run --release -- show.openq    # abrir un espectáculo gardado</code></pre
   <div class="table-wrap"><table>
     <thead><tr><th>Modo de grupo</th><th>Comportamento</th></tr></thead>
     <tbody>
-      <tr><td>Start first child and enter group</td><td>Dispara a primeira cue do grupo e mete o cabezal dentro.</td></tr>
-      <tr><td>Start first child and go to next cue</td><td>Unha lista de reprodución: os fillos soan un tras outro mentres o cabezal pasa máis alá do grupo.</td></tr>
-      <tr><td>Start all children simultaneously</td><td>Dispara todo o que contén á vez, cada un coa súa propia pre-espera.</td></tr>
-      <tr><td>Start random child and go to next cue</td><td>Dispara un fillo escollido ao chou.</td></tr>
+      <tr><td>Iniciar a primeira filla e entrar no grupo</td><td>Dispara a primeira cue do grupo e mete o cabezal dentro.</td></tr>
+      <tr><td>Iniciar a primeira filla e pasar á seguinte cue</td><td>Unha lista de reprodución: as fillas soan unha tras outra mentres o cabezal pasa máis alá do grupo.</td></tr>
+      <tr><td>Iniciar todas as fillas á vez</td><td>Dispara todo o que contén á vez, cada un coa súa propia pre-espera.</td></tr>
+      <tr><td>Iniciar unha filla ao chou e pasar á seguinte cue</td><td>Dispara unha filla escollida ao chou.</td></tr>
     </tbody>
   </table></div>
   <p>Selecciona cues e preme <kbd>Ctrl</kbd>+<kbd>G</kbd> para agrupalas. <kbd>←</kbd> e <kbd>→</kbd> pregan e despregan un grupo.</p>
@@ -403,21 +404,21 @@ cargo run --release -- show.openq    # abrir un espectáculo gardado</code></pre
 
 <section id="audio">
   <h2><span class="n">06</span>Cues de audio</h2>
-  <h3>Time &amp; Loops</h3>
+  <h3>Tempo e bucles</h3>
   <figure>
-    <img src="img/waveform.webp" width="1400" height="369" alt="Lapela Time and Loops: forma de onda con marcadores de recorte e curvas de fundido, e as tarxetas Trim, Loops, Playback e Fades.">
-    <figcaption>A lapela Time &amp; Loops. Arrastra os marcadores verde e vermello para recortar; fai dobre clic para engadir un fragmento.
+    <img src="img/waveform.webp" width="1400" height="369" alt="Lapela Tempo e bucles: forma de onda con marcadores de recorte e curvas de fundido, e as tarxetas Recorte, Bucles, Reprodución e Fundidos.">
+    <figcaption>A lapela Tempo e bucles. Arrastra os marcadores verde e vermello para recortar; fai dobre clic para engadir un fragmento.
     As curvas laranxas son a entrada e a saída en fundido da cue.</figcaption>
   </figure>
   <ul>
-    <li><strong>Trim (recorte):</strong> arrastra os marcadores de inicio e fin, ou escribe os tempos. Arrastra a forma de onda para
+    <li><strong>Recorte:</strong> arrastra os marcadores de inicio e fin, ou escribe os tempos. Arrastra a forma de onda para
     desprazarte e usa <kbd>Ctrl</kbd>+roda para facer zoom. Unha liña amosa a posición de reprodución mentres a cue soa.</li>
-    <li><strong>Loops (bucles):</strong> fixa un número de reproducións ou repite ata que se pare.</li>
-    <li><strong>Playback:</strong> a velocidade é varispeed. O ton cambia coa velocidade, como nun magnetófono.</li>
-    <li><strong>Fades:</strong> unha entrada desde silencio ao comezar a cue e unha saída a silencio ao final, con varias curvas para
+    <li><strong>Bucles:</strong> fixa un número de <em>Repeticións</em> ou marca <em>Bucle infinito</em> para repetir ata que se pare.</li>
+    <li><strong>Reprodución:</strong> a velocidade é varispeed. O ton cambia coa velocidade, como nun magnetófono.</li>
+    <li><strong>Fundidos:</strong> unha entrada desde silencio ao comezar a cue e unha saída a silencio ao final, con varias curvas para
     escoller, sen necesidade dunha cue Fade á parte. A saída precisa un final coñecido, así que non ocorre mentres a cue se repite
     indefinidamente; cun fragmento en vamp soa despois do Devamp.</li>
-    <li><strong>Slices (fragmentos):</strong> fai dobre clic na forma de onda para engadir un marcador de fragmento. Arrástrao para
+    <li><strong>Fragmentos:</strong> fai dobre clic na forma de onda para engadir un marcador de fragmento. Arrástrao para
     movelo e fai clic dereito para borralo. Cada fragmento soa un número fixo de veces ou repítese ata que unha cue
     <strong>Devamp</strong> (ou a mensaxe OSC <code>/cue/&lt;n&gt;/devamp</code>) o libera. Entón remata a pasada actual e a
     reprodución segue. Úsao para música que ten que facer vamp ata a frase dun actor.</li>
@@ -428,12 +429,12 @@ cargo run --release -- show.openq    # abrir un espectáculo gardado</code></pre
     <figcaption>De onde vén o son e a onde vai.</figcaption>
   </figure>
   <ul>
-    <li><strong>Input:</strong> o ficheiro de medios, coa súa duración, formato, localización no disco (e un botón para amosalo no
-    xestor de ficheiros), tamaño e número de canles. <em>Browse…</em> substitúe o ficheiro.</li>
-    <li><strong>Output:</strong> o dispositivo de audio polo que soa a cue e o seu número de saídas (axústase en Settings → Audio).</li>
-    <li><strong>Routing:</strong> automático, ou unha <strong>matriz de puntos de cruzamento</strong> das canles do ficheiro ás saídas
+    <li><strong>Entrada:</strong> o ficheiro de medios, coa súa duración, formato, localización no disco (e un botón para amosalo no
+    xestor de ficheiros), tamaño e número de canles. <em>Examinar…</em> substitúe o ficheiro.</li>
+    <li><strong>Saída:</strong> o dispositivo de audio polo que soa a cue e o seu número de saídas (axústase en Axustes → Audio).</li>
+    <li><strong>Enrutado:</strong> automático, ou unha <strong>matriz de puntos de cruzamento</strong> das canles do ficheiro ás saídas
     do dispositivo. Cada punto de cruzamento ten o seu propio nivel en dB, así que un ficheiro estéreo pode alimentar oito altofalantes.
-    Ou cambia a <strong>Object audio</strong> e coloca as canles na sala (máis abaixo).</li>
+    Ou cambia a <strong>Audio por obxectos</strong> e coloca as canles na sala (máis abaixo).</li>
   </ul>
   <h3>Audio por obxectos</h3>
   <figure>
@@ -441,46 +442,46 @@ cargo run --release -- show.openq    # abrir un espectáculo gardado</code></pre
     <figcaption>Audio por obxectos: cada canle do ficheiro é un obxecto numerado na sala. Os altofalantes acéndense co que reproducen.</figcaption>
   </figure>
   <p>O audio por obxectos enruta o son segundo <em>de onde debe vir</em> en lugar de por saída. Escolle
-  <strong>Object audio</strong> na tarxeta Routing: cada canle do ficheiro convértese nun obxecto que arrastras pola sala
+  <strong>Audio por obxectos</strong> na tarxeta Enrutado: cada canle do ficheiro convértese nun obxecto que arrastras pola sala
   (ou cuxa posición escribes). Os altofalantes máis próximos a un obxecto reprodúceno máis forte; o nivel baixa 6 dB cada vez que a
   distancia se duplica, e a potencia total é a mesma estea onde estea o obxecto, así que movelo nunca cambia o seu volume.
-  <strong>Spread</strong> ensancha un obxecto desde un punto (0 %) ata toda a sala (100 %). Os faders de saída da lapela
-  Levels seguen a aplicarse, e as cues Mic e as bandas sonoras de vídeo tamén poden usar audio por obxectos.</p>
-  <p>A sala axústase unha vez por espectáculo en <a href="#settings">Settings → Audio</a>. Unha <a href="#fades">cue Fade</a> pode
+  <strong>Apertura</strong> ensancha un obxecto desde un punto (0 %) ata toda a sala (100 %). Os faders de saída da lapela
+  Niveis seguen a aplicarse, e as cues Micro e as bandas sonoras de vídeo tamén poden usar audio por obxectos.</p>
+  <p>A sala axústase unha vez por espectáculo en <a href="#settings">Axustes → Audio</a>. Unha <a href="#fades">cue Fade</a> pode
   mover os obxectos, para un son que voa pola sala. Os movementos suavízanse, así que arrastrar un obxecto nunha cue que
   soa non produce estalidos.</p>
-  <h3>Levels</h3>
+  <h3>Niveis</h3>
   <figure>
-    <img src="img/levels.webp" width="1400" height="314" alt="Lapela Levels: faders verticais para o nivel principal e as saídas 1 e 2, e unha tarxeta de panorama.">
+    <img src="img/levels.webp" width="1400" height="314" alt="Lapela Niveis: faders verticais para o nivel principal e as saídas 1 e 2, e unha tarxeta de panorama.">
     <figcaption>Faders para o nivel principal da cue e cada saída do dispositivo.</figcaption>
   </figure>
-  <p>O fader <strong>Main</strong> fixa o nivel da cue. Ao seu lado hai un fader por cada saída do dispositivo de audio, que
+  <p>O fader <strong>Principal</strong> fixa o nivel da cue. Ao seu lado hai un fader por cada saída do dispositivo de audio, que
   axusta esa saída despois da matriz de enrutado. Arrastra un fader ou escribe un valor na caixa de enriba; fai dobre clic
-  nun fader para devolvelo a 0 dB. <strong>Pan</strong> move o son entre as saídas 1 e 2 mentres o enrutado é automático.</p>
+  nun fader para devolvelo a 0 dB. <strong>Panorama</strong> move o son entre as saídas 1 e 2 mentres o enrutado é automático.</p>
   <h3>EQ</h3>
   <figure>
     <img src="img/eq.webp" width="1400" height="421" alt="Ecualizador cunha curva de resposta e unha lista de bandas.">
     <figcaption>Ata oito bandas por cue. Arrastra os tiradores para axustar frecuencia e ganancia, e usa a roda sobre un tirador para cambiar a Q.</figcaption>
   </figure>
-  <p>Os tipos de banda son paso alto, shelf de graves, pico, shelf de agudos e paso baixo. <strong>EQ enabled</strong> activa e
+  <p>Os tipos de banda son paso alto, shelf de graves, pico, shelf de agudos e paso baixo. <strong>EQ activado</strong> activa e
   desactiva todo o ecualizador.</p>
-  <h3>Audio FX</h3>
+  <h3>FX de audio</h3>
   <figure>
-    <img src="img/audio-fx.webp" width="1400" height="283" alt="Lapela Audio FX: reverb, compresor e un delay desactivado como tarxetas, e unha tarxeta para engadir efectos.">
+    <img src="img/audio-fx.webp" width="1400" height="283" alt="Lapela FX de audio: reverb, compresor e un delay desactivado como tarxetas, e unha tarxeta para engadir efectos.">
     <figcaption>Unha cadea de efectos: reverb e despois compresor; o delay está apagado.</figcaption>
   </figure>
-  <p>As cues de audio, Mic e vídeo teñen unha lapela <strong>Audio FX</strong>: unha cadea de ata oito efectos que actúan de arriba
-  abaixo sobre as canles da cue, despois do EQ e antes do enrutado. <em>Add…</em> pon un efecto novo ao final; as frechas
-  cambian a orde, <strong>On</strong> pontea un efecto sen perder os seus axustes.</p>
+  <p>As cues de audio, Micro e vídeo teñen unha lapela <strong>FX de audio</strong>: unha cadea de ata oito efectos que actúan de arriba
+  abaixo sobre as canles da cue, despois do EQ e antes do enrutado. <em>Engadir…</em> pon un efecto novo ao final; as frechas
+  cambian a orde, <strong>Acendido</strong> pontea un efecto sen perder os seus axustes.</p>
   <div class="table-wrap"><table>
     <thead><tr><th>Efecto</th><th>Axustes</th><th>Uso</th></tr></thead>
     <tbody>
       <tr><td>Delay</td><td>tempo, realimentación, corte de agudos, mestura</td><td>Ecos; o corte de agudos escurece cada repetición.</td></tr>
-      <tr><td>Reverb</td><td>tamaño, amortecemento, pre-delay, anchura, mestura</td><td>Son de sala para gravacións secas ou voces.</td></tr>
-      <tr><td>Compressor</td><td>limiar, ratio, ataque, liberación, ganancia</td><td>Iguala o nivel; todas as canles móvense xuntas.</td></tr>
-      <tr><td>Limiter</td><td>teito, liberación</td><td>Nunca deixa pasar un pico por riba do teito.</td></tr>
-      <tr><td>Gate</td><td>limiar, rango, ataque, mantemento, liberación</td><td>Baixa un micrófono entre frases.</td></tr>
-      <tr><td>Distortion</td><td>saturación, ton, saída, mestura</td><td>Sons de radio, de teléfono ou saturados.</td></tr>
+      <tr><td>Reverberación</td><td>tamaño, amortecemento, predelay, ancho, mestura</td><td>Son de sala para gravacións secas ou voces.</td></tr>
+      <tr><td>Compresor</td><td>limiar, relación, ataque, liberación, compensación</td><td>Iguala o nivel; todas as canles móvense xuntas.</td></tr>
+      <tr><td>Limitador</td><td>teito, liberación</td><td>Nunca deixa pasar un pico por riba do teito.</td></tr>
+      <tr><td>Porta de ruído</td><td>limiar, rango, ataque, mantemento, liberación</td><td>Baixa un micrófono entre frases.</td></tr>
+      <tr><td>Distorsión</td><td>ganancia, ton, saída, mestura</td><td>Sons de radio, de teléfono ou saturados.</td></tr>
       <tr><td>Chorus</td><td>velocidade, profundidade, retardo, realimentación, mestura</td><td>Engorda e ensancha un son.</td></tr>
       <tr><td>Bitcrusher</td><td>bits, submostraxe, mestura</td><td>Sons lo-fi, de videoxogo retro.</td></tr>
     </tbody>
@@ -488,13 +489,13 @@ cargo run --release -- show.openq    # abrir un espectáculo gardado</code></pre
   <div class="note tip"><span class="label">Cambios en directo</span><p>Os cambios de nivel, fader de saída, panorama, EQ, efectos,
   enrutado e obxectos óense ao momento nunha cue que soa, así que podes axustalos durante un pase. As colas de reverb e
   delay continúan a través dunha edición.</p></div>
-  <h3>Cues Mic</h3>
+  <h3>Cues Micro</h3>
   <figure>
-    <img src="img/mic.webp" width="1400" height="312" alt="Lapela I/O dunha cue Mic: dispositivo de entrada, canles e medidor de nivel, tempos e enrutado.">
-    <figcaption>A lapela I/O dunha cue Mic. A barra de nivel móvese mentres a cue está en marcha.</figcaption>
+    <img src="img/mic.webp" width="1400" height="312" alt="Lapela I/O dunha cue Micro: dispositivo de entrada, canles e medidor de nivel, tempos e enrutado.">
+    <figcaption>A lapela I/O dunha cue Micro. A barra de nivel móvese mentres a cue está en marcha.</figcaption>
   </figure>
-  <p>Unha cue Mic envía unha entrada en directo (un micrófono, unha entrada de liña, un reprodutor) polo mesturador de OpenQ, así que
-  ten os mesmos faders de <strong>Levels</strong>, panorama, <strong>EQ</strong> e enrutado ca unha cue de audio, e as cues Fade
+  <p>Unha cue Micro envía unha entrada en directo (un micrófono, unha entrada de liña, un reprodutor) polo mesturador de OpenQ, así que
+  ten os mesmos faders de <strong>Niveis</strong>, panorama, <strong>EQ</strong> e enrutado ca unha cue de audio, e as cues Fade
   poden fundila. Na lapela <strong>I/O</strong> escolle o dispositivo de entrada e que canles usar, por exemplo as entradas
   3–4 para un par estéreo. Unha <strong>duración</strong> de 0 mantén a entrada aberta ata que se para a cue, e a
   <strong>entrada en fundido</strong> sóbea desde silencio. A entrada chega ás saídas cuns 30 ms de atraso, demasiado
@@ -506,54 +507,54 @@ cargo run --release -- show.openq    # abrir un espectáculo gardado</code></pre
   <p>Unha cue de vídeo reproduce unha película (todo o que FFmpeg pode reproducir) ou unha imaxe fixa: PNG, JPEG, WebP, GIF, TIFF, BMP ou
   <strong>SVG</strong>. As imaxes amósanse durante un tempo fixo ou ata que se paran. Un SVG debúxase ao tamaño ao que se vai
   amosar, incluída a maior escala á que chegan a súa xeometría e a súa animación, así que logotipos e debuxos de liña vense nítidos.
-  <strong>Time &amp; Loops</strong> ten recortes de inicio e fin, bucles e <em>hold last frame</em> (manter o último fotograma).
+  <strong>Tempo e bucles</strong> ten recortes de inicio e fin, bucles e <em>Manter o último fotograma</em>.
   A lapela <strong>Audio</strong> ten os faders principal e de saída da banda sonora, e <strong>I/O</strong> o seu ficheiro e
   enrutado; a banda sonora soa polo mesturador como unha cue de audio.</p>
-  <h3>Geometry</h3>
+  <h3>Xeometría</h3>
   <ul>
-    <li><strong>Stage:</strong> a que saída vai a imaxe. Sen ningunha, úsase o primeiro escenario.</li>
-    <li><strong>Fit:</strong> <em>Fit</em> amosa a imaxe enteira (con bandas), <em>Fill</em> cobre o escenario e recorta o que
-    sobra, <em>Stretch</em> énchea exactamente e <em>Native size</em> usa os píxeles propios do ficheiro.</li>
-    <li><strong>Layer</strong> (capa; as máis altas debúxanse enriba) e <strong>opacidade</strong>.</li>
+    <li><strong>Escenario:</strong> a que saída vai a imaxe. Sen ningunha, úsase o primeiro escenario.</li>
+    <li><strong>Axustar:</strong> <em>Axustar</em> amosa a imaxe enteira (con bandas), <em>Encher</em> cobre o escenario e recorta o que
+    sobra, <em>Estirar</em> énchea exactamente e <em>Tamaño nativo</em> usa os píxeles propios do ficheiro.</li>
+    <li><strong>Capa</strong> (as máis altas debúxanse enriba) e <strong>opacidade</strong>.</li>
     <li><strong>Posición, escala e rotación.</strong> A posición é unha porcentaxe do escenario: <code>X 25%</code>
-    move a imaxe un cuarto do escenario cara á dereita. Activa <em>proportional</em> para escalar os dous eixes á vez.</li>
-    <li><strong>Crop (recorte):</strong> quita unha porcentaxe pola esquerda, arriba, dereita e abaixo. O resto da imaxe
+    move a imaxe un cuarto do escenario cara á dereita. Activa <em>proporcional</em> para escalar os dous eixes á vez.</li>
+    <li><strong>Recorte:</strong> quita unha porcentaxe pola esquerda, arriba, dereita e abaixo. O resto da imaxe
     queda onde estaba.</li>
   </ul>
   <figure class="narrow">
     <img src="img/geometry-preview.webp" width="660" height="460" alt="Xanela de vista previa de xeometría cunha capa xirada e recortada nun escenario de 1920 por 1080.">
     <figcaption>A vista previa de xeometría. Unha liña descontinua amosa a imaxe sen recortar.</figcaption>
   </figure>
-  <p>A <strong>vista previa de xeometría</strong> (<span class="menu">View → Geometry preview</span>, ou <em>Preview</em> na lapela Geometry)
+  <p>A <strong>vista previa de xeometría</strong> (<span class="menu">Ver → Vista previa de xeometría</span>, ou <em>Vista previa</em> na lapela Xeometría)
   debuxa o escenario da cue seleccionada coa imaxe no seu sitio, sen abrir unha saída de proxector. En modo edición,
   arrastra na vista previa para mover a imaxe, usa a roda para escalala e fai dobre clic para centrala. Para unha cue Fade que
   cambia a xeometría, a vista previa amosa onde remata o fundido, coa posición inicial como contorno descontinuo.</p>
-  <h3>Cues Camera</h3>
-  <p>Unha cue Camera amosa unha cámara en directo (unha webcam, unha capturadora USB ou HDMI) como capa nun escenario, coa mesma
-  lapela <strong>Geometry</strong> ca o vídeo: posición, escala, rotación, recorte, opacidade e capa, e as cues Fade poden movela
-  e fundila. Na lapela <strong>Camera</strong> escolle o dispositivo e, se o precisas, o tamaño de captura; <em>Mirror</em>
-  voltea a imaxe como nun selfi. <em>Show for</em> 0 mantena ata que se pare. O dispositivo e o tamaño úsanse a
+  <h3>Cues Cámara</h3>
+  <p>Unha cue Cámara amosa unha cámara en directo (unha webcam, unha capturadora USB ou HDMI) como capa nun escenario, coa mesma
+  lapela <strong>Xeometría</strong> ca o vídeo: posición, escala, rotación, recorte, opacidade e capa, e as cues Fade poden movela
+  e fundila. Na lapela <strong>Cámara</strong> escolle o dispositivo e, se o precisas, o tamaño de captura; <em>Espello</em>
+  voltea a imaxe como nun selfi. <em>Amosar durante</em> 0 mantena ata que se pare. O dispositivo e o tamaño úsanse a
   próxima vez que arrinque a cue.</p>
-  <h3>Cues Text</h3>
+  <h3>Cues Texto</h3>
   <p>As cues de texto amosan texto escrito nun escenario: títulos, sobretítulos, subtítulos ou unha conta atrás para o equipo.
-  As lapelas <strong>Geometry</strong> e <strong>Animation</strong> funcionan como no vídeo, e as cues Fade poden mover e fundir
-  o texto. Os cambios na lapela <strong>Text</strong> aparecen ao momento nunha cue que se está a amosar.</p>
+  As lapelas <strong>Xeometría</strong> e <strong>Animación</strong> funcionan como no vídeo, e as cues Fade poden mover e fundir
+  o texto. Os cambios na lapela <strong>Texto</strong> aparecen ao momento nunha cue que se está a amosar.</p>
   <figure>
-    <img src="img/text-cue.webp" width="1400" height="383" alt="Lapela Text en tarxetas: o texto, a fonte (peso, tamaño, entreliñado, espazado), o aspecto (cor, aliñamento, contorno, sombra, caixa de fondo) e unha mostra.">
-    <figcaption>A lapela Text. Baixo os axustes aparece unha vista previa da primeira liña co estilo escollido.</figcaption>
+    <img src="img/text-cue.webp" width="1400" height="383" alt="Lapela Texto en tarxetas: o texto, a fonte (peso, tamaño, entreliñado, espazado), o aspecto (cor, aliñamento, contorno, sombra, caixa de fondo) e unha mostra.">
+    <figcaption>A lapela Texto. Baixo os axustes aparece unha vista previa da primeira liña co estilo escollido.</figcaption>
   </figure>
   <div class="table-wrap"><table>
     <thead><tr><th>Axuste</th><th>Que fai</th></tr></thead>
     <tbody>
-      <tr><td>Font</td><td>Calquera fonte instalada no ordenador. Escribe na lista para buscar. <em>Inter (built-in)</em> está sempre dispoñible.</td></tr>
-      <tr><td>Weight · Italic</td><td>De Thin (100) a Black (900). Os pesos que a fonte non inclúe aparecen en gris e úsase o instalado máis próximo.</td></tr>
-      <tr><td>Size</td><td>Tamaño de letra en píxeles do escenario: 96 px nun escenario de 1080 liñas é unha décima parte da súa altura.</td></tr>
-      <tr><td>Line height · Spacing</td><td>Distancia entre liñas (como múltiplo do tamaño) e espazo extra entre letras en em.</td></tr>
+      <tr><td>Fonte</td><td>Calquera fonte instalada no ordenador. Escribe na lista para buscar. <em>Inter (integrada)</em> está sempre dispoñible.</td></tr>
+      <tr><td>Peso · Cursiva</td><td>De Thin (100) a Black (900). Os pesos que a fonte non inclúe aparecen en gris e úsase o instalado máis próximo.</td></tr>
+      <tr><td>Tamaño</td><td>Tamaño de letra en píxeles do escenario: 96 px nun escenario de 1080 liñas é unha décima parte da súa altura.</td></tr>
+      <tr><td>Altura de liña · Espazado</td><td>Distancia entre liñas (como múltiplo do tamaño) e espazo extra entre letras en em.</td></tr>
       <tr><td>Cor · aliñamento</td><td>Cor e transparencia do texto; liñas á esquerda, centradas ou á dereita.</td></tr>
-      <tr><td>Outline</td><td>Un bordo arredor de cada letra, en píxeles do escenario, coa súa propia cor. Mantén o texto lexible sobre vídeo cargado.</td></tr>
-      <tr><td>Shadow</td><td>Unha sombra suave: cor, desprazamento á dereita e abaixo, e desenfoque.</td></tr>
-      <tr><td>Background</td><td>Unha caixa detrás do texto: cor e transparencia, <em>padding</em> (espazo arredor do texto, en píxeles do escenario) e <em>radius</em> para esquinas arredondadas. Boa para subtítulos e sobretítulos sobre vídeo.</td></tr>
-      <tr><td>Show for</td><td>Tempo en pantalla; 0 amósaa ata que se pare.</td></tr>
+      <tr><td>Contorno</td><td>Un bordo arredor de cada letra, en píxeles do escenario, coa súa propia cor. Mantén o texto lexible sobre vídeo cargado.</td></tr>
+      <tr><td>Sombra</td><td>Unha sombra suave: cor, desprazamento á dereita e abaixo, e desenfoque.</td></tr>
+      <tr><td>Fondo</td><td>Unha caixa detrás do texto: cor e transparencia, <em>marxe</em> (espazo arredor do texto, en píxeles do escenario) e <em>raio</em> para esquinas arredondadas. Boa para subtítulos e sobretítulos sobre vídeo.</td></tr>
+      <tr><td>Amosar durante</td><td>Tempo en pantalla; 0 amósaa ata que se pare.</td></tr>
     </tbody>
   </table></div>
   <p>O texto compóñese correctamente en calquera lingua. Pares como <em>AV</em> levan kerning, úsanse ligaduras e a escrita de
@@ -563,44 +564,44 @@ cargo run --release -- show.openq    # abrir un espectáculo gardado</code></pre
   cue de texto nunca retén o espectáculo. Os cambios de cor, movementos e animacións non precisan preparación. Tras cambiar o texto,
   a fonte ou o tamaño dunha cue que se está a amosar, a versión nova substitúe a antiga un momento despois.</p>
   <div class="note"><span class="label">De xira</span><p>O ficheiro do espectáculo garda o nome da fonte, non a fonte en si.
-  Instala as mesmas fontes en cada ordenador que reproduza o espectáculo. Se falta unha fonte, a lapela Text indica <em>not installed
-  here</em> e úsase unha fonte de substitución.</p></div>
-  <h3>Animation</h3>
-  <p>A lapela <strong><span class="ms" aria-hidden="true">&#xe71c;</span> Animation</strong> das cues de vídeo e texto move,
+  Instala as mesmas fontes en cada ordenador que reproduza o espectáculo. Se falta unha fonte, a lapela Texto indica <em>non instalada
+  aquí</em> e úsase unha fonte de substitución.</p></div>
+  <h3>Animación</h3>
+  <p>A lapela <strong><span class="ms" aria-hidden="true">&#xe71c;</span> Animación</strong> das cues de vídeo e texto move,
   escala, xira, recorta, funde e cambia a cor da capa con fotogramas clave. A animación comeza cando arrinca a cue e segue o
   reloxo da propia cue: pausar a cue pausaa.</p>
   <figure>
-    <img src="img/animation.webp" width="1400" height="427" alt="Lapela Animation: unha liña de tempo con filas para X, Opacity, Scale X, Scale Y, Text colour e Background, cada unha con fotogramas clave en forma de rombo, un cabezal azul en 2,2 segundos e, debaixo, os axustes de animación e o tempo e valor do fotograma clave seleccionado.">
-    <figcaption>A lapela Animation. Cada fila é unha propiedade animada; os rombos son fotogramas clave.</figcaption>
+    <img src="img/animation.webp" width="1400" height="427" alt="Lapela Animación: unha liña de tempo con filas para X, Opacidade, Escala X, Escala Y, Cor do texto e Fondo, cada unha con fotogramas clave en forma de rombo, un cabezal azul en 2,2 segundos e, debaixo, os axustes de animación e o tempo e valor do fotograma clave seleccionado.">
+    <figcaption>A lapela Animación. Cada fila é unha propiedade animada; os rombos son fotogramas clave.</figcaption>
   </figure>
   <ul>
-    <li><strong>Add track</strong> escolle unha propiedade. O seu primeiro fotograma clave queda no cabezal e non cambia nada,
+    <li><strong>Engadir pista</strong> escolle unha propiedade. O seu primeiro fotograma clave queda no cabezal e non cambia nada,
     así que despois podes poñer os valores que queiras.</li>
     <li><strong>Liña de tempo:</strong> fai clic na regra ou nunha fila para mover o cabezal. Fai clic nun fotograma clave para
     seleccionalo e arrástrao de lado para cambiar o seu tempo. Fai dobre clic nunha fila para engadir un fotograma clave aí.</li>
-    <li>Tarxeta <strong>Keyframe</strong>: o tempo e o valor da clave seleccionada, e <em>Then</em>, que indica como pasa o valor á
-    clave seguinte: <em>Hold</em> (quédase e logo salta), <em>Linear</em>, <em>Ease in</em>, <em>Ease out</em>,
-    <em>Ease in-out</em> ou unha <em>Custom curve</em> (unha Bézier cúbica, escrita como en CSS: x1 y1 x2 y2).
-    <em>Key at playhead</em> engade unha clave co valor que ten a pista no cabezal.</li>
-    <li><strong>Length</strong> é unha pasada da animación; 0 significa que remata no último fotograma clave. Unha liña ámbar
-    descontinua márcaa na liña de tempo. <strong>Repeat</strong>: <em>Once</em> mantén os últimos valores, <em>Loop</em> volve
+    <li>Tarxeta <strong>Fotograma clave</strong>: o tempo e o valor da clave seleccionada, e <em>Despois</em>, que indica como pasa o valor á
+    clave seguinte: <em>Manter</em> (quédase e logo salta), <em>Lineal</em>, <em>Entrada suave</em>, <em>Saída suave</em>,
+    <em>Entrada e saída suaves</em> ou unha <em>Curva personalizada</em> (unha Bézier cúbica, escrita como en CSS: x1 y1 x2 y2).
+    <em>Fotograma clave no cabezal</em> engade unha clave co valor que ten a pista no cabezal.</li>
+    <li><strong>Duración</strong> é unha pasada da animación; 0 significa que remata no último fotograma clave. Unha liña ámbar
+    descontinua márcaa na liña de tempo. <strong>Repetir</strong>: <em>Unha vez</em> mantén os últimos valores, <em>Bucle</em> volve
     comezar, <em>Ping-pong</em> vai cara adiante e logo cara atrás.</li>
-    <li>Activa <strong>Preview</strong> para ver a capa na vista previa de xeometría tal e como está no cabezal. Un contorno
+    <li>Activa <strong>Vista previa</strong> para ver a capa na vista previa de xeometría tal e como está no cabezal. Un contorno
     descontinuo amosa a posición propia da cue.</li>
   </ul>
   <div class="table-wrap"><table>
     <thead><tr><th>Propiedade</th><th>Valor</th><th>Como se combina coa cue</th></tr></thead>
     <tbody>
-      <tr><td>X · Y</td><td>% do escenario</td><td>Súmase á posición da lapela Geometry.</td></tr>
-      <tr><td>Scale X · Scale Y</td><td>%</td><td>Multiplica a escala da lapela Geometry: 200% duplícaa.</td></tr>
-      <tr><td>Rotation</td><td>graos</td><td>Súmase á rotación. 360° é unha volta completa.</td></tr>
-      <tr><td>Crop left · top · right · bottom</td><td>% da imaxe</td><td>Súmase ao recorte. Anímao para cortinas e revelados.</td></tr>
-      <tr><td>Opacity</td><td>%</td><td>Multiplica a opacidade da cue.</td></tr>
-      <tr><td>Tint</td><td>cor</td><td>Multiplica as cores da imaxe. O branco déixaa igual. Unha tinguidura só pode escurecer ou recolorear: o branco convértese na cor da tinguidura e o negro segue negro.</td></tr>
-      <tr><td>Text colour · Outline colour · Shadow colour · Background</td><td>cor (só texto)</td><td>Substitúen as cores da lapela Text.</td></tr>
+      <tr><td>X · Y</td><td>% do escenario</td><td>Súmase á posición da lapela Xeometría.</td></tr>
+      <tr><td>Escala X · Escala Y</td><td>%</td><td>Multiplica a escala da lapela Xeometría: 200% duplícaa.</td></tr>
+      <tr><td>Rotación</td><td>graos</td><td>Súmase á rotación. 360° é unha volta completa.</td></tr>
+      <tr><td>Recorte esquerda · arriba · dereita · abaixo</td><td>% da imaxe</td><td>Súmase ao recorte. Anímao para cortinas e revelados.</td></tr>
+      <tr><td>Opacidade</td><td>%</td><td>Multiplica a opacidade da cue.</td></tr>
+      <tr><td>Tinguidura</td><td>cor</td><td>Multiplica as cores da imaxe. O branco déixaa igual. Unha tinguidura só pode escurecer ou recolorear: o branco convértese na cor da tinguidura e o negro segue negro.</td></tr>
+      <tr><td>Cor do texto · Cor do contorno · Cor da sombra · Fondo</td><td>cor (só texto)</td><td>Substitúen as cores da lapela Texto.</td></tr>
     </tbody>
   </table></div>
-  <p>Como os valores son relativos, unha cue Fade ou un cambio na lapela Geometry seguen a mover ou fundir toda a capa animada.
+  <p>Como os valores son relativos, unha cue Fade ou un cambio na lapela Xeometría seguen a mover ou fundir toda a capa animada.
   Por exemplo, unha animación pode facer que un logotipo suba e baixe mentres unha cue Fade o despraza polo escenario.</p>
   <figure class="narrow">
     <img src="img/animation-stage.webp" width="900" height="449" alt="Un escenario cun título animado en ámbar sobre unha caixa vermella arredondada e un logotipo SVG xirado do revés e tinguido de verde.">
@@ -611,12 +612,12 @@ cargo run --release -- show.openq    # abrir un espectáculo gardado</code></pre
   nin descodifica nada por adiantado, así que animar unha capa custa o mesmo que amosala queda. Os cambios que fagas aparecen ao
   momento, mesmo nunha cue en marcha, a calquera resolución de escenario. O desenfoque e os cambios de cor son
   <a href="#videofx">efectos de vídeo</a>, que unha cue Fade pode animar.</p></div>
-  <h3 id="videofx">Video FX</h3>
+  <h3 id="videofx">FX de vídeo</h3>
   <figure>
-    <img src="img/video-fx.webp" width="1400" height="237" alt="Lapela Video FX dunha cue de texto: tarxetas Colourise, Blur e Vignette e unha tarxeta para engadir efectos.">
+    <img src="img/video-fx.webp" width="1400" height="237" alt="Lapela FX de vídeo dunha cue de texto: tarxetas Colorear, Desenfoque e Viñeta e unha tarxeta para engadir efectos.">
     <figcaption>Unha cue de texto coloreada de laranxa, algo desenfocada e con viñeta.</figcaption>
   </figure>
-  <p>As cues de vídeo, cámara e texto teñen unha lapela <strong>Video FX</strong>, unha morea de efectos sobre a imaxe. Engádeos,
+  <p>As cues de vídeo, cámara e texto teñen unha lapela <strong>FX de vídeo</strong>, unha morea de efectos sobre a imaxe. Engádeos,
   reordénaos e actívaos como os efectos de audio. Debúxaos a tarxeta gráfica mentres debuxa o escenario, así que case non custan
   nada e cambian en directo, mesmo nunha cue en marcha.</p>
   <figure class="narrow">
@@ -626,20 +627,20 @@ cargo run --release -- show.openq    # abrir un espectáculo gardado</code></pre
   <div class="table-wrap"><table>
     <thead><tr><th>Efecto</th><th>Axustes</th></tr></thead>
     <tbody>
-      <tr><td>Colour controls</td><td>Brillo, contraste, saturación (0 = branco e negro).</td></tr>
-      <tr><td>Exposure</td><td>Exposición en pasos, gamma.</td></tr>
-      <tr><td>Hue</td><td>Xira todas as cores pola roda de cor.</td></tr>
-      <tr><td>Colourise</td><td>Monocromo na cor que escollas.</td></tr>
-      <tr><td>Sepia · Invert</td><td>Cantidade.</td></tr>
-      <tr><td>Posterise</td><td>Número de niveis por cor.</td></tr>
-      <tr><td>Threshold</td><td>Corte a branco e negro nun nivel de brillo.</td></tr>
-      <tr><td>Vignette</td><td>Escurece os bordos: raio, suavidade, cantidade.</td></tr>
-      <tr><td>Blur · Pixellate · Sharpen</td><td>Raio ou tamaño de bloque nos píxeles propios da imaxe.</td></tr>
+      <tr><td>Controis de cor</td><td>Brillo, contraste, saturación (0 = branco e negro).</td></tr>
+      <tr><td>Exposición</td><td>Exposición en pasos, gamma.</td></tr>
+      <tr><td>Matiz</td><td>Xira todas as cores pola roda de cor.</td></tr>
+      <tr><td>Colorear</td><td>Monocromo na cor que escollas.</td></tr>
+      <tr><td>Sepia · Inverter</td><td>Cantidade.</td></tr>
+      <tr><td>Posterizar</td><td>Número de niveis por cor.</td></tr>
+      <tr><td>Limiar</td><td>Corte a branco e negro nun nivel de brillo.</td></tr>
+      <tr><td>Viñeta</td><td>Escurece os bordos: raio, suavidade, cantidade.</td></tr>
+      <tr><td>Desenfoque · Pixelar · Enfocar</td><td>Raio ou tamaño de bloque nos píxeles propios da imaxe.</td></tr>
       <tr><td>Chroma key</td><td>Fai transparente unha cor (croma verde ou azul nunha cue de cámara): cor clave, limiar,
-      suavidade e spill, que quita o reflexo verde dos bordos que quedan.</td></tr>
+      suavidade e derrame, que quita o reflexo verde dos bordos que quedan.</td></tr>
     </tbody>
   </table></div>
-  <p>Os efectos de cor actúan de arriba abaixo; Blur, Pixellate e Sharpen cambian como se le a imaxe, así que sempre actúan
+  <p>Os efectos de cor actúan de arriba abaixo; Desenfoque, Pixelar e Enfocar cambian como se le a imaxe, así que sempre actúan
   primeiro. Os efectos aplícanse despois da tinguidura e a opacidade da capa, e funcionan con todos os modos de fusión.</p>
 </section>
 
@@ -652,13 +653,13 @@ cargo run --release -- show.openq    # abrir un espectáculo gardado</code></pre
     <li><strong>Opacidade</strong>, para vídeo e texto.</li>
     <li><strong>Xeometría</strong>: posición, escala, rotación e recorte. Parte da xeometría propia do destino, así que só
     se moven os valores que cambies.</li>
-    <li><strong>Efectos de vídeo</strong>: os axustes de <a href="#videofx">Video FX</a> do destino cópianse no fundido ao
+    <li><strong>Efectos de vídeo</strong>: os axustes de <a href="#videofx">FX de vídeo</a> do destino cópianse no fundido ao
     marcalo; cambia os valores cara aos que fundir. Un efecto apagado aquí fúndese cara a fóra, e os efectos que o destino non
-    ten entran fundindo desde nada. <em>Take the target's effects</em> vólveos copiar despois de cambiar de destino.</li>
+    ten entran fundindo desde nada. <em>Tomar os efectos do destino</em> vólveos copiar despois de cambiar de destino.</li>
     <li><strong>Obxectos</strong>, para destinos en modo <a href="#audio">audio por obxectos</a>: as posicións e a dispersión ás
     que mover os obxectos, editadas na mesma vista de sala.</li>
   </ul>
-  <p>Marca <strong>Stop target</strong> para un fundido de saída: o destino párase ao rematar o fundido. Pausar un fundido
+  <p>Marca <strong>Parar o destino</strong> para un fundido de saída: o destino párase ao rematar o fundido. Pausar un fundido
   conxélao, e retomalo continúa co tempo que quedaba.</p>
 </section>
 
@@ -674,12 +675,12 @@ cargo run --release -- show.openq    # abrir un espectáculo gardado</code></pre
   seguir o LTC da banda mentres outra se leva á man.</p>
   <h3>Disparadores por código de tempo</h3>
   <figure>
-    <img src="img/triggers.webp" width="1400" height="255" alt="Lapela Triggers: unha tarxeta de atallo e unha tarxeta de código de tempo co tempo de disparo, a fonte da lista e o que está a recibir.">
-    <figcaption>A lapela Triggers dunha cue que se dispara en 01:00:05:00.</figcaption>
+    <img src="img/triggers.webp" width="1400" height="255" alt="Lapela Disparadores: unha tarxeta de atallo e unha tarxeta de código de tempo co tempo de disparo, a fonte da lista e o que está a recibir.">
+    <figcaption>A lapela Disparadores dunha cue que se dispara en 01:00:05:00.</figcaption>
   </figure>
-  <p>Na lapela <strong>Triggers</strong> dunha cue, marca <em>Fire at</em> e escribe o tempo (hh:mm:ss:ff). Cando o código de
+  <p>Na lapela <strong>Disparadores</strong> dunha cue, marca <em>Disparar en</em> e escribe o tempo (hh:mm:ss:ff). Cando o código de
   tempo da lista pasa por ese momento, a cue dispárase, estea onde estea o cabezal, e as súas continuacións funcionan coma sempre.
-  A lapela amosa que segue a lista e que está a recibir; <em>Set up…</em> abre os axustes de código de tempo da lista.</p>
+  A lapela amosa que segue a lista e que está a recibir; <em>Configurar…</em> abre os axustes de código de tempo da lista.</p>
   <p>Só o código de tempo que avanza dispara cues. Cando a fonte salta (un locate ou un rebobinado) ou se para, non se dispara nada,
   e os disparos retómanse desde a nova posición, así que ensaiar unha sección facendo retroceder a fonte é seguro.</p>
 </section>
@@ -687,21 +688,21 @@ cargo run --release -- show.openq    # abrir un espectáculo gardado</code></pre
 <section id="stages">
   <h2><span class="n">10</span>Escenarios e proxección</h2>
   <p>Un <strong>escenario</strong> (stage) é unha saída de vídeo, como un proxector ou unha pantalla. Engade escenarios en
-  <span class="menu">Settings → Stages</span>. Cada un ten un nome e un tamaño de lenzo en píxeles.</p>
+  <span class="menu">Axustes → Escenarios de vídeo</span>. Cada un ten un nome e un tamaño de lenzo en píxeles.</p>
   <h3>Enviar un escenario a unha pantalla</h3>
-  <p>En <span class="menu">Video → Stage: <em>nome</em> → Output</span>, ou co despregable Output de Settings → Stages,
-  escolle <em>Window</em> ou unha das pantallas conectadas. Un escenario asignado a unha pantalla ábrese a pantalla completa nela, e
-  volve abrirse alí ao cargar o espectáculo. Se unha pantalla non aparece, usa <em>Refresh displays</em>. Nunha xanela de
+  <p>En <span class="menu">Vídeo → Escenario: <em>nome</em> → Saída</span>, ou co despregable Saída de Axustes → Escenarios de vídeo,
+  escolle <em>Xanela</em> ou unha das pantallas conectadas. Un escenario asignado a unha pantalla ábrese a pantalla completa nela, e
+  volve abrirse alí ao cargar o espectáculo. Se unha pantalla non aparece, usa <em>Actualizar pantallas</em>. Nunha xanela de
   escenario, fai dobre clic ou preme <kbd>F11</kbd> para alternar a pantalla completa.</p>
-  <h3>Mapping</h3>
+  <h3>Mapeado</h3>
   <figure>
     <img src="img/mapping.webp" width="1100" height="551" alt="Patrón de axuste de mapping nun escenario con corrección de trapecio: lenzo branco con cuadrícula, regras de píxeles en cada bordo, círculos e esquinas numeradas.">
     <figcaption>O patrón de axuste de mapping. Círculos que parecen óvalos, ou cadros da cuadrícula que non son cadrados, amosan o que aínda está desaxustado.</figcaption>
   </figure>
-  <p><em>Edit mapping</em> amosa un patrón de axuste no escenario: un lenzo branco cunha cuadrícula cadrada, regras de píxeles
+  <p><em>Editar mapeado</em> amosa un patrón de axuste no escenario: un lenzo branco cunha cuadrícula cadrada, regras de píxeles
   en cada bordo, círculos, diagonais e unha cruz central, todo debuxado a través do mapping, ademais de catro esquinas numeradas.
   Arrastra as esquinas para encaixar a imaxe na pantalla (corrección de trapecio), ou pasa o rato por unha esquina e móvea coas
-  frechas: un píxel cada vez, ou dez con <kbd>Maiús</kbd>. <em>Reset mapping</em> devolve as esquinas ao seu sitio.</p>
+  frechas: un píxel cada vez, ou dez con <kbd>Maiús</kbd>. <em>Restablecer mapeado</em> devolve as esquinas ao seu sitio.</p>
 </section>
 
 <section id="remote">
@@ -711,33 +712,33 @@ cargo run --release -- show.openq    # abrir un espectáculo gardado</code></pre
   reprodución. O outro dispositivo amosa a súa lista de cues, cabezal, cues en marcha e medidores, e envíalle GO e outras ordes.</p>
   <h3>Emparellar un dispositivo</h3>
   <ol class="steps">
-    <li>No dispositivo principal, abre <span class="menu">Remote → Share this OpenQ</span>, marca
-    <em>Let paired devices connect</em> e fai clic en <em>Pair a new device…</em>. Aparece un código como <code>C9XR-E9HJ</code>.</li>
-    <li>No outro dispositivo, abre <span class="menu">Remote → Connect to another OpenQ</span>, fai clic en <em>Search</em> e escolle o
-    dispositivo principal. Se a busca non atopa nada, escribe o seu enderezo, que aparece na xanela Remote do dispositivo principal.</li>
-    <li>Introduce o código e fai clic en <em>Connect</em>. A partir da primeira vez, conectar non precisa código.</li>
+    <li>No dispositivo principal, abre <span class="menu">Remoto → Compartir este OpenQ</span>, marca
+    <em>Deixar que se conecten os dispositivos emparellados</em> e fai clic en <em>Emparellar un dispositivo novo…</em>. Aparece un código como <code>C9XR-E9HJ</code>.</li>
+    <li>No outro dispositivo, abre <span class="menu">Remoto → Conectar a outro OpenQ</span>, fai clic en <em>Buscar</em> e escolle o
+    dispositivo principal. Se a busca non atopa nada, escribe o seu enderezo, que aparece na xanela Remoto do dispositivo principal.</li>
+    <li>Introduce o código e fai clic en <em>Conectar</em>. A partir da primeira vez, conectar non precisa código.</li>
   </ol>
   <figure class="narrow">
-    <img src="img/remote-share.webp" width="700" height="680" alt="Xanela Remote do dispositivo principal cun código de emparellamento e unha lista de dispositivos emparellados.">
+    <img src="img/remote-share.webp" width="700" height="680" alt="Xanela Remoto do dispositivo principal cun código de emparellamento e unha lista de dispositivos emparellados.">
     <figcaption>O dispositivo principal durante o emparellamento. Os dispositivos emparellados aparecen baixo o código, co seu rol.</figcaption>
   </figure>
   <h3>Roles</h3>
   <div class="table-wrap"><table>
     <thead><tr><th>Rol</th><th>O dispositivo pode</th></tr></thead>
     <tbody>
-      <tr><td>View only</td><td>Seguir o espectáculo: lista de cues, cabezal, cues en marcha e medidores.</td></tr>
+      <tr><td>Só ver</td><td>Seguir o espectáculo: lista de cues, cabezal, cues en marcha e medidores.</td></tr>
       <tr><td>Control</td><td>Ademais, premer GO, parar, pausar e retomar, mover o cabezal e iniciar ou parar cues soltas.</td></tr>
-      <tr><td>Control &amp; edit</td><td>Ademais, editar o espectáculo. Os cambios gárdanse no dispositivo principal.</td></tr>
+      <tr><td>Control e edición</td><td>Ademais, editar o espectáculo. Os cambios gárdanse no dispositivo principal.</td></tr>
     </tbody>
   </table></div>
-  <p>Axusta o rol que reciben os dispositivos novos, e cambia o de calquera dispositivo, na xanela Remote do dispositivo
-  principal. Os cambios aplícanse ao momento. <strong>Remove</strong> desconecta un dispositivo axiña, e ten que volver
+  <p>Axusta o rol que reciben os dispositivos novos, e cambia o de calquera dispositivo, na xanela Remoto do dispositivo
+  principal. Os cambios aplícanse ao momento. <strong>Quitar</strong> desconecta un dispositivo axiña, e ten que volver
   emparellarse para reconectar. Cando un dispositivo se desconecta, recupera o seu propio espectáculo. Os ficheiros de medios quedan
   no dispositivo principal, así que engádeos alí.</p>
   <div class="note"><span class="label">Seguridade</span><p>As conexións van cifradas e autenticadas. Un código de emparellamento
   vale 5 minutos e 5 intentos, e quen grave o tráfico de rede non pode deducilo a partir da gravación. Despois do
   emparellamento, cada dispositivo entra coa súa propia clave secreta. Un enderezo que falla unha e outra vez bloquéase
-  5 minutos. A lista Activity amosa as conexións e os intentos rexeitados.</p></div>
+  5 minutos. A lista Actividade amosa as conexións e os intentos rexeitados.</p></div>
   <div class="note tip"><span class="label">Rede</span><p>O acceso remoto usa o porto TCP <code>53200</code>, e a busca
   usa o porto UDP <code>53201</code>. Un devasa no dispositivo principal ten que permitir os dous. Nunha wifi de convidados
   a busca pode non atopar nada; escribir o enderezo segue a funcionar.</p></div>
@@ -745,7 +746,7 @@ cargo run --release -- show.openq    # abrir un espectáculo gardado</code></pre
 
 <section id="osc">
   <h2><span class="n">12</span>OSC e cues de rede</h2>
-  <p>Activa <strong>OSC remote control</strong> en <span class="menu">Settings → General</span>. Escoita no porto UDP 53000
+  <p>Activa <strong>Control remoto OSC</strong> en <span class="menu">Axustes → Xeral</span>. Escoita no porto UDP 53000
   por defecto. As cues identifícanse polo seu número.</p>
   <div class="table-wrap"><table>
     <thead><tr><th>Enderezo</th><th>Acción</th></tr></thead>
@@ -758,22 +759,22 @@ cargo run --release -- show.openq    # abrir un espectáculo gardado</code></pre
       <tr><td><code>/cue/4.2/start</code></td><td>Tamén <code>stop</code>, <code>pause</code>, <code>resume</code>, <code>devamp</code></td></tr>
     </tbody>
   </table></div>
-  <p>Unha <strong>cue Network</strong> envía unha mensaxe OSC a outros equipos. Axusta o host, o porto, o enderezo
+  <p>Unha <strong>cue Rede</strong> envía unha mensaxe OSC a outros equipos. Axusta o host, o porto, o enderezo
   (por exemplo <code>/eos/cue/12/fire</code>) e os argumentos. Os argumentos sepáranse con espazos: os números envíanse como
   números e o texto entre comiñas como texto.</p>
 </section>
 
 <section id="settings">
   <h2><span class="n">13</span>Axustes</h2>
-  <p><span class="menu">Edit → Settings…</span>, ou o botón <span class="ms" aria-hidden="true">&#xe8b8;</span> á
-  dereita da barra de estado. Gárdanse co espectáculo.</p>
+  <p><span class="menu">Edición → Axustes…</span>, ou o botón <span class="ms" aria-hidden="true">&#xe8b8;</span> á
+  dereita da barra de estado. Gárdanse co espectáculo, agás a lingua, que é de cada ordenador.</p>
   <div class="table-wrap"><table>
     <thead><tr><th>Lapela</th><th>Axustes</th></tr></thead>
     <tbody>
-      <tr><td>General</td><td>Tempo de fundido de parar todo, protección contra dobre GO, volume mestre, OSC activado e porto.</td></tr>
+      <tr><td>Xeral</td><td>Lingua da interface (galego, español ou inglés; cambia ao momento), tempo de fundido de Parar todo, protección contra dobre GO, volume xeral, OSC activado e porto.</td></tr>
       <tr><td>Audio</td><td>Dispositivo de saída. Cambialo para toda a reprodución. As matrices de enrutado apuntan ás saídas deste dispositivo.
       A <strong>sala para audio por obxectos</strong>: os altofalantes, onde están e a que saída vai cada un.</td></tr>
-      <tr><td>Stages</td><td>Engadir e nomear escenarios, tamaño do lenzo, pantalla de saída, pantalla completa, mapping.</td></tr>
+      <tr><td>Escenarios de vídeo</td><td>Engadir e nomear escenarios, tamaño do lenzo, pantalla de saída, pantalla completa, mapping.</td></tr>
     </tbody>
   </table></div>
   <figure class="narrow">
@@ -781,7 +782,7 @@ cargo run --release -- show.openq    # abrir un espectáculo gardado</code></pre
     <figcaption>A sala para audio por obxectos. Arrastra os altofalantes ou escribe as súas posicións.</figcaption>
   </figure>
   <p>Mentres non a cambies, a sala segue o dispositivo de saída: un par estéreo, cuadrafónico, 5.1 ou 7.1 (sen altofalante na saída
-  LFE), ou un anel para outros números de canles. Os predefinidos configuran esas salas, e <em>Use default</em> volve seguir o
+  LFE), ou un anel para outros números de canles. Os predefinidos configuran esas salas, e <em>Usar o predeterminado</em> volve seguir o
   dispositivo. A fronte, onde está o escenario, queda arriba. Varios altofalantes poden compartir unha saída.</p>
   <p>Os axustes de acceso remoto e as claves dos dispositivos pertencen ao ordenador, non ao espectáculo. Están en
   <code>~/.config/openq/remote.json</code>, lexible só pola túa conta de usuario.</p>
@@ -795,14 +796,14 @@ cargo run --release -- show.openq    # abrir un espectáculo gardado</code></pre
   <p>Mentres un espectáculo ten cambios sen gardar, OpenQ garda unha copia cada poucos segundos. Gardar o espectáculo,
   ou saír con normalidade, borra a copia. Se OpenQ ou o ordenador caen, o seguinte arranque ofréceche a copia:</p>
   <figure class="narrow">
-    <img src="img/recovery.webp" width="702" height="382" alt="Xanela Recover unsaved work con dous espectáculos autogardados, cada un con botóns Recover e Discard, e un botón Later.">
+    <img src="img/recovery.webp" width="702" height="382" alt="Xanela Recuperar traballo sen gardar con dous espectáculos autogardados, cada un con botóns Recuperar e Descartar, e un botón Máis tarde.">
     <figcaption>Despois dun fallo: cada espectáculo con cambios sen gardar, cando se autogardou e a que ficheiro pertence.</figcaption>
   </figure>
   <ul>
-    <li><strong>Recover</strong> abre a copia cos cambios sen gardar. Gárdaa para conservalos (gárdase no
+    <li><strong>Recuperar</strong> abre a copia cos cambios sen gardar. Gárdaa para conservalos (gárdase no
     propio ficheiro do espectáculo).</li>
-    <li><strong>Discard</strong> borra a copia para sempre.</li>
-    <li><strong>Later</strong> pecha a xanela; volve preguntar a próxima vez.</li>
+    <li><strong>Descartar</strong> borra a copia para sempre.</li>
+    <li><strong>Máis tarde</strong> pecha a xanela; volve preguntar a próxima vez.</li>
   </ul>
   <p>Gardar un espectáculo escribe primeiro un ficheiro temporal e ponno no seu lugar cando xa está a salvo no disco, así que un
   fallo ou un corte de luz durante o gardado deixa intacta a versión anterior.</p>
@@ -811,13 +812,13 @@ cargo run --release -- show.openq    # abrir un espectáculo gardado</code></pre
     <thead><tr><th>Que pasa</th><th>Que fai OpenQ</th></tr></thead>
     <tbody>
       <tr><td>O dispositivo de audio desaparece (desconectado, servidor de audio reiniciado)</td><td>Os seus sons páranse e a
-      barra de estado amosa <em>audio lost · reconnecting…</em>. OpenQ tenta abrir o mesmo dispositivo cada
+      barra de estado amosa <em>audio perdido · reconectando…</em>. OpenQ tenta abrir o mesmo dispositivo cada
       2 segundos e segue en canto volve. O vídeo e as demais cues seguen a funcionar.</td></tr>
-      <tr><td>Un ficheiro de medios está danado</td><td>Esa cue remata cun erro en <span class="menu">View → Engine log</span>;
+      <tr><td>Un ficheiro de medios está danado</td><td>Esa cue remata cun erro en <span class="menu">Ver → Rexistro do motor</span>;
       todas as demais cues seguen a soar.</td></tr>
       <tr><td>Un erro interno no motor de cues</td><td>Todas as cues páranse á vez, o cabezal queda onde estaba e
       o rexistro explica que pasou. O seguinte GO funciona coma sempre.</td></tr>
-      <tr><td>Unha cue iníciase a si mesma nun bucle sen tempo (unha cue Start que apunta a si mesma, ou dúas que se apuntan
+      <tr><td>Unha cue iníciase a si mesma nun bucle sen tempo (unha cue Iniciar que apunta a si mesma, ou dúas que se apuntan
       entre si)</td><td>Retense e o rexistro nomea a cue, en lugar de enlentecer todo o espectáculo.</td></tr>
       <tr><td>Máis de 256 sons á vez</td><td>As cues de audio adicionais rexéitanse cun erro no rexistro.</td></tr>
     </tbody>
@@ -828,7 +829,7 @@ cargo run --release -- show.openq    # abrir un espectáculo gardado</code></pre
   cando informes dun problema.</p>
   <p><strong>Rexistro de erros.</strong> Cada aviso e erro (entradas do rexistro do motor, fallos de dispositivos, gardados ou
   aperturas fallidos, caídas) tamén se escribe, coa data e a hora en UTC, en <code>logs/openq.log</code> dentro do mesmo
-  cartafol, para que poidas revisalo despois da función. <span class="menu">Help → Error log</span> ábreo. Cando supera
+  cartafol, para que poidas revisalo despois da función. <span class="menu">Axuda → Rexistro de erros</span> ábreo. Cando supera
   os 2 MB, móvese a <code>openq.old.log</code> a próxima vez que arrinca OpenQ.</p>
 </section>
 
@@ -844,14 +845,14 @@ cargo run --release -- show.openq    # abrir un espectáculo gardado</code></pre
       <tr><td><kbd>←</kbd> <kbd>→</kbd></td><td>Pregar / despregar un grupo</td></tr>
       <tr><td><kbd>Ctrl</kbd>+<kbd>E</kbd></td><td>Cambiar entre modo edición e modo función</td></tr>
       <tr><td><kbd>Intro</kbd></td><td>Renomear no sitio a cue seleccionada</td></tr>
-      <tr><td><kbd>Ctrl</kbd>+<kbd>1</kbd> … <kbd>0</kbd></td><td>Nova cue Audio, Video, Group, Wait, Memo, Fade, Start, Stop, Pause, Go To</td></tr>
+      <tr><td><kbd>Ctrl</kbd>+<kbd>1</kbd> … <kbd>0</kbd></td><td>Nova cue Audio, Vídeo, Grupo, Espera, Memo, Fade, Iniciar, Parar, Pausa, Ir a</td></tr>
       <tr><td><kbd>Ctrl</kbd>+<kbd>D</kbd> · <kbd>Ctrl</kbd>+<kbd>G</kbd> · <kbd>Supr</kbd></td><td>Duplicar · agrupar a selección · borrar</td></tr>
       <tr><td><kbd>Ctrl</kbd>+<kbd>Z</kbd> · <kbd>Ctrl</kbd>+<kbd>Maiús</kbd>+<kbd>Z</kbd></td><td>Desfacer · refacer (ata 200 pasos; os espectáculos moi grandes gardan menos, polo menos 10, para aforrar memoria)</td></tr>
       <tr><td><kbd>Ctrl</kbd>+<kbd>N</kbd> / <kbd>O</kbd> / <kbd>S</kbd> / <kbd>Maiús</kbd>+<kbd>S</kbd></td><td>Novo / abrir / gardar / gardar como</td></tr>
       <tr><td><kbd>F1</kbd></td><td>Abrir este manual de usuario</td></tr>
       <tr><td><kbd>F11</kbd></td><td>Pantalla completa, nunha xanela de escenario</td></tr>
       <tr><td><kbd>←</kbd> <kbd>→</kbd> <kbd>↑</kbd> <kbd>↓</kbd> (+<kbd>Maiús</kbd>)</td><td>Mover 1 (10) píxeles a esquina baixo o rato ao facer mapping</td></tr>
-      <tr><td>Atallo da cue</td><td>Dispara esa cue directamente (axústase na lapela Triggers)</td></tr>
+      <tr><td>Atallo da cue</td><td>Dispara esa cue directamente (axústase na lapela Disparadores)</td></tr>
     </tbody>
   </table></div>
 </section>
@@ -861,22 +862,22 @@ cargo run --release -- show.openq    # abrir un espectáculo gardado</code></pre
   <div class="table-wrap"><table>
     <thead><tr><th>Problema</th><th>Proba</th></tr></thead>
     <tbody>
-      <tr><td>Non hai son</td><td>Mira a barra de estado. Se di <em>no audio</em>, escolle outro dispositivo en Settings → Audio.
+      <tr><td>Non hai son</td><td>Mira a barra de estado. Se di <em>sen audio</em>, escolle outro dispositivo en Axustes → Audio.
       Comproba o volume mestre e o nivel e o enrutado da cue.</td></tr>
-      <tr><td>Unha cue Mic non soa</td><td>Comproba o dispositivo de entrada e as canles na súa lapela I/O; a barra de nivel amosa
+      <tr><td>Unha cue Micro non soa</td><td>Comproba o dispositivo de entrada e as canles na súa lapela I/O; a barra de nivel amosa
       se chega algo. En macOS e Windows, OpenQ precisa permiso para usar o micrófono.</td></tr>
       <tr><td>Os disparadores por código de tempo non se disparan</td><td>Abre a xanela <em>Timecode…</em> da lista e comproba que
       recibe código de tempo á frecuencia correcta. As cues só se disparan mentres o código avanza polo seu tempo de disparo.</td></tr>
-      <tr><td>Unha cue Camera non amosa nada</td><td>Comproba o dispositivo na súa lapela Camera (usa <span class="ms" aria-hidden="true">&#xe5d5;</span>
+      <tr><td>Unha cue Cámara non amosa nada</td><td>Comproba o dispositivo na súa lapela Cámara (usa <span class="ms" aria-hidden="true">&#xe5d5;</span>
       para volver buscar) e o rexistro do motor. Outro programa que use a cámara pode bloqueala.</td></tr>
-      <tr><td>Unha cue amosa unha icona vermella <span class="ms" style="color:var(--red)" aria-hidden="true">&#xf8b6;</span></td><td>O seu ficheiro de medios falta ou non se pode ler, ou borrouse a súa cue de destino. Se o ficheiro se moveu, fai clic en <em>Browse…</em> na lapela
-      Time da cue para atopalo de novo. Tras reconectar unha unidade, dálle uns dous segundos para que desapareza.</td></tr>
-      <tr><td>Un vídeo non aparece</td><td>Abre a xanela do escenario desde o menú Video. Comproba o escenario, a opacidade
-      e a capa da cue, e busca erros do descodificador en <span class="menu">View → Engine log</span>. Unha tarxeta gráfica só
+      <tr><td>Unha cue amosa unha icona vermella <span class="ms" style="color:var(--red)" aria-hidden="true">&#xf8b6;</span></td><td>O seu ficheiro de medios falta ou non se pode ler, ou borrouse a súa cue de destino. Se o ficheiro se moveu, fai clic en <em>Examinar…</em> na lapela
+      Básico da cue para atopalo de novo. Tras reconectar unha unidade, dálle uns dous segundos para que desapareza.</td></tr>
+      <tr><td>Un vídeo non aparece</td><td>Abre a xanela do escenario desde o menú Vídeo. Comproba o escenario, a opacidade
+      e a capa da cue, e busca erros do descodificador en <span class="menu">Ver → Rexistro do motor</span>. Unha tarxeta gráfica só
       pode amosar imaxes ata certo tamaño (a miúdo 8192 ou 16384 píxeles de ancho). OpenQ reduce imaxes fixas, SVG e texto
       para que caiban, pero unha película maior queda fóra: convértea a un tamaño menor.</td></tr>
-      <tr><td>A barra de estado di <em>audio lost · reconnecting…</em></td><td>O dispositivo de audio desapareceu. Volve conectalo
-      ou reinicia o servizo de audio; OpenQ reconéctase só. Para usar outro dispositivo, escólleo en Settings → Audio.</td></tr>
+      <tr><td>A barra de estado di <em>audio perdido · reconectando…</em></td><td>O dispositivo de audio desapareceu. Volve conectalo
+      ou reinicia o servizo de audio; OpenQ reconéctase só. Para usar outro dispositivo, escólleo en Axustes → Audio.</td></tr>
       <tr><td>OpenQ pide recuperar traballo sen gardar</td><td>A última vez non se pechou con normalidade. Ver <a href="#safety">Seguridade ante fallos</a>.</td></tr>
       <tr><td>GO parece non facer nada</td><td>A cue baixo o cabezal pode estar desarmada, ou a segunda pulsación pode ter
       chegado dentro da protección contra dobre GO.</td></tr>
@@ -884,7 +885,7 @@ cargo run --release -- show.openq    # abrir un espectáculo gardado</code></pre
       están na mesma rede, e escribe o enderezo que aparece no dispositivo principal.</td></tr>
       <tr><td>"Pair this device again" (remoto)</td><td>O dispositivo quitouse no principal, ou esqueceuse a súa clave. Abre o
       emparellamento no dispositivo principal e introduce o código novo.</td></tr>
-      <tr><td>Algo falla e non sabes por que</td><td>Abre <span class="menu">Help → Error log</span>: cada aviso, erro e caída queda alí coa súa hora.</td></tr>
+      <tr><td>Algo falla e non sabes por que</td><td>Abre <span class="menu">Axuda → Rexistro de erros</span>: cada aviso, erro e caída queda alí coa súa hora.</td></tr>
     </tbody>
   </table></div>
 
@@ -905,7 +906,7 @@ cargo run --release -- show.openq    # abrir un espectáculo gardado</code></pre
     </tr></tbody>
   </table></div>
   <pre><code>Copyright 2026 Iago Núñez — OpenQ (https://github.com/iagonunez/OpenQ)</code></pre>
-  <p><span class="menu">Help → About OpenQ and licenses</span> amosa a versión, a licenza e todos os avisos de terceiros.
+  <p><span class="menu">Axuda → Acerca de OpenQ e licenzas</span> amosa a versión, a licenza e todos os avisos de terceiros.
   Son as fontes (Inter, JetBrains Mono e Barlow Condensed baixo a SIL Open Font License; Material Symbols baixo Apache 2.0; as
   fontes incluídas en egui) e as bibliotecas Rust de código aberto coas que se constrúe OpenQ, cada unha coa súa propia
   licenza. Os mesmos textos están en <code>NOTICE.md</code> e <code>THIRD_PARTY_LICENSES.md</code> xunto ao programa.</p>

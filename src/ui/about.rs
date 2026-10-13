@@ -3,6 +3,7 @@
 
 use super::{App, icons, theme};
 use egui::{RichText, Ui};
+use crate::i18n::t;
 
 const LICENSE: &str = include_str!("../../LICENSE.md");
 const NOTICE: &str = include_str!("../../NOTICE.md");
@@ -36,7 +37,7 @@ impl App {
             return;
         }
         let mut open = true;
-        egui::Window::new(theme::with_icon(icons::INFO, "About OpenQ"))
+        egui::Window::new(theme::with_icon(icons::INFO, t("About OpenQ")))
             .id(egui::Id::new("about"))
             .open(&mut open)
             .default_size([620.0, 560.0])
@@ -49,27 +50,27 @@ impl App {
                         job.append("Open", 0.0, TextFormat::simple(theme::title(34.0), theme::TEXT));
                         job.append("Q", 0.0, TextFormat::simple(theme::title(34.0), theme::GREEN));
                         ui.label(job);
-                        ui.label(RichText::new(format!("version {}", env!("CARGO_PKG_VERSION"))).color(theme::TEXT_DIM));
+                        ui.label(RichText::new(tr!("version {v}", v = env!("CARGO_PKG_VERSION"))).color(theme::TEXT_DIM));
                     });
-                    ui.label("Show control and cue playback.");
+                    ui.label(t("Show control and cue playback."));
                     ui.hyperlink(env!("CARGO_PKG_REPOSITORY"));
                     ui.add_space(6.0);
                     ui.label(RichText::new(copyright()).strong());
                     ui.label(
-                        "Licensed under the Apache License 2.0. Use it for anything, \
+                        t("Licensed under the Apache License 2.0. Use it for anything, \
                          paid shows and productions included, and copy, change, share or sell it with this notice and \
-                         the license.",
+                         the license."),
                     );
                     ui.add_space(8.0);
-                    egui::CollapsingHeader::new("License").show(ui, |ui| long_text(ui, "lic", LICENSE));
-                    egui::CollapsingHeader::new("Notices and credits").default_open(true).show(ui, |ui| long_text(ui, "notice", NOTICE));
-                    egui::CollapsingHeader::new("Font licenses").show(ui, |ui| {
+                    egui::CollapsingHeader::new(t("License")).show(ui, |ui| long_text(ui, "lic", LICENSE));
+                    egui::CollapsingHeader::new(t("Notices and credits")).default_open(true).show(ui, |ui| long_text(ui, "notice", NOTICE));
+                    egui::CollapsingHeader::new(t("Font licenses")).show(ui, |ui| {
                         for (name, text) in FONT_LICENSES {
                             egui::CollapsingHeader::new(name).show(ui, |ui| long_text(ui, name, text));
                         }
                     });
                     let crates = THIRD_PARTY.lines().filter(|l| l.starts_with("| ") && !l.starts_with("| Crate")).count();
-                    egui::CollapsingHeader::new(format!("Third-party software licenses ({crates} crates)"))
+                    egui::CollapsingHeader::new(tr!("Third-party software licenses ({crates} crates)", crates)).id_salt("third-party")
                         .show(ui, |ui| long_text(ui, "third", THIRD_PARTY));
                 });
             });

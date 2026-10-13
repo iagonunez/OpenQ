@@ -12,6 +12,7 @@ use crate::model::{
 use crate::show::Show;
 use egui::{ComboBox, DragValue, RichText, Slider, TextEdit, Ui};
 use std::path::Path;
+use crate::i18n::t;
 
 #[derive(Clone, Copy, PartialEq, Eq, Default, Debug)]
 pub(super) enum Tab {
@@ -27,6 +28,12 @@ pub(super) enum Tab {
     Settings,
     AudioFx,
     VideoFx,
+}
+
+/// Every tab name (translation test).
+#[cfg(test)]
+pub(super) fn tab_names() -> Vec<&'static str> {
+    crate::model::KindTag::ALL.iter().flat_map(|k| tabs_for(&k.default_kind()).iter().map(|t| t.1)).collect()
 }
 
 fn tabs_for(kind: &CueKind) -> &'static [(Tab, &'static str)] {
@@ -199,7 +206,7 @@ fn target_label(cue: &Cue, other_list: Option<&str>) -> String {
 impl App {
     pub(super) fn inspector(&mut self, ui: &mut Ui, show: &mut Show) {
         let Some(id) = self.primary() else {
-            ui.centered_and_justified(|ui| ui.label(RichText::new("No cue selected").weak()));
+            ui.centered_and_justified(|ui| ui.label(RichText::new(t("No cue selected")).weak()));
             return;
         };
         let stages: Vec<(StageId, String)> = show.ws.stages.iter().map(|s| (s.id, s.name.clone())).collect();
@@ -260,10 +267,10 @@ impl App {
                     Tab::AudioFx => super::icons::INSTANT_MIX,
                     Tab::VideoFx => super::icons::AUTO_FIX_HIGH,
                 };
-                super::theme::tab(ui, &mut self.inspector_tab, *t, glyph, label);
+                super::theme::tab(ui, &mut self.inspector_tab, *t, glyph, crate::i18n::t(label));
             }
             if self.selection.len() > 1 {
-                ui.label(RichText::new(format!("({} selected — editing the last)", self.selection.len())).weak());
+                ui.label(RichText::new(tr!("({n} selected — editing the last)", n = self.selection.len())).weak());
             }
         });
         ui.separator();
@@ -315,8 +322,8 @@ impl App {
                 if let Some(eq) = eq {
                     // Bands on the left, the response curve to their right (both edit the same EQ).
                     let specs = [
-                        super::theme::Card::new(super::icons::TUNE, "Bands", 470.0),
-                        super::theme::Card::new(super::icons::GRAPHIC_EQ, "Response", 320.0),
+                        super::theme::Card::new(super::icons::TUNE, t("Bands"), 470.0),
+                        super::theme::Card::new(super::icons::GRAPHIC_EQ, t("Response"), 320.0),
                     ];
                     let eq_id = ui.id().with(("eq", id));
                     super::theme::cards(ui, "eq", &specs, |ui, i| if i == 0 { eq_bands(ui, eq_id, eq) } else { eq_graph(ui, eq_id, eq) });
@@ -392,26 +399,26 @@ impl App {
 fn basics(ui: &mut Ui, cue: &mut Cue, ctx: &Ctx, pick: &mut bool) {
     use super::icons as ic;
     use super::theme::Card;
-    let mut specs = vec![Card::new(ic::INFO, "Cue", 300.0), Card::new(ic::SCHEDULE, "Timing", 280.0)];
+    let mut specs = vec![Card::new(ic::INFO, t("Cue"), 300.0), Card::new(ic::SCHEDULE, t("Timing"), 280.0)];
     let media = cue.kind.media_path().is_some();
     if media {
-        specs.push(Card::new(ic::UPLOAD_FILE, "Media", 320.0));
+        specs.push(Card::new(ic::UPLOAD_FILE, t("Media"), 320.0));
     }
-    specs.push(Card::new(ic::NOTES, "Notes", 280.0));
+    specs.push(Card::new(ic::NOTES, t("Notes"), 280.0));
     let notes = specs.len() - 1;
     super::theme::cards(ui, "basics", &specs, |ui, i| match i {
         0 => {
             egui::Grid::new("basics-cue").num_columns(2).spacing([10.0, 6.0]).show(ui, |ui| {
-                ui.label("Number");
+                ui.label(t("Number"));
                 ui.add(TextEdit::singleline(&mut cue.number).desired_width(80.0));
                 ui.end_row();
 
-                ui.label("Name");
+                ui.label(t("Name"));
                 let hint = cue.display_name();
                 ui.add(TextEdit::singleline(&mut cue.name).hint_text(hint).desired_width(f32::INFINITY));
                 ui.end_row();
 
-                ui.label("Color");
+                ui.label(t("Color"));
                 ComboBox::from_id_salt("color").selected_text(cue.color.label()).show_ui(ui, |ui| {
                     for c in CueColor::ALL {
                         ui.selectable_value(&mut cue.color, c, c.label());
@@ -419,19 +426,19 @@ fn basics(ui: &mut Ui, cue: &mut Cue, ctx: &Ctx, pick: &mut bool) {
                 });
                 ui.end_row();
 
-                ui.label("Armed");
+                ui.label(t("Armed"));
                 ui.checkbox(&mut cue.armed, "")
-                    .on_hover_text("Disarmed cues skip their action but still run waits and continues");
+                    .on_hover_text(t("Disarmed cues skip their action but still run waits and continues"));
                 ui.end_row();
             });
         }
         1 => {
             egui::Grid::new("basics-timing").num_columns(2).spacing([10.0, 6.0]).show(ui, |ui| {
-                ui.label("Pre-wait");
-                time_edit(ui, &mut cue.pre_wait).on_hover_text("Delay between GO and the cue's action");
+                ui.label(t("Pre-wait"));
+                time_edit(ui, &mut cue.pre_wait).on_hover_text(t("Delay between GO and the cue's action"));
                 ui.end_row();
 
-                ui.label("Continue");
+                ui.label(t("Continue"));
                 ComboBox::from_id_salt("continue").selected_text(cue.continue_mode.label()).show_ui(ui, |ui| {
                     for m in ContinueMode::ALL {
                         ui.selectable_value(&mut cue.continue_mode, m, m.label());
@@ -439,17 +446,17 @@ fn basics(ui: &mut Ui, cue: &mut Cue, ctx: &Ctx, pick: &mut bool) {
                 });
                 ui.end_row();
 
-                ui.label("Post-wait");
+                ui.label(t("Post-wait"));
                 ui.add_enabled_ui(cue.continue_mode != ContinueMode::AutoFollow, |ui| {
                     time_edit(ui, &mut cue.post_wait)
-                        .on_hover_text("Time after the action starts before the next cue auto-continues");
+                        .on_hover_text(t("Time after the action starts before the next cue auto-continues"));
                 });
                 ui.end_row();
 
             });
         }
         i if i == notes => {
-            ui.add(TextEdit::multiline(&mut cue.notes).desired_rows(5).desired_width(f32::INFINITY).hint_text("Notes for the operator"));
+            ui.add(TextEdit::multiline(&mut cue.notes).desired_rows(5).desired_width(f32::INFINITY).hint_text(t("Notes for the operator")));
         }
         _ => {
             if let Some(path) = cue.kind.media_path() {
@@ -468,7 +475,7 @@ fn target_combo(ui: &mut Ui, salt: &str, target: &mut Option<CueId>, ctx: &Ctx, 
         None => none_label.into(),
         Some(t) => match ctx.list.find(t) {
             Some(c) => target_label(c, background_list(ctx.list, t)),
-            None => super::theme::with_icon(super::icons::WARNING, "missing cue"),
+            None => super::theme::with_icon(super::icons::WARNING, crate::i18n::t("missing cue")),
         },
     };
     ComboBox::from_id_salt(salt).width(220.0).selected_text(selected).show_ui(ui, |ui| {
@@ -484,13 +491,13 @@ fn target_combo(ui: &mut Ui, salt: &str, target: &mut Option<CueId>, ctx: &Ctx, 
 /// File picker row inside a grid; returns the probe result if known.
 fn file_row(ui: &mut Ui, path: &Path, prober: &Prober, pick: &mut bool) -> Option<MediaInfo> {
     let mut info = None;
-    ui.label("File");
+    ui.label(t("File"));
     ui.horizontal(|ui| {
-        if ui.button(super::theme::with_icon(super::icons::FOLDER_OPEN, "Browse…")).clicked() {
+        if ui.button(super::theme::with_icon(super::icons::FOLDER_OPEN, t("Browse…"))).clicked() {
             *pick = true;
         }
         if path.as_os_str().is_empty() {
-            ui.label(RichText::new("none").weak());
+            ui.label(RichText::new(t("none")).weak());
         } else {
             let name = path.file_name().map(|f| f.to_string_lossy().into_owned()).unwrap_or_default();
             let color = if prober.exists(path) { ui.visuals().text_color() } else { RED };
@@ -505,7 +512,7 @@ fn file_row(ui: &mut Ui, path: &Path, prober: &Prober, pick: &mut bool) -> Optio
                 ui.label(
                     RichText::new(format!(
                         "{} · {}",
-                        i.duration.map(fmt_time).unwrap_or_else(|| if i.still { "still".into() } else { "unknown length".into() }),
+                        i.duration.map(fmt_time).unwrap_or_else(|| if i.still { t("still").into() } else { t("unknown length").into() }),
                         i.detail
                     ))
                     .weak(),
@@ -516,7 +523,7 @@ fn file_row(ui: &mut Ui, path: &Path, prober: &Prober, pick: &mut bool) -> Optio
                 ui.label(RichText::new(e).color(RED));
             }
             None => {
-                ui.label(RichText::new(if prober.exists(path) { "reading…" } else { "file not found" }).weak());
+                ui.label(RichText::new(if prober.exists(path) { t("reading…") } else { t("file not found") }).weak());
             }
         }
         ui.end_row();
@@ -525,16 +532,16 @@ fn file_row(ui: &mut Ui, path: &Path, prober: &Prober, pick: &mut bool) -> Optio
 }
 
 fn plays_row(ui: &mut Ui, play_count: &mut u32, infinite: &mut bool) {
-    ui.label("Plays");
+    ui.label(t("Plays"));
     ui.horizontal(|ui| {
         ui.add_enabled(!*infinite, DragValue::new(play_count).range(1..=9999).suffix("×"));
-        ui.checkbox(infinite, "Loop forever");
+        ui.checkbox(infinite, t("Loop forever"));
     });
     ui.end_row();
 }
 
 fn end_row(ui: &mut Ui, end: &mut Option<f64>, start: f64, file_dur: Option<f64>) {
-    ui.label("End time");
+    ui.label(t("End time"));
     ui.horizontal(|ui| {
         let mut has_end = end.is_some();
         if ui.checkbox(&mut has_end, "").changed() {
@@ -545,7 +552,7 @@ fn end_row(ui: &mut Ui, end: &mut Option<f64>, start: f64, file_dur: Option<f64>
                 time_edit(ui, e);
             }
             None => {
-                ui.label(RichText::new("end of file").weak());
+                ui.label(RichText::new(t("end of file")).weak());
             }
         }
     });
@@ -566,28 +573,28 @@ fn audio_time(ui: &mut Ui, id: CueId, a: &mut AudioCue, ctx: &Ctx, pick: &mut bo
     }
     let file_dur = ctx.prober.get(&a.path).and_then(|r| r.ok()).and_then(|i| i.duration);
     let mut parts = vec![
-        (Part::Wave, Card::new(ic::GRAPHIC_EQ, "Waveform", f32::INFINITY)),
-        (Part::Trim, Card::new(ic::CROP, "Trim", 250.0)),
-        (Part::Loops, Card::new(ic::REPLAY, "Loops", 250.0)),
-        (Part::Playback, Card::new(ic::AV_TIMER, "Playback", 270.0)),
-        (Part::Fades, Card::new(ic::TRENDING_DOWN, "Fades", 270.0)),
+        (Part::Wave, Card::new(ic::GRAPHIC_EQ, t("Waveform"), f32::INFINITY)),
+        (Part::Trim, Card::new(ic::CROP, t("Trim"), 250.0)),
+        (Part::Loops, Card::new(ic::REPLAY, t("Loops"), 250.0)),
+        (Part::Playback, Card::new(ic::AV_TIMER, t("Playback"), 270.0)),
+        (Part::Fades, Card::new(ic::TRENDING_DOWN, t("Fades"), 270.0)),
     ];
     if !a.slices.is_empty() {
-        parts.push((Part::Slices, Card::new(ic::ALL_INCLUSIVE, "Slices", 460.0)));
+        parts.push((Part::Slices, Card::new(ic::ALL_INCLUSIVE, t("Slices"), 460.0)));
     }
     let specs: Vec<Card> = parts.iter().map(|p| Card::new(p.1.glyph, p.1.title, p.1.width)).collect();
     super::theme::cards(ui, "atime", &specs, |ui, i| match parts[i].0 {
         Part::Wave => audio_waveform(ui, id, a, ctx, file_dur, pick),
         Part::Trim => {
             egui::Grid::new("atrim").num_columns(2).spacing([10.0, 6.0]).show(ui, |ui| {
-                ui.label("Start");
+                ui.label(t("Start time"));
                 time_edit(ui, &mut a.start_time);
                 ui.end_row();
                 end_row(ui, &mut a.end_time, a.start_time, file_dur);
-                ui.label("Duration");
+                ui.label(t("Duration"));
                 let probe = Cue::new(CueKind::Audio(a.clone()));
                 ui.label(
-                    RichText::new(effective_duration(&probe, file_dur).map(fmt_time).unwrap_or_else(|| "∞ / unknown".into()))
+                    RichText::new(effective_duration(&probe, file_dur).map(fmt_time).unwrap_or_else(|| t("∞ / unknown").into()))
                         .font(super::theme::mono(12.5)),
                 );
                 ui.end_row();
@@ -598,34 +605,34 @@ fn audio_time(ui: &mut Ui, id: CueId, a: &mut AudioCue, ctx: &Ctx, pick: &mut bo
                 plays_row(ui, &mut a.play_count, &mut a.infinite_loop);
             });
             ui.add_space(4.0);
-            ui.label(RichText::new("Double-click the waveform to add slices that loop on their own.").weak().small());
+            ui.label(RichText::new(t("Double-click the waveform to add slices that loop on their own.")).weak().small());
         }
         Part::Playback => {
             egui::Grid::new("arate").num_columns(2).spacing([10.0, 6.0]).show(ui, |ui| {
-                ui.label("Rate");
+                ui.label(t("Rate"));
                 ui.horizontal(|ui| {
                     ui.add(DragValue::new(&mut a.rate).range(0.25..=4.0).speed(0.005).max_decimals(3).suffix("×"))
-                        .on_hover_text("Playback speed; pitch follows (varispeed). Applies the next time the cue starts.");
+                        .on_hover_text(t("Playback speed; pitch follows (varispeed). Applies the next time the cue starts."));
                     if ui.small_button("1×").clicked() {
                         a.rate = 1.0;
                     }
                 });
                 ui.end_row();
-                ui.label("Pitch");
+                ui.label(t("Pitch"));
                 let semis = 12.0 * (a.rate.max(1e-3)).log2();
-                ui.label(RichText::new(format!("{semis:+.2} semitones")).weak());
+                ui.label(RichText::new(tr!("{n} semitones", n = format!("{semis:+.2}"))).weak());
                 ui.end_row();
             });
         }
         Part::Fades => {
             egui::Grid::new("afades").num_columns(2).spacing([10.0, 6.0]).show(ui, |ui| {
-                ui.label("Fade in");
-                time_edit(ui, &mut a.fade_in).on_hover_text("Fades up from silence when the cue starts");
+                ui.label(t("Fade in"));
+                time_edit(ui, &mut a.fade_in).on_hover_text(t("Fades up from silence when the cue starts"));
                 ui.end_row();
-                ui.label("Fade out");
-                time_edit(ui, &mut a.fade_out).on_hover_text("Fades down to silence at the end of the cue");
+                ui.label(t("Fade out"));
+                time_edit(ui, &mut a.fade_out).on_hover_text(t("Fades down to silence at the end of the cue"));
                 ui.end_row();
-                ui.label("Curve");
+                ui.label(t("Curve"));
                 ComboBox::from_id_salt("fade-curve").selected_text(a.fade_curve.label()).width(110.0).show_ui(ui, |ui| {
                     for c in FadeCurve::ALL {
                         ui.selectable_value(&mut a.fade_curve, c, c.label());
@@ -635,7 +642,7 @@ fn audio_time(ui: &mut Ui, id: CueId, a: &mut AudioCue, ctx: &Ctx, pick: &mut bo
             });
             if a.fade_out > 0.0 && (a.infinite_loop || a.slices.iter().any(|s| s.plays == 0)) {
                 ui.label(
-                    RichText::new("The fade-out happens once the end is known: after a Devamp, never while looping forever.")
+                    RichText::new(t("The fade-out happens once the end is known: after a Devamp, never while looping forever."))
                         .weak()
                         .small(),
                 );
@@ -655,13 +662,13 @@ fn audio_waveform(ui: &mut Ui, id: CueId, a: &mut AudioCue, ctx: &Ctx, file_dur:
     let wf_ref = wf.as_ref().and_then(|r| r.as_ref().ok()).cloned();
     let duration = file_dur.or(wf_ref.as_ref().map(|w| w.duration)).unwrap_or(0.0);
     if duration <= 0.0 {
-        ui.label(RichText::new("Reading the file…").weak());
+        ui.label(RichText::new(t("Reading the file…")).weak());
         return;
     }
     // Map wall-clock elapsed to a position in the file (rate + loops).
     let playhead = ctx.elapsed.map(|e| a.file_position(e * a.rate as f64, duration));
     if let Some(Err(e)) = &wf {
-        ui.label(RichText::new(format!("waveform: {e}")).color(RED));
+        ui.label(RichText::new(tr!("waveform: {e}", e)).color(RED));
     }
     waveform_editor(
         ui,
@@ -692,18 +699,18 @@ fn slice_table(ui: &mut Ui, a: &mut AudioCue) {
             ui.horizontal(|ui| {
                 let mut forever = m.plays == 0;
                 ui.add_enabled(!forever, DragValue::new(&mut m.plays).range(1..=9999).suffix("×"));
-                if ui.checkbox(&mut forever, "loop until devamp").changed() {
+                if ui.checkbox(&mut forever, t("loop until devamp")).changed() {
                     m.plays = if forever { 0 } else { 1 };
                 }
             });
-            if super::theme::icon_button(ui, super::icons::DELETE, "Remove slice").clicked() {
+            if super::theme::icon_button(ui, super::icons::DELETE, t("Remove slice")).clicked() {
                 remove = Some(i);
             }
             ui.end_row();
             prev = m.time;
         }
-        ui.label(RichText::new(format!("{} – end", fmt_time(prev))).weak());
-        ui.label(RichText::new("last slice uses Plays").weak());
+        ui.label(RichText::new(tr!("{time} – end", time = fmt_time(prev))).weak());
+        ui.label(RichText::new(t("last slice uses Plays")).weak());
         ui.end_row();
     });
     if let Some(i) = remove {
@@ -714,9 +721,9 @@ fn slice_table(ui: &mut Ui, a: &mut AudioCue) {
 /// Shown where the media file is needed but missing: a way to pick it.
 fn missing_file(ui: &mut Ui, path: &Path, pick: &mut bool) {
     ui.horizontal(|ui| {
-        let msg = if path.as_os_str().is_empty() { "No file selected." } else { "The file can't be found." };
+        let msg = if path.as_os_str().is_empty() { t("No file selected.") } else { t("The file can't be found.") };
         ui.label(RichText::new(msg).color(if path.as_os_str().is_empty() { ui.visuals().weak_text_color() } else { RED }));
-        if ui.button(super::theme::with_icon(super::icons::FOLDER_OPEN, "Choose file…")).clicked() {
+        if ui.button(super::theme::with_icon(super::icons::FOLDER_OPEN, t("Choose file…"))).clicked() {
             *pick = true;
         }
     });
@@ -737,9 +744,9 @@ fn io_tab(
     use super::theme::Card;
     let info = ctx.prober.get(path).and_then(|r| r.ok());
     let specs = [
-        Card::new(ic::UPLOAD_FILE, "Input", 400.0),
-        Card::new(ic::SPEAKER, "Output", 360.0),
-        Card::new(ic::GRID_VIEW, "Routing", routing_width(objects)),
+        Card::new(ic::UPLOAD_FILE, t("Input"), 400.0),
+        Card::new(ic::SPEAKER, t("Output"), 360.0),
+        Card::new(ic::GRID_VIEW, t("Routing"), routing_width(objects)),
     ];
     super::theme::cards(ui, "io", &specs, |ui, i| match i {
         0 => {
@@ -748,10 +755,10 @@ fn io_tab(
                 if path.as_os_str().is_empty() {
                     return;
                 }
-                ui.label("Location");
+                ui.label(t("Location"));
                 ui.horizontal(|ui| {
                     if let Some(dir) = path.parent().filter(|_| ctx.prober.exists(path))
-                        && super::theme::icon_button(ui, ic::FOLDER_OPEN, "Show in folder").clicked()
+                        && super::theme::icon_button(ui, ic::FOLDER_OPEN, t("Show in folder")).clicked()
                     {
                         let _ = super::manual::open_with_default_app(dir);
                     }
@@ -760,17 +767,17 @@ fn io_tab(
                 });
                 ui.end_row();
                 if let Some(Some(len)) = ctx.prober.stat(path) {
-                    ui.label("Size");
+                    ui.label(t("Size"));
                     let mb = len as f64 / 1_048_576.0;
                     ui.label(if mb >= 1.0 { format!("{mb:.1} MB") } else { format!("{:.0} KB", len as f64 / 1024.0) });
                     ui.end_row();
                 }
                 if let Some(i) = &info {
-                    ui.label("Channels");
+                    ui.label(t("Channels"));
                     ui.label(match i.channels {
-                        0 => "no audio".to_string(),
-                        1 => "1 (mono)".into(),
-                        2 => "2 (stereo)".into(),
+                        0 => t("no audio").to_string(),
+                        1 => t("1 (mono)").into(),
+                        2 => t("2 (stereo)").into(),
                         n => n.to_string(),
                     });
                     ui.end_row();
@@ -780,23 +787,23 @@ fn io_tab(
         1 => {
             egui::Grid::new("io-out").num_columns(2).spacing([10.0, 6.0]).show(ui, |ui| {
                 if let Some(stage) = stage {
-                    ui.label("Picture");
+                    ui.label(t("Picture"));
                     let name = stage
                         .and_then(|s| ctx.stages.iter().find(|x| x.0 == s))
                         .or(ctx.stages.first())
-                        .map_or_else(|| "no stage".to_string(), |s| format!("stage \"{}\"", s.1));
-                    ui.label(name).on_hover_text("Set on the Geometry tab");
+                        .map_or_else(|| t("no stage").to_string(), |s| tr!("stage \"{name}\"", name = s.1));
+                    ui.label(name).on_hover_text(t("Set on the Geometry tab"));
                     ui.end_row();
                 }
-                ui.label("Device");
+                ui.label(t("Device"));
                 match &ctx.device {
                     Some(d) => ui.label(d.as_str()),
-                    None => ui.label(RichText::new("no audio device").color(RED)),
+                    None => ui.label(RichText::new(t("no audio device")).color(RED)),
                 }
-                .on_hover_text("Settings → Audio");
+                .on_hover_text(t("Settings → Audio"));
                 ui.end_row();
                 if ctx.device.is_some() {
-                    ui.label("Outputs");
+                    ui.label(t("Outputs"));
                     ui.label(ctx.out_channels.to_string());
                     ui.end_row();
                 }
@@ -804,7 +811,7 @@ fn io_tab(
         }
         _ => match info.as_ref().map(|i| i.channels) {
             Some(0) => {
-                ui.label(RichText::new("This file has no sound to route.").weak());
+                ui.label(RichText::new(t("This file has no sound to route.")).weak());
             }
             ch => {
                 let src = ch.unwrap_or(2).clamp(1, crate::model::MAX_SRC_CHANNELS);
@@ -823,9 +830,9 @@ fn routing_width(objects: &crate::spatial::ObjectAudio) -> f32 {
 /// The Routing card: crosspoints, or object audio placing each channel in the room.
 fn routing_card(ui: &mut Ui, routing: &mut Option<Vec<Vec<f32>>>, objects: &mut crate::spatial::ObjectAudio, src: usize, ctx: &Ctx) {
     ui.horizontal(|ui| {
-        ui.selectable_value(&mut objects.enabled, false, super::theme::with_icon(super::icons::GRID_VIEW, "Crosspoints"));
-        ui.selectable_value(&mut objects.enabled, true, super::theme::with_icon(super::icons::SURROUND_SOUND, "Object audio"))
-            .on_hover_text("Place each channel in the room (Settings → Audio); the speakers it is near play it");
+        ui.selectable_value(&mut objects.enabled, false, super::theme::with_icon(super::icons::GRID_VIEW, t("Crosspoints")));
+        ui.selectable_value(&mut objects.enabled, true, super::theme::with_icon(super::icons::SURROUND_SOUND, t("Object audio")))
+            .on_hover_text(t("Place each channel in the room (Settings → Audio); the speakers it is near play it"));
     });
     ui.add_space(4.0);
     if objects.enabled {
@@ -858,11 +865,11 @@ fn fader_bank(ui: &mut Ui, main: &mut f32, out_levels: &mut Vec<f32>, outs: usiz
     ui.horizontal_top(|ui| {
         ui.spacing_mut().item_spacing = egui::vec2(6.0, 4.0);
         fader_scale(ui, FADER_TRACK);
-        vfader(ui, main, "Main", FADER_TRACK, true, fader_w).on_hover_text("The cue's level");
+        vfader(ui, main, t("Main"), FADER_TRACK, true, fader_w).on_hover_text(t("The cue's level"));
         ui.add_space(14.0);
         for (o, l) in levels.iter_mut().enumerate() {
             changed |= vfader(ui, l, &(o + 1).to_string(), FADER_TRACK, false, fader_w)
-                .on_hover_text(format!("Output {} level, after the routing matrix", o + 1))
+                .on_hover_text(tr!("Output {n} level, after the routing matrix", n = o + 1))
                 .changed();
         }
         ui.with_layout(egui::Layout::right_to_left(egui::Align::Min), |ui| {
@@ -870,15 +877,15 @@ fn fader_bank(ui: &mut Ui, main: &mut f32, out_levels: &mut Vec<f32>, outs: usiz
                 ui.set_width(120.0);
                 ui.add_space(20.0);
                 let silent = *main <= MIN_DB && levels.iter().all(|l| *l <= MIN_DB);
-                if ui.add_enabled(!silent, egui::Button::new("Set all silent").min_size(egui::vec2(120.0, 0.0))).clicked() {
+                if ui.add_enabled(!silent, egui::Button::new(t("Set all silent")).min_size(egui::vec2(120.0, 0.0))).clicked() {
                     *main = MIN_DB;
                     levels.iter_mut().for_each(|l| *l = MIN_DB);
                     changed = true;
                 }
                 let flat = *main == 0.0 && levels.iter().all(|l| *l == 0.0);
                 if ui
-                    .add_enabled(!flat, egui::Button::new("Default levels").min_size(egui::vec2(120.0, 0.0)))
-                    .on_hover_text("Main and every output to 0 dB")
+                    .add_enabled(!flat, egui::Button::new(t("Default levels")).min_size(egui::vec2(120.0, 0.0)))
+                    .on_hover_text(t("Main and every output to 0 dB"))
                     .clicked()
                 {
                     *main = 0.0;
@@ -886,7 +893,7 @@ fn fader_bank(ui: &mut Ui, main: &mut f32, out_levels: &mut Vec<f32>, outs: usiz
                     changed = true;
                 }
                 ui.add_space(6.0);
-                ui.label(RichText::new("Crosspoints are on the I/O tab.").weak().small());
+                ui.label(RichText::new(t("Crosspoints are on the I/O tab.")).weak().small());
             });
         });
     });
@@ -899,7 +906,7 @@ fn audio_levels(ui: &mut Ui, a: &mut AudioCue, outs: usize) {
     use super::icons as ic;
     use super::theme::Card;
     // Pan in a narrow card on the left, the fader bank takes the rest of the row.
-    let specs = [Card::new(ic::CONTROL_CAMERA, "Pan", PAN_W), Card::new(ic::TUNE, "Levels", fader_bank_width(outs))];
+    let specs = [Card::new(ic::CONTROL_CAMERA, t("Pan"), PAN_W), Card::new(ic::TUNE, t("Levels"), fader_bank_width(outs))];
     super::theme::cards(ui, "alevels", &specs, |ui, i| match i {
         0 => pan_card(ui, &mut a.pan),
         _ => fader_bank(ui, &mut a.volume_db, &mut a.out_levels, outs),
@@ -907,7 +914,7 @@ fn audio_levels(ui: &mut Ui, a: &mut AudioCue, outs: usize) {
 }
 
 fn video_levels(ui: &mut Ui, v: &mut VideoCue, outs: usize) {
-    let specs = [super::theme::Card::new(super::icons::TUNE, "Soundtrack levels", f32::INFINITY)];
+    let specs = [super::theme::Card::new(super::icons::TUNE, t("Soundtrack levels"), f32::INFINITY)];
     super::theme::cards(ui, "vlevels", &specs, |ui, _| fader_bank(ui, &mut v.volume_db, &mut v.out_levels, outs));
 }
 
@@ -924,7 +931,7 @@ fn pan_label(v: f32) -> String {
 fn routing_editor(ui: &mut Ui, routing: &mut Option<Vec<Vec<f32>>>, src: usize, outs: usize) {
     ui.horizontal(|ui| {
         let mut custom = routing.is_some();
-        if ui.checkbox(&mut custom, "Custom crosspoints").changed() {
+        if ui.checkbox(&mut custom, t("Custom crosspoints")).changed() {
             *routing = custom.then(|| {
                 default_routing(src, outs)
                     .into_iter()
@@ -932,10 +939,10 @@ fn routing_editor(ui: &mut Ui, routing: &mut Option<Vec<Vec<f32>>>, src: usize, 
                     .collect()
             });
         }
-        ui.label(RichText::new(format!("{src} in, {outs} out")).weak());
+        ui.label(RichText::new(tr!("{src} in, {outs} out", src, outs)).weak());
     });
     let Some(m) = routing else {
-        ui.label(RichText::new("Automatic: mono feeds outputs 1+2, multichannel maps 1:1.").weak());
+        ui.label(RichText::new(t("Automatic: mono feeds outputs 1+2, multichannel maps 1:1.")).weak());
         return;
     };
     // Keep the matrix sized to the file and device.
@@ -947,11 +954,11 @@ fn routing_editor(ui: &mut Ui, routing: &mut Option<Vec<Vec<f32>>>, src: usize, 
         egui::Grid::new("matrix").spacing([4.0, 4.0]).show(ui, |ui| {
             ui.label("");
             for o in 0..outs {
-                ui.label(RichText::new(format!("Out {}", o + 1)).weak());
+                ui.label(RichText::new(tr!("Out {n}", n = o + 1)).weak());
             }
             ui.end_row();
             for (s, row) in m.iter_mut().enumerate() {
-                ui.label(RichText::new(format!("In {}", s + 1)).weak());
+                ui.label(RichText::new(tr!("In {n}", n = s + 1)).weak());
                 for g in row.iter_mut() {
                     ui.add(
                         DragValue::new(g)
@@ -959,17 +966,17 @@ fn routing_editor(ui: &mut Ui, routing: &mut Option<Vec<Vec<f32>>>, src: usize, 
                             .speed(0.25)
                             .custom_formatter(|v, _| if v <= MIN_DB as f64 { "-∞".into() } else { format!("{v:.1}") }),
                     )
-                    .on_hover_text("Crosspoint level in dB (drag to -60 for off)");
+                    .on_hover_text(t("Crosspoint level in dB (drag to -60 for off)"));
                 }
                 ui.end_row();
             }
         });
     });
     ui.horizontal(|ui| {
-        if ui.small_button("All off").clicked() {
+        if ui.small_button(t("All off")).clicked() {
             m.iter_mut().flatten().for_each(|g| *g = MIN_DB);
         }
-        if ui.small_button("Reset to default").clicked() {
+        if ui.small_button(t("Reset to default")).clicked() {
             *m = default_routing(src, outs)
                 .into_iter()
                 .map(|row| row.into_iter().map(|g| if g > 0.0 { gain_to_db(g) } else { MIN_DB }).collect())
@@ -987,31 +994,31 @@ fn video_time(ui: &mut Ui, v: &mut VideoCue, ctx: &Ctx, pick: &mut bool) {
     let file_dur = ctx.prober.get(&v.path).and_then(|r| r.ok()).and_then(|i| i.duration);
     let still = is_image_path(&v.path);
     let specs = if still {
-        vec![Card::new(ic::IMAGE, "Still image", 300.0), Card::new(ic::REPLAY, "At end", 300.0)]
+        vec![Card::new(ic::IMAGE, t("Still image"), 300.0), Card::new(ic::REPLAY, t("At end"), 300.0)]
     } else {
-        vec![Card::new(ic::CROP, "Trim", 280.0), Card::new(ic::REPLAY, "Loops", 300.0)]
+        vec![Card::new(ic::CROP, t("Trim"), 280.0), Card::new(ic::REPLAY, t("Loops"), 300.0)]
     };
     super::theme::cards(ui, "vtime", &specs, |ui, i| match (i, still) {
         (0, true) => {
             egui::Grid::new("vstill").num_columns(2).spacing([10.0, 6.0]).show(ui, |ui| {
-                ui.label("Show for");
+                ui.label(t("Show for"));
                 ui.horizontal(|ui| {
                     time_edit(ui, &mut v.still_duration);
-                    ui.label(RichText::new(if v.still_duration <= 0.0 { "until stopped" } else { "" }).weak());
+                    ui.label(RichText::new(if v.still_duration <= 0.0 { crate::i18n::t("until stopped") } else { "" }).weak());
                 });
                 ui.end_row();
             });
         }
         (0, false) => {
             egui::Grid::new("vtrim").num_columns(2).spacing([10.0, 6.0]).show(ui, |ui| {
-                ui.label("Start");
+                ui.label(t("Start time"));
                 time_edit(ui, &mut v.start_time);
                 ui.end_row();
                 end_row(ui, &mut v.end_time, v.start_time, file_dur);
-                ui.label("Duration");
+                ui.label(t("Duration"));
                 let probe = Cue::new(CueKind::Video(v.clone()));
                 ui.label(
-                    RichText::new(effective_duration(&probe, file_dur).map(fmt_time).unwrap_or_else(|| "∞ / until stopped".into()))
+                    RichText::new(effective_duration(&probe, file_dur).map(fmt_time).unwrap_or_else(|| t("∞ / until stopped").into()))
                         .font(super::theme::mono(12.5)),
                 );
                 ui.end_row();
@@ -1022,8 +1029,8 @@ fn video_time(ui: &mut Ui, v: &mut VideoCue, ctx: &Ctx, pick: &mut bool) {
                 if !still {
                     plays_row(ui, &mut v.play_count, &mut v.infinite_loop);
                 }
-                ui.label("At end");
-                ui.checkbox(&mut v.hold_last_frame, "Hold last frame");
+                ui.label(t("At end"));
+                ui.checkbox(&mut v.hold_last_frame, t("Hold last frame"));
                 ui.end_row();
             });
         }
@@ -1034,9 +1041,9 @@ fn stage_combo(ui: &mut Ui, salt: &str, stage: &mut Option<StageId>, stages: &[(
     let label = stage
         .and_then(|s| stages.iter().find(|x| x.0 == s))
         .map(|s| s.1.clone())
-        .unwrap_or_else(|| stages.first().map(|s| format!("{} (default)", s.1)).unwrap_or_default());
+        .unwrap_or_else(|| stages.first().map(|s| tr!("{name} (default)", name = s.1)).unwrap_or_default());
     ComboBox::from_id_salt(salt).selected_text(label).show_ui(ui, |ui| {
-        ui.selectable_value(stage, None, "Default (first stage)");
+        ui.selectable_value(stage, None, t("Default (first stage)"));
         for (id, name) in stages {
             ui.selectable_value(stage, Some(*id), name);
         }
@@ -1045,8 +1052,8 @@ fn stage_combo(ui: &mut Ui, salt: &str, stage: &mut Option<StageId>, stages: &[(
 
 pub(super) fn preview_toggle(ui: &mut Ui, open: &mut bool) {
     if cfg!(feature = "video") {
-        ui.toggle_value(open, super::theme::with_icon(super::icons::PREVIEW, "Preview"))
-            .on_hover_text("Show where this layer lands on its stage (View → Geometry preview)");
+        ui.toggle_value(open, super::theme::with_icon(super::icons::PREVIEW, t("Preview")))
+            .on_hover_text(t("Show where this layer lands on its stage (View → Geometry preview)"));
     }
 }
 
@@ -1055,15 +1062,15 @@ fn layer_geometry(ui: &mut Ui, salt: &str, layer: LayerRefs, ctx: &Ctx, preview:
     use super::icons as ic;
     use super::theme::Card;
     let LayerRefs { stage, mut fit, layer, blend_mode, opacity, geometry } = layer;
-    let specs = [Card::new(ic::DESKTOP_WINDOWS, "Layer", 320.0), Card::new(ic::OPEN_WITH, "Geometry", 520.0)];
+    let specs = [Card::new(ic::DESKTOP_WINDOWS, t("Layer"), 320.0), Card::new(ic::OPEN_WITH, t("Geometry"), 520.0)];
     super::theme::cards(ui, salt, &specs, |ui, i| match i {
         0 => {
             egui::Grid::new((salt, "layer")).num_columns(2).spacing([10.0, 6.0]).show(ui, |ui| {
-                ui.label("Stage");
+                ui.label(t("Stage"));
                 stage_combo(ui, &format!("{salt}-stage"), stage, ctx.stages);
                 ui.end_row();
                 if let Some(fit) = fit.as_deref_mut() {
-                    ui.label("Fit");
+                    ui.label(t("Fit"));
                     ComboBox::from_id_salt((salt, "fit")).selected_text(fit.label()).show_ui(ui, |ui| {
                         for f in VideoFit::ALL {
                             ui.selectable_value(fit, f, f.label());
@@ -1071,20 +1078,20 @@ fn layer_geometry(ui: &mut Ui, salt: &str, layer: LayerRefs, ctx: &Ctx, preview:
                     });
                     ui.end_row();
                 }
-                ui.label("Layer");
-                ui.add(DragValue::new(layer).range(-100..=100)).on_hover_text("Higher layers draw on top");
+                ui.label(t("Layer"));
+                ui.add(DragValue::new(layer).range(-100..=100)).on_hover_text(t("Higher layers draw on top"));
                 ui.end_row();
-                ui.label("Opacity");
+                ui.label(t("Opacity"));
                 ui.add(Slider::new(opacity, 0.0..=1.0));
                 ui.end_row();
-                ui.label("Blend");
+                ui.label(t("Blend"));
                 ComboBox::from_id_salt((salt, "blend")).selected_text(blend_mode.label()).show_ui(ui, |ui| {
                     for m in BlendMode::ALL {
                         ui.selectable_value(blend_mode, m, m.label());
                     }
                 })
                 .response
-                .on_hover_text("How this layer combines with the layers below it");
+                .on_hover_text(t("How this layer combines with the layers below it"));
                 ui.end_row();
             });
             ui.add_space(4.0);
@@ -1111,7 +1118,7 @@ pub(super) fn geometry_editor(ui: &mut Ui, salt: &str, g: &mut Geometry) {
     let mut lock = ui.data(|d| d.get_temp::<bool>(lock_id)).unwrap_or(true);
     let pct = |v: f64, _| format!("{:.1}%", v * 100.0);
     egui::Grid::new(salt).num_columns(2).spacing([10.0, 6.0]).show(ui, |ui| {
-        ui.label("Position");
+        ui.label(t("Position"));
         ui.horizontal(|ui| {
             ui.label("X");
             ui.add(DragValue::new(&mut g.x).speed(0.002).range(-2.0..=2.0).custom_formatter(pct).custom_parser(parse_pct));
@@ -1119,7 +1126,7 @@ pub(super) fn geometry_editor(ui: &mut Ui, salt: &str, g: &mut Geometry) {
             ui.add(DragValue::new(&mut g.y).speed(0.002).range(-2.0..=2.0).custom_formatter(pct).custom_parser(parse_pct));
         });
         ui.end_row();
-        ui.label("Scale");
+        ui.label(t("Scale"));
         ui.horizontal(|ui| {
             if lock {
                 let mut s = g.scale_x;
@@ -1135,13 +1142,13 @@ pub(super) fn geometry_editor(ui: &mut Ui, salt: &str, g: &mut Geometry) {
                 ui.add(DragValue::new(&mut g.scale_y).speed(0.005).range(0.0..=10.0).custom_formatter(pct).custom_parser(parse_pct));
             }
             let glyph = if lock { super::icons::LOCK } else { super::icons::LOCK_OPEN };
-            ui.checkbox(&mut lock, super::theme::with_icon(glyph, "proportional"));
+            ui.checkbox(&mut lock, super::theme::with_icon(glyph, t("proportional")));
         });
         ui.end_row();
-        ui.label("Rotation");
+        ui.label(t("Rotation"));
         ui.add(Slider::new(&mut g.rotation, -180.0..=180.0).suffix("°"));
         ui.end_row();
-        ui.label("Crop");
+        ui.label(t("Crop"));
         ui.horizontal(|ui| {
             for (i, side) in ["L", "T", "R", "B"].into_iter().enumerate() {
                 ui.label(side);
@@ -1151,13 +1158,13 @@ pub(super) fn geometry_editor(ui: &mut Ui, salt: &str, g: &mut Geometry) {
                     DragValue::new(&mut g.crop[i]).speed(0.002).range(0.0..=max).custom_formatter(pct).custom_parser(parse_pct),
                 );
             }
-            if g.crop != [0.0; 4] && ui.small_button("Clear").clicked() {
+            if g.crop != [0.0; 4] && ui.small_button(t("Clear")).clicked() {
                 g.crop = [0.0; 4];
             }
         });
         ui.end_row();
         ui.label("");
-        if ui.button("Reset geometry").clicked() {
+        if ui.button(t("Reset geometry")).clicked() {
             *g = Geometry::default();
         }
         ui.end_row();
@@ -1174,7 +1181,7 @@ fn settings_tab(ui: &mut Ui, cue: &mut Cue, ctx: &Ctx, refresh: &mut bool) {
     use super::theme::{Card, cards};
     // Cues that only point at another cue: one card with the target.
     let target_card = |ui: &mut Ui, label: &str, salt: &str, target: &mut Option<CueId>, none: &str, note: Option<&str>| {
-        let specs = [Card::new(ic::ARROW_RIGHT, "Target", 420.0)];
+        let specs = [Card::new(ic::ARROW_RIGHT, t("Target"), 420.0)];
         cards(ui, salt, &specs, |ui, _| {
             egui::Grid::new(salt).num_columns(2).spacing([10.0, 6.0]).show(ui, |ui| {
                 ui.label(label);
@@ -1189,29 +1196,29 @@ fn settings_tab(ui: &mut Ui, cue: &mut Cue, ctx: &Ctx, refresh: &mut bool) {
     };
     match &mut cue.kind {
         CueKind::Group { mode, children } => {
-            let specs = [Card::new(ic::FOLDER, "Group", 460.0)];
+            let specs = [Card::new(ic::FOLDER, t("Group"), 460.0)];
             cards(ui, "group", &specs, |ui, _| {
                 egui::Grid::new("group").num_columns(2).spacing([10.0, 6.0]).show(ui, |ui| {
-                    ui.label("Mode");
+                    ui.label(t("Mode"));
                     ComboBox::from_id_salt("gmode").width(300.0).selected_text(mode.label()).show_ui(ui, |ui| {
                         for m in GroupMode::ALL {
                             ui.selectable_value(mode, m, m.label());
                         }
                     });
                     ui.end_row();
-                    ui.label("Children");
+                    ui.label(t("Children"));
                     ui.label(format!("{}", children.len()));
                     ui.end_row();
                 });
                 ui.add_space(4.0);
-                ui.label(RichText::new("Drag cues onto the middle of a group row to put them inside it.").weak().small());
+                ui.label(RichText::new(t("Drag cues onto the middle of a group row to put them inside it.")).weak().small());
             });
         }
         CueKind::Wait { duration } => {
-            let specs = [Card::new(ic::HOURGLASS_EMPTY, "Wait", 300.0)];
+            let specs = [Card::new(ic::HOURGLASS_EMPTY, t("Wait"), 300.0)];
             cards(ui, "wait", &specs, |ui, _| {
                 egui::Grid::new("wait").num_columns(2).spacing([10.0, 6.0]).show(ui, |ui| {
-                    ui.label("Duration");
+                    ui.label(t("Duration"));
                     time_edit(ui, duration);
                     ui.end_row();
                 });
@@ -1221,19 +1228,19 @@ fn settings_tab(ui: &mut Ui, cue: &mut Cue, ctx: &Ctx, refresh: &mut bool) {
             // Only what the target can do: no geometry for a sound cue, no level for a text cue.
             // With no target yet, everything is offered.
             let caps = f.target.map_or(FadeCaps { level: true, picture: true, objects: false }, |t| ctx.fade_caps(t));
-            let mut specs = vec![Card::new(ic::TUNE, "Changes", 300.0), Card::new(ic::TRENDING_DOWN, "Fade", 420.0)];
+            let mut specs = vec![Card::new(ic::TUNE, t("Changes"), 300.0), Card::new(ic::TRENDING_DOWN, t("Fade"), 420.0)];
             // The extra cards, in order: geometry, object positions, video effects.
             let mut extra = Vec::new();
             if f.geometry.is_some() && caps.picture {
-                specs.push(Card::new(ic::OPEN_WITH, "Target geometry", f32::INFINITY));
+                specs.push(Card::new(ic::OPEN_WITH, t("Target geometry"), f32::INFINITY));
                 extra.push(0);
             }
             if f.objects.is_some() && caps.objects {
-                specs.push(Card::new(ic::SURROUND_SOUND, "Target object positions", f32::INFINITY));
+                specs.push(Card::new(ic::SURROUND_SOUND, t("Target object positions"), f32::INFINITY));
                 extra.push(1);
             }
             if f.video_fx.is_some() && caps.picture {
-                specs.push(Card::new(ic::AUTO_FIX_HIGH, "Target video effects", f32::INFINITY));
+                specs.push(Card::new(ic::AUTO_FIX_HIGH, t("Target video effects"), f32::INFINITY));
                 extra.push(2);
             }
             // Fading toward silence / transparency draws the curve falling.
@@ -1245,12 +1252,12 @@ fn settings_tab(ui: &mut Ui, cue: &mut Cue, ctx: &Ctx, refresh: &mut bool) {
             cards(ui, "fade", &specs, |ui, i| match i {
                 0 => {
                     if !caps.level && !caps.picture {
-                        ui.label(RichText::new("The target has nothing to fade: pick a sound, video, text, camera or group cue.").weak());
+                        ui.label(RichText::new(t("The target has nothing to fade: pick a sound, video, text, camera or group cue.")).weak());
                         return;
                     }
                     egui::Grid::new("fade-changes").num_columns(2).spacing([10.0, 6.0]).show(ui, |ui| {
                         if caps.level {
-                            ui.label("Level");
+                            ui.label(t("Level"));
                             ui.horizontal(|ui| {
                                 let mut on = f.volume_db.is_some();
                                 if ui.checkbox(&mut on, "").changed() {
@@ -1259,13 +1266,13 @@ fn settings_tab(ui: &mut Ui, cue: &mut Cue, ctx: &Ctx, refresh: &mut bool) {
                                 if let Some(db) = &mut f.volume_db {
                                     db_edit(ui, db);
                                 } else {
-                                    ui.label(RichText::new("unchanged").weak());
+                                    ui.label(RichText::new(t("unchanged")).weak());
                                 }
                             });
                             ui.end_row();
                         }
                         if caps.picture {
-                            ui.label("Opacity");
+                            ui.label(t("Opacity"));
                             ui.horizontal(|ui| {
                                 let mut on = f.opacity.is_some();
                                 if ui.checkbox(&mut on, "").changed() {
@@ -1274,29 +1281,29 @@ fn settings_tab(ui: &mut Ui, cue: &mut Cue, ctx: &Ctx, refresh: &mut bool) {
                                 if let Some(o) = &mut f.opacity {
                                     ui.add(Slider::new(o, 0.0..=1.0));
                                 } else {
-                                    ui.label(RichText::new("unchanged").weak());
+                                    ui.label(RichText::new(t("unchanged")).weak());
                                 }
                             });
                             ui.end_row();
-                            ui.label("Geometry");
+                            ui.label(t("Geometry"));
                             let mut on = f.geometry.is_some();
-                            if ui.checkbox(&mut on, "Animate position / scale / rotation").changed() {
+                            if ui.checkbox(&mut on, t("Animate position / scale / rotation")).changed() {
                                 // Start from the target's own geometry so only what you change moves.
                                 f.geometry =
                                     on.then(|| f.target.and_then(|t| ctx.geometry(t)).unwrap_or_default());
                             }
                             ui.end_row();
-                            ui.label("Video effects");
+                            ui.label(t("Video effects"));
                             let mut on = f.video_fx.is_some();
-                            if ui.checkbox(&mut on, "Fade effect settings").changed() {
+                            if ui.checkbox(&mut on, t("Fade effect settings")).changed() {
                                 f.video_fx = on.then(|| f.target.and_then(|t| ctx.video_fx(t)).unwrap_or_default());
                             }
                             ui.end_row();
                         }
                         if caps.objects {
-                            ui.label("Objects");
+                            ui.label(t("Objects"));
                             let mut on = f.objects.is_some();
-                            if ui.checkbox(&mut on, "Move object audio").changed() {
+                            if ui.checkbox(&mut on, t("Move object audio")).changed() {
                                 f.objects = on.then(|| f.target.and_then(|t| ctx.objects(t)).unwrap_or_default());
                             }
                             ui.end_row();
@@ -1305,24 +1312,24 @@ fn settings_tab(ui: &mut Ui, cue: &mut Cue, ctx: &Ctx, refresh: &mut bool) {
                 }
                 1 => {
                     egui::Grid::new("fade").num_columns(2).spacing([10.0, 6.0]).show(ui, |ui| {
-                        ui.label("Target");
-                        target_combo(ui, "fade_target", &mut f.target, ctx, "— none —");
+                        ui.label(t("Target"));
+                        target_combo(ui, "fade_target", &mut f.target, ctx, t("— none —"));
                         ui.end_row();
-                        ui.label("Duration");
+                        ui.label(t("Duration"));
                         time_edit(ui, &mut f.duration);
                         ui.end_row();
-                        ui.label("Curve");
+                        ui.label(t("Curve"));
                         ComboBox::from_id_salt("curve").selected_text(f.curve.label()).show_ui(ui, |ui| {
                             for c in FadeCurve::ALL {
                                 ui.selectable_value(&mut f.curve, c, c.label());
                             }
                             if let FadeCurve::Custom(_) = f.curve {
-                                let _ = ui.selectable_label(true, "Custom");
+                                let _ = ui.selectable_label(true, t("Custom"));
                             }
                         });
                         ui.end_row();
-                        ui.label("When done");
-                        ui.checkbox(&mut f.stop_target_when_done, "Stop target");
+                        ui.label(t("When done"));
+                        ui.checkbox(&mut f.stop_target_when_done, t("Stop target"));
                         ui.end_row();
                     });
                     ui.add_space(6.0);
@@ -1346,41 +1353,41 @@ fn settings_tab(ui: &mut Ui, cue: &mut Cue, ctx: &Ctx, refresh: &mut bool) {
                 },
             });
         }
-        CueKind::Start { target } => target_card(ui, "Start", "start_target", target, "— none —", None),
-        CueKind::Stop { target } => target_card(ui, "Stop", "stop_target", target, "All cues", None),
-        CueKind::Pause { target } => target_card(ui, "Pause", "pause_target", target, "All cues", None),
-        CueKind::Goto { target } => target_card(ui, "Move playhead to", "goto_target", target, "— none —", None),
+        CueKind::Start { target } => target_card(ui, t("Start"), "start_target", target, t("— none —"), None),
+        CueKind::Stop { target } => target_card(ui, t("Stop"), "stop_target", target, t("All cues"), None),
+        CueKind::Pause { target } => target_card(ui, t("Pause"), "pause_target", target, t("All cues"), None),
+        CueKind::Goto { target } => target_card(ui, t("Move playhead to"), "goto_target", target, t("— none —"), None),
         CueKind::Devamp { target } => target_card(
             ui,
-            "Devamp",
+            t("Devamp"),
             "devamp_target",
             target,
-            "— none —",
-            Some("Lets the target's looping slice finish its current pass, then play on to the next slice."),
+            t("— none —"),
+            Some(t("Lets the target's looping slice finish its current pass, then play on to the next slice.")),
         ),
         CueKind::Text(t) => text_settings(ui, t),
         CueKind::Camera(c) => camera_settings(ui, c, ctx, refresh),
         CueKind::Network(n) => {
-            let specs = [Card::new(ic::SETTINGS_REMOTE, "OSC message", 480.0)];
+            let specs = [Card::new(ic::SETTINGS_REMOTE, t("OSC message"), 480.0)];
             cards(ui, "net", &specs, |ui, _| {
                 egui::Grid::new("net").num_columns(2).spacing([10.0, 6.0]).show(ui, |ui| {
-                    ui.label("Destination");
+                    ui.label(t("Destination"));
                     ui.horizontal(|ui| {
                         ui.add(TextEdit::singleline(&mut n.host).desired_width(160.0));
                         ui.label(":");
                         ui.add(DragValue::new(&mut n.port).range(1..=65535));
                     });
                     ui.end_row();
-                    ui.label("OSC address");
+                    ui.label(t("OSC address"));
                     ui.add(TextEdit::singleline(&mut n.address).desired_width(260.0));
                     ui.end_row();
-                    ui.label("Arguments");
+                    ui.label(t("Arguments"));
                     ui.add(TextEdit::singleline(&mut n.args).desired_width(260.0).hint_text(r#"1 0.5 "text""#));
                     ui.end_row();
                 });
                 ui.add_space(4.0);
                 ui.label(
-                    RichText::new("Sends one OSC message over UDP. Numbers are sent as int/float, other words as strings.")
+                    RichText::new(t("Sends one OSC message over UDP. Numbers are sent as int/float, other words as strings."))
                         .weak()
                         .small(),
                 );
@@ -1400,14 +1407,14 @@ fn fade_video_fx(ui: &mut Ui, f: &mut crate::model::FadeCue, ctx: &Ctx) {
         if let Some(cur) = &current
             && kinds(cur) != kinds(fx)
         {
-            ui.label(RichText::new("The target's effects changed since these were taken.").color(super::widgets::AMBER));
+            ui.label(RichText::new(t("The target's effects changed since these were taken.")).color(super::widgets::AMBER));
         }
-        if ui.small_button("Take the target's effects").on_hover_text("Start again from the target's current effects").clicked() {
+        if ui.small_button(t("Take the target's effects")).on_hover_text(t("Start again from the target's current effects")).clicked() {
             *fx = current.clone().unwrap_or_default();
         }
     });
     if fx.is_empty() {
-        ui.label(RichText::new("The target has no video effects: add them on its Video FX tab.").weak());
+        ui.label(RichText::new(t("The target has no video effects: add them on its Video FX tab.")).weak());
         return;
     }
     ui.horizontal_wrapped(|ui| {
@@ -1417,14 +1424,14 @@ fn fade_video_fx(ui: &mut Ui, f: &mut crate::model::FadeCue, ctx: &Ctx) {
                     ui.set_width(280.0);
                     ui.horizontal(|ui| {
                         ui.label(RichText::new(format!("{}. {}", i + 1, e.kind.label())).strong());
-                        ui.checkbox(&mut e.enabled, "On").on_hover_text("Off: fade this effect out");
+                        ui.checkbox(&mut e.enabled, t("On")).on_hover_text(t("Off: fade this effect out"));
                     });
                     super::effects::video_effect_settings(ui, 100 + i, e);
                 });
             });
         }
     });
-    ui.label(RichText::new("Effects off here fade out; effects the target doesn't have fade in from nothing.").weak().small());
+    ui.label(RichText::new(t("Effects off here fade out; effects the target doesn't have fade in from nothing.")).weak().small());
 }
 
 fn color_button(ui: &mut Ui, rgba: &mut [u8; 4]) -> bool {
@@ -1454,37 +1461,37 @@ fn text_settings(ui: &mut Ui, t: &mut crate::model::TextCue) {
     use super::theme::Card;
     use crate::media::text;
     let specs = [
-        Card::new(ic::TEXT_FIELDS, "Text", 360.0),
-        Card::new(ic::NOTES, "Font", 520.0),
-        Card::new(ic::PALETTE, "Look", 520.0),
-        Card::new(ic::PREVIEW, "Sample", 360.0),
+        Card::new(ic::TEXT_FIELDS, crate::i18n::t("Text"), 360.0),
+        Card::new(ic::NOTES, crate::i18n::t("Font"), 520.0),
+        Card::new(ic::PALETTE, crate::i18n::t("Look"), 520.0),
+        Card::new(ic::PREVIEW, crate::i18n::t("Sample"), 360.0),
     ];
     super::theme::cards(ui, "text", &specs, |ui, i| match i {
         0 => {
-            ui.add(TextEdit::multiline(&mut t.text).desired_rows(3).desired_width(f32::INFINITY).hint_text("Text to show"));
+            ui.add(TextEdit::multiline(&mut t.text).desired_rows(3).desired_width(f32::INFINITY).hint_text(crate::i18n::t("Text to show")));
             ui.add_space(4.0);
             egui::Grid::new("text-time").num_columns(2).spacing([10.0, 6.0]).show(ui, |ui| {
-                ui.label("Show for");
+                ui.label(crate::i18n::t("Show for"));
                 ui.horizontal(|ui| {
                     time_edit(ui, &mut t.duration);
-                    ui.label(RichText::new(if t.duration <= 0.0 { "until stopped" } else { "" }).weak());
+                    ui.label(RichText::new(if t.duration <= 0.0 { crate::i18n::t("until stopped") } else { "" }).weak());
                 });
                 ui.end_row();
             });
         }
         1 => {
             egui::Grid::new("text-font").num_columns(2).spacing([10.0, 6.0]).show(ui, |ui| {
-                ui.label("Font");
+                ui.label(crate::i18n::t("Font"));
                 ui.horizontal(|ui| {
                     font_picker(ui, &mut t.font);
                     if text::families_ready() && !text::is_installed(&t.font) {
-                        ui.label(RichText::new("not installed here: a fallback font is used").color(super::widgets::AMBER))
-                            .on_hover_text("Install this font on every computer that plays the show");
+                        ui.label(RichText::new(crate::i18n::t("not installed here: a fallback font is used")).color(super::widgets::AMBER))
+                            .on_hover_text(crate::i18n::t("Install this font on every computer that plays the show"));
                     }
                 });
                 ui.end_row();
 
-                ui.label("Weight");
+                ui.label(crate::i18n::t("Weight"));
                 ui.horizontal(|ui| {
                     let styles = if text::families_ready() { text::styles_of(&t.font) } else { Vec::new() };
                     let has = |w: u16, italic: bool| styles.iter().any(|s| s.0 == w && s.1 == italic);
@@ -1497,23 +1504,23 @@ fn text_settings(ui: &mut Ui, t: &mut crate::model::TextCue) {
                         }
                     })
                     .response
-                    .on_hover_text("Weights the font doesn't include are greyed out; the nearest one is used");
+                    .on_hover_text(crate::i18n::t("Weights the font doesn't include are greyed out; the nearest one is used"));
                     if w != t.effective_weight() {
                         t.weight = w;
                         t.bold = w >= 600;
                     }
-                    ui.checkbox(&mut t.italic, "Italic");
+                    ui.checkbox(&mut t.italic, crate::i18n::t("Italic"));
                 });
                 ui.end_row();
 
-                ui.label("Size");
+                ui.label(crate::i18n::t("Size"));
                 ui.horizontal(|ui| {
                     ui.add(DragValue::new(&mut t.size).range(4.0..=1000.0).speed(1.0).suffix(" px"));
-                    ui.label("Line height");
+                    ui.label(crate::i18n::t("Line height"));
                     ui.add(DragValue::new(&mut t.line_height).range(0.5..=4.0).speed(0.01).fixed_decimals(2).suffix("×"));
-                    ui.label("Spacing");
+                    ui.label(crate::i18n::t("Spacing"));
                     ui.add(DragValue::new(&mut t.letter_spacing).range(-0.5..=2.0).speed(0.002).fixed_decimals(3).suffix(" em"))
-                        .on_hover_text("Extra space between letters");
+                        .on_hover_text(crate::i18n::t("Extra space between letters"));
                 });
                 ui.end_row();
 
@@ -1521,24 +1528,25 @@ fn text_settings(ui: &mut Ui, t: &mut crate::model::TextCue) {
         }
         2 => {
             egui::Grid::new("text-look").num_columns(2).spacing([10.0, 6.0]).show(ui, |ui| {
-                ui.label("Colour");
+                ui.label(crate::i18n::t("Colour"));
                 ui.horizontal(|ui| {
                     color_button(ui, &mut t.color);
-                    for a in [crate::model::TextAlign::Left, crate::model::TextAlign::Center, crate::model::TextAlign::Right] {
-                        ui.selectable_value(&mut t.align, a, format!("{a:?}"));
+                    use crate::model::TextAlign;
+                    for (a, label) in [(TextAlign::Left, "Left"), (TextAlign::Center, "Centre"), (TextAlign::Right, "Right")] {
+                        ui.selectable_value(&mut t.align, a, crate::i18n::t(label));
                     }
                 });
                 ui.end_row();
 
-                ui.label("Outline");
+                ui.label(crate::i18n::t("Outline"));
                 ui.horizontal(|ui| {
                     ui.add(DragValue::new(&mut t.outline_width).range(0.0..=100.0).speed(0.1).fixed_decimals(1).suffix(" px"));
                     color_button(ui, &mut t.outline_color);
-                    ui.label(RichText::new(if t.outline_width <= 0.0 { "off" } else { "" }).weak());
+                    ui.label(RichText::new(if t.outline_width <= 0.0 { crate::i18n::t("off") } else { "" }).weak());
                 });
                 ui.end_row();
 
-                ui.label("Shadow");
+                ui.label(crate::i18n::t("Shadow"));
                 ui.horizontal(|ui| {
                     let mut on = t.shadow_color[3] > 0;
                     if ui.checkbox(&mut on, "").changed() {
@@ -1546,28 +1554,28 @@ fn text_settings(ui: &mut Ui, t: &mut crate::model::TextCue) {
                     }
                     ui.add_enabled_ui(on, |ui| {
                         color_button(ui, &mut t.shadow_color);
-                        ui.label("offset");
+                        ui.label(crate::i18n::t("offset"));
                         ui.add(DragValue::new(&mut t.shadow_offset[0]).range(-200.0..=200.0).speed(0.2).suffix(" px"));
                         ui.add(DragValue::new(&mut t.shadow_offset[1]).range(-200.0..=200.0).speed(0.2).suffix(" px"));
-                        ui.label("blur");
+                        ui.label(crate::i18n::t("blur"));
                         ui.add(DragValue::new(&mut t.shadow_blur).range(0.0..=100.0).speed(0.2).suffix(" px"));
                     });
                 });
                 ui.end_row();
 
-                ui.label("Background");
+                ui.label(crate::i18n::t("Background"));
                 ui.horizontal(|ui| {
                     let mut on = t.bg_color[3] > 0;
-                    if ui.checkbox(&mut on, "").on_hover_text("A box behind the text").changed() {
+                    if ui.checkbox(&mut on, "").on_hover_text(crate::i18n::t("A box behind the text")).changed() {
                         t.bg_color[3] = if on { 255 } else { 0 };
                     }
                     ui.add_enabled_ui(on, |ui| {
                         color_button(ui, &mut t.bg_color);
-                        ui.label("padding");
+                        ui.label(crate::i18n::t("padding"));
                         ui.add(DragValue::new(&mut t.bg_padding).range(0.0..=500.0).speed(0.5).suffix(" px"));
-                        ui.label("radius");
+                        ui.label(crate::i18n::t("radius"));
                         ui.add(DragValue::new(&mut t.bg_radius).range(0.0..=500.0).speed(0.5).suffix(" px"))
-                            .on_hover_text("Rounded corners");
+                            .on_hover_text(crate::i18n::t("Rounded corners"));
                     });
                 });
                 ui.end_row();
@@ -1578,7 +1586,7 @@ fn text_settings(ui: &mut Ui, t: &mut crate::model::TextCue) {
             text_sample(ui, t);
             ui.add_space(4.0);
             ui.label(
-                RichText::new("Text appears on the stage like a video layer: use the Geometry and Animation tabs and Fade cues to place, animate and fade it.")
+                RichText::new(crate::i18n::t("Text appears on the stage like a video layer: use the Geometry and Animation tabs and Fade cues to place, animate and fade it."))
                     .weak()
                     .small(),
             );
@@ -1589,25 +1597,25 @@ fn text_settings(ui: &mut Ui, t: &mut crate::model::TextCue) {
 /// Searchable list of installed font families.
 fn font_picker(ui: &mut Ui, font: &mut String) {
     use crate::media::text;
-    let label = if font.is_empty() { format!("{} (built-in)", text::BUILT_IN) } else { font.clone() };
+    let label = if font.is_empty() { tr!("{name} (built-in)", name = text::BUILT_IN) } else { font.clone() };
     let search_id = ui.id().with("font-search");
     ComboBox::from_id_salt("font").selected_text(label).width(240.0).height(360.0).show_ui(ui, |ui| {
         if !text::families_ready() {
             ui.horizontal(|ui| {
                 ui.spinner();
-                ui.label("Loading installed fonts…");
+                ui.label(t("Loading installed fonts…"));
             });
             ui.ctx().request_repaint_after(std::time::Duration::from_millis(200));
             return;
         }
         let mut q = ui.data(|d| d.get_temp::<String>(search_id)).unwrap_or_default();
-        let r = ui.add(TextEdit::singleline(&mut q).hint_text("Search fonts").desired_width(220.0));
+        let r = ui.add(TextEdit::singleline(&mut q).hint_text(t("Search fonts")).desired_width(220.0));
         if q.is_empty() && !r.has_focus() {
             r.request_focus();
         }
         ui.data_mut(|d| d.insert_temp(search_id, q.clone()));
         let q = q.to_lowercase();
-        ui.selectable_value(font, String::new(), format!("{} (built-in)", text::BUILT_IN));
+        ui.selectable_value(font, String::new(), tr!("{name} (built-in)", name = text::BUILT_IN));
         for name in text::families().iter().filter(|n| q.is_empty() || n.to_lowercase().contains(&q)) {
             if ui.selectable_label(font == name, name).clicked() {
                 *font = name.clone();
@@ -1623,7 +1631,7 @@ fn text_sample(ui: &mut Ui, t: &crate::model::TextCue) {
     if !text::families_ready() {
         return;
     }
-    let first = t.text.lines().find(|l| !l.trim().is_empty()).unwrap_or("Sample").chars().take(60).collect::<String>();
+    let first = t.text.lines().find(|l| !l.trim().is_empty()).unwrap_or(crate::i18n::t("Sample")).chars().take(60).collect::<String>();
     // Placement, timing and animation don't change the sample, so editing them renders nothing.
     let sample = crate::model::TextCue {
         text: first,
@@ -1669,14 +1677,14 @@ pub(super) fn timecode_edit(ui: &mut Ui, secs: &mut f64, rate: crate::model::Tim
             .custom_formatter(move |v, _| format_secs(v, rate))
             .custom_parser(move |t| parse_secs(t, rate)),
     )
-    .on_hover_text(format!("Timecode at {} (type hh:mm:ss:ff)", rate.label()))
+    .on_hover_text(tr!("Timecode at {rate} (type hh:mm:ss:ff)", rate = rate.label()))
 }
 
 /// Combo of choices by (value, label), with a first "default" entry for None.
 fn device_combo(ui: &mut Ui, salt: &str, value: &mut Option<String>, choices: &[(String, String)], default: &str) {
     let label = match value {
         None => default.to_string(),
-        Some(v) => choices.iter().find(|c| &c.0 == v).map_or_else(|| format!("{v} (not found)"), |c| c.1.clone()),
+        Some(v) => choices.iter().find(|c| &c.0 == v).map_or_else(|| tr!("{v} (not found)", v), |c| c.1.clone()),
     };
     ComboBox::from_id_salt(salt).width(260.0).selected_text(label).show_ui(ui, |ui| {
         ui.selectable_value(value, None, default);
@@ -1689,7 +1697,7 @@ fn device_combo(ui: &mut Ui, salt: &str, value: &mut Option<String>, choices: &[
 fn refresh_button(ui: &mut Ui, ctx: &Ctx, refresh: &mut bool) {
     if ctx.devices.loading {
         ui.spinner();
-    } else if super::theme::icon_button(ui, super::icons::REFRESH, "Look for devices again").clicked() {
+    } else if super::theme::icon_button(ui, super::icons::REFRESH, t("Look for devices again")).clicked() {
         *refresh = true;
     }
 }
@@ -1707,54 +1715,54 @@ fn mic_io(ui: &mut Ui, m: &mut crate::model::MicCue, ctx: &Ctx, refresh: &mut bo
     use super::icons as ic;
     use super::theme::Card;
     let specs = [
-        Card::new(ic::MIC, "Input", 420.0),
-        Card::new(ic::SCHEDULE, "Timing", 260.0),
-        Card::new(ic::GRID_VIEW, "Routing", routing_width(&m.objects)),
+        Card::new(ic::MIC, t("Input"), 420.0),
+        Card::new(ic::SCHEDULE, t("Timing"), 260.0),
+        Card::new(ic::GRID_VIEW, t("Routing"), routing_width(&m.objects)),
     ];
     let inputs: Vec<(String, String)> = ctx.devices.audio_in.iter().map(|d| (d.id.clone(), d.name.clone())).collect();
     super::theme::cards(ui, "mic", &specs, |ui, i| match i {
         0 => {
             egui::Grid::new("mic-in").num_columns(2).spacing([10.0, 6.0]).show(ui, |ui| {
-                ui.label("Device");
+                ui.label(t("Device"));
                 ui.horizontal(|ui| {
-                    device_combo(ui, "mic-dev", &mut m.device, &inputs, "System default input");
+                    device_combo(ui, "mic-dev", &mut m.device, &inputs, t("System default input"));
                     refresh_button(ui, ctx, refresh);
                 });
                 ui.end_row();
-                ui.label("Channels");
+                ui.label(t("Channels"));
                 ui.horizontal(|ui| {
                     let mut first = m.first_channel + 1;
-                    ui.add(DragValue::new(&mut first).range(1..=64).prefix("from "));
+                    ui.add(DragValue::new(&mut first).range(1..=64).prefix(t("from ")));
                     m.first_channel = first - 1;
                     ui.add(DragValue::new(&mut m.channels).range(1..=crate::model::MAX_SRC_CHANNELS as u16).suffix(" ch"));
                     ui.label(RichText::new(match m.channels {
-                        1 => format!("input {}", m.first_channel + 1),
-                        n => format!("inputs {}–{}", m.first_channel + 1, m.first_channel + n),
+                        1 => tr!("input {n}", n = m.first_channel + 1),
+                        n => tr!("inputs {first}–{last}", first = m.first_channel + 1, last = m.first_channel + n),
                     }).weak());
                 });
                 ui.end_row();
-                ui.label("Level");
+                ui.label(t("Level"));
                 ui.horizontal(|ui| {
                     level_bar(ui, ctx.mic_level);
                     if ctx.mic_level.is_none() {
-                        ui.label(RichText::new("shown while the cue runs").weak().small());
+                        ui.label(RichText::new(t("shown while the cue runs")).weak().small());
                     }
                 });
                 ui.end_row();
             });
             ui.add_space(4.0);
-            ui.label(RichText::new("Live input is delayed by about 30 ms on its way through the mixer.").weak().small());
+            ui.label(RichText::new(t("Live input is delayed by about 30 ms on its way through the mixer.")).weak().small());
         }
         1 => {
             egui::Grid::new("mic-time").num_columns(2).spacing([10.0, 6.0]).show(ui, |ui| {
-                ui.label("Duration");
+                ui.label(t("Duration"));
                 ui.horizontal(|ui| {
                     time_edit(ui, &mut m.duration);
-                    ui.label(RichText::new(if m.duration <= 0.0 { "until stopped" } else { "" }).weak());
+                    ui.label(RichText::new(if m.duration <= 0.0 { crate::i18n::t("until stopped") } else { "" }).weak());
                 });
                 ui.end_row();
-                ui.label("Fade in");
-                time_edit(ui, &mut m.fade_in).on_hover_text("Fades up from silence when the cue starts");
+                ui.label(t("Fade in"));
+                time_edit(ui, &mut m.fade_in).on_hover_text(t("Fades up from silence when the cue starts"));
                 ui.end_row();
             });
         }
@@ -1765,7 +1773,7 @@ fn mic_io(ui: &mut Ui, m: &mut crate::model::MicCue, ctx: &Ctx, refresh: &mut bo
 fn mic_levels(ui: &mut Ui, m: &mut crate::model::MicCue, outs: usize) {
     use super::icons as ic;
     use super::theme::Card;
-    let specs = [Card::new(ic::CONTROL_CAMERA, "Pan", PAN_W), Card::new(ic::TUNE, "Levels", fader_bank_width(outs))];
+    let specs = [Card::new(ic::CONTROL_CAMERA, t("Pan"), PAN_W), Card::new(ic::TUNE, t("Levels"), fader_bank_width(outs))];
     super::theme::cards(ui, "miclevels", &specs, |ui, i| match i {
         0 => pan_card(ui, &mut m.pan),
         _ => fader_bank(ui, &mut m.volume_db, &mut m.out_levels, outs),
@@ -1781,11 +1789,11 @@ fn pan_card(ui: &mut Ui, pan: &mut f32) {
         ui.add(Slider::new(pan, -1.0..=1.0).show_value(false));
         ui.label(RichText::new(pan_label(*pan)).font(super::theme::mono(12.5)));
     });
-    if ui.add_enabled(*pan != 0.0, egui::Button::new("Centre").small()).clicked() {
+    if ui.add_enabled(*pan != 0.0, egui::Button::new(t("Centre")).small()).clicked() {
         *pan = 0.0;
     }
     ui.add_space(4.0);
-    ui.label(RichText::new("Pans between outputs 1 and 2 when the routing is automatic.").weak().small());
+    ui.label(RichText::new(t("Pans between outputs 1 and 2 when the routing is automatic.")).weak().small());
 }
 
 /// Capture sizes offered for cameras.
@@ -1794,11 +1802,11 @@ const CAMERA_SIZES: [[u32; 2]; 4] = [[640, 480], [1280, 720], [1920, 1080], [384
 fn camera_settings(ui: &mut Ui, c: &mut crate::model::CameraCue, ctx: &Ctx, refresh: &mut bool) {
     use super::icons as ic;
     use super::theme::Card;
-    let specs = [Card::new(ic::PHOTO_CAMERA, "Camera", 460.0), Card::new(ic::SCHEDULE, "Timing", 300.0)];
+    let specs = [Card::new(ic::PHOTO_CAMERA, t("Camera"), 460.0), Card::new(ic::SCHEDULE, t("Timing"), 300.0)];
     super::theme::cards(ui, "camera", &specs, |ui, i| match i {
         0 => {
             egui::Grid::new("cam").num_columns(2).spacing([10.0, 6.0]).show(ui, |ui| {
-                ui.label("Device");
+                ui.label(t("Device"));
                 ui.horizontal(|ui| {
                     if c.format.is_some() {
                         // A source typed by hand (e.g. a test pattern): show it as text.
@@ -1807,38 +1815,38 @@ fn camera_settings(ui: &mut Ui, c: &mut crate::model::CameraCue, ctx: &Ctx, refr
                             c.device = (!text.is_empty()).then_some(text);
                         }
                     } else {
-                        device_combo(ui, "cam-dev", &mut c.device, &ctx.devices.cameras, "First camera found");
+                        device_combo(ui, "cam-dev", &mut c.device, &ctx.devices.cameras, t("First camera found"));
                     }
                     refresh_button(ui, ctx, refresh);
                 });
                 ui.end_row();
                 if ctx.devices.loaded && ctx.devices.cameras.is_empty() && c.format.is_none() {
                     ui.label("");
-                    ui.label(RichText::new("No cameras found.").color(super::widgets::AMBER));
+                    ui.label(RichText::new(t("No cameras found.")).color(super::widgets::AMBER));
                     ui.end_row();
                 }
-                ui.label("Size");
-                let label = c.size.map_or_else(|| "Camera default".to_string(), |[w, h]| format!("{w} × {h}"));
+                ui.label(t("Size"));
+                let label = c.size.map_or_else(|| t("Camera default").to_string(), |[w, h]| format!("{w} × {h}"));
                 ComboBox::from_id_salt("cam-size").selected_text(label).show_ui(ui, |ui| {
-                    ui.selectable_value(&mut c.size, None, "Camera default");
+                    ui.selectable_value(&mut c.size, None, t("Camera default"));
                     for s in CAMERA_SIZES {
                         ui.selectable_value(&mut c.size, Some(s), format!("{} × {}", s[0], s[1]));
                     }
                 });
                 ui.end_row();
-                ui.label("Mirror");
-                ui.checkbox(&mut c.mirror, "Flip left to right");
+                ui.label(t("Mirror"));
+                ui.checkbox(&mut c.mirror, t("Flip left to right"));
                 ui.end_row();
             });
             ui.add_space(4.0);
-            ui.label(RichText::new("Device and size changes apply the next time the cue starts.").weak().small());
+            ui.label(RichText::new(t("Device and size changes apply the next time the cue starts.")).weak().small());
         }
         _ => {
             egui::Grid::new("cam-time").num_columns(2).spacing([10.0, 6.0]).show(ui, |ui| {
-                ui.label("Show for");
+                ui.label(t("Show for"));
                 ui.horizontal(|ui| {
                     time_edit(ui, &mut c.duration);
-                    ui.label(RichText::new(if c.duration <= 0.0 { "until stopped" } else { "" }).weak());
+                    ui.label(RichText::new(if c.duration <= 0.0 { crate::i18n::t("until stopped") } else { "" }).weak());
                 });
                 ui.end_row();
             });
@@ -1853,35 +1861,35 @@ fn triggers(ui: &mut Ui, cue: &mut Cue, ctx: &Ctx) -> bool {
     use super::theme::Card;
     use crate::model::TimecodeSource;
     let mut setup = false;
-    let specs = [Card::new(ic::KEYBOARD, "Hotkey", 340.0), Card::new(ic::TIMER_PLAY, "Timecode", 460.0)];
+    let specs = [Card::new(ic::KEYBOARD, t("Hotkey"), 340.0), Card::new(ic::TIMER_PLAY, t("Timecode"), 460.0)];
     super::theme::cards(ui, "triggers", &specs, |ui, i| match i {
         0 => {
             egui::Grid::new("trig-key").num_columns(2).spacing([10.0, 6.0]).show(ui, |ui| {
-                ui.label("Key");
+                ui.label(t("Key"));
                 let mut text = cue.hotkey.clone().unwrap_or_default();
                 let valid = text.is_empty() || egui::Key::from_name(&text).is_some();
                 let r = ui.add(
                     TextEdit::singleline(&mut text)
                         .desired_width(80.0)
-                        .hint_text("none")
+                        .hint_text(t("no key"))
                         .text_color_opt((!valid).then_some(RED)),
                 );
                 if r.changed() {
                     cue.hotkey = (!text.trim().is_empty()).then(|| text.trim().to_string());
                 }
-                r.on_hover_text("Key that fires this cue (e.g. F1, A, Num5). Not Space/P/R/Esc.");
+                r.on_hover_text(t("Key that fires this cue (e.g. F1, A, Num5). Not Space/P/R/Esc."));
                 ui.end_row();
             });
             ui.add_space(4.0);
-            ui.label(RichText::new("Fires the cue directly, whatever the playhead is on.").weak().small());
+            ui.label(RichText::new(t("Fires the cue directly, whatever the playhead is on.")).weak().small());
         }
         _ => {
             let sync = &ctx.list_tc;
             egui::Grid::new("trig-tc").num_columns(2).spacing([10.0, 6.0]).show(ui, |ui| {
-                ui.label("Fire at");
+                ui.label(t("Fire at"));
                 ui.horizontal(|ui| {
                     let mut on = cue.timecode_trigger.is_some();
-                    if ui.checkbox(&mut on, "").on_hover_text("Fire when the cue list's timecode reaches this time").changed() {
+                    if ui.checkbox(&mut on, "").on_hover_text(t("Fire when the cue list's timecode reaches this time")).changed() {
                         cue.timecode_trigger = on.then_some(3600.0);
                     }
                     match &mut cue.timecode_trigger {
@@ -1889,17 +1897,17 @@ fn triggers(ui: &mut Ui, cue: &mut Cue, ctx: &Ctx) -> bool {
                             timecode_edit(ui, t, sync.rate);
                         }
                         None => {
-                            ui.label(RichText::new("off").weak());
+                            ui.label(RichText::new(t("off")).weak());
                         }
                     }
                 });
                 ui.end_row();
-                ui.label("Cue list");
+                ui.label(t("Cue list"));
                 ui.horizontal(|ui| {
                     let text = match sync.source {
-                        TimecodeSource::Off => "doesn't follow timecode".to_string(),
-                        TimecodeSource::Ltc => format!("follows LTC at {}", sync.rate.label()),
-                        TimecodeSource::Mtc => format!("follows MTC at {}", sync.rate.label()),
+                        TimecodeSource::Off => t("doesn't follow timecode").to_string(),
+                        TimecodeSource::Ltc => tr!("follows LTC at {rate}", rate = sync.rate.label()),
+                        TimecodeSource::Mtc => tr!("follows MTC at {rate}", rate = sync.rate.label()),
                     };
                     let color = if sync.source == TimecodeSource::Off && cue.timecode_trigger.is_some() {
                         super::widgets::AMBER
@@ -1907,23 +1915,23 @@ fn triggers(ui: &mut Ui, cue: &mut Cue, ctx: &Ctx) -> bool {
                         ui.visuals().weak_text_color()
                     };
                     ui.label(RichText::new(text).color(color));
-                    if ui.small_button("Set up…").on_hover_text("The cue list's timecode settings").clicked() {
+                    if ui.small_button(t("Set up…")).on_hover_text(t("The cue list's timecode settings")).clicked() {
                         setup = true;
                     }
                 });
                 ui.end_row();
                 if sync.source != TimecodeSource::Off {
-                    ui.label("Receiving");
+                    ui.label(t("Receiving"));
                     match &ctx.tc_in {
                         Some(t) => ui.label(RichText::new(t).font(super::theme::mono(13.0)).color(super::theme::GREEN)),
-                        None => ui.label(RichText::new("no timecode").color(super::widgets::AMBER)),
+                        None => ui.label(RichText::new(t("no timecode")).color(super::widgets::AMBER)),
                     };
                     ui.end_row();
                 }
             });
             ui.add_space(4.0);
             ui.label(
-                RichText::new("The cue fires as running timecode passes this time. Jumps and dropouts don't fire cues.")
+                RichText::new(t("The cue fires as running timecode passes this time. Jumps and dropouts don't fire cues."))
                     .weak()
                     .small(),
             );

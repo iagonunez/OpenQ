@@ -74,21 +74,21 @@ impl AnimProp {
     /// Name shown in the editor.
     pub fn label(self) -> &'static str {
         match self {
-            AnimProp::X => "X",
-            AnimProp::Y => "Y",
-            AnimProp::ScaleX => "Scale X",
-            AnimProp::ScaleY => "Scale Y",
-            AnimProp::Rotation => "Rotation",
-            AnimProp::CropLeft => "Crop left",
-            AnimProp::CropTop => "Crop top",
-            AnimProp::CropRight => "Crop right",
-            AnimProp::CropBottom => "Crop bottom",
-            AnimProp::Opacity => "Opacity",
-            AnimProp::Tint => "Tint",
-            AnimProp::TextColor => "Text colour",
-            AnimProp::OutlineColor => "Outline colour",
-            AnimProp::ShadowColor => "Shadow colour",
-            AnimProp::Background => "Background",
+            AnimProp::X => crate::i18n::t("X"),
+            AnimProp::Y => crate::i18n::t("Y"),
+            AnimProp::ScaleX => crate::i18n::t("Scale X"),
+            AnimProp::ScaleY => crate::i18n::t("Scale Y"),
+            AnimProp::Rotation => crate::i18n::t("Rotation"),
+            AnimProp::CropLeft => crate::i18n::t("Crop left"),
+            AnimProp::CropTop => crate::i18n::t("Crop top"),
+            AnimProp::CropRight => crate::i18n::t("Crop right"),
+            AnimProp::CropBottom => crate::i18n::t("Crop bottom"),
+            AnimProp::Opacity => crate::i18n::t("Opacity"),
+            AnimProp::Tint => crate::i18n::t("Tint"),
+            AnimProp::TextColor => crate::i18n::t("Text colour"),
+            AnimProp::OutlineColor => crate::i18n::t("Outline colour"),
+            AnimProp::ShadowColor => crate::i18n::t("Shadow colour"),
+            AnimProp::Background => crate::i18n::t("Background"),
         }
     }
 
@@ -137,12 +137,12 @@ impl Ease {
     /// Name shown in the editor.
     pub fn label(self) -> &'static str {
         match self {
-            Ease::Hold => "Hold",
-            Ease::Linear => "Linear",
-            Ease::In => "Ease in",
-            Ease::Out => "Ease out",
-            Ease::InOut => "Ease in-out",
-            Ease::Bezier(_) => "Custom curve",
+            Ease::Hold => crate::i18n::t("Hold"),
+            Ease::Linear => crate::i18n::t("Linear"),
+            Ease::In => crate::i18n::t("Ease in"),
+            Ease::Out => crate::i18n::t("Ease out"),
+            Ease::InOut => crate::i18n::t("Ease in-out"),
+            Ease::Bezier(_) => crate::i18n::t("Custom curve"),
         }
     }
 }

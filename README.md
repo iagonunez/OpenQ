@@ -109,8 +109,8 @@ cargo build --release && ./target/release/openq
 
 Everything above is explained step by step, with pictures, in the **user manual**, which comes with
 the app: choose **Help → User manual** or press **F1** and it opens in your web browser. It works
-offline and always matches your version of OpenQ. It is available in English, Spanish and Galician,
-and you can also read it [online](https://iagonunez.github.io/OpenQ/manual/).
+offline and always matches your version of OpenQ. Like the app itself (pick the language on the first run or in
+**Settings → General**), it is available in English, Spanish and Galician, and you can also read it [online](https://iagonunez.github.io/OpenQ/manual/).
 
 ## 🎨 Look and credits
 

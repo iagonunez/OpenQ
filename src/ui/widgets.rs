@@ -1,6 +1,7 @@
 //! Small shared UI helpers.
 
 use egui::{Color32, DragValue, Rect, Response, Ui};
+use crate::i18n::t;
 
 /// "m:ss.cc" (or "h:mm:ss.cc").
 pub fn fmt_time(secs: f64) -> String {
@@ -99,7 +100,7 @@ pub fn vfader(ui: &mut Ui, value: &mut f32, label: &str, track_h: f32, strong: b
             DragValue::new(value).range(min..=FADER_MAX_DB).speed(0.2).custom_formatter(|v, _| db_text(v)),
         );
         let (rect, track) = ui.allocate_exact_size(vec2(w, track_h), Sense::click_and_drag());
-        let track = track.on_hover_cursor(egui::CursorIcon::ResizeVertical).on_hover_text("Drag to set · double-click for 0 dB");
+        let track = track.on_hover_cursor(egui::CursorIcon::ResizeVertical).on_hover_text(t("Drag to set · double-click for 0 dB"));
         // The handle's centre travels between these.
         let (top, bottom) = (rect.top() + 7.0, rect.bottom() - 7.0);
         if track.double_clicked() {
@@ -202,7 +203,7 @@ pub fn curve_graph(ui: &mut Ui, salt: &str, curve: &mut crate::model::FadeCurve,
             resp.mark_changed();
         }
         let hot = r.hovered() || r.dragged();
-        let r = r.on_hover_cursor(egui::CursorIcon::ResizeVertical).on_hover_text("Drag to shape the fade · double-click for a straight line");
+        let r = r.on_hover_cursor(egui::CursorIcon::ResizeVertical).on_hover_text(crate::i18n::t("Drag to shape the fade · double-click for a straight line"));
         resp |= r;
         // Control arm from the nearer end point.
         let end = if k == 0 { at(0.0, a) } else { at(1.0, b) };
@@ -217,7 +218,7 @@ pub fn curve_graph(ui: &mut Ui, salt: &str, curve: &mut crate::model::FadeCurve,
     let small = theme::mono(9.0);
     p.text(pos2(rect.left(), outer.bottom() - 1.0), Align2::LEFT_BOTTOM, "0", small.clone(), theme::TEXT_FAINT);
     p.text(pos2(rect.right(), outer.bottom() - 1.0), Align2::RIGHT_BOTTOM, fmt_time(duration), small.clone(), theme::TEXT_FAINT);
-    p.text(pos2(rect.left() + 3.0, outer.top() + 1.0), Align2::LEFT_TOP, if falling { "start" } else { "target" }, small, theme::TEXT_FAINT);
+    p.text(pos2(rect.left() + 3.0, outer.top() + 1.0), Align2::LEFT_TOP, if falling { crate::i18n::t("start") } else { crate::i18n::t("target") }, small, theme::TEXT_FAINT);
     resp
 }
 

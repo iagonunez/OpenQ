@@ -4,6 +4,7 @@ use super::widgets::{AMBER, BLUE, GREEN, RED, fmt_time};
 use crate::model::SliceMarker;
 use crate::media::decoder::Waveform;
 use egui::{Align2, Color32, CursorIcon, FontId, Id, Pos2, Rect, Sense, Stroke, Ui, pos2, vec2};
+use crate::i18n::t;
 
 const HEIGHT: f32 = 104.0;
 const RULER: f32 = 16.0;
@@ -44,28 +45,28 @@ pub fn waveform_editor(
 
     ui.horizontal(|ui| {
         let span = view.t1 - view.t0;
-        if super::theme::icon_button(ui, super::icons::ZOOM_OUT, "Zoom out").clicked() {
+        if super::theme::icon_button(ui, super::icons::ZOOM_OUT, t("Zoom out")).clicked() {
             let c = (view.t0 + view.t1) / 2.0;
             zoom(&mut view, duration, c, 2.0);
         }
-        if super::theme::icon_button(ui, super::icons::ZOOM_IN, "Zoom in (or Ctrl+scroll on the waveform)").clicked() {
+        if super::theme::icon_button(ui, super::icons::ZOOM_IN, t("Zoom in (or Ctrl+scroll on the waveform)")).clicked() {
             let c = (view.t0 + view.t1) / 2.0;
             zoom(&mut view, duration, c, 0.5);
         }
-        if super::theme::icon_button(ui, super::icons::FIT_SCREEN, "Show the whole file").clicked() {
+        if super::theme::icon_button(ui, super::icons::FIT_SCREEN, t("Show the whole file")).clicked() {
             view = View { t0: 0.0, t1: duration };
         }
-        if super::theme::icon_button(ui, super::icons::CROP_FREE, "Zoom to the start–end region").clicked() {
+        if super::theme::icon_button(ui, super::icons::CROP_FREE, t("Zoom to the start–end region")).clicked() {
             let e = end.unwrap_or(duration);
             let pad = (e - *start) * 0.05;
             view = View { t0: (*start - pad).max(0.0), t1: (e + pad).min(duration) };
         }
-        ui.label(egui::RichText::new(format!("view {} – {}  ({:.0}×)", fmt_time(view.t0), fmt_time(view.t1), duration / span)).weak().small());
+        ui.label(egui::RichText::new(tr!("view {from} – {to}  ({zoom}×)", from = fmt_time(view.t0), to = fmt_time(view.t1), zoom = format!("{:.0}", duration / span))).weak().small());
         ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
             ui.add(
                 egui::Label::new(
                     egui::RichText::new(
-                        "Drag green/red markers to trim · double-click to add a slice · drag to pan · Ctrl+scroll to zoom",
+                        t("Drag green/red markers to trim · double-click to add a slice · drag to pan · Ctrl+scroll to zoom"),
                     )
                     .weak()
                     .small(),
@@ -115,7 +116,7 @@ pub fn waveform_editor(
             }
         }
         None => {
-            p.text(wave.center(), Align2::CENTER_CENTER, "building waveform…", FontId::proportional(13.0), vis.weak_text_color());
+            p.text(wave.center(), Align2::CENTER_CENTER, crate::i18n::t("building waveform…"), FontId::proportional(13.0), vis.weak_text_color());
         }
     }
     p.line_segment([pos2(wave.left(), mid), pos2(wave.right(), mid)], Stroke::new(0.5, Color32::from_gray(60)));
@@ -152,7 +153,7 @@ pub fn waveform_editor(
     let handle = |x: f32| Rect::from_center_size(pos2(x, wave.center().y), vec2(12.0, wave.height()));
     let hs = ui.interact(handle(x_of(*start)), id.with("start"), Sense::drag());
     let he = ui.interact(handle(x_of(end_t)), id.with("end"), Sense::drag());
-    for (r, x, c, label) in [(&hs, x_of(*start), GREEN, "start"), (&he, x_of(end_t), RED, "end")] {
+    for (r, x, c, label) in [(&hs, x_of(*start), GREEN, crate::i18n::t("start")), (&he, x_of(end_t), RED, crate::i18n::t("end"))] {
         let w = if r.hovered() || r.dragged() { 3.0 } else { 2.0 };
         p.line_segment([pos2(x, wave.top()), pos2(x, wave.bottom())], Stroke::new(w, c));
         p.add(egui::Shape::convex_polygon(
@@ -208,7 +209,7 @@ pub fn waveform_editor(
         if r.secondary_clicked() {
             remove = Some(i);
         }
-        r.on_hover_text("Slice marker — drag to move, right-click to delete. Set loops in the slice table.");
+        r.on_hover_text(crate::i18n::t("Slice marker — drag to move, right-click to delete. Set loops in the slice table."));
     }
     if let Some(i) = remove {
         slices.remove(i);

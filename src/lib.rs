@@ -38,6 +38,8 @@
 //! * [`osc`] — OSC input. [`remote`] — paired remote devices (encrypted, authenticated).
 //! * [`displays`] — system monitors for stage outputs. [`ui`] — the egui application, including
 //!   the stage windows (spanned surfaces, edge blending, layer [`model::BlendMode`]s).
+//! * [`i18n`] — UI translations (English, Spanish, Galician): texts are looked up by their
+//!   English wording in `assets/i18n/*.json`; the language is chosen on the first run.
 //! * [`recovery`] — crash safety: panics in workers become errors, the engine thread recovers
 //!   in place, autosave plus crash detection bring unsaved work back after a crash.
 //! * [`errlog`] — warnings, errors and crashes are also appended to a local log file
@@ -77,6 +79,8 @@
 
 #![warn(missing_docs)]
 
+#[macro_use]
+pub mod i18n;
 pub mod animation;
 pub mod audio_fx;
 pub mod bench;

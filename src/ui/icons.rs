@@ -104,3 +104,4 @@ pub const AUTO_FIX_HIGH: &str = "\u{e663}";
 pub const INSTANT_MIX: &str = "\u{e026}";
 pub const SURROUND_SOUND: &str = "\u{e049}";
 pub const ARROW_UPWARD: &str = "\u{e5d8}";
+pub const LANGUAGE: &str = "\u{ea07}";

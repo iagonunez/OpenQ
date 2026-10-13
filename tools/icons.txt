@@ -102,3 +102,4 @@ auto_fix_high
 instant_mix
 surround_sound
 arrow_upward
+language

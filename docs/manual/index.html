@@ -218,6 +218,8 @@ footer { margin-top: 56px; padding-top: 18px; border-top: 1px solid var(--border
   <p class="lede">OpenQ runs a show from a list of cues. Each press of GO fires the next one:
   sound, video, text on a screen, fades, waits, or messages to other gear. This manual covers
   building a cue list, running it live, and controlling it from other devices.</p>
+  <div class="note tip"><span class="label">Language</span><p>OpenQ speaks English, Spanish and Galician. It asks for a
+  language the first time it starts; change it any time in <span class="menu">Settings → General → Language</span>.</p></div>
 </header>
 
 <section id="start">
@@ -245,7 +247,7 @@ footer { margin-top: 56px; padding-top: 18px; border-top: 1px solid var(--border
 <pre><code>cargo run --release                  # start with an empty show
 cargo run --release -- show.openq    # open a saved show</code></pre>
   <p>This manual is built into OpenQ: choose <span class="menu">Help → User manual</span> or press <kbd>F1</kbd>
-  to open it in your web browser. It works without an internet connection and always matches your version of OpenQ.</p>
+  to open it in your web browser, in the language of the interface. It works without an internet connection and always matches your version of OpenQ.</p>
   <h3>Your first show</h3>
   <ol class="steps">
     <li>Drag audio or video files from your file manager onto the window. Each file becomes a cue.
@@ -760,11 +762,11 @@ cargo run --release -- show.openq    # open a saved show</code></pre>
 <section id="settings">
   <h2><span class="n">13</span>Settings</h2>
   <p><span class="menu">Edit → Settings…</span>, or the <span class="ms" aria-hidden="true">&#xe8b8;</span> button at the
-  right of the status bar. These are saved with the show.</p>
+  right of the status bar. These are saved with the show, except the language, which belongs to the computer.</p>
   <div class="table-wrap"><table>
     <thead><tr><th>Tab</th><th>Settings</th></tr></thead>
     <tbody>
-      <tr><td>General</td><td>Stop-all fade time, double-GO protection, master volume, OSC on/off and port.</td></tr>
+      <tr><td>General</td><td>Interface language (English, Spanish or Galician; changes at once), stop-all fade time, double-GO protection, master volume, OSC on/off and port.</td></tr>
       <tr><td>Audio</td><td>Output device. Changing it stops all playback. Routing matrices address this device's outputs.
       The <strong>room for object audio</strong>: the speakers, where they stand and which output each one is on.</td></tr>
       <tr><td>Stages</td><td>Add and name stages, canvas size, output display, fullscreen, mapping.</td></tr>
@@ -865,7 +867,7 @@ cargo run --release -- show.openq    # open a saved show</code></pre>
       <tr><td>A Camera cue shows nothing</td><td>Check the device on its Camera tab (use <span class="ms" aria-hidden="true">&#xe5d5;</span>
       to look again) and the engine log. Another program using the camera can block it.</td></tr>
       <tr><td>A cue shows a red <span class="ms" style="color:var(--red)" aria-hidden="true">&#xf8b6;</span> icon</td><td>Its media file is missing or unreadable, or its target cue was deleted. If the file has moved, click <em>Browse…</em> on the cue's
-      Time tab to find it again. After reconnecting a drive, give it about two seconds to clear.</td></tr>
+      Basics tab to find it again. After reconnecting a drive, give it about two seconds to clear.</td></tr>
       <tr><td>A video doesn't appear</td><td>Open the stage window from the Video menu. Check the cue's stage, opacity
       and layer, and look in <span class="menu">View → Engine log</span> for decoder errors. A graphics card can only
       show pictures up to a certain size (often 8192 or 16384 pixels across). OpenQ shrinks still images, SVGs and text

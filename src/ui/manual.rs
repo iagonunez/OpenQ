@@ -1,6 +1,6 @@
 //! Help → User manual: the manual (`docs/manual`) is compiled into the program. Opening it writes
 //! the pages to a per-version folder in the system's temporary directory and hands the page in the
-//! system language (English, Spanish or Galician; [`page_for`]) to the default browser, so it
+//! UI language (English, Spanish or Galician; [`page_for`]) to the default browser, so it
 //! works offline and always matches the running version. Each page links to the other languages.
 
 use std::path::{Path, PathBuf};
@@ -57,7 +57,7 @@ pub(super) fn open_with_default_app(path: &Path) -> std::io::Result<()> {
     cmd.arg(path).spawn().map(|_| ())
 }
 
-/// The manual page for a POSIX locale name such as `es_ES.UTF-8` or `gl` (English otherwise).
+/// The manual page for a language code or POSIX locale name such as `es_ES.UTF-8` or `gl` (English otherwise).
 fn page_for(locale: &str) -> &'static str {
     match locale.get(..2).map(str::to_ascii_lowercase).as_deref() {
         Some("es") => "index.es.html",
@@ -66,17 +66,11 @@ fn page_for(locale: &str) -> &'static str {
     }
 }
 
-/// The system language from the usual environment variables (set on Linux and in most macOS
-/// terminals; English when none is set, e.g. on Windows).
-fn system_locale() -> String {
-    ["LC_ALL", "LC_MESSAGES", "LANG"].iter().filter_map(|v| std::env::var(v).ok()).find(|v| !v.is_empty()).unwrap_or_default()
-}
-
 /// Extract the manual for this version and open it in the browser. Returns where it was written.
 pub(super) fn open() -> anyhow::Result<PathBuf> {
     let dir = std::env::temp_dir().join(format!("openq-manual-{}", env!("CARGO_PKG_VERSION")));
     extract(&dir).map_err(|e| anyhow::anyhow!("cannot write the manual to {}: {e}", dir.display()))?;
-    let page = dir.join(page_for(&system_locale()));
+    let page = dir.join(page_for(crate::i18n::lang().code()));
     open_with_default_app(&page).map_err(|e| anyhow::anyhow!("cannot open a browser ({e}); the manual is at {}", page.display()))?;
     Ok(page)
 }

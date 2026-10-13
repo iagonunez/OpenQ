@@ -12,6 +12,7 @@ mod eq;
 mod effects;
 mod icons;
 mod inspector;
+mod language;
 mod manual;
 mod outputs;
 #[cfg(all(test, feature = "video"))]
@@ -42,6 +43,7 @@ use std::path::PathBuf;
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 use widgets::{AMBER, GREEN, RED, fmt_time};
+use crate::i18n::t;
 
 /// Work that needs a native dialog; done after the show lock is released so the engine keeps
 /// running while a dialog is open.
@@ -165,6 +167,8 @@ pub struct App {
     /// [`STATUS_TIMEOUT`]; View → Engine log keeps them all).
     log_tail: (usize, String, Instant),
     show_settings: bool,
+    /// The first-run language picker is open ([`App::ask_language`]).
+    ask_language: bool,
     show_log: bool,
     scroll_to: Option<CueId>,
     title: String,
@@ -233,6 +237,7 @@ impl App {
             status: None,
             log_tail: (0, String::new(), Instant::now()),
             show_settings: false,
+            ask_language: false,
             show_log: false,
             scroll_to: None,
             title: String::new(),
@@ -274,7 +279,7 @@ impl App {
     /// Open the bundled user manual in the default browser.
     fn open_manual(&mut self) {
         match manual::open() {
-            Ok(path) => self.notify(format!("Opened the user manual in your browser ({})", path.display())),
+            Ok(path) => self.notify(tr!("Opened the user manual in your browser ({path})", path = path.display())),
             Err(e) => self.notify_error(format!("{e:#}")),
         }
     }
@@ -293,10 +298,10 @@ impl App {
     /// Open the error log (warnings, errors, crashes) with the system's text viewer.
     fn open_error_log(&mut self) {
         let Some(path) = errlog::log_path() else {
-            return self.notify("No config folder: the error log is off");
+            return self.notify(t("No config folder: the error log is off"));
         };
         if let Err(e) = manual::open_with_default_app(&path) {
-            self.notify(format!("Cannot open {}: {e}", path.display()));
+            self.notify(tr!("Cannot open {path}: {e}", path = path.display(), e));
         }
     }
 
@@ -340,7 +345,7 @@ impl App {
         if let (CueKind::Fade(_), Some(sel)) = (&cue.kind, sel)
             && let Some(target) = show.ws.cue_list.find(sel)
         {
-            cue.name = format!("Fade out {}", target.display_name());
+            cue.name = tr!("Fade out {name}", name = target.display_name());
         }
         let id = cue.id;
         show.ws.cue_list.insert_after(sel, cue);
@@ -361,7 +366,7 @@ impl App {
                 ..Default::default()
             })
         } else {
-            self.notify(format!("Unsupported file: {}", path.display()));
+            self.notify(tr!("Unsupported file: {path}", path = path.display()));
             return None;
         };
         let mut cue = Cue::new(kind);
@@ -442,7 +447,7 @@ impl App {
             children: Vec::new(),
         });
         group.number = String::new();
-        group.name = "Group".into();
+        group.name = t("Group").into();
         let gid = group.id;
         let children: Vec<Cue> = members
             .iter()
@@ -616,7 +621,7 @@ impl App {
 
     fn toggle_mode(&mut self) {
         if self.mode == Mode::Show && !self.can_edit_show() {
-            self.notify("This device can only run the show: editing needs the Control & edit role");
+            self.notify(t("This device can only run the show: editing needs the Control & edit role"));
             return;
         }
         self.mode = match self.mode {
@@ -680,7 +685,7 @@ impl App {
             self.redo.push(UndoState::of(show));
             trim_undo(&mut self.redo);
             self.apply_undo_state(show, prev);
-            self.notify("Undo");
+            self.notify(t("Undo"));
         }
     }
 
@@ -690,7 +695,7 @@ impl App {
             self.undo.push(UndoState::of(show));
             trim_undo(&mut self.undo);
             self.apply_undo_state(show, next);
-            self.notify("Redo");
+            self.notify(t("Redo"));
         }
     }
 
@@ -722,7 +727,7 @@ impl App {
             {
                 Ok(s) => self.osc = Some(s),
                 Err(e) => {
-                    self.osc_error = Some(format!("OSC port {port}: {e}"));
+                    self.osc_error = Some(tr!("OSC port {port}: {e}", port, e));
                     self.osc_failed_for = want;
                 }
             }
@@ -738,11 +743,11 @@ impl App {
                 .collect()
         });
         if self.mode == Mode::Show && !files.is_empty() {
-            self.notify("Switch to edit mode (Ctrl+E) to add cues");
+            self.notify(t("Switch to edit mode (Ctrl+E) to add cues"));
             return;
         }
         if self.remote.is_replica() && !files.is_empty() {
-            self.notify("Media files live on the main device: add them there");
+            self.notify(t("Media files live on the main device: add them there"));
             return;
         }
         for f in files {
@@ -756,29 +761,29 @@ impl App {
         use icons as I;
         use theme::with_icon as wi;
         egui::MenuBar::new().ui(ui, |ui| {
-            ui.menu_button("File", |ui| {
-                if ui.button(wi(I::NOTE_ADD, "New")).clicked() {
+            ui.menu_button(t("File"), |ui| {
+                if ui.button(wi(I::NOTE_ADD, t("New"))).clicked() {
                     self.deferred.push(Deferred::New);
                 }
-                if ui.button(wi(I::FOLDER_OPEN, "Open…")).clicked() {
+                if ui.button(wi(I::FOLDER_OPEN, t("Open…"))).clicked() {
                     self.deferred.push(Deferred::Open);
                 }
-                if ui.button(wi(I::SAVE, "Save")).clicked() {
+                if ui.button(wi(I::SAVE, t("Save"))).clicked() {
                     self.deferred.push(Deferred::Save);
                 }
-                if ui.button(wi(I::SAVE, "Save As…")).clicked() {
+                if ui.button(wi(I::SAVE, t("Save As…"))).clicked() {
                     self.deferred.push(Deferred::SaveAs);
                 }
                 ui.separator();
-                if ui.button(wi(I::ADD, "Import media files…")).clicked() {
+                if ui.button(wi(I::ADD, t("Import media files…"))).clicked() {
                     self.deferred.push(Deferred::AddMediaCues);
                 }
                 ui.separator();
-                if ui.button(wi(I::CLOSE, "Quit")).clicked() {
+                if ui.button(wi(I::CLOSE, t("Quit"))).clicked() {
                     ui.ctx().send_viewport_cmd(egui::ViewportCommand::Close);
                 }
             });
-            ui.menu_button("Edit", |ui| {
+            ui.menu_button(t("Edit"), |ui| {
                 if self.mode == Mode::Show {
                     ui.disable();
                 }
@@ -786,7 +791,7 @@ impl App {
                 if ui
                     .add_enabled(
                         can_undo,
-                        egui::Button::new(wi(I::UNDO, "Undo")).shortcut_text("Ctrl+Z"),
+                        egui::Button::new(wi(I::UNDO, t("Undo"))).shortcut_text("Ctrl+Z"),
                     )
                     .clicked()
                 {
@@ -795,7 +800,7 @@ impl App {
                 if ui
                     .add_enabled(
                         !self.redo.is_empty(),
-                        egui::Button::new(wi(I::REDO, "Redo")).shortcut_text("Ctrl+Shift+Z"),
+                        egui::Button::new(wi(I::REDO, t("Redo"))).shortcut_text(t("Ctrl+Shift+Z")),
                     )
                     .clicked()
                 {
@@ -804,21 +809,21 @@ impl App {
                 ui.separator();
                 if ui
                     .add(
-                        egui::Button::new(wi(I::CONTENT_COPY, "Duplicate")).shortcut_text("Ctrl+D"),
+                        egui::Button::new(wi(I::CONTENT_COPY, t("Duplicate"))).shortcut_text("Ctrl+D"),
                     )
                     .clicked()
                 {
                     self.duplicate_selected(show);
                 }
                 if ui
-                    .add(egui::Button::new(wi(I::DELETE, "Delete")).shortcut_text("Del"))
+                    .add(egui::Button::new(wi(I::DELETE, t("Delete"))).shortcut_text(t("Del")))
                     .clicked()
                 {
                     self.delete_selected(show);
                 }
                 if ui
                     .add(
-                        egui::Button::new(wi(I::CREATE_NEW_FOLDER, "Group selected"))
+                        egui::Button::new(wi(I::CREATE_NEW_FOLDER, t("Group selected")))
                             .shortcut_text("Ctrl+G"),
                     )
                     .clicked()
@@ -826,21 +831,21 @@ impl App {
                     self.group_selected(show);
                 }
                 ui.separator();
-                if ui.button(wi(I::REFRESH, "Renumber all cues")).clicked() {
+                if ui.button(wi(I::REFRESH, t("Renumber all cues"))).clicked() {
                     self.renumber_all(show);
                 }
-                if ui.button(wi(I::SETTINGS, "Settings…")).clicked() {
+                if ui.button(wi(I::SETTINGS, t("Settings…"))).clicked() {
                     self.show_settings = true;
                 }
             });
-            ui.menu_button("Cue", |ui| {
+            ui.menu_button(t("Cue"), |ui| {
                 if self.mode == Mode::Show {
                     ui.disable();
                 }
                 for (i, tag) in KindTag::ALL.iter().enumerate() {
                     let mut b = egui::Button::new(wi(
                         theme::kind_icon(*tag),
-                        &format!("New {} cue", tag.label()),
+                        &tr!("New {kind} cue", kind = tag.label()),
                     ));
                     if i < 10 {
                         b = b.shortcut_text(format!("Ctrl+{}", (i + 1) % 10));
@@ -850,36 +855,36 @@ impl App {
                     }
                 }
             });
-            ui.menu_button("Show", |ui| {
+            ui.menu_button(t("Show"), |ui| {
                 if ui
-                    .add(egui::Button::new(wi(I::PLAY_ARROW, "GO")).shortcut_text("Space"))
+                    .add(egui::Button::new(wi(I::PLAY_ARROW, t("GO"))).shortcut_text(t("Space")))
                     .clicked()
                 {
                     self.control(show, Command::Go);
                 }
                 if ui
-                    .add(egui::Button::new(wi(I::STOP, "Stop all")).shortcut_text("Esc"))
+                    .add(egui::Button::new(wi(I::STOP, t("Stop all"))).shortcut_text("Esc"))
                     .clicked()
                 {
                     self.control(show, Command::Stop);
                 }
                 if ui
-                    .add(egui::Button::new(wi(I::PAUSE, "Pause all")).shortcut_text("P"))
+                    .add(egui::Button::new(wi(I::PAUSE, t("Pause all"))).shortcut_text("P"))
                     .clicked()
                 {
                     self.control(show, Command::PauseAll);
                 }
                 if ui
-                    .add(egui::Button::new(wi(I::PLAY_ARROW, "Resume all")).shortcut_text("R"))
+                    .add(egui::Button::new(wi(I::PLAY_ARROW, t("Resume all"))).shortcut_text("R"))
                     .clicked()
                 {
                     self.control(show, Command::ResumeAll);
                 }
                 ui.separator();
                 let label = if self.mode == Mode::Edit {
-                    wi(I::THEATER_COMEDY, "Enter show mode")
+                    wi(I::THEATER_COMEDY, t("Enter show mode"))
                 } else {
-                    wi(I::EDIT, "Back to edit mode")
+                    wi(I::EDIT, t("Back to edit mode"))
                 };
                 if ui
                     .add(egui::Button::new(label).shortcut_text("Ctrl+E"))
@@ -888,14 +893,14 @@ impl App {
                     self.toggle_mode();
                 }
             });
-            ui.menu_button("Video", |ui| {
+            ui.menu_button(t("Video"), |ui| {
                 let mut edited = false;
                 for st in show.ws.stages.iter_mut() {
                     let open = self.stage_open.contains(&st.id);
                     let glyph = if open { I::DESKTOP_WINDOWS } else { I::MONITOR };
-                    ui.menu_button(wi(glyph, &format!("Stage: {}", st.name)), |ui| {
+                    ui.menu_button(wi(glyph, &tr!("Stage: {name}", name = st.name)), |ui| {
                         let mut open = open;
-                        if ui.checkbox(&mut open, "Show stage window").changed() {
+                        if ui.checkbox(&mut open, t("Show stage window")).changed() {
                             if open {
                                 self.stage_open.insert(st.id);
                             } else {
@@ -903,7 +908,7 @@ impl App {
                             }
                         }
                         let mut editing = self.mapping_edit.contains(&st.id);
-                        if ui.checkbox(&mut editing, "Edit mapping").changed() {
+                        if ui.checkbox(&mut editing, t("Edit mapping")).changed() {
                             if editing {
                                 self.mapping_edit.insert(st.id);
                                 self.stage_open.insert(st.id);
@@ -912,7 +917,7 @@ impl App {
                             }
                         }
                         ui.separator();
-                        ui.label(theme::caption("Output"));
+                        ui.label(theme::caption(t("Output")));
                         edited |= self.output_choices(ui, st);
                     });
                 }
@@ -920,40 +925,40 @@ impl App {
                     show.edited();
                 }
                 ui.separator();
-                if ui.button(wi(I::CROP_FREE, "Stages & mapping…")).clicked() {
+                if ui.button(wi(I::CROP_FREE, t("Stages & mapping…"))).clicked() {
                     self.show_settings = true;
                     self.settings_tab = SettingsTab::Stages;
                     ui.close();
                 }
             });
-            ui.menu_button("Remote", |ui| {
-                if ui.button(wi(I::LAN, "Share this OpenQ…")).clicked() {
+            ui.menu_button(t("Remote"), |ui| {
+                if ui.button(wi(I::LAN, t("Share this OpenQ…"))).clicked() {
                     self.remote.window = true;
                     self.remote.tab = remote::RemoteTab::Share;
                 }
-                if ui.button(wi(I::CABLE, "Connect to another OpenQ…")).clicked() {
+                if ui.button(wi(I::CABLE, t("Connect to another OpenQ…"))).clicked() {
                     self.remote.window = true;
                     self.remote.tab = remote::RemoteTab::Connect;
                 }
-                if self.remote.is_replica() && ui.button(wi(I::CLOSE, "Disconnect")).clicked() {
+                if self.remote.is_replica() && ui.button(wi(I::CLOSE, t("Disconnect"))).clicked() {
                     self.disconnect(show);
                 }
             });
-            ui.menu_button("View", |ui| {
+            ui.menu_button(t("View"), |ui| {
                 #[cfg(feature = "video")]
-                ui.checkbox(&mut self.show_preview, wi(I::PREVIEW, "Geometry preview"));
-                ui.checkbox(&mut self.show_log, wi(I::RECEIPT_LONG, "Engine log"));
+                ui.checkbox(&mut self.show_preview, wi(I::PREVIEW, t("Geometry preview")));
+                ui.checkbox(&mut self.show_log, wi(I::RECEIPT_LONG, t("Engine log")));
             });
-            ui.menu_button("Help", |ui| {
-                if ui.add(egui::Button::new(wi(I::NOTES, "User manual")).shortcut_text("F1")).clicked() {
+            ui.menu_button(t("Help"), |ui| {
+                if ui.add(egui::Button::new(wi(I::NOTES, t("User manual"))).shortcut_text("F1")).clicked() {
                     self.open_manual();
                 }
                 ui.separator();
-                if ui.button(wi(I::RECEIPT_LONG, "Error log")).on_hover_text("Warnings, errors and crashes, kept in a local file").clicked() {
+                if ui.button(wi(I::RECEIPT_LONG, t("Error log"))).on_hover_text(t("Warnings, errors and crashes, kept in a local file")).clicked() {
                     self.open_error_log();
                 }
                 ui.separator();
-                if ui.button(wi(I::INFO, "About OpenQ and licenses…")).clicked() {
+                if ui.button(wi(I::INFO, t("About OpenQ and licenses…"))).clicked() {
                     self.show_about = true;
                 }
             });
@@ -1000,7 +1005,7 @@ impl App {
             p.text(
                 rect.center_bottom() - vec2(0.0, 12.0),
                 Align2::CENTER_CENTER,
-                "SPACE",
+                t("SPACE"),
                 theme::semibold(9.5),
                 text.gamma_multiply(0.7),
             );
@@ -1026,13 +1031,13 @@ impl App {
                     ui.vertical(|ui| {
                         ui.spacing_mut().item_spacing.y = 2.0;
                         ui.horizontal(|ui| {
-                            ui.label(theme::caption("Standby"));
+                            ui.label(theme::caption(t("Standby")));
                             if show.ws.cue_list.list_count() > 1 {
                                 ui.label(theme::caption(&format!("·  {}", show.ws.cue_list.info.name)));
                             }
                             if self.mode == Mode::Show {
                                 ui.label(
-                                    RichText::new("SHOW MODE")
+                                    RichText::new(t("SHOW MODE"))
                                         .font(theme::semibold(10.0))
                                         .color(theme::RED),
                                 );
@@ -1043,10 +1048,10 @@ impl App {
                                 ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                                     let (text, color) = match show.timecode.position(sync, std::time::Instant::now()) {
                                         Some(r) => (crate::timecode::format_secs(r.secs, r.rate), theme::GREEN),
-                                        None => ("no timecode".to_string(), AMBER),
+                                        None => (t("no timecode").to_string(), AMBER),
                                     };
                                     ui.label(RichText::new(text).font(theme::mono(13.0)).color(color))
-                                        .on_hover_text("Timecode this cue list follows (right-click its tab → Timecode…)");
+                                        .on_hover_text(t("Timecode this cue list follows (right-click its tab → Timecode…)"));
                                     ui.label(theme::icon(icons::TIMER_PLAY, 15.0).color(color));
                                     ui.ctx().request_repaint_after(std::time::Duration::from_millis(40));
                                 });
@@ -1097,7 +1102,7 @@ impl App {
                             }
                             None => {
                                 ui.label(
-                                    RichText::new("End of cue list")
+                                    RichText::new(t("End of cue list"))
                                         .font(theme::semibold(22.0))
                                         .color(theme::TEXT_FAINT),
                                 );
@@ -1122,22 +1127,22 @@ impl App {
                     48.0,
                 )
                 .on_hover_text(if panicking {
-                    "Stop now"
+                    t("Stop now")
                 } else {
-                    "Stop all (Esc) — fades out; press again to stop instantly"
+                    t("Stop all (Esc) — fades out; press again to stop instantly")
                 })
                 .clicked()
                 {
                     self.control(show, Command::Stop);
                 }
                 if round_button(ui, icons::PLAY_ARROW, theme::BG_HOVER, 40.0)
-                    .on_hover_text("Resume all (R)")
+                    .on_hover_text(t("Resume all (R)"))
                     .clicked()
                 {
                     self.control(show, Command::ResumeAll);
                 }
                 if round_button(ui, icons::PAUSE, theme::BG_HOVER, 40.0)
-                    .on_hover_text("Pause all (P)")
+                    .on_hover_text(t("Pause all (P)"))
                     .clicked()
                 {
                     self.control(show, Command::PauseAll);
@@ -1167,14 +1172,14 @@ impl App {
             (
                 Mode::Edit,
                 icons::EDIT,
-                "Edit",
+                t("Edit"),
                 theme::ACCENT,
                 Rect::from_min_size(inner.min, vec2(w, inner.height())),
             ),
             (
                 Mode::Show,
                 icons::THEATER_COMEDY,
-                "Show",
+                t("Show"),
                 theme::RED,
                 Rect::from_min_size(
                     pos2(inner.left() + w + gap, inner.top()),
@@ -1185,7 +1190,7 @@ impl App {
         for (mode, glyph, label, color, r) in halves {
             let resp = ui
                 .interact(r, ui.id().with(("mode", label)), Sense::click())
-                .on_hover_text("Ctrl+E");
+                .on_hover_text(t("Ctrl+E"));
             let on = self.mode == mode;
             let fill = if on {
                 color
@@ -1247,7 +1252,7 @@ impl App {
             .as_ref()
             .and_then(|p| p.file_stem())
             .map(|s| s.to_string_lossy().into_owned())
-            .unwrap_or_else(|| "Untitled".into());
+            .unwrap_or_else(|| t("Untitled").into());
         let (name, dirty) = self.remote.title().unwrap_or((name, show.dirty));
         let label = format!("{name}{}", if dirty { "  •" } else { "" });
         ui.painter().text(rect.center(), egui::Align2::CENTER_CENTER, label, egui::FontId::proportional(14.0), theme::TEXT_DIM);
@@ -1267,7 +1272,7 @@ impl App {
     fn caption_buttons(&mut self, ui: &mut egui::Ui, bar: egui::Rect, maximized: bool) {
         use egui::{Rect, Sense, pos2, vec2};
         let w = 46.0;
-        let tips = ["Minimise", if maximized { "Restore" } else { "Maximise" }, "Close"];
+        let tips = [t("Minimise"), if maximized { t("Restore") } else { t("Maximise") }, t("Close")];
         for (k, tip) in tips.into_iter().enumerate() {
             let close = k == 2;
             let r = Rect::from_min_size(pos2(bar.right() - w * (3 - k) as f32, bar.top()), vec2(w, bar.height()));
@@ -1386,11 +1391,8 @@ impl App {
             );
         }
         resp.on_hover_text(match &show.media.audio {
-            Some(a) => format!(
-                "Output: {} · {} Hz · {} ch",
-                a.device_name, a.rate, a.channels
-            ),
-            None => "No audio output".into(),
+            Some(a) => tr!("Output: {device} · {rate} Hz · {n} ch", device = a.device_name, rate = a.rate, n = a.channels),
+            None => t("No audio output").into(),
         });
     }
 
@@ -1406,7 +1408,7 @@ impl App {
         list.sort();
         ui.add_space(4.0);
         ui.horizontal(|ui| {
-            ui.label(theme::caption("Active cues"));
+            ui.label(theme::caption(t("Active cues")));
             if !list.is_empty() {
                 ui.label(
                     RichText::new(format!("{}", list.len()))
@@ -1420,7 +1422,7 @@ impl App {
             ui.add_space(30.0);
             ui.vertical_centered(|ui| {
                 ui.label(theme::icon(icons::CHECK_CIRCLE, 30.0).color(theme::TEXT_FAINT));
-                ui.label(RichText::new("Nothing running").color(theme::TEXT_FAINT));
+                ui.label(RichText::new(t("Nothing running")).color(theme::TEXT_FAINT));
             });
         }
         let log_h = if self.show_log { 170.0 } else { 0.0 };
@@ -1443,7 +1445,7 @@ impl App {
                     let (label, frac, color) = if prewait {
                         let e = inst.pre_wait_elapsed(now);
                         (
-                            format!("pre-wait −{}", fmt_time(inst.pre_wait - e)),
+                            tr!("pre-wait −{time}", time = fmt_time(inst.pre_wait - e)),
                             (e / inst.pre_wait.max(1e-6)) as f32,
                             AMBER,
                         )
@@ -1499,15 +1501,15 @@ impl App {
                                 ui.with_layout(
                                     egui::Layout::right_to_left(egui::Align::Center),
                                     |ui| {
-                                        if theme::icon_button(ui, icons::STOP, "Stop this cue")
+                                        if theme::icon_button(ui, icons::STOP, t("Stop this cue"))
                                             .clicked()
                                         {
                                             self.control(show, Command::Cue(id, CueAction::Stop));
                                         }
                                         let (g, tip) = if paused {
-                                            (icons::PLAY_ARROW, "Resume")
+                                            (icons::PLAY_ARROW, t("Resume"))
                                         } else {
-                                            (icons::PAUSE, "Pause")
+                                            (icons::PAUSE, t("Pause"))
                                         };
                                         if theme::icon_button(ui, g, tip).clicked() {
                                             self.control(show, Command::Cue(id, if paused { CueAction::Resume } else { CueAction::Pause }));
@@ -1522,7 +1524,7 @@ impl App {
             });
         if self.show_log {
             ui.separator();
-            ui.label(theme::caption("Engine log"));
+            ui.label(theme::caption(t("Engine log")));
             egui::ScrollArea::vertical()
                 .id_salt("log")
                 .stick_to_bottom(true)
@@ -1557,13 +1559,13 @@ impl App {
                 .as_ref()
                 .and_then(|p| p.file_name())
                 .map(|p| p.to_string_lossy().into_owned())
-                .unwrap_or_else(|| "Untitled".into())
+                .unwrap_or_else(|| t("Untitled").into())
             };
             let replica = self.remote.is_replica();
             item(ui, icons::FOLDER, file, theme::TEXT_DIM);
             if show.dirty && !replica {
                 ui.label(RichText::new("●").small().color(AMBER))
-                    .on_hover_text("Unsaved changes");
+                    .on_hover_text(t("Unsaved changes"));
             }
             ui.add_space(10.0);
             match (&show.media.audio, &show.media.audio_error) {
@@ -1581,20 +1583,20 @@ impl App {
                     theme::TEXT_DIM,
                 ),
                 (None, _) if show.media.audio_reconnecting() => {
-                    item(ui, icons::SPEAKER, "audio lost · reconnecting…".into(), AMBER)
+                    item(ui, icons::SPEAKER, t("audio lost · reconnecting…").into(), AMBER)
                 }
                 (None, e) => item(
                     ui,
                     icons::SPEAKER,
-                    format!("no audio: {}", e.as_deref().unwrap_or("off")),
+                    tr!("no audio: {error}", error = e.as_deref().unwrap_or(t("off"))),
                     RED,
                 ),
             }
             ui.add_space(10.0);
             match &show.media.video_error {
                 _ if replica => {}
-                None => item(ui, icons::VIDEOCAM, "video ready".into(), theme::TEXT_DIM),
-                Some(e) => item(ui, icons::VIDEOCAM, format!("video: {e}"), AMBER),
+                None => item(ui, icons::VIDEOCAM, t("video ready").into(), theme::TEXT_DIM),
+                Some(e) => item(ui, icons::VIDEOCAM, tr!("video: {e}", e), AMBER),
             }
             ui.add_space(10.0);
             match (&self.osc, &self.osc_error) {
@@ -1604,7 +1606,7 @@ impl App {
                     format!("OSC :{}", o.port),
                     theme::GREEN,
                 ),
-                (None, Some(_)) => item(ui, icons::SETTINGS_REMOTE, "OSC error".into(), RED),
+                (None, Some(_)) => item(ui, icons::SETTINGS_REMOTE, t("OSC error").into(), RED),
                 _ => {}
             }
             if let Some((text, replica)) = self.remote.status() {
@@ -1616,7 +1618,7 @@ impl App {
             item(
                 ui,
                 icons::NOTES,
-                format!("{} cues", show.ws.cue_list.iter_all().len()),
+                tr!("{n} cues", n = show.ws.cue_list.iter_all().len()),
                 theme::TEXT_DIM,
             );
             if let Some((msg, t)) = &self.status {
@@ -1641,7 +1643,7 @@ impl App {
                             .frame(false)
                             .min_size(egui::vec2(26.0, 24.0)),
                     )
-                    .on_hover_text("Settings");
+                    .on_hover_text(t("Settings"));
                 if r.on_hover_cursor(egui::CursorIcon::PointingHand).clicked() {
                     self.show_settings = !open;
                 }
@@ -1667,14 +1669,15 @@ impl App {
 
     fn settings_window(&mut self, ctx: &egui::Context, show: &mut Show) {
         let mut open = self.show_settings;
-        egui::Window::new("Settings")
+        egui::Window::new(t("Settings"))
+            .id(egui::Id::new("settings-window"))
             .open(&mut open)
             .default_width(560.0)
             .show(ctx, |ui| {
                 ui.horizontal(|ui| {
-                    theme::tab(ui, &mut self.settings_tab, SettingsTab::General, icons::SETTINGS, "General");
-                    theme::tab(ui, &mut self.settings_tab, SettingsTab::Audio, icons::SPEAKER, "Audio");
-                    theme::tab(ui, &mut self.settings_tab, SettingsTab::Stages, icons::DESKTOP_WINDOWS, "Video stages");
+                    theme::tab(ui, &mut self.settings_tab, SettingsTab::General, icons::SETTINGS, t("General"));
+                    theme::tab(ui, &mut self.settings_tab, SettingsTab::Audio, icons::SPEAKER, t("Audio"));
+                    theme::tab(ui, &mut self.settings_tab, SettingsTab::Stages, icons::DESKTOP_WINDOWS, t("Video stages"));
                 });
                 ui.separator();
                 match self.settings_tab {
@@ -1689,32 +1692,32 @@ impl App {
     fn settings_general(&mut self, ui: &mut egui::Ui, show: &mut Show) {
         let before = show.ws.settings.clone();
         egui::Grid::new("settings").num_columns(2).show(ui, |ui| {
-            ui.label("Stop-all fade time");
+            ui.label(theme::with_icon(icons::LANGUAGE, t("Language")));
+            self.language_setting(ui);
+            ui.end_row();
+            ui.label(t("Stop-all fade time"));
             widgets::time_edit(ui, &mut show.ws.settings.panic_fade);
             ui.end_row();
-            ui.label("Double-GO protection");
+            ui.label(t("Double-GO protection"));
             widgets::time_edit(ui, &mut show.ws.settings.double_go_protection);
             ui.end_row();
-            ui.label("Master volume");
+            ui.label(t("Master volume"));
             widgets::db_edit(ui, &mut show.ws.settings.master_volume_db);
             ui.end_row();
-            ui.label("OSC remote control");
+            ui.label(t("OSC remote control"));
             ui.horizontal(|ui| {
-                ui.checkbox(&mut show.ws.settings.osc_enabled, "Listen on UDP port");
+                ui.checkbox(&mut show.ws.settings.osc_enabled, t("Listen on UDP port"));
                 ui.add(egui::DragValue::new(&mut show.ws.settings.osc_port).range(1024..=65535));
             });
             ui.end_row();
             ui.label("");
             match (&self.osc, &self.osc_error) {
                 (Some(o), _) => ui.label(
-                    RichText::new(format!(
-                        "listening on {} · /go /stop /pause /resume /cue/<n>/start …",
-                        o.port
-                    ))
+                    RichText::new(tr!("listening on {port} · /go /stop /pause /resume /cue/<n>/start …", port = o.port))
                     .weak(),
                 ),
                 (None, Some(e)) => ui.label(RichText::new(e).color(RED)),
-                _ => ui.label(RichText::new("off").weak()),
+                _ => ui.label(RichText::new(t("off")).weak()),
             };
             ui.end_row();
         });
@@ -1728,7 +1731,7 @@ impl App {
 
     fn settings_audio(&mut self, ui: &mut egui::Ui, show: &mut Show) {
         if self.remote.is_replica() {
-            ui.label(RichText::new("Audio output is set up on the main device.").weak());
+            ui.label(RichText::new(t("Audio output is set up on the main device.")).weak());
             return;
         }
         if self.devices.is_none() {
@@ -1737,40 +1740,37 @@ impl App {
         let devices = self.devices.clone().unwrap_or_default();
         let current = show.ws.settings.audio_device.clone();
         let label = |id: &Option<String>| match id {
-            None => "System default".to_string(),
+            None => t("System default").to_string(),
             Some(id) => devices
                 .iter()
                 .find(|d| &d.id == id)
                 .map(|d| d.name.clone())
-                .unwrap_or_else(|| format!("{id} (missing)")),
+                .unwrap_or_else(|| tr!("{id} (missing)", id)),
         };
         let mut chosen = current.clone();
         egui::Grid::new("audio_settings")
             .num_columns(2)
             .show(ui, |ui| {
-                ui.label("Output device");
+                ui.label(t("Output device"));
                 ui.horizontal(|ui| {
                     egui::ComboBox::from_id_salt("device")
                         .width(320.0)
                         .selected_text(label(&chosen))
                         .show_ui(ui, |ui| {
-                            ui.selectable_value(&mut chosen, None, "System default");
+                            ui.selectable_value(&mut chosen, None, t("System default"));
                             for d in &devices {
                                 ui.selectable_value(&mut chosen, Some(d.id.clone()), &d.name)
                                     .on_hover_text(&d.id);
                             }
                         });
-                    if theme::icon_button(ui, icons::REFRESH, "Rescan devices").clicked() {
+                    if theme::icon_button(ui, icons::REFRESH, t("Rescan devices")).clicked() {
                         self.devices = None;
                     }
                 });
                 ui.end_row();
-                ui.label("Active");
+                ui.label(t("Active"));
                 match &show.media.audio {
-                    Some(a) => ui.label(format!(
-                        "{} · {} Hz · {} outputs",
-                        a.device_name, a.rate, a.channels
-                    )),
+                    Some(a) => ui.label(tr!("{device} · {rate} Hz · {n} outputs", device = a.device_name, rate = a.rate, n = a.channels)),
                     None => ui.label(
                         RichText::new(show.media.audio_error.clone().unwrap_or_default())
                             .color(RED),
@@ -1778,7 +1778,7 @@ impl App {
                 };
                 ui.end_row();
             });
-        ui.label(RichText::new("Changing the device stops all playback. Cue routing matrices address the device's outputs.").weak());
+        ui.label(RichText::new(t("Changing the device stops all playback. Cue routing matrices address the device's outputs.")).weak());
         ui.separator();
         let channels = show.media.audio.as_ref().map_or(2, |a| a.channels);
         let before = show.ws.settings.speakers.clone();
@@ -1800,7 +1800,7 @@ impl App {
             engine.workspace_changed();
             show.edited();
             if let Some(e) = &show.media.audio_error {
-                self.notify_error(format!("Audio device failed: {e}"));
+                self.notify_error(tr!("Audio device failed: {e}", e));
             }
         }
     }
@@ -1827,7 +1827,7 @@ impl App {
                             .range(16..=16384)
                             .suffix(" px"),
                     );
-                    if n > 1 && theme::icon_button(ui, icons::DELETE, "Delete stage").clicked() {
+                    if n > 1 && theme::icon_button(ui, icons::DELETE, t("Delete stage")).clicked() {
                         remove = Some(i);
                     }
                 });
@@ -1836,7 +1836,7 @@ impl App {
                     if ui
                         .toggle_value(
                             &mut open,
-                            theme::with_icon(icons::DESKTOP_WINDOWS, "Window"),
+                            theme::with_icon(icons::DESKTOP_WINDOWS, t("Window")),
                         )
                         .changed()
                     {
@@ -1847,8 +1847,8 @@ impl App {
                         }
                     }
                     if ui
-                        .button(theme::with_icon(icons::FULLSCREEN, "Fullscreen"))
-                        .on_hover_text("Also: double-click or F11 in the stage window")
+                        .button(theme::with_icon(icons::FULLSCREEN, t("Fullscreen")))
+                        .on_hover_text(t("Also: double-click or F11 in the stage window"))
                         .clicked()
                     {
                         self.stage_open.insert(st.id);
@@ -1866,9 +1866,9 @@ impl App {
                     if ui
                         .toggle_value(
                             &mut editing,
-                            theme::with_icon(icons::CROP_FREE, "Edit mapping"),
+                            theme::with_icon(icons::CROP_FREE, t("Edit mapping")),
                         )
-                        .on_hover_text("Shows a test pattern and corner pins in the stage window")
+                        .on_hover_text(t("Shows a test pattern and corner pins in the stage window"))
                         .changed()
                     {
                         if editing {
@@ -1879,15 +1879,15 @@ impl App {
                         }
                     }
                     if ui
-                        .button(theme::with_icon(icons::REPLAY, "Reset mapping"))
+                        .button(theme::with_icon(icons::REPLAY, t("Reset mapping")))
                         .clicked()
                     {
                         st.corners = Stage::IDENTITY;
                     }
                 });
                 ui.horizontal(|ui| {
-                    ui.label("Output");
-                    let label = st.output.clone().unwrap_or_else(|| "Window".into());
+                    ui.label(t("Output"));
+                    let label = st.output.clone().unwrap_or_else(|| t("Window").into());
                     egui::ComboBox::from_id_salt(("stage-output", st.id))
                         .selected_text(label)
                         .width(260.0)
@@ -1898,8 +1898,9 @@ impl App {
                 stage_span_blend(ui, st, &surfaces);
                 if st.corners != Stage::IDENTITY {
                     ui.label(
-                        RichText::new(format!(
-                            "corners: {}",
+                        RichText::new(tr!(
+                            "corners: {list}",
+                            list =
                             st.corners
                                 .iter()
                                 .map(|c| format!("({:.3}, {:.3})", c[0], c[1]))
@@ -1923,10 +1924,10 @@ impl App {
             self.mapping_edit.remove(&id);
         }
         if ui
-            .button(theme::with_icon(icons::ADD, "Add stage"))
+            .button(theme::with_icon(icons::ADD, t("Add stage")))
             .clicked()
         {
-            let st = Stage::new(&format!("Stage {}", show.ws.stages.len() + 1));
+            let st = Stage::new(&tr!("Stage {n}", n = show.ws.stages.len() + 1));
             self.stage_open.insert(st.id);
             show.ws.stages.push(st);
         }
@@ -1943,8 +1944,8 @@ impl App {
         }
         matches!(
             rfd::MessageDialog::new()
-                .set_title("Unsaved changes")
-                .set_description("Discard unsaved changes to this workspace?")
+                .set_title(t("Unsaved changes"))
+                .set_description(t("Discard unsaved changes to this workspace?"))
                 .set_buttons(rfd::MessageButtons::YesNo)
                 .show(),
             rfd::MessageDialogResult::Yes
@@ -1955,7 +1956,7 @@ impl App {
         let path = match path.or_else(|| self.show.lock().path.clone()) {
             Some(p) => p,
             None => match rfd::FileDialog::new()
-                .add_filter("OpenQ workspace", &[Workspace::EXTENSION])
+                .add_filter(t("OpenQ workspace"), &[Workspace::EXTENSION])
                 .set_file_name("show.openq")
                 .save_file()
             {
@@ -1975,9 +1976,9 @@ impl App {
                 s.path = Some(path.clone());
                 s.dirty = false;
                 drop(s);
-                self.notify(format!("Saved {}", path.display()));
+                self.notify(tr!("Saved {path}", path = path.display()));
             }
-            Err(e) => self.notify_error(format!("Save failed: {e:#}")),
+            Err(e) => self.notify_error(tr!("Save failed: {e}", e = format!("{e:#}"))),
         }
     }
 
@@ -1994,9 +1995,9 @@ impl App {
                 // Stages assigned to a display come up on it straight away.
                 self.stage_open.extend(s.ws.stages.iter().filter(|st| st.output.is_some()).map(|st| st.id));
                 drop(s);
-                self.notify(format!("Opened {}", path.display()));
+                self.notify(tr!("Opened {path}", path = path.display()));
             }
-            Err(e) => self.notify_error(format!("Open failed: {e:#}")),
+            Err(e) => self.notify_error(tr!("Open failed: {e}", e = format!("{e:#}"))),
         }
     }
 
@@ -2004,8 +2005,8 @@ impl App {
         for d in std::mem::take(&mut self.deferred) {
             if self.remote.is_replica() {
                 let why = match d {
-                    Deferred::New | Deferred::Open | Deferred::Recover(_) => Some("Disconnect from the main device first (Remote → Disconnect)"),
-                    Deferred::PickMedia(_) | Deferred::AddMediaCues => Some("Media files live on the main device: add them there"),
+                    Deferred::New | Deferred::Open | Deferred::Recover(_) => Some(t("Disconnect from the main device first (Remote → Disconnect)")),
+                    Deferred::PickMedia(_) | Deferred::AddMediaCues => Some(t("Media files live on the main device: add them there")),
                     _ => None,
                 };
                 if let Some(why) = why {
@@ -2026,7 +2027,7 @@ impl App {
                 Deferred::Open => {
                     if self.confirm_discard()
                         && let Some(p) = rfd::FileDialog::new()
-                            .add_filter("OpenQ workspace", &[Workspace::EXTENSION])
+                            .add_filter(t("OpenQ workspace"), &[Workspace::EXTENSION])
                             .pick_file()
                     {
                         self.open_path(p);
@@ -2036,7 +2037,7 @@ impl App {
                 Deferred::Save => self.save_to(None),
                 Deferred::SaveAs => {
                     if let Some(p) = rfd::FileDialog::new()
-                        .add_filter("OpenQ workspace", &[Workspace::EXTENSION])
+                        .add_filter(t("OpenQ workspace"), &[Workspace::EXTENSION])
                         .set_file_name("show.openq")
                         .save_file()
                     {
@@ -2051,7 +2052,7 @@ impl App {
                     let mut dlg = rfd::FileDialog::new();
                     dlg = if video {
                         dlg.add_filter(
-                            "Video and images",
+                            t("Video and images"),
                             &[
                                 "mp4", "mov", "mkv", "avi", "webm", "m4v", "mpg", "mpeg", "ogv",
                                 "mxf", "png", "jpg", "jpeg", "webp", "gif", "bmp", "tif", "tiff", "svg", "svgz",
@@ -2059,14 +2060,14 @@ impl App {
                         )
                     } else {
                         dlg.add_filter(
-                            "Audio",
+                            t("Audio"),
                             &[
                                 "wav", "aif", "aiff", "flac", "mp3", "ogg", "opus", "m4a", "aac",
                                 "caf",
                             ],
                         )
                     };
-                    if let Some(p) = dlg.add_filter("All files", &["*"]).pick_file() {
+                    if let Some(p) = dlg.add_filter(t("All files"), &["*"]).pick_file() {
                         let mut s = self.show.lock();
                         if let Some(c) = s.ws.cue_list.find_mut(id) {
                             match &mut c.kind {
@@ -2082,7 +2083,7 @@ impl App {
                 Deferred::AddMediaCues => {
                     if let Some(files) = rfd::FileDialog::new()
                         .add_filter(
-                            "Media",
+                            t("Media"),
                             &[
                                 "wav", "aif", "aiff", "flac", "mp3", "ogg", "opus", "m4a", "aac",
                                 "caf", "mp4", "mov", "mkv", "avi", "webm", "m4v", "png", "jpg", "jpeg",
@@ -2186,12 +2187,15 @@ impl App {
             if std::env::var_os("OPENQ_SCREENSHOT_PREVIEW").is_some() {
                 self.show_preview = true;
             }
+            if std::env::var_os("OPENQ_SCREENSHOT_LANGUAGE").is_some() {
+                self.ask_language = true;
+            }
             if let Ok(t) = std::env::var("OPENQ_SCREENSHOT_SETTINGS") {
                 self.show_settings = true;
-                self.settings_tab = if t == "audio" {
-                    SettingsTab::Audio
-                } else {
-                    SettingsTab::Stages
+                self.settings_tab = match t.as_str() {
+                    "audio" => SettingsTab::Audio,
+                    "general" => SettingsTab::General,
+                    _ => SettingsTab::Stages,
                 };
             }
         }
@@ -2258,6 +2262,21 @@ fn round_button(ui: &mut egui::Ui, glyph: &str, fill: Color32, size: f32) -> egu
     resp.on_hover_cursor(egui::CursorIcon::PointingHand)
 }
 
+/// UI texts that reach [`crate::i18n::t`] through a name rather than a literal at the call site
+/// (inspector tab names, effect parameter names and units), for the translation test.
+#[cfg(test)]
+pub(crate) fn translated_names() -> Vec<&'static str> {
+    let mut v: Vec<&'static str> = inspector::tab_names();
+    for k in crate::effects::AudioFxKind::ALL {
+        v.extend(k.params().iter().flat_map(|p| [p.name, p.unit]));
+    }
+    for k in crate::effects::VideoFxKind::ALL {
+        v.extend(k.params().iter().flat_map(|p| [p.name, p.unit]));
+    }
+    v.retain(|s| s.chars().any(|c| c.is_alphabetic()));
+    v
+}
+
 /// True when OpenQ draws its own window frame: the system title bar is hidden and the OpenQ title
 /// bar carries minimise, maximise and close (always on Windows; `OPENQ_CUSTOM_FRAME=1` elsewhere,
 /// for testing).
@@ -2278,26 +2297,26 @@ pub fn install_theme(ctx: &egui::Context) {
 fn stage_span_blend(ui: &mut egui::Ui, st: &mut Stage, surfaces: &[(StageId, String)]) {
     let pct = |v: f64, _| format!("{:.1}%", v * 100.0);
     let parse = |t: &str| t.trim().trim_end_matches('%').trim().parse::<f64>().ok().map(|v| v / 100.0);
-    egui::CollapsingHeader::new("Span & edge blend").id_salt(("span", st.id)).default_open(st.span_of.is_some() || st.blend != [0.0; 4]).show(ui, |ui| {
+    egui::CollapsingHeader::new(t("Span & edge blend")).id_salt(("span", st.id)).default_open(st.span_of.is_some() || st.blend != [0.0; 4]).show(ui, |ui| {
         egui::Grid::new(("span-grid", st.id)).num_columns(2).spacing([10.0, 6.0]).show(ui, |ui| {
-            ui.label("Shows");
-            let shown = st.span_of.and_then(|id| surfaces.iter().find(|s| s.0 == id)).map(|s| format!("Part of {}", s.1));
+            ui.label(t("Shows"));
+            let shown = st.span_of.and_then(|id| surfaces.iter().find(|s| s.0 == id)).map(|s| tr!("Part of {name}", name = s.1));
             egui::ComboBox::from_id_salt(("span-of", st.id))
-                .selected_text(shown.unwrap_or_else(|| "Its own cues".into()))
+                .selected_text(shown.unwrap_or_else(|| t("Its own cues").into()))
                 .width(220.0)
                 .show_ui(ui, |ui| {
-                    ui.selectable_value(&mut st.span_of, None, "Its own cues");
+                    ui.selectable_value(&mut st.span_of, None, t("Its own cues"));
                     for (id, name) in surfaces.iter().filter(|s| s.0 != st.id) {
-                        ui.selectable_value(&mut st.span_of, Some(*id), format!("Part of {name}"));
+                        ui.selectable_value(&mut st.span_of, Some(*id), tr!("Part of {name}", name));
                     }
                 })
                 .response
-                .on_hover_text("Split one wide stage (a surface) across several outputs: each shows a part of it");
+                .on_hover_text(t("Split one wide stage (a surface) across several outputs: each shows a part of it"));
             ui.end_row();
             if st.span_of.is_some() {
-                ui.label("Part");
+                ui.label(t("Part"));
                 ui.horizontal(|ui| {
-                    for (i, side) in ["Left", "Top", "Right", "Bottom"].into_iter().enumerate() {
+                    for (i, side) in [t("Left"), t("Top"), t("Right"), t("Bottom")].into_iter().enumerate() {
                         ui.label(side);
                         // x0/y0 stay below x1/y1.
                         let range = if i < 2 { 0.0..=(st.crop[i + 2] - 0.01).max(0.0) } else { (st.crop[i - 2] + 0.01).min(1.0)..=1.0 };
@@ -2305,10 +2324,10 @@ fn stage_span_blend(ui: &mut egui::Ui, st: &mut Stage, surfaces: &[(StageId, Str
                     }
                 })
                 .response
-                .on_hover_text("Edges of the part this output shows, in % of the surface. Neighbouring outputs overlap by their blend width.");
+                .on_hover_text(t("Edges of the part this output shows, in % of the surface. Neighbouring outputs overlap by their blend width."));
                 ui.end_row();
             }
-            ui.label("Blend");
+            ui.label(t("Blend"));
             ui.horizontal(|ui| {
                 for (i, side) in ["L", "T", "R", "B"].into_iter().enumerate() {
                     ui.label(side);
@@ -2317,11 +2336,11 @@ fn stage_span_blend(ui: &mut egui::Ui, st: &mut Stage, surfaces: &[(StageId, Str
                 }
             })
             .response
-            .on_hover_text("Soft-edge widths in % of this output: set them to the overlap with the neighbouring projector");
+            .on_hover_text(t("Soft-edge widths in % of this output: set them to the overlap with the neighbouring projector"));
             ui.end_row();
-            ui.label("Gamma");
+            ui.label(t("Gamma"));
             ui.add(egui::DragValue::new(&mut st.blend_gamma).speed(0.01).range(1.0..=3.0).max_decimals(2))
-                .on_hover_text("Projector gamma: raise it if the overlap looks too bright, lower it if it looks dark");
+                .on_hover_text(t("Projector gamma: raise it if the overlap looks too bright, lower it if it looks dark"));
             ui.end_row();
         });
     });
@@ -2373,9 +2392,9 @@ impl App {
             if reconnecting != self.audio_reconnecting {
                 self.audio_reconnecting = reconnecting;
                 self.notify(if reconnecting {
-                    "Audio output lost — its sounds stopped. Reconnecting…".to_string()
+                    t("Audio output lost — its sounds stopped. Reconnecting…").to_string()
                 } else {
-                    "Audio output reconnected".to_string()
+                    t("Audio output reconnected").to_string()
                 });
             }
 
@@ -2479,7 +2498,12 @@ impl App {
             self.geometry_preview(&ctx, show);
             self.remote_window(&ctx, show);
             self.about_window(&ctx);
-            self.recovery_window(&ctx);
+            // One centred window at a time: the language first, then lost work.
+            if self.ask_language {
+                self.language_window(&ctx);
+            } else {
+                self.recovery_window(&ctx);
+            }
             self.track_undo(&ctx, show);
             self.sync_osc(&ctx, show);
 
@@ -2505,7 +2529,7 @@ impl App {
                 painter.text(
                     rect.center(),
                     egui::Align2::CENTER_CENTER,
-                    "Drop audio / video files to create cues",
+                    t("Drop audio / video files to create cues"),
                     egui::FontId::proportional(26.0),
                     Color32::WHITE,
                 );
@@ -2516,7 +2540,7 @@ impl App {
                 .as_ref()
                 .and_then(|p| p.file_stem())
                 .map(|s| s.to_string_lossy().into_owned())
-                .unwrap_or_else(|| "Untitled".into());
+                .unwrap_or_else(|| t("Untitled").into());
             let title = format!("{name}{} — OpenQ", if show.dirty { " •" } else { "" });
             if title != self.title {
                 ctx.send_viewport_cmd(egui::ViewportCommand::Title(title.clone()));

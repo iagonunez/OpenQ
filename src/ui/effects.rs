@@ -6,6 +6,7 @@ use super::icons as ic;
 use super::theme::{self, Card};
 use crate::effects::{AudioEffect, AudioFxKind, MAX_AUDIO_FX, MAX_VIDEO_FX, ParamSpec, VideoEffect, VideoFxKind};
 use egui::{RichText, Slider, Ui};
+use crate::i18n::t;
 
 /// A slider for one effect setting.
 pub(super) fn param_slider(ui: &mut Ui, spec: &ParamSpec, v: &mut f32) -> bool {
@@ -18,7 +19,7 @@ pub(super) fn param_slider(ui: &mut Ui, spec: &ParamSpec, v: &mut f32) -> bool {
         Slider::new(v, spec.min..=spec.max)
             .logarithmic(spec.log)
             .fixed_decimals(decimals)
-            .suffix(if spec.unit.is_empty() { String::new() } else { format!(" {}", spec.unit) }),
+            .suffix(if spec.unit.is_empty() { String::new() } else { format!(" {}", t(spec.unit)) }),
     )
     .changed()
 }
@@ -34,15 +35,15 @@ enum Action {
 fn tool_row(ui: &mut Ui, enabled: &mut bool, i: usize, n: usize) -> Option<Action> {
     let mut act = None;
     ui.horizontal(|ui| {
-        ui.checkbox(enabled, "On");
+        ui.checkbox(enabled, t("On"));
         ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-            if theme::icon_button(ui, ic::DELETE, "Remove effect").clicked() {
+            if theme::icon_button(ui, ic::DELETE, t("Remove effect")).clicked() {
                 act = Some(Action::Remove);
             }
-            if i + 1 < n && theme::icon_button(ui, ic::ARROW_DOWNWARD, "Later in the chain").clicked() {
+            if i + 1 < n && theme::icon_button(ui, ic::ARROW_DOWNWARD, t("Later in the chain")).clicked() {
                 act = Some(Action::Down);
             }
-            if i > 0 && theme::icon_button(ui, ic::ARROW_UPWARD, "Earlier in the chain").clicked() {
+            if i > 0 && theme::icon_button(ui, ic::ARROW_UPWARD, t("Earlier in the chain")).clicked() {
                 act = Some(Action::Up);
             }
         });
@@ -64,7 +65,7 @@ fn apply<T>(list: &mut Vec<T>, i: usize, act: Option<Action>) {
 fn param_grid(ui: &mut Ui, salt: (&str, usize), specs: &[ParamSpec], params: &mut [f32]) {
     egui::Grid::new(salt).num_columns(2).spacing([10.0, 6.0]).show(ui, |ui| {
         for (s, v) in specs.iter().zip(params.iter_mut()) {
-            ui.label(s.name);
+            ui.label(t(s.name));
             param_slider(ui, s, v);
             ui.end_row();
         }
@@ -75,14 +76,14 @@ fn param_grid(ui: &mut Ui, salt: (&str, usize), specs: &[ParamSpec], params: &mu
 pub(super) fn audio_fx_tab(ui: &mut Ui, fx: &mut Vec<AudioEffect>) {
     let titles: Vec<String> = fx.iter().enumerate().map(|(i, e)| format!("{}. {}", i + 1, e.kind.label())).collect();
     let mut specs: Vec<Card> = titles.iter().map(|t| Card::new(ic::INSTANT_MIX, t, 300.0)).collect();
-    specs.push(Card::new(ic::ADD_CIRCLE, "Add effect", 260.0));
+    specs.push(Card::new(ic::ADD_CIRCLE, t("Add effect"), 260.0));
     let n = fx.len();
     let mut action = None;
     theme::cards(ui, "audio-fx", &specs, |ui, i| {
         if i == n {
             add_menu(ui, "add-afx", n < MAX_AUDIO_FX, AudioFxKind::ALL.iter().map(|k| (*k, k.label())), |k| fx.push(AudioEffect::new(k)));
             ui.add_space(6.0);
-            ui.label(RichText::new("Effects run top to bottom on the cue's channels, after the EQ and before routing.").weak().small());
+            ui.label(RichText::new(t("Effects run top to bottom on the cue's channels, after the EQ and before routing.")).weak().small());
             return;
         }
         let e = &mut fx[i];
@@ -103,7 +104,7 @@ pub(super) fn audio_fx_tab(ui: &mut Ui, fx: &mut Vec<AudioEffect>) {
 pub(super) fn video_fx_tab(ui: &mut Ui, fx: &mut Vec<VideoEffect>) {
     let titles: Vec<String> = fx.iter().enumerate().map(|(i, e)| format!("{}. {}", i + 1, e.kind.label())).collect();
     let mut specs: Vec<Card> = titles.iter().map(|t| Card::new(ic::AUTO_FIX_HIGH, t, 300.0)).collect();
-    specs.push(Card::new(ic::ADD_CIRCLE, "Add effect", 260.0));
+    specs.push(Card::new(ic::ADD_CIRCLE, t("Add effect"), 260.0));
     let n = fx.len();
     let mut action = None;
     theme::cards(ui, "video-fx", &specs, |ui, i| {
@@ -112,7 +113,7 @@ pub(super) fn video_fx_tab(ui: &mut Ui, fx: &mut Vec<VideoEffect>) {
             add_menu(ui, "add-vfx", colour < MAX_VIDEO_FX, VideoFxKind::ALL.iter().map(|k| (*k, k.label())), |k| fx.push(VideoEffect::new(k)));
             ui.add_space(6.0);
             ui.label(
-                RichText::new("Colour effects run top to bottom; Blur, Pixellate and Sharpen always act first. Fade cues can fade these settings.")
+                RichText::new(t("Colour effects run top to bottom; Blur, Pixellate and Sharpen always act first. Fade cues can fade these settings."))
                     .weak()
                     .small(),
             );
@@ -134,7 +135,7 @@ pub(super) fn video_effect_settings(ui: &mut Ui, i: usize, e: &mut VideoEffect) 
     let specs = e.kind.params();
     egui::Grid::new(("vfx", i)).num_columns(2).spacing([10.0, 6.0]).show(ui, |ui| {
         if e.kind.has_color() {
-            ui.label(if e.kind == VideoFxKind::ChromaKey { "Key colour" } else { "Colour" });
+            ui.label(if e.kind == VideoFxKind::ChromaKey { t("Key colour") } else { t("Colour") });
             let mut c = egui::Color32::from_rgb(e.color[0], e.color[1], e.color[2]);
             if egui::color_picker::color_edit_button_srgba(ui, &mut c, egui::color_picker::Alpha::Opaque).changed() {
                 e.color = [c.r(), c.g(), c.b()];
@@ -142,7 +143,7 @@ pub(super) fn video_effect_settings(ui: &mut Ui, i: usize, e: &mut VideoEffect) 
             ui.end_row();
         }
         for (s, v) in specs.iter().zip(e.params.iter_mut()) {
-            ui.label(s.name);
+            ui.label(t(s.name));
             param_slider(ui, s, v);
             ui.end_row();
         }
@@ -152,7 +153,7 @@ pub(super) fn video_effect_settings(ui: &mut Ui, i: usize, e: &mut VideoEffect) 
 /// A menu of effect types; `add` is called with the one picked.
 fn add_menu<K: Copy>(ui: &mut Ui, salt: &str, room: bool, kinds: impl Iterator<Item = (K, &'static str)>, mut add: impl FnMut(K)) {
     ui.add_enabled_ui(room, |ui| {
-        egui::ComboBox::from_id_salt(salt).width(200.0).selected_text(theme::with_icon(ic::ADD, "Add…")).show_ui(ui, |ui| {
+        egui::ComboBox::from_id_salt(salt).width(200.0).selected_text(theme::with_icon(ic::ADD, t("Add…"))).show_ui(ui, |ui| {
             for (k, label) in kinds {
                 if ui.selectable_label(false, label).clicked() {
                     add(k);
@@ -161,6 +162,6 @@ fn add_menu<K: Copy>(ui: &mut Ui, salt: &str, room: bool, kinds: impl Iterator<I
         });
     });
     if !room {
-        ui.label(RichText::new("The chain is full.").weak().small());
+        ui.label(RichText::new(t("The chain is full.")).weak().small());
     }
 }

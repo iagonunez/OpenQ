@@ -13,6 +13,7 @@ use crate::model::{CueId, CueKind, Geometry, StageId, TextCue, VideoFit};
 use crate::show::Show;
 use egui::{Color32, Pos2, Rect, RichText, Sense, Shape, Stroke, pos2, vec2};
 use std::path::PathBuf;
+use crate::i18n::t;
 
 /// A Text cue's planes for the preview: rendered in the background once per look, then drawn
 /// like on stage with the current (or animated) colours, so scrubbing and colour edits cost
@@ -121,7 +122,7 @@ impl App {
         }
         let mut open = true;
         let screen = ctx.content_rect();
-        egui::Window::new(theme::with_icon(icons::PREVIEW, "Geometry preview"))
+        egui::Window::new(theme::with_icon(icons::PREVIEW, t("Geometry preview")))
             .id(egui::Id::new("geometry-preview"))
             .open(&mut open)
             .default_size([520.0, 360.0])
@@ -183,7 +184,7 @@ impl App {
     fn preview_body(&mut self, ui: &mut egui::Ui, show: &mut Show) {
         let Some(t) = self.primary().and_then(|id| target_of(show, id)) else {
             ui.centered_and_justified(|ui| {
-                ui.label(RichText::new("Select a video or text cue, or a fade that changes geometry").weak());
+                ui.label(RichText::new(t("Select a video or text cue, or a fade that changes geometry")).weak());
             });
             return;
         };
@@ -306,13 +307,13 @@ impl App {
                 painter.text(view.center(), egui::Align2::CENTER_CENTER, e, egui::FontId::proportional(12.0), theme::RED);
             }
             Ok(None) => {
-                painter.text(view.center(), egui::Align2::CENTER_CENTER, "Loading…", egui::FontId::proportional(12.0), theme::TEXT_FAINT);
+                painter.text(view.center(), egui::Align2::CENTER_CENTER, crate::i18n::t("Loading…"), egui::FontId::proportional(12.0), theme::TEXT_FAINT);
             }
             _ => {}
         }
 
         // Direct manipulation: drag to move, scroll to scale, double-click to centre.
-        let resp = if editable { resp.on_hover_text("Drag to move · scroll to scale · double-click to centre") } else { resp };
+        let resp = if editable { resp.on_hover_text(crate::i18n::t("Drag to move · scroll to scale · double-click to centre")) } else { resp };
         if editable {
             if resp.dragged() {
                 let d = resp.drag_delta();
@@ -338,14 +339,15 @@ impl App {
             let c = g.crop;
             ui.label(
                 RichText::new(format!(
-                    "X {:.1}%  Y {:.1}%  ·  Scale {:.0}% × {:.0}%  ·  {:.1}°{}",
+                    "X {:.1}%  Y {:.1}%  ·  {} {:.0}% × {:.0}%  ·  {:.1}°{}",
+                    crate::i18n::t("Scale"),
                     g.x * 100.0,
                     g.y * 100.0,
                     g.scale_x * 100.0,
                     g.scale_y * 100.0,
                     g.rotation,
                     if c != [0.0; 4] {
-                        format!("  ·  Crop {:.0}/{:.0}/{:.0}/{:.0}%", c[0] * 100.0, c[1] * 100.0, c[2] * 100.0, c[3] * 100.0)
+                        format!("  ·  {} {:.0}/{:.0}/{:.0}/{:.0}%", crate::i18n::t("Crop"), c[0] * 100.0, c[1] * 100.0, c[2] * 100.0, c[3] * 100.0)
                     } else {
                         String::new()
                     }

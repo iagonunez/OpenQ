@@ -150,9 +150,9 @@ impl App {
                             }
                         }
                         // Instructions on a dark pill so they read over the white pattern.
-                        let msg = format!(
-                            "Mapping {} — drag the corners · arrow keys nudge the hovered corner (Shift: 10 px)",
-                            stage.name
+                        let msg = tr!(
+                            "Mapping {name} — drag the corners · arrow keys nudge the hovered corner (Shift: 10 px)",
+                            name = stage.name
                         );
                         let galley = painter.layout_no_wrap(msg, egui::FontId::proportional(14.0), Color32::WHITE);
                         let pill = Rect::from_center_size(
@@ -189,7 +189,7 @@ impl App {
                         painter.text(
                             rect.center(),
                             egui::Align2::CENTER_CENTER,
-                            format!("{} — double-click for fullscreen", stage.name),
+                            tr!("{name} — double-click for fullscreen", name = stage.name),
                             egui::FontId::proportional(16.0),
                             Color32::from_gray(60),
                         );

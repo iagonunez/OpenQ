@@ -1,7 +1,7 @@
 // Release builds on Windows are GUI apps: no console window.
 #![cfg_attr(all(windows, not(debug_assertions)), windows_subsystem = "windows")]
 
-use openq::{displays, errlog, media, recovery, show, ui};
+use openq::{displays, errlog, i18n, media, recovery, show, ui};
 use parking_lot::Mutex;
 use std::sync::Arc;
 
@@ -16,6 +16,8 @@ fn main() -> eframe::Result {
     // stderr as before, plus warnings/errors/crashes in the error log file (Help → Error log).
     errlog::init("openq=info");
 
+    // UI language; on the first run (none saved) the app asks for it.
+    let language_chosen = i18n::init();
     media::text::preload();
     let prober = media::Prober::new();
     let show = Arc::new(Mutex::new(show::Show::new(prober.clone())));
@@ -57,6 +59,9 @@ fn main() -> eframe::Result {
             show::spawn_engine_thread(show.clone(), move || ctx.request_repaint());
             let mut app = ui::App::new(show, prober);
             app.set_recovery(autosave, autosave_now, orphans);
+            if !language_chosen && std::env::var_os("OPENQ_SCREENSHOT").is_none() {
+                app.ask_language();
+            }
             if let Some(p) = open_arg {
                 app.open_path(p);
             }
