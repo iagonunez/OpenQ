@@ -329,7 +329,7 @@ cargo run --release -- show.openq    # open a saved show</code></pre>
     <div class="type"><b><span class="ms" aria-hidden="true">&#xe2c7;</span>Group</b><span class="d">Holds other cues and fires them in one of four ways.</span></div>
     <div class="type"><b><span class="ms" aria-hidden="true">&#xe88b;</span>Wait</b><span class="d">Takes a set time. Use it to space out an auto-follow chain.</span></div>
     <div class="type"><b><span class="ms" aria-hidden="true">&#xf1fc;</span>Memo</b><span class="d">Does nothing. Holds notes and marks places in the show.</span></div>
-    <div class="type"><b><span class="ms" aria-hidden="true">&#xe8e3;</span>Fade</b><span class="d">Changes another cue's level, opacity or geometry over time.</span></div>
+    <div class="type"><b><span class="ms" aria-hidden="true">&#xe8e3;</span>Fade</b><span class="d">Changes another cue's level, opacity, geometry, video effects or object-audio positions over time.</span></div>
     <div class="type"><b><span class="ms" aria-hidden="true">&#xe1c4;</span>Start</b><span class="d">Fires another cue.</span></div>
     <div class="type"><b><span class="ms" aria-hidden="true">&#xef71;</span>Stop</b><span class="d">Stops another cue.</span></div>
     <div class="type"><b><span class="ms" aria-hidden="true">&#xe1a2;</span>Pause</b><span class="d">Pauses another cue.</span></div>
@@ -417,8 +417,23 @@ cargo run --release -- show.openq    # open a saved show</code></pre>
     the file manager), size and channel count. <em>Browse…</em> replaces the file.</li>
     <li><strong>Output:</strong> the audio device the cue plays on and its number of outputs (set in Settings → Audio).</li>
     <li><strong>Routing:</strong> automatic, or a <strong>crosspoint matrix</strong> from the file's channels to the
-    device outputs. Each crosspoint has its own level in dB, so a stereo file can feed eight speakers.</li>
+    device outputs. Each crosspoint has its own level in dB, so a stereo file can feed eight speakers. Or switch to
+    <strong>Object audio</strong> and place the channels in the room (below).</li>
   </ul>
+  <h3>Object audio</h3>
+  <figure>
+    <img src="img/object-audio.webp" width="1400" height="382" alt="I/O tab in object audio mode: a room with four speakers and two numbered objects, and their positions.">
+    <figcaption>Object audio: each channel of the file is a numbered object in the room. The speakers light up with what they play.</figcaption>
+  </figure>
+  <p>Object audio routes sound by <em>where it should come from</em> instead of by output. Pick
+  <strong>Object audio</strong> in the Routing card: every channel of the file becomes an object you drag around the room
+  (or type its position). The speakers nearest an object play it loudest; the level falls 6 dB each time the distance
+  doubles, and the total power stays the same wherever the object is, so moving it never changes its loudness.
+  <strong>Spread</strong> widens an object from a point (0 %) to the whole room (100 %). Output faders on the Levels tab
+  still apply, and Mic cues and video soundtracks can use object audio too.</p>
+  <p>The room is set once per show in <a href="#settings">Settings → Audio</a>. A <a href="#fades">Fade cue</a> can move
+  the objects, for a sound that flies across the room. Moves are smoothed, so dragging an object on a playing cue
+  doesn't click.</p>
   <h3>Levels</h3>
   <figure>
     <img src="img/levels.webp" width="1400" height="314" alt="Levels tab: vertical faders for the main level and outputs 1 and 2, and a pan card.">
@@ -435,8 +450,30 @@ cargo run --release -- show.openq    # open a saved show</code></pre>
   </figure>
   <p>Band types are high-pass, low shelf, peak, high shelf and low-pass. <strong>EQ enabled</strong> turns the
   whole EQ on and off.</p>
-  <div class="note tip"><span class="label">Live changes</span><p>Level, output fader, pan, EQ and routing changes are heard straight away
-  on a playing cue, so you can tune them during a run.</p></div>
+  <h3>Audio FX</h3>
+  <figure>
+    <img src="img/audio-fx.webp" width="1400" height="283" alt="Audio FX tab: reverb, compressor and a bypassed delay as cards, and an Add effect card.">
+    <figcaption>An effect chain: reverb, then compressor; the delay is switched off.</figcaption>
+  </figure>
+  <p>Audio, Mic and video cues have an <strong>Audio FX</strong> tab: a chain of up to eight effects that run top to
+  bottom on the cue's channels, after the EQ and before routing. <em>Add…</em> puts a new effect at the end; the arrows
+  change the order, <strong>On</strong> bypasses an effect without losing its settings.</p>
+  <div class="table-wrap"><table>
+    <thead><tr><th>Effect</th><th>Settings</th><th>Use</th></tr></thead>
+    <tbody>
+      <tr><td>Delay</td><td>time, feedback, high cut, mix</td><td>Echoes; the high cut darkens each repeat.</td></tr>
+      <tr><td>Reverb</td><td>size, damping, pre-delay, width, mix</td><td>Room sound for dry recordings or voices.</td></tr>
+      <tr><td>Compressor</td><td>threshold, ratio, attack, release, makeup</td><td>Evens out level; all channels move together.</td></tr>
+      <tr><td>Limiter</td><td>ceiling, release</td><td>Never lets a peak past the ceiling.</td></tr>
+      <tr><td>Gate</td><td>threshold, range, attack, hold, release</td><td>Turns a microphone down between phrases.</td></tr>
+      <tr><td>Distortion</td><td>drive, tone, output, mix</td><td>Radio, telephone or overdriven sounds.</td></tr>
+      <tr><td>Chorus</td><td>rate, depth, delay, feedback, mix</td><td>Thickens and widens a sound.</td></tr>
+      <tr><td>Bitcrusher</td><td>bits, downsample, mix</td><td>Lo-fi, retro game sounds.</td></tr>
+    </tbody>
+  </table></div>
+  <div class="note tip"><span class="label">Live changes</span><p>Level, output fader, pan, EQ, effect, routing and object
+  changes are heard straight away on a playing cue, so you can tune them during a run. Reverb and delay tails carry on
+  through an edit.</p></div>
   <h3>Mic cues</h3>
   <figure>
     <img src="img/mic.webp" width="1400" height="312" alt="Mic cue I/O tab: input device, channels and level meter, timing, and routing.">
@@ -558,8 +595,37 @@ cargo run --release -- show.openq    # open a saved show</code></pre>
   <div class="note"><span class="label">No load on the show</span><p>Animations are worked out live while the stage draws: a few
   sums per layer, with the moving, scaling and colouring done by the graphics card. Nothing is rendered or decoded
   ahead of time, so animating a layer costs about the same as showing it still. Changes you make appear at once, even on a
-  running cue, at any stage resolution. Effects that would need every frame redrawn, such as animated blur, are not
-  available.</p></div>
+  running cue, at any stage resolution. Blur and colour changes are <a href="#videofx">video effects</a>, which a Fade
+  cue can animate.</p></div>
+  <h3 id="videofx">Video FX</h3>
+  <figure>
+    <img src="img/video-fx.webp" width="1400" height="237" alt="Video FX tab of a text cue: Colourise, Blur and Vignette cards and an Add effect card.">
+    <figcaption>A text cue coloured orange, slightly blurred and vignetted.</figcaption>
+  </figure>
+  <p>Video, camera and text cues have a <strong>Video FX</strong> tab, a stack of effects on the picture. Add, reorder and switch them like audio effects. They are drawn by the graphics card as the stage draws,
+  so they cost almost nothing and change live, even on a running cue.</p>
+  <figure class="narrow">
+    <img src="img/video-fx-stage.webp" width="750" height="285" alt="A stage showing the title 'Act One' in orange.">
+    <figcaption>The result on stage.</figcaption>
+  </figure>
+  <div class="table-wrap"><table>
+    <thead><tr><th>Effect</th><th>Settings</th></tr></thead>
+    <tbody>
+      <tr><td>Colour controls</td><td>Brightness, contrast, saturation (0 = black and white).</td></tr>
+      <tr><td>Exposure</td><td>Exposure in stops, gamma.</td></tr>
+      <tr><td>Hue</td><td>Turns every colour round the colour wheel.</td></tr>
+      <tr><td>Colourise</td><td>Monochrome in a colour of your choice.</td></tr>
+      <tr><td>Sepia · Invert</td><td>Amount.</td></tr>
+      <tr><td>Posterise</td><td>Number of levels per colour.</td></tr>
+      <tr><td>Threshold</td><td>Black and white cut at a brightness level.</td></tr>
+      <tr><td>Vignette</td><td>Darkens the edges: radius, softness, amount.</td></tr>
+      <tr><td>Blur · Pixellate · Sharpen</td><td>Radius or block size in the picture's own pixels.</td></tr>
+      <tr><td>Chroma key</td><td>Makes a colour transparent (green or blue screen on a camera cue): key colour, threshold,
+      softness and spill, which takes the green cast off the edges that remain.</td></tr>
+    </tbody>
+  </table></div>
+  <p>Colour effects run top to bottom; Blur, Pixellate and Sharpen change how the picture is read, so they always act
+  first. The effects are applied after the layer's tint and opacity, and work with every blend mode.</p>
 </section>
 
 <section id="fades">
@@ -571,6 +637,11 @@ cargo run --release -- show.openq    # open a saved show</code></pre>
     <li><strong>Opacity</strong>, for video and text.</li>
     <li><strong>Geometry</strong>: position, scale, rotation and crop. This starts from the target's own geometry, so only
     the values you change will move.</li>
+    <li><strong>Video effects</strong>: the target's <a href="#videofx">Video FX</a> settings are copied into the fade
+    when you tick it; change the values to fade to. An effect switched off here fades out, and effects the target
+    doesn't have fade in from nothing. <em>Take the target's effects</em> copies them again after you change the target.</li>
+    <li><strong>Objects</strong>, for targets in <a href="#audio">object audio</a> mode: the positions and spread to move
+    the objects to, edited on the same room view.</li>
   </ul>
   <p>Tick <strong>Stop target</strong> for a fade-out: the target stops when the fade ends. Pausing a fade freezes it, and resuming it continues
   with the time that was left.</p>
@@ -684,10 +755,18 @@ cargo run --release -- show.openq    # open a saved show</code></pre>
     <thead><tr><th>Tab</th><th>Settings</th></tr></thead>
     <tbody>
       <tr><td>General</td><td>Stop-all fade time, double-GO protection, master volume, OSC on/off and port.</td></tr>
-      <tr><td>Audio</td><td>Output device. Changing it stops all playback. Routing matrices address this device's outputs.</td></tr>
+      <tr><td>Audio</td><td>Output device. Changing it stops all playback. Routing matrices address this device's outputs.
+      The <strong>room for object audio</strong>: the speakers, where they stand and which output each one is on.</td></tr>
       <tr><td>Stages</td><td>Add and name stages, canvas size, output display, fullscreen, mapping.</td></tr>
     </tbody>
   </table></div>
+  <figure class="narrow">
+    <img src="img/room.webp" width="731" height="465" alt="The room editor: a square room with four speakers FL, FR, RL, RR and a table of their outputs and positions.">
+    <figcaption>The room for object audio. Drag the speakers, or type their positions.</figcaption>
+  </figure>
+  <p>Until you change it, the room follows the output device: a stereo pair, quad, 5.1 or 7.1 (with no speaker on the
+  LFE output), or a ring for other channel counts. The presets set those up, and <em>Use default</em> goes back to
+  following the device. Front, where the stage is, is at the top. Several speakers can share an output.</p>
   <p>Remote access settings and device keys belong to the computer, not the show. They live in
   <code>~/.config/openq/remote.json</code>, readable only by your user account.</p>
 </section>

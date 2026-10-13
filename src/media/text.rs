@@ -199,6 +199,7 @@ pub fn look(t: &TextCue) -> TextCue {
         shadow_color: on(t.shadow_color, AnimProp::ShadowColor),
         outline_color: on(t.outline_color, AnimProp::OutlineColor),
         animation: Default::default(),
+        video_fx: Vec::new(),
         stage: None,
         geometry: Default::default(),
         layer: 0,

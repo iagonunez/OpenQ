@@ -50,7 +50,7 @@ impl PreviewText {
 #[derive(Clone)]
 enum Source {
     Poster(PathBuf, f64),
-    Text(TextCue),
+    Text(Box<TextCue>),
     /// A live camera: a grey stand-in of its capture size until it runs.
     Camera([u32; 2]),
 }
@@ -98,7 +98,7 @@ fn target_of(show: &Show, id: CueId) -> Option<Target> {
             fit: VideoFit::Native,
             geometry: t.geometry,
             opacity: t.opacity,
-            source: Source::Text(t.clone()),
+            source: Source::Text(Box::new(t.clone())),
             ghost: None,
             anim: t.animation.clone(),
         }),
@@ -280,6 +280,7 @@ impl App {
                     tint: st.tint,
                     text_colors: *colors,
                     animated: false,
+                    effects: Vec::new(),
                 };
                 self.preview_text.textures.retain(|(id, _), _| *id == t.layer);
                 painter.extend(paint_layer(ui.ctx(), &mut self.preview_text.textures, &layer, canvas, place));

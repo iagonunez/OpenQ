@@ -10,6 +10,7 @@ use super::audio::VoiceShared;
 use super::text::{TextPlanes, TextRender};
 use crate::animation::AnimState;
 use crate::engine::FadeRequest;
+use crate::effects::VideoEffect;
 use crate::model::{BlendMode, CameraCue, CueId, FadeCurve, Geometry, MIN_DB, StageId, TextCue, VideoCue, VideoFit};
 use anyhow::{Context, anyhow};
 use ffmpeg_next as ff;
@@ -102,6 +103,8 @@ pub struct StageLayer {
     pub text_colors: [[f32; 4]; 4],
     /// True while an animation runs, so stage windows keep redrawing.
     pub animated: bool,
+    /// Video effects (including fades in progress), drawn by the stage's layer shader.
+    pub effects: Vec<VideoEffect>,
 }
 
 /// Progress shaping for non-level parameters.
@@ -124,6 +127,21 @@ impl<T: Copy> Ramp<T> {
             return 0.0;
         }
         if self.secs <= 0.0 { 1.0 } else { ((now - self.start).as_secs_f64() / self.secs) as f32 }
+    }
+}
+
+/// A Fade cue taking a layer's video effects from one stack to another.
+struct FxRamp {
+    from: Vec<VideoEffect>,
+    to: Vec<VideoEffect>,
+    start: Instant,
+    secs: f64,
+    curve: FadeCurve,
+}
+
+impl FxRamp {
+    fn progress(&self, now: Instant) -> f32 {
+        Ramp { from: (), to: (), start: self.start, secs: self.secs, curve: self.curve }.progress(now)
     }
 }
 
@@ -760,6 +778,7 @@ pub fn camera_layer_params(c: &CameraCue) -> VideoCue {
         stage: c.stage,
         geometry: c.geometry,
         still_duration: c.duration,
+        video_fx: c.video_fx.clone(),
         ..Default::default()
     }
 }
@@ -785,6 +804,9 @@ struct Player {
     op_ramp: Option<Ramp<f32>>,
     geometry: Geometry,
     geo_ramp: Option<Ramp<Geometry>>,
+    /// Video effects now (the cue's, or where a fade has taken them).
+    effects: Vec<VideoEffect>,
+    fx_ramp: Option<FxRamp>,
     play_at: Option<Instant>,
     playing: bool,
     /// When a still started showing (shifted by pauses).
@@ -865,6 +887,7 @@ pub fn text_layer_params(t: &TextCue) -> VideoCue {
         geometry: t.geometry,
         still_duration: t.duration,
         animation: t.animation.clone(),
+        video_fx: t.video_fx.clone(),
         ..Default::default()
     }
 }
@@ -886,6 +909,8 @@ impl Player {
             op_ramp: None,
             geometry: params.geometry,
             geo_ramp: None,
+            effects: params.video_fx.clone(),
+            fx_ramp: None,
             params,
             play_at: None,
             playing: false,
@@ -937,6 +962,8 @@ impl Player {
             op_ramp: None,
             geometry: params.geometry,
             geo_ramp: None,
+            effects: params.video_fx.clone(),
+            fx_ramp: None,
             play_at: None,
             playing: false,
             started_at: None,
@@ -1065,6 +1092,13 @@ impl Player {
                 self.geo_ramp = None;
             }
         }
+        if let Some(r) = &self.fx_ramp {
+            let t = r.progress(now);
+            self.effects = crate::effects::lerp_video_fx(&r.from, &r.to, if t >= 1.0 { 1.0 } else { shape(r.curve, t) });
+            if t >= 1.0 {
+                self.fx_ramp = None;
+            }
+        }
     }
 
     fn pause(&mut self, now: Instant) {
@@ -1088,6 +1122,9 @@ impl Player {
             r.start += shift;
         }
         if let Some(r) = &mut self.geo_ramp {
+            r.start += shift;
+        }
+        if let Some(r) = &mut self.fx_ramp {
             r.start += shift;
         }
         for t in [&mut self.play_at, &mut self.started_at].into_iter().flatten() {
@@ -1251,6 +1288,7 @@ impl VideoOutput {
             p.update(Instant::now());
             p.op_ramp = None;
             p.geo_ramp = None;
+            p.fx_ramp = None;
         }
     }
 
@@ -1278,6 +1316,9 @@ impl VideoOutput {
         if let Some(g) = f.geometry {
             p.geo_ramp = Some(Ramp { from: p.geometry, to: g, start: at, secs, curve });
         }
+        if let Some(fx) = &f.video_fx {
+            p.fx_ramp = Some(FxRamp { from: p.effects.clone(), to: fx.clone(), start: at, secs, curve });
+        }
     }
 
     /// Apply inspector edits to a playing cue (opacity, geometry, layer, fit, stage).
@@ -1291,6 +1332,10 @@ impl VideoOutput {
         if old.geometry != params.geometry {
             p.geo_ramp = None;
             p.geometry = params.geometry;
+        }
+        if old.video_fx != params.video_fx {
+            p.fx_ramp = None;
+            p.effects = params.video_fx.clone();
         }
     }
 
@@ -1354,6 +1399,7 @@ impl VideoOutput {
                     tint: st.tint,
                     text_colors,
                     animated: !anim.is_empty() && p.paused_at.is_none(),
+                    effects: p.effects.iter().filter(|e| e.enabled).copied().collect(),
                 }
             })
             .collect();

@@ -72,6 +72,8 @@ impl App {
                         "geometry" => inspector::Tab::Geometry,
                         "animation" => inspector::Tab::Animation,
                         "settings" | "text" => inspector::Tab::Settings,
+                        "audiofx" => inspector::Tab::AudioFx,
+                        "videofx" => inspector::Tab::VideoFx,
                         _ => inspector::Tab::Basics,
                     }
                 }

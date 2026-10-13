@@ -25,6 +25,8 @@ pub(super) enum Tab {
     Geometry,
     Animation,
     Settings,
+    AudioFx,
+    VideoFx,
 }
 
 fn tabs_for(kind: &CueKind) -> &'static [(Tab, &'static str)] {
@@ -36,6 +38,7 @@ fn tabs_for(kind: &CueKind) -> &'static [(Tab, &'static str)] {
             (Tab::Io, "I/O"),
             (Tab::Levels, "Levels"),
             (Tab::Eq, "EQ"),
+            (Tab::AudioFx, "Audio FX"),
         ],
         CueKind::Video(_) => &[
             (Tab::Basics, "Basics"),
@@ -43,11 +46,26 @@ fn tabs_for(kind: &CueKind) -> &'static [(Tab, &'static str)] {
             (Tab::Time, "Time & Loops"),
             (Tab::Geometry, "Geometry"),
             (Tab::Animation, "Animation"),
+            (Tab::VideoFx, "Video FX"),
             (Tab::Io, "I/O"),
             (Tab::Levels, "Audio"),
+            (Tab::AudioFx, "Audio FX"),
         ],
-        CueKind::Mic(_) => &[(Tab::Basics, "Basics"), (Tab::Triggers, "Triggers"), (Tab::Io, "I/O"), (Tab::Levels, "Levels"), (Tab::Eq, "EQ")],
-        CueKind::Camera(_) => &[(Tab::Basics, "Basics"), (Tab::Triggers, "Triggers"), (Tab::Settings, "Camera"), (Tab::Geometry, "Geometry")],
+        CueKind::Mic(_) => &[
+            (Tab::Basics, "Basics"),
+            (Tab::Triggers, "Triggers"),
+            (Tab::Io, "I/O"),
+            (Tab::Levels, "Levels"),
+            (Tab::Eq, "EQ"),
+            (Tab::AudioFx, "Audio FX"),
+        ],
+        CueKind::Camera(_) => &[
+            (Tab::Basics, "Basics"),
+            (Tab::Triggers, "Triggers"),
+            (Tab::Settings, "Camera"),
+            (Tab::Geometry, "Geometry"),
+            (Tab::VideoFx, "Video FX"),
+        ],
         CueKind::Memo => &[(Tab::Basics, "Basics"), (Tab::Triggers, "Triggers")],
         CueKind::Text(_) => &[
             (Tab::Basics, "Basics"),
@@ -55,30 +73,38 @@ fn tabs_for(kind: &CueKind) -> &'static [(Tab, &'static str)] {
             (Tab::Settings, "Text"),
             (Tab::Geometry, "Geometry"),
             (Tab::Animation, "Animation"),
+            (Tab::VideoFx, "Video FX"),
         ],
         _ => &[(Tab::Basics, "Basics"), (Tab::Triggers, "Triggers"), (Tab::Settings, "Settings")],
     }
 }
 
 /// Everything the editors need that lives outside the cue being edited.
-/// What a Fade cue can change on a target: its level (sound), its picture (opacity and
-/// geometry), both (a movie, or a group holding both kinds), or nothing.
+/// What a Fade cue can change on a target: its level (sound), its picture (opacity, geometry
+/// and video effects), its object-audio positions, a mix of them (a movie, or a group holding
+/// several kinds), or nothing.
 #[derive(Clone, Copy, Default, PartialEq, Debug)]
 struct FadeCaps {
     level: bool,
     picture: bool,
+    objects: bool,
 }
 
 impl FadeCaps {
     fn of(cue: &Cue) -> Self {
         match &cue.kind {
-            CueKind::Audio(_) | CueKind::Mic(_) => Self { level: true, picture: false },
+            CueKind::Audio(a) => Self { level: true, picture: false, objects: a.objects.enabled },
+            CueKind::Mic(m) => Self { level: true, picture: false, objects: m.objects.enabled },
             // A still has no soundtrack.
-            CueKind::Video(v) => Self { level: !crate::media::is_image_path(&v.path), picture: true },
-            CueKind::Text(_) | CueKind::Camera(_) => Self { level: false, picture: true },
+            CueKind::Video(v) => {
+                let sound = !crate::media::is_image_path(&v.path);
+                Self { level: sound, picture: true, objects: sound && v.objects.enabled }
+            }
+            CueKind::Text(_) | CueKind::Camera(_) => Self { level: false, picture: true, objects: false },
             CueKind::Group { children, .. } => children.iter().map(Self::of).fold(Self::default(), |a, b| Self {
                 level: a.level || b.level,
                 picture: a.picture || b.picture,
+                objects: a.objects || b.objects,
             }),
             _ => Self::default(),
         }
@@ -106,12 +132,36 @@ struct Ctx<'a> {
     tc_in: Option<String>,
     /// Input level of a running Mic cue (linear peak).
     mic_level: Option<f32>,
+    /// The object-audio room (the workspace's speakers or the device's default layout).
+    room: Vec<crate::spatial::Speaker>,
 }
 
 impl Ctx<'_> {
     /// What a Fade cue can change on `target`.
     fn fade_caps(&self, target: CueId) -> FadeCaps {
         self.list.find(target).map(FadeCaps::of).unwrap_or_default()
+    }
+
+    /// Object positions of a sound cue in object mode (with its source channel count).
+    fn objects(&self, target: CueId) -> Option<Vec<crate::spatial::AudioObject>> {
+        let (o, path) = match &self.list.find(target)?.kind {
+            CueKind::Audio(a) => (&a.objects, Some(&a.path)),
+            CueKind::Video(v) => (&v.objects, Some(&v.path)),
+            CueKind::Mic(m) => return Some(m.objects.resolved(m.channels.max(1) as usize)),
+            _ => return None,
+        };
+        let src = path.and_then(|p| self.prober.get(p)).and_then(|r| r.ok()).map_or(2, |i| i.channels.max(1));
+        Some(o.resolved(src.min(crate::model::MAX_SRC_CHANNELS)))
+    }
+
+    /// Video effects of a picture cue.
+    fn video_fx(&self, target: CueId) -> Option<Vec<crate::effects::VideoEffect>> {
+        match &self.list.find(target)?.kind {
+            CueKind::Video(v) => Some(v.video_fx.clone()),
+            CueKind::Text(t) => Some(t.video_fx.clone()),
+            CueKind::Camera(k) => Some(k.video_fx.clone()),
+            _ => None,
+        }
     }
 
     /// Geometry of a picture cue.
@@ -168,6 +218,11 @@ impl App {
             devices: self.inputs.lock().clone(),
             list_tc: show.ws.cue_list.timecode_of(id).clone(),
             mic_level: show.media.mic_peak(id),
+            room: if show.ws.settings.speakers.is_empty() {
+                crate::spatial::default_room(show.media.audio.as_ref().map_or(2, |a| a.channels))
+            } else {
+                show.ws.settings.speakers.clone()
+            },
             tc_in: {
                 let sync = show.ws.cue_list.timecode_of(id);
                 show.timecode.position(sync, std::time::Instant::now()).map(|r| crate::timecode::format_secs(r.secs, r.rate))
@@ -202,6 +257,8 @@ impl App {
                     Tab::Animation => super::icons::ANIMATION,
                     Tab::Settings => super::icons::SETTINGS,
                     Tab::Triggers => super::icons::KEYBOARD,
+                    Tab::AudioFx => super::icons::INSTANT_MIX,
+                    Tab::VideoFx => super::icons::AUTO_FIX_HIGH,
                 };
                 super::theme::tab(ui, &mut self.inspector_tab, *t, glyph, label);
             }
@@ -219,9 +276,21 @@ impl App {
                     self.show_list_timecode = true;
                 }
             }
+            Tab::AudioFx => match &mut cue.kind {
+                CueKind::Audio(a) => super::effects::audio_fx_tab(ui, &mut a.audio_fx),
+                CueKind::Video(v) => super::effects::audio_fx_tab(ui, &mut v.audio_fx),
+                CueKind::Mic(m) => super::effects::audio_fx_tab(ui, &mut m.audio_fx),
+                _ => {}
+            },
+            Tab::VideoFx => match &mut cue.kind {
+                CueKind::Video(v) => super::effects::video_fx_tab(ui, &mut v.video_fx),
+                CueKind::Text(t) => super::effects::video_fx_tab(ui, &mut t.video_fx),
+                CueKind::Camera(c) => super::effects::video_fx_tab(ui, &mut c.video_fx),
+                _ => {}
+            },
             Tab::Io => match &mut cue.kind {
-                CueKind::Audio(a) => io_tab(ui, &a.path, &mut a.routing, None, &ctx, &mut pick_media),
-                CueKind::Video(v) => io_tab(ui, &v.path, &mut v.routing, Some(v.stage), &ctx, &mut pick_media),
+                CueKind::Audio(a) => io_tab(ui, &a.path, &mut a.routing, &mut a.objects, None, &ctx, &mut pick_media),
+                CueKind::Video(v) => io_tab(ui, &v.path, &mut v.routing, &mut v.objects, Some(v.stage), &ctx, &mut pick_media),
                 CueKind::Mic(m) => mic_io(ui, m, &ctx, &mut refresh_devices),
                 _ => {}
             },
@@ -659,6 +728,7 @@ fn io_tab(
     ui: &mut Ui,
     path: &Path,
     routing: &mut Option<Vec<Vec<f32>>>,
+    objects: &mut crate::spatial::ObjectAudio,
     stage: Option<Option<StageId>>,
     ctx: &Ctx,
     pick: &mut bool,
@@ -669,7 +739,7 @@ fn io_tab(
     let specs = [
         Card::new(ic::UPLOAD_FILE, "Input", 400.0),
         Card::new(ic::SPEAKER, "Output", 360.0),
-        Card::new(ic::GRID_VIEW, "Routing", f32::INFINITY),
+        Card::new(ic::GRID_VIEW, "Routing", routing_width(objects)),
     ];
     super::theme::cards(ui, "io", &specs, |ui, i| match i {
         0 => {
@@ -738,10 +808,31 @@ fn io_tab(
             }
             ch => {
                 let src = ch.unwrap_or(2).clamp(1, crate::model::MAX_SRC_CHANNELS);
-                routing_editor(ui, routing, src, ctx.out_channels.min(crate::model::MAX_OUT_CHANNELS));
+                routing_card(ui, routing, objects, src, ctx);
             }
         },
     });
+}
+
+/// Width of the Routing card: the matrix gets a row of its own; the room fits beside the other
+/// cards on a wide inspector.
+fn routing_width(objects: &crate::spatial::ObjectAudio) -> f32 {
+    if objects.enabled { 640.0 } else { f32::INFINITY }
+}
+
+/// The Routing card: crosspoints, or object audio placing each channel in the room.
+fn routing_card(ui: &mut Ui, routing: &mut Option<Vec<Vec<f32>>>, objects: &mut crate::spatial::ObjectAudio, src: usize, ctx: &Ctx) {
+    ui.horizontal(|ui| {
+        ui.selectable_value(&mut objects.enabled, false, super::theme::with_icon(super::icons::GRID_VIEW, "Crosspoints"));
+        ui.selectable_value(&mut objects.enabled, true, super::theme::with_icon(super::icons::SURROUND_SOUND, "Object audio"))
+            .on_hover_text("Place each channel in the room (Settings → Audio); the speakers it is near play it");
+    });
+    ui.add_space(4.0);
+    if objects.enabled {
+        super::room::object_editor(ui, objects, src, &ctx.room);
+    } else {
+        routing_editor(ui, routing, src, ctx.out_channels.min(crate::model::MAX_OUT_CHANNELS));
+    }
 }
 
 /// Height of the faders' travel on the Levels tab.
@@ -1129,10 +1220,21 @@ fn settings_tab(ui: &mut Ui, cue: &mut Cue, ctx: &Ctx, refresh: &mut bool) {
         CueKind::Fade(f) => {
             // Only what the target can do: no geometry for a sound cue, no level for a text cue.
             // With no target yet, everything is offered.
-            let caps = f.target.map_or(FadeCaps { level: true, picture: true }, |t| ctx.fade_caps(t));
+            let caps = f.target.map_or(FadeCaps { level: true, picture: true, objects: false }, |t| ctx.fade_caps(t));
             let mut specs = vec![Card::new(ic::TUNE, "Changes", 300.0), Card::new(ic::TRENDING_DOWN, "Fade", 420.0)];
+            // The extra cards, in order: geometry, object positions, video effects.
+            let mut extra = Vec::new();
             if f.geometry.is_some() && caps.picture {
                 specs.push(Card::new(ic::OPEN_WITH, "Target geometry", f32::INFINITY));
+                extra.push(0);
+            }
+            if f.objects.is_some() && caps.objects {
+                specs.push(Card::new(ic::SURROUND_SOUND, "Target object positions", f32::INFINITY));
+                extra.push(1);
+            }
+            if f.video_fx.is_some() && caps.picture {
+                specs.push(Card::new(ic::AUTO_FIX_HIGH, "Target video effects", f32::INFINITY));
+                extra.push(2);
             }
             // Fading toward silence / transparency draws the curve falling.
             let falling = match (f.volume_db.filter(|_| caps.level), f.opacity.filter(|_| caps.picture)) {
@@ -1184,6 +1286,20 @@ fn settings_tab(ui: &mut Ui, cue: &mut Cue, ctx: &Ctx, refresh: &mut bool) {
                                     on.then(|| f.target.and_then(|t| ctx.geometry(t)).unwrap_or_default());
                             }
                             ui.end_row();
+                            ui.label("Video effects");
+                            let mut on = f.video_fx.is_some();
+                            if ui.checkbox(&mut on, "Fade effect settings").changed() {
+                                f.video_fx = on.then(|| f.target.and_then(|t| ctx.video_fx(t)).unwrap_or_default());
+                            }
+                            ui.end_row();
+                        }
+                        if caps.objects {
+                            ui.label("Objects");
+                            let mut on = f.objects.is_some();
+                            if ui.checkbox(&mut on, "Move object audio").changed() {
+                                f.objects = on.then(|| f.target.and_then(|t| ctx.objects(t)).unwrap_or_default());
+                            }
+                            ui.end_row();
                         }
                     });
                 }
@@ -1212,11 +1328,22 @@ fn settings_tab(ui: &mut Ui, cue: &mut Cue, ctx: &Ctx, refresh: &mut bool) {
                     ui.add_space(6.0);
                     super::widgets::curve_graph(ui, "fade-curve", &mut f.curve, f.duration, falling, caps.level);
                 }
-                _ => {
-                    if let Some(g) = &mut f.geometry {
-                        geometry_editor(ui, "fgeom", g);
+                i => match extra.get(i - 2) {
+                    Some(0) => {
+                        if let Some(g) = &mut f.geometry {
+                            geometry_editor(ui, "fgeom", g);
+                        }
                     }
-                }
+                    Some(1) => {
+                        if let Some(objs) = &mut f.objects {
+                            let mut o = crate::spatial::ObjectAudio { enabled: true, objects: std::mem::take(objs) };
+                            let src = o.objects.len().max(1);
+                            super::room::object_editor(ui, &mut o, src, &ctx.room);
+                            *objs = o.objects;
+                        }
+                    }
+                    _ => fade_video_fx(ui, f, ctx),
+                },
             });
         }
         CueKind::Start { target } => target_card(ui, "Start", "start_target", target, "— none —", None),
@@ -1261,6 +1388,43 @@ fn settings_tab(ui: &mut Ui, cue: &mut Cue, ctx: &Ctx, refresh: &mut bool) {
         }
         _ => {}
     }
+}
+
+/// A Fade cue's target video effect settings: the target's stack (taken when the option was
+/// switched on), with values to fade to.
+fn fade_video_fx(ui: &mut Ui, f: &mut crate::model::FadeCue, ctx: &Ctx) {
+    let current = f.target.and_then(|t| ctx.video_fx(t));
+    let Some(fx) = &mut f.video_fx else { return };
+    let kinds = |v: &[crate::effects::VideoEffect]| v.iter().map(|e| e.kind).collect::<Vec<_>>();
+    ui.horizontal(|ui| {
+        if let Some(cur) = &current
+            && kinds(cur) != kinds(fx)
+        {
+            ui.label(RichText::new("The target's effects changed since these were taken.").color(super::widgets::AMBER));
+        }
+        if ui.small_button("Take the target's effects").on_hover_text("Start again from the target's current effects").clicked() {
+            *fx = current.clone().unwrap_or_default();
+        }
+    });
+    if fx.is_empty() {
+        ui.label(RichText::new("The target has no video effects: add them on its Video FX tab.").weak());
+        return;
+    }
+    ui.horizontal_wrapped(|ui| {
+        for (i, e) in fx.iter_mut().enumerate() {
+            super::theme::card_frame().show(ui, |ui| {
+                ui.vertical(|ui| {
+                    ui.set_width(280.0);
+                    ui.horizontal(|ui| {
+                        ui.label(RichText::new(format!("{}. {}", i + 1, e.kind.label())).strong());
+                        ui.checkbox(&mut e.enabled, "On").on_hover_text("Off: fade this effect out");
+                    });
+                    super::effects::video_effect_settings(ui, 100 + i, e);
+                });
+            });
+        }
+    });
+    ui.label(RichText::new("Effects off here fade out; effects the target doesn't have fade in from nothing.").weak().small());
 }
 
 fn color_button(ui: &mut Ui, rgba: &mut [u8; 4]) -> bool {
@@ -1545,7 +1709,7 @@ fn mic_io(ui: &mut Ui, m: &mut crate::model::MicCue, ctx: &Ctx, refresh: &mut bo
     let specs = [
         Card::new(ic::MIC, "Input", 420.0),
         Card::new(ic::SCHEDULE, "Timing", 260.0),
-        Card::new(ic::GRID_VIEW, "Routing", f32::INFINITY),
+        Card::new(ic::GRID_VIEW, "Routing", routing_width(&m.objects)),
     ];
     let inputs: Vec<(String, String)> = ctx.devices.audio_in.iter().map(|d| (d.id.clone(), d.name.clone())).collect();
     super::theme::cards(ui, "mic", &specs, |ui, i| match i {
@@ -1594,7 +1758,7 @@ fn mic_io(ui: &mut Ui, m: &mut crate::model::MicCue, ctx: &Ctx, refresh: &mut bo
                 ui.end_row();
             });
         }
-        _ => routing_editor(ui, &mut m.routing, m.channels as usize, ctx.out_channels.min(crate::model::MAX_OUT_CHANNELS)),
+        _ => routing_card(ui, &mut m.routing, &mut m.objects, (m.channels as usize).clamp(1, crate::model::MAX_SRC_CHANNELS), ctx),
     });
 }
 
@@ -1777,16 +1941,16 @@ mod tests {
     #[test]
     fn fade_caps_follow_the_target_kind() {
         let caps = |k: KindTag| FadeCaps::of(&Cue::new(k.default_kind()));
-        assert_eq!(caps(KindTag::Audio), FadeCaps { level: true, picture: false });
-        assert_eq!(caps(KindTag::Text), FadeCaps { level: false, picture: true });
-        assert_eq!(caps(KindTag::Video), FadeCaps { level: true, picture: true });
+        assert_eq!(caps(KindTag::Audio), FadeCaps { level: true, picture: false, objects: false });
+        assert_eq!(caps(KindTag::Text), FadeCaps { level: false, picture: true, objects: false });
+        assert_eq!(caps(KindTag::Video), FadeCaps { level: true, picture: true, objects: false });
         assert_eq!(caps(KindTag::Wait), FadeCaps::default());
         let still = crate::model::VideoCue { path: "logo.svg".into(), ..Default::default() };
-        assert_eq!(FadeCaps::of(&Cue::new(CueKind::Video(still))), FadeCaps { level: false, picture: true });
+        assert_eq!(FadeCaps::of(&Cue::new(CueKind::Video(still))), FadeCaps { level: false, picture: true, objects: false });
         let group = CueKind::Group {
             mode: GroupMode::StartAll,
             children: vec![Cue::new(KindTag::Audio.default_kind()), Cue::new(KindTag::Camera.default_kind())],
         };
-        assert_eq!(FadeCaps::of(&Cue::new(group)), FadeCaps { level: true, picture: true });
+        assert_eq!(FadeCaps::of(&Cue::new(group)), FadeCaps { level: true, picture: true, objects: false });
     }
 }

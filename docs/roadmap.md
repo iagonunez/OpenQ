@@ -54,6 +54,15 @@ Still open:
 - Re-rasterise an SVG when a live edit raises its scale (now only on start).
 - Brightness/colourise beyond multiply tint (needs a custom paint callback / shader).
 
+## Effects and object audio (done: audio FX chains, video FX in the layer shader, object audio; follow-ups)
+- Fade cues for audio effect parameters (wet/dry, filter sweeps); only video effects and object
+  positions fade now.
+- Effects on outputs/master, not only per cue.
+- Group objects: one object for several channels (stereo pair moving together) and object level.
+- Video effects that need the destination or several passes (glow, edge detect, separable
+  large-radius blur); blur is a single-pass 48-tap spiral, fine up to ~30 px.
+- Room in 3D (height layers) and a VBAP option alongside DBAP.
+
 ## Remote (possible follow-ups)
 - Merge edits per cue instead of sending the whole workspace (removes last-writer-wins).
 - Push the main device's display list so a replica can pick stage outputs.

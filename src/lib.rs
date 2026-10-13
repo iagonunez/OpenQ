@@ -31,7 +31,10 @@
 //! * [`geometry`] — layer placement, crop, corner-pin homography, edge-blend curve.
 //! * [`animation`] — keyframe animation of video, image and text layers, evaluated live as the
 //!   stage windows draw (relative to the cue's own geometry, opacity and colours).
-//! * [`dsp`] — EQ filter design and processing.
+//! * [`dsp`] — EQ filter design and processing. [`audio_fx`] — real-time audio effect chains.
+//! * [`effects`] — audio and video effect settings (effect stacks on cues); video
+//!   effects run in the stage windows' layer shader.
+//! * [`spatial`] — object audio: speakers in a room, objects placed by distance-based panning.
 //! * [`osc`] — OSC input. [`remote`] — paired remote devices (encrypted, authenticated).
 //! * [`displays`] — system monitors for stage outputs. [`ui`] — the egui application, including
 //!   the stage windows (spanned surfaces, edge blending, layer [`model::BlendMode`]s).
@@ -73,10 +76,12 @@
 #![warn(missing_docs)]
 
 pub mod animation;
+pub mod audio_fx;
 pub mod bench;
 pub mod control;
 pub mod displays;
 pub mod dsp;
+pub mod effects;
 pub mod engine;
 pub mod geometry;
 pub mod media;
@@ -85,5 +90,6 @@ pub mod osc;
 pub mod recovery;
 pub mod remote;
 pub mod show;
+pub mod spatial;
 pub mod timecode;
 pub mod ui;

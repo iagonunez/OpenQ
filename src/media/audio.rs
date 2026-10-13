@@ -2,7 +2,9 @@
 //!
 //! Each playing audio cue is a [`Voice`] fed by its own decoder thread through a ring buffer
 //! (resampled to the device rate, still in the file's channel layout). The voice applies the
-//! cue's EQ, routing matrix, level and pan in the callback, so all of them can change live.
+//! cue's EQ, effect chain ([`crate::audio_fx`]), routing matrix, level and pan in the callback,
+//! so all of them can change live. Routing changes (crosspoint edits, object audio moving
+//! through the room) ramp over [`MATRIX_RAMP_SECS`] instead of jumping, so they never click.
 //! The control side talks to the callback only through a wait-free command queue, and removed
 //! voices are shipped back for deallocation so the audio thread never frees memory.
 //!
@@ -16,7 +18,10 @@
 //! runs the same mixer on a timer thread without hardware, for tests and CI machines.
 
 use super::decoder::{self, DecodeParams};
+use crate::audio_fx::FxChain;
 use crate::dsp::{BiquadState, Coeffs, eq_coeffs};
+use crate::effects::AudioEffect;
+use crate::spatial::{AudioObject, ObjectAudio, Speaker};
 use crate::model::{
     AudioCue, CueId, Eq, FadeCurve, MAX_EQ_BANDS, MAX_OUT_CHANNELS, MAX_SRC_CHANNELS, VideoCue, db_to_gain, out_level_gain, routing_gains,
 };
@@ -50,6 +55,11 @@ const VOICE_BUFFER_SECS: f64 = 2.0;
 pub const MAX_VOICES: usize = 256;
 /// Commands held back while the mixer's queue is full (beyond this they are dropped).
 const MAX_PENDING: usize = 1 << 16;
+
+/// Time a voice takes to move to a new routing matrix.
+pub const MATRIX_RAMP_SECS: f64 = 0.01;
+/// How often a running object-audio fade sends new positions to the mixer.
+const OBJECT_FADE_STEP: Duration = Duration::from_millis(10);
 
 /// Linear routing gains, `[src * MAX_OUT_CHANNELS + out]`.
 pub type Matrix = [f32; MAX_SRC_CHANNELS * MAX_OUT_CHANNELS];
@@ -281,9 +291,15 @@ pub struct Voice {
     gain: f32,
     pan: [f32; 2],
     matrix: Matrix,
+    /// Matrix being left behind while `matrix_ramp` frames remain of a routing change.
+    matrix_from: Matrix,
+    matrix_ramp: u32,
+    matrix_ramp_len: u32,
     eq: [Coeffs; MAX_EQ_BANDS],
     eq_bands: usize,
     eq_state: [[BiquadState; MAX_EQ_BANDS]; MAX_SRC_CHANNELS],
+    /// Audio effects after the EQ (None = no effect enabled).
+    fx: Option<Box<FxChain>>,
     ramp: Option<Ramp>,
     stop_after_ramp: bool,
     done: bool,
@@ -299,6 +315,7 @@ enum Cmd {
     Pan { id: u64, pan: [f32; 2] },
     Eq { id: u64, coeffs: [Coeffs; MAX_EQ_BANDS], bands: usize },
     Matrix { id: u64, matrix: Box<Matrix> },
+    Fx { id: u64, chain: Option<Box<FxChain>> },
     /// Freeze any running gain ramp at its current value.
     Hold(u64),
     Master(f32),
@@ -323,29 +340,64 @@ pub struct MixParams {
     pub routing: Option<Vec<Vec<f32>>>,
     /// Output fader levels in dB, folded into the matrix.
     pub out_levels: Vec<f32>,
+    /// Effect chain after the EQ.
+    pub audio_fx: Vec<AudioEffect>,
+    /// Object audio (replaces `routing` when enabled).
+    pub objects: ObjectAudio,
 }
 
 impl From<&AudioCue> for MixParams {
     fn from(a: &AudioCue) -> Self {
-        Self { volume_db: a.volume_db, pan: a.pan, eq: a.eq.clone(), routing: a.routing.clone(), out_levels: a.out_levels.clone() }
+        Self {
+            volume_db: a.volume_db,
+            pan: a.pan,
+            eq: a.eq.clone(),
+            routing: a.routing.clone(),
+            out_levels: a.out_levels.clone(),
+            audio_fx: a.audio_fx.clone(),
+            objects: a.objects.clone(),
+        }
     }
 }
 
 impl From<&crate::model::MicCue> for MixParams {
     fn from(m: &crate::model::MicCue) -> Self {
-        Self { volume_db: m.volume_db, pan: m.pan, eq: m.eq.clone(), routing: m.routing.clone(), out_levels: m.out_levels.clone() }
+        Self {
+            volume_db: m.volume_db,
+            pan: m.pan,
+            eq: m.eq.clone(),
+            routing: m.routing.clone(),
+            out_levels: m.out_levels.clone(),
+            audio_fx: m.audio_fx.clone(),
+            objects: m.objects.clone(),
+        }
     }
 }
 
 impl From<&VideoCue> for MixParams {
     fn from(v: &VideoCue) -> Self {
-        Self { volume_db: v.volume_db, pan: 0.0, eq: Eq::default(), routing: v.routing.clone(), out_levels: v.out_levels.clone() }
+        Self {
+            volume_db: v.volume_db,
+            pan: 0.0,
+            eq: Eq::default(),
+            routing: v.routing.clone(),
+            out_levels: v.out_levels.clone(),
+            audio_fx: v.audio_fx.clone(),
+            objects: v.objects.clone(),
+        }
     }
 }
 
-fn build_matrix(params: &MixParams, src: usize, out: usize) -> Matrix {
+/// The voice matrix for `params`: crosspoints (or object positions in `room`), times the output
+/// faders.
+fn build_matrix(params: &MixParams, src: usize, out: usize, room: &[Speaker]) -> Matrix {
     let mut m = [0.0; MAX_SRC_CHANNELS * MAX_OUT_CHANNELS];
-    for (s, row) in routing_gains(&params.routing, src, out).iter().enumerate().take(MAX_SRC_CHANNELS) {
+    let gains = if params.objects.enabled {
+        crate::spatial::object_matrix(&params.objects, room, src, out)
+    } else {
+        routing_gains(&params.routing, src, out)
+    };
+    for (s, row) in gains.iter().enumerate().take(MAX_SRC_CHANNELS) {
         for (o, g) in row.iter().enumerate().take(MAX_OUT_CHANNELS) {
             m[s * MAX_OUT_CHANNELS + o] = *g * out_level_gain(&params.out_levels, o);
         }
@@ -357,6 +409,7 @@ fn build_matrix(params: &MixParams, src: usize, out: usize) -> Matrix {
 enum Garbage {
     Voice(#[allow(dead_code)] Box<Voice>),
     Matrix(#[allow(dead_code)] Box<Matrix>),
+    Fx(#[allow(dead_code)] Box<FxChain>),
 }
 
 struct Mixer {
@@ -461,11 +514,37 @@ impl Mixer {
                     }
                 }
                 Cmd::Matrix { id, mut matrix } => {
+                    let len = ((self.clock.rate as f64 * MATRIX_RAMP_SECS) as u32).max(1);
                     if let Some(v) = self.voice(id) {
+                        // Ramp from wherever the voice is now (possibly mid-ramp) to the new one.
+                        if v.matrix_ramp > 0 {
+                            let t = 1.0 - v.matrix_ramp as f32 / v.matrix_ramp_len as f32;
+                            for (a, b) in v.matrix_from.iter_mut().zip(v.matrix.iter()) {
+                                *a += (b - *a) * t;
+                            }
+                        } else {
+                            v.matrix_from = v.matrix;
+                        }
                         std::mem::swap(&mut v.matrix, &mut *matrix);
+                        if matches!(v.state, VoiceState::Playing) {
+                            v.matrix_ramp = len;
+                            v.matrix_ramp_len = len;
+                        }
                     }
                     // The box (now holding the old matrix) is freed off the audio thread.
                     let _ = self.garbage.push(Garbage::Matrix(matrix));
+                }
+                Cmd::Fx { id, mut chain } => {
+                    if let Some(v) = self.voice(id) {
+                        if let (Some(new), Some(old)) = (chain.as_mut(), v.fx.as_mut()) {
+                            new.adopt(old);
+                        }
+                        std::mem::swap(&mut v.fx, &mut chain);
+                    }
+                    // `chain` now holds the replaced one (or the unused new one).
+                    if let Some(c) = chain {
+                        let _ = self.garbage.push(Garbage::Fx(c));
+                    }
                 }
             }
         }
@@ -620,11 +699,28 @@ fn render_voice(v: &mut Voice, out: &mut [f32], ch: usize, frames: usize, start_
                 }
                 *xs = val;
             }
+            if let Some(fx) = &mut v.fx {
+                fx.process(&mut x[..src]);
+            }
+            let mt = (v.matrix_ramp > 0).then(|| {
+                v.matrix_ramp -= 1;
+                1.0 - v.matrix_ramp as f32 / v.matrix_ramp_len as f32
+            });
             let base = f * ch;
             for o in 0..outs {
                 let mut acc = 0.0;
-                for (s, xs) in x.iter().enumerate().take(src) {
-                    acc += xs * v.matrix[s * MAX_OUT_CHANNELS + o];
+                match mt {
+                    None => {
+                        for (s, xs) in x.iter().enumerate().take(src) {
+                            acc += xs * v.matrix[s * MAX_OUT_CHANNELS + o];
+                        }
+                    }
+                    Some(t) => {
+                        for (s, xs) in x.iter().enumerate().take(src) {
+                            let k = s * MAX_OUT_CHANNELS + o;
+                            acc += xs * (v.matrix_from[k] + (v.matrix[k] - v.matrix_from[k]) * t);
+                        }
+                    }
                 }
                 let p = if o < 2 && ch >= 2 { v.pan[o] } else { 1.0 };
                 out[base + o] += acc * g * p;
@@ -660,6 +756,28 @@ struct VoiceHandle {
     error_reported: bool,
     /// The decoder stall was reported (once per voice).
     stall_reported: bool,
+    /// A Fade cue moving the objects, and when positions were last sent.
+    obj_fade: Option<ObjectFade>,
+    obj_sent: Option<Instant>,
+    /// The cue's own object positions once a fade has taken them over.
+    obj_base: Option<Vec<AudioObject>>,
+}
+
+/// An object-audio fade in progress on one voice.
+struct ObjectFade {
+    from: Vec<AudioObject>,
+    to: Vec<AudioObject>,
+    start: Instant,
+    secs: f64,
+    curve: FadeCurve,
+}
+
+impl ObjectFade {
+    fn at(&self, now: Instant) -> (Vec<AudioObject>, bool) {
+        let t = if self.secs <= 0.0 { 1.0 } else { now.saturating_duration_since(self.start).as_secs_f64() / self.secs };
+        let done = t >= 1.0 && now >= self.start;
+        (crate::spatial::lerp_objects(&self.from, &self.to, self.curve.progress(t as f32)), done)
+    }
 }
 
 /// An output device the user can pick.
@@ -815,6 +933,8 @@ pub struct AudioOutput {
     voices: HashMap<CueId, VoiceHandle>,
     preloaded: HashMap<CueId, VoiceHandle>,
     next_id: u64,
+    /// The object-audio room (resolved: never empty while there are outputs).
+    room: Vec<Speaker>,
 }
 
 impl Drop for AudioOutput {
@@ -940,6 +1060,7 @@ impl AudioOutput {
             voices: HashMap::new(),
             preloaded: HashMap::new(),
             next_id: 1,
+            room: crate::spatial::default_room(channels),
         })
     }
 
@@ -1034,6 +1155,9 @@ impl AudioOutput {
             src_channels: src,
             error_reported: false,
             stall_reported: false,
+            obj_fade: None,
+            obj_sent: None,
+            obj_base: None,
         }
     }
 
@@ -1047,10 +1171,14 @@ impl AudioOutput {
             src_channels: src,
             gain: db_to_gain(mix.volume_db),
             pan: pan_gains(mix.pan),
-            matrix: build_matrix(mix, src, self.channels),
+            matrix: build_matrix(mix, src, self.channels, &self.room),
+            matrix_from: [0.0; MAX_SRC_CHANNELS * MAX_OUT_CHANNELS],
+            matrix_ramp: 0,
+            matrix_ramp_len: 1,
             eq,
             eq_bands,
             eq_state: Default::default(),
+            fx: FxChain::new(&mix.audio_fx, src, self.rate as f32),
             ramp: None,
             stop_after_ramp: false,
             done: false,
@@ -1088,6 +1216,9 @@ impl AudioOutput {
                 src_channels: src,
                 error_reported: false,
                 stall_reported: false,
+                obj_fade: None,
+                obj_sent: None,
+                obj_base: None,
             },
         );
         (tx, shared)
@@ -1104,10 +1235,74 @@ impl AudioOutput {
         }
     }
 
-    /// Stop any fade in progress on this cue, keeping the current level.
+    /// Stop any fade in progress on this cue, keeping the current level and object positions.
     pub fn hold(&mut self, cue: CueId) {
-        if let Some(id) = self.voices.get(&cue).map(|h| h.id) {
-            self.send(Cmd::Hold(id));
+        let Some(h) = self.voices.get_mut(&cue) else { return };
+        let id = h.id;
+        if let Some(f) = h.obj_fade.take() {
+            let (now, _) = f.at(Instant::now());
+            h.mix.objects.objects = now;
+            let (mix, src) = (h.mix.clone(), h.src_channels);
+            self.send_matrix(id, &mix, src);
+        }
+        self.send(Cmd::Hold(id));
+    }
+
+    fn send_matrix(&mut self, id: u64, mix: &MixParams, src: usize) {
+        let matrix = Box::new(build_matrix(mix, src, self.channels, &self.room));
+        self.send(Cmd::Matrix { id, matrix });
+    }
+
+    /// Move a cue's objects to `to` over `secs` (a Fade cue on object audio).
+    pub fn fade_objects(&mut self, cue: CueId, to: &[AudioObject], secs: f64, curve: FadeCurve, at: Instant) {
+        let Some(h) = self.voices.get_mut(&cue) else { return };
+        let from = match &h.obj_fade {
+            Some(f) => f.at(Instant::now()).0,
+            None => h.mix.objects.resolved(h.src_channels),
+        };
+        h.obj_base.get_or_insert_with(|| h.mix.objects.objects.clone());
+        h.obj_fade = Some(ObjectFade { from, to: to.to_vec(), start: at, secs: secs.max(0.0), curve });
+        h.obj_sent = None;
+    }
+
+    /// The object-audio room: speakers and their outputs (empty = the default layout for this
+    /// device). Voices in object mode move to the new layout at once.
+    pub fn set_room(&mut self, speakers: &[Speaker]) {
+        let room = if speakers.is_empty() { crate::spatial::default_room(self.channels) } else { speakers.to_vec() };
+        if room == self.room {
+            return;
+        }
+        self.room = room;
+        let moved: Vec<(u64, MixParams, usize)> = self
+            .voices
+            .values()
+            .chain(self.preloaded.values())
+            .filter(|h| h.mix.objects.enabled)
+            .map(|h| (h.id, h.mix.clone(), h.src_channels))
+            .collect();
+        for (id, mix, src) in moved {
+            self.send_matrix(id, &mix, src);
+        }
+    }
+
+    /// Advance object-audio fades (new positions go to the mixer every 10 ms).
+    pub fn advance_fades(&mut self, now: Instant) {
+        let mut send = Vec::new();
+        for h in self.voices.values_mut() {
+            let Some(f) = &h.obj_fade else { continue };
+            if now < f.start || h.obj_sent.is_some_and(|t| now.saturating_duration_since(t) < OBJECT_FADE_STEP) {
+                continue;
+            }
+            let (objs, done) = f.at(now);
+            h.mix.objects.objects = objs;
+            h.obj_sent = Some(now);
+            if done {
+                h.obj_fade = None;
+            }
+            send.push((h.id, h.mix.clone(), h.src_channels));
+        }
+        for (id, mix, src) in send {
+            self.send_matrix(id, &mix, src);
         }
     }
 
@@ -1206,6 +1401,17 @@ impl AudioOutput {
     pub fn update_live(&mut self, cue: CueId, params: &MixParams) {
         let Some(h) = self.voices.get_mut(&cue) else { return };
         let (id, src) = (h.id, h.src_channels);
+        let mut params = params.clone();
+        if let Some(base) = &h.obj_base {
+            if params.objects.objects == *base {
+                // A Fade cue moved the objects and this edit isn't about them: they stay put.
+                params.objects.objects = h.mix.objects.objects.clone();
+            } else {
+                h.obj_fade = None;
+                h.obj_base = None;
+            }
+        }
+        let params = &params;
         let old = std::mem::replace(&mut h.mix, params.clone());
         if old.volume_db != params.volume_db {
             let frames = (0.03 * self.rate as f64) as u64;
@@ -1218,9 +1424,12 @@ impl AudioOutput {
             let (coeffs, bands) = eq_coeffs(&params.eq, self.rate as f32);
             self.send(Cmd::Eq { id, coeffs, bands });
         }
-        if old.routing != params.routing || old.out_levels != params.out_levels {
-            let matrix = Box::new(build_matrix(params, src, self.channels));
-            self.send(Cmd::Matrix { id, matrix });
+        if old.routing != params.routing || old.out_levels != params.out_levels || old.objects != params.objects {
+            self.send_matrix(id, params, src);
+        }
+        if old.audio_fx != params.audio_fx {
+            let chain = FxChain::new(&params.audio_fx, src, self.rate as f32);
+            self.send(Cmd::Fx { id, chain });
         }
     }
 
@@ -1428,10 +1637,14 @@ mod tests {
             src_channels: src,
             gain: db_to_gain(params.volume_db),
             pan: pan_gains(params.pan),
-            matrix: build_matrix(&MixParams::from(params), src, out_ch),
+            matrix: build_matrix(&MixParams::from(params), src, out_ch, &crate::spatial::default_room(out_ch)),
+            matrix_from: [0.0; MAX_SRC_CHANNELS * MAX_OUT_CHANNELS],
+            matrix_ramp: 0,
+            matrix_ramp_len: 1,
             eq,
             eq_bands,
             eq_state: Default::default(),
+            fx: FxChain::new(&params.audio_fx, src, 48000.0),
             ramp: None,
             stop_after_ramp: false,
             done: false,
@@ -1471,6 +1684,90 @@ mod tests {
         let out = render_once(&p, 1, 2, &[1.0; 4]);
         assert_eq!(out[0], 0.0);
         assert!((out[1] - 1.0).abs() < 1e-5);
+    }
+
+    #[test]
+    fn object_audio_places_channels_by_position() {
+        // Mono object hard left in a stereo room: nearly all of it on output 1.
+        let objects = ObjectAudio { enabled: true, objects: vec![AudioObject { x: -0.8, y: -1.0, spread: 0.0 }] };
+        let p = AudioCue { objects, ..Default::default() };
+        let out = render_once(&p, 1, 2, &[1.0; 4]);
+        assert!(out[0] > 0.99 && out[1] < 0.1, "{out:?}");
+        // Output faders still apply on top.
+        let p = AudioCue { out_levels: vec![-6.0], ..p };
+        let out = render_once(&p, 1, 2, &[1.0; 4]);
+        assert!((out[0] - 0.5).abs() < 0.02, "{out:?}");
+    }
+
+    #[test]
+    fn effects_run_in_the_voice() {
+        // A fully wet 1 ms delay: the first 48 frames are silent.
+        let mut d = crate::effects::AudioEffect::new(crate::effects::AudioFxKind::Delay);
+        d.params = [1.0, 0.0, 20000.0, 100.0, 0.0, 0.0];
+        let p = AudioCue { audio_fx: vec![d], ..Default::default() };
+        let out = render_once(&p, 1, 1, &[1.0; 200]);
+        assert!(out[10].abs() < 1e-6 && (out[150] - 1.0).abs() < 0.01, "{} {}", out[10], out[150]);
+    }
+
+    #[test]
+    fn a_new_matrix_ramps_in() {
+        // A matrix change while playing glides over MATRIX_RAMP_SECS instead of jumping.
+        let (mut tx, rx) = rtrb::RingBuffer::<f32>::new(4800);
+        for _ in 0..4800 {
+            tx.push(1.0).unwrap();
+        }
+        let p = AudioCue::default();
+        let mut v = Voice {
+            id: 1,
+            rx,
+            shared: Arc::new(VoiceShared::default()),
+            state: VoiceState::Playing,
+            src_channels: 1,
+            gain: 1.0,
+            pan: pan_gains(0.0),
+            matrix: build_matrix(&MixParams::from(&p), 1, 1, &[]),
+            matrix_from: [0.0; MAX_SRC_CHANNELS * MAX_OUT_CHANNELS],
+            matrix_ramp: 0,
+            matrix_ramp_len: 1,
+            eq: [Coeffs::IDENTITY; MAX_EQ_BANDS],
+            eq_bands: 0,
+            eq_state: Default::default(),
+            fx: None,
+            ramp: None,
+            stop_after_ramp: false,
+            done: false,
+        };
+        // As Cmd::Matrix does: silence the output over 480 frames.
+        v.matrix_from = v.matrix;
+        v.matrix = [0.0; MAX_SRC_CHANNELS * MAX_OUT_CHANNELS];
+        v.matrix_ramp = 480;
+        v.matrix_ramp_len = 480;
+        let mut out = vec![0.0; 960];
+        render_voice(&mut v, &mut out, 1, 960, 0);
+        assert!((out[0] - 1.0).abs() < 0.01 && (out[240] - 0.5).abs() < 0.01 && out[600] == 0.0, "{} {} {}", out[0], out[240], out[600]);
+    }
+
+    #[test]
+    fn object_fades_move_objects_and_stick() {
+        let mut a = AudioOutput::open_virtual(48000, 2, None).unwrap();
+        let cue = crate::model::CueId::new_v4();
+        let mix = MixParams { objects: ObjectAudio { enabled: true, objects: vec![AudioObject::default()] }, ..Default::default() };
+        let _feed = a.add_external(cue, &mix, 1, "test", 0.1);
+        let t0 = Instant::now();
+        let to = [AudioObject { x: 1.0, y: 0.0, spread: 0.0 }];
+        a.fade_objects(cue, &to, 1.0, FadeCurve::Linear, t0);
+        a.advance_fades(t0 + Duration::from_millis(500));
+        let x = a.voices[&cue].mix.objects.objects[0].x;
+        assert!((x - 0.5).abs() < 0.01, "{x}");
+        a.advance_fades(t0 + Duration::from_millis(1100));
+        assert_eq!(a.voices[&cue].mix.objects.objects, to.to_vec());
+        assert!(a.voices[&cue].obj_fade.is_none());
+        // An edit that doesn't touch the objects keeps the faded positions; moving them wins.
+        a.update_live(cue, &MixParams { volume_db: -3.0, ..mix.clone() });
+        assert_eq!(a.voices[&cue].mix.objects.objects, to.to_vec());
+        let moved = MixParams { objects: ObjectAudio { enabled: true, objects: vec![AudioObject { x: -1.0, ..Default::default() }] }, ..mix };
+        a.update_live(cue, &moved);
+        assert_eq!(a.voices[&cue].mix.objects.objects[0].x, -1.0);
     }
 
     #[test]

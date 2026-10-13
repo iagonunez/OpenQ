@@ -524,6 +524,9 @@ pub struct Media {
     /// Audio cues started before their file was probed: they start once the background probe
     /// answers (the engine thread never probes).
     pending_audio: HashMap<CueId, PendingAudio>,
+    /// Object-audio speakers from the workspace (empty = the device's default layout); applied
+    /// to every audio output this opens.
+    room: Vec<crate::spatial::Speaker>,
 }
 
 /// A Mic cue's live input. Opening a device can take a while, so it opens on its own thread;
@@ -614,6 +617,17 @@ impl Media {
             notes: Vec::new(),
             preload_retry: None,
             pending_audio: HashMap::new(),
+            room: Vec::new(),
+        }
+    }
+
+    /// Set the object-audio room (the workspace's speakers).
+    pub fn set_room(&mut self, speakers: &[crate::spatial::Speaker]) {
+        if self.room != speakers {
+            self.room = speakers.to_vec();
+        }
+        if let Some(a) = &mut self.audio {
+            a.set_room(&self.room);
         }
     }
 
@@ -658,6 +672,7 @@ impl Media {
         match audio::AudioOutput::open(device) {
             Ok(mut a) => {
                 a.set_master(master_db);
+                a.set_room(&self.room);
                 self.audio = Some(a);
                 self.audio_error = None;
             }
@@ -726,6 +741,7 @@ impl Media {
             Some(rx) => match rx.try_recv() {
                 Ok(Ok(mut a)) => {
                     a.set_master(r.master_db);
+                    a.set_room(&self.room);
                     self.notes.push(format!("Audio output back: {}", a.device_name));
                     self.audio = Some(a);
                     self.audio_error = None;
@@ -1107,10 +1123,13 @@ impl Backend for Media {
     }
 
     fn fade(&mut self, id: CueId, f: &FadeRequest, at: Instant) {
-        if let Some(a) = &mut self.audio
-            && let Some(db) = f.volume_db
-        {
-            a.fade(id, db, f.duration, f.curve, at);
+        if let Some(a) = &mut self.audio {
+            if let Some(db) = f.volume_db {
+                a.fade(id, db, f.duration, f.curve, at);
+            }
+            if let Some(objs) = &f.objects {
+                a.fade_objects(id, objs, f.duration, f.curve, at);
+            }
         }
         #[cfg(feature = "video")]
         if let Some(v) = &mut self.video {
@@ -1190,6 +1209,7 @@ impl Backend for Media {
         self.watch_mics(now);
         self.start_pending_audio(now);
         if let Some(a) = &mut self.audio {
+            a.advance_fades(now);
             a.update();
             // Close the inputs of Mic cues whose voice has ended.
             self.mics.retain(|id, _| !a.is_finished(*id));

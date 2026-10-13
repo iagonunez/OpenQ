@@ -34,6 +34,10 @@ pub struct FadeRequest {
     pub opacity: Option<f32>,
     /// Target position/scale/rotation/crop for video/text layers.
     pub geometry: Option<crate::model::Geometry>,
+    /// Target object-audio positions, one per source channel.
+    pub objects: Option<Vec<crate::spatial::AudioObject>>,
+    /// Target video effect settings for video/text/camera layers.
+    pub video_fx: Option<Vec<crate::effects::VideoEffect>>,
     /// Fade length in seconds.
     pub duration: f64,
     /// Shape of the fade.
@@ -52,7 +56,7 @@ pub trait Backend {
     fn pause(&mut self, id: CueId);
     /// Continue a paused media cue so it is heard/seen again at `at`.
     fn resume(&mut self, id: CueId, at: Instant);
-    /// Ramp a running media cue's level/opacity/geometry.
+    /// Ramp a running media cue's level/opacity/geometry/object positions/video effects.
     fn fade(&mut self, id: CueId, fade: &FadeRequest, at: Instant);
     /// True once a started media cue reached its end on its own (or failed).
     fn is_finished(&self, id: CueId) -> bool;
@@ -477,6 +481,8 @@ impl Engine {
             volume_db: Some(MIN_DB),
             opacity: Some(0.0),
             geometry: None,
+            objects: None,
+            video_fx: None,
             duration: fade,
             curve: FadeCurve::Linear,
         };
@@ -780,6 +786,8 @@ impl Engine {
                     volume_db: f.volume_db,
                     opacity: f.opacity,
                     geometry: f.geometry,
+                    objects: f.objects.clone(),
+                    video_fx: f.video_fx.clone(),
                     duration: f.duration.max(0.0),
                     curve: f.curve,
                 };

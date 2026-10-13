@@ -98,3 +98,7 @@ photo_camera
 timer_play
 animation
 diamond
+auto_fix_high
+instant_mix
+surround_sound
+arrow_upward

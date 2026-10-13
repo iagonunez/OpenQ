@@ -9,6 +9,7 @@ mod debug;
 mod cue_list;
 mod devices;
 mod eq;
+mod effects;
 mod icons;
 mod inspector;
 mod manual;
@@ -19,6 +20,7 @@ mod perf_tests;
 mod preview;
 mod recovery;
 mod remote;
+mod room;
 #[cfg(feature = "video")]
 mod stage;
 mod theme;
@@ -1733,6 +1735,13 @@ impl App {
                 ui.end_row();
             });
         ui.label(RichText::new("Changing the device stops all playback. Cue routing matrices address the device's outputs.").weak());
+        ui.separator();
+        let channels = show.media.audio.as_ref().map_or(2, |a| a.channels);
+        let before = show.ws.settings.speakers.clone();
+        room::speaker_editor(ui, &mut show.ws.settings.speakers, channels);
+        if show.ws.settings.speakers != before {
+            show.edited();
+        }
         if chosen != current {
             show.ws.settings.audio_device = chosen;
             let now = Instant::now();
@@ -2095,6 +2104,8 @@ impl App {
                 Ok("animation") => inspector::Tab::Animation,
                 Ok("settings") => inspector::Tab::Settings,
                 Ok("triggers") => inspector::Tab::Triggers,
+                Ok("audiofx") => inspector::Tab::AudioFx,
+                Ok("videofx") => inspector::Tab::VideoFx,
                 _ => inspector::Tab::Basics,
             };
             if std::env::var("OPENQ_SCREENSHOT_MODE").as_deref() == Ok("show") {

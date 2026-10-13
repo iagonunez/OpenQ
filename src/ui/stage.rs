@@ -123,7 +123,7 @@ impl App {
                     };
                     for l in &mine {
                         let shapes = paint_layer(&ctx, textures, l, source_canvas, place);
-                        match blend(gpu.as_ref(), l.blend_mode, shapes, rect) {
+                        match blend(gpu.as_ref(), l.blend_mode, &l.effects, shapes, rect) {
                             Blended::Shape(s) => {
                                 painter.add(s);
                             }

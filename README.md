@@ -142,7 +142,12 @@ Jumps and dropouts don't fire cues.
   outputs, dB per crosspoint).
 - **EQ**: up to 8 bands (high/low-pass, shelves, peaks) with a response curve; drag handles to set
   frequency/gain, scroll on a handle for Q.
-- Level, pan, EQ and routing changes apply live to a playing cue. Pick the output device in
+- **Audio FX**: a chain of up to 8 effects after the EQ (delay, reverb, compressor, limiter,
+  gate, distortion, chorus, bitcrusher); reorder, bypass, edit live (tails carry on).
+- **Object audio**: place each channel as an object in a room of speakers
+  (Settings → Audio: stereo/quad/5.1/7.1/ring presets or your own layout). Distance-based panning
+  at constant power, spread from point to whole room; Fade cues move the objects, click-free.
+- Level, pan, EQ, effect and routing changes apply live to a playing cue. Pick the output device in
   Settings → Audio.
 - **Mic cues** play a live input (device and channels on the I/O tab) through the same mixer,
   with levels, EQ, routing and fades; about 30 ms of latency.
@@ -153,7 +158,10 @@ Jumps and dropouts don't fire cues.
   at; stills can show for a set time or until stopped).
 - Start/end trim, loops, hold last frame.
 - **Geometry**: position, scale (proportional or not), rotation, opacity, layer, fit/fill/stretch.
-- **Fade cues** can animate level, opacity *and* geometry.
+- **Fade cues** can animate level, opacity, geometry, video effects and object-audio positions.
+- **Video FX** (video, camera and text cues): colour controls, exposure, hue, colourise, sepia,
+  invert, posterise, threshold, vignette, blur, pixellate, sharpen and chroma key, run in the
+  stage's GPU shader, live and fadeable.
 - **Keyframe animation** (Animation tab, video and text cues): position, scale, rotation, crop,
   opacity, colour tint and, for text, fill/outline/shadow/background colours, with hold, linear,
   ease or custom Bézier curves and once/loop/ping-pong. Values are relative to the cue's own
@@ -233,11 +241,14 @@ can also drop media files from your file manager onto the window.
 ```
 src/model.rs        cue tree, workspace file (.openq JSON, media paths stored relative)
 src/dsp.rs          biquad EQ (design, response, processing)
+src/effects.rs      audio/video effect settings (parameter tables, fades, shader uniform)
+src/audio_fx.rs     real-time audio effect chains (delay, reverb, dynamics, ...)
+src/spatial.rs      object audio: speakers, objects, DBAP panning
 src/geometry.rs     layer placement + corner-pin homography
 src/animation.rs    keyframe tracks, easing, sampling (evaluated as the stages draw)
 src/engine.rs       cue state machine (GO, waits, continues, groups, fades, pause, panic)
 src/media/audio.rs  cpal output + lock-free real-time mixer (sample-accurate starts, gain ramps,
-                    per-voice EQ and routing matrix)
+                    per-voice EQ, effects and ramped routing matrix)
 src/media/decoder.rs  per-voice symphonia decode → trim/loop → rubato resample → ring buffer
 src/media/video.rs  FFmpeg decode threads / still images / cameras → RGBA frames + soundtrack to
                     the mixer

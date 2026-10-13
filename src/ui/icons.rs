@@ -100,3 +100,7 @@ pub const PHOTO_CAMERA: &str = "\u{e412}";
 pub const TIMER_PLAY: &str = "\u{f4ba}";
 pub const ANIMATION: &str = "\u{e71c}";
 pub const DIAMOND: &str = "\u{ead5}";
+pub const AUTO_FIX_HIGH: &str = "\u{e663}";
+pub const INSTANT_MIX: &str = "\u{e026}";
+pub const SURROUND_SOUND: &str = "\u{e049}";
+pub const ARROW_UPWARD: &str = "\u{e5d8}";

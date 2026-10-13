@@ -1,6 +1,8 @@
 //! Show data model: cues, cue tree operations and the workspace file format.
 
 use crate::animation::Animation;
+use crate::effects::{AudioEffect, VideoEffect};
+use crate::spatial::{AudioObject, ObjectAudio, Speaker};
 use serde::{Deserialize, Serialize};
 use std::path::{Path, PathBuf};
 use std::collections::HashMap;
@@ -580,6 +582,12 @@ pub struct AudioCue {
     /// Output fader levels in dB, one per device output, applied after the
     /// routing matrix. Missing entries are 0 dB.
     pub out_levels: Vec<f32>,
+    /// Audio effects, run in order after the EQ.
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub audio_fx: Vec<AudioEffect>,
+    /// Object audio: place the channels in the room instead of using the routing matrix.
+    #[serde(skip_serializing_if = "ObjectAudio::is_off")]
+    pub objects: ObjectAudio,
 }
 
 impl AudioCue {
@@ -673,6 +681,8 @@ impl Default for AudioCue {
             fade_out: 0.0,
             fade_curve: FadeCurve::SCurve,
             out_levels: Vec::new(),
+            audio_fx: Vec::new(),
+            objects: ObjectAudio::default(),
         }
     }
 }
@@ -716,6 +726,15 @@ pub struct VideoCue {
     /// Keyframe animation of the picture (relative to the settings above).
     #[serde(skip_serializing_if = "Animation::is_empty")]
     pub animation: Animation,
+    /// Video effects on the picture, in order (blur, pixellate and sharpen act first).
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub video_fx: Vec<VideoEffect>,
+    /// Audio effects on the soundtrack.
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub audio_fx: Vec<AudioEffect>,
+    /// Object audio for the soundtrack.
+    #[serde(skip_serializing_if = "ObjectAudio::is_off")]
+    pub objects: ObjectAudio,
 }
 
 impl Default for VideoCue {
@@ -738,6 +757,9 @@ impl Default for VideoCue {
             routing: None,
             out_levels: Vec::new(),
             animation: Animation::default(),
+            video_fx: Vec::new(),
+            audio_fx: Vec::new(),
+            objects: ObjectAudio::default(),
         }
     }
 }
@@ -760,6 +782,10 @@ pub struct FadeCue {
     pub geometry: Option<Geometry>,
     /// Stop the target when the fade ends (fade-outs).
     pub stop_target_when_done: bool,
+    /// Move object-audio objects to these positions (None = leave them alone).
+    pub objects: Option<Vec<AudioObject>>,
+    /// Fade the target's video effects to these settings (None = leave them alone).
+    pub video_fx: Option<Vec<VideoEffect>>,
 }
 
 impl Default for FadeCue {
@@ -772,6 +798,8 @@ impl Default for FadeCue {
             opacity: None,
             geometry: None,
             stop_target_when_done: true,
+            objects: None,
+            video_fx: None,
         }
     }
 }
@@ -843,6 +871,9 @@ pub struct TextCue {
     /// Keyframe animation (placement, opacity and colours; relative to the settings above).
     #[serde(skip_serializing_if = "Animation::is_empty")]
     pub animation: Animation,
+    /// Video effects on the text layer.
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub video_fx: Vec<VideoEffect>,
 }
 
 impl TextCue {
@@ -884,6 +915,7 @@ impl Default for TextCue {
             bg_padding: 24.0,
             bg_radius: 0.0,
             animation: Animation::default(),
+            video_fx: Vec::new(),
         }
     }
 }
@@ -933,6 +965,12 @@ pub struct MicCue {
     pub duration: f64,
     /// Fade up from silence when the cue starts, in seconds.
     pub fade_in: f64,
+    /// Audio effects, run in order after the EQ.
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub audio_fx: Vec<AudioEffect>,
+    /// Object audio: place the input channels in the room.
+    #[serde(skip_serializing_if = "ObjectAudio::is_off")]
+    pub objects: ObjectAudio,
 }
 
 impl Default for MicCue {
@@ -948,6 +986,8 @@ impl Default for MicCue {
             out_levels: Vec::new(),
             duration: 0.0,
             fade_in: 0.0,
+            audio_fx: Vec::new(),
+            objects: ObjectAudio::default(),
         }
     }
 }
@@ -980,6 +1020,9 @@ pub struct CameraCue {
     pub mirror: bool,
     /// Seconds the camera shows (0 = until stopped).
     pub duration: f64,
+    /// Video effects on the picture (chroma key for a green screen, colour, blur…).
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub video_fx: Vec<VideoEffect>,
 }
 
 impl Default for CameraCue {
@@ -996,6 +1039,7 @@ impl Default for CameraCue {
             geometry: Geometry::default(),
             mirror: false,
             duration: 0.0,
+            video_fx: Vec::new(),
         }
     }
 }
@@ -2008,6 +2052,10 @@ pub struct Settings {
     pub osc_enabled: bool,
     /// UDP port for OSC input.
     pub osc_port: u16,
+    /// The room for object audio: speaker positions and outputs (empty = a usual layout for the
+    /// device's output count, see [`crate::spatial::default_room`]).
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub speakers: Vec<Speaker>,
 }
 
 impl Default for Settings {
@@ -2015,6 +2063,7 @@ impl Default for Settings {
         Self { panic_fade: 1.0, master_volume_db: 0.0, double_go_protection: 0.25, audio_device: None,
             osc_enabled: false,
             osc_port: 53000,
+            speakers: Vec::new(),
         }
     }
 }

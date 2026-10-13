@@ -175,6 +175,7 @@ impl Show {
         self.dirty = true;
         self.edit_gen += 1;
         self.engine.workspace_changed();
+        self.media.set_room(&self.ws.settings.speakers);
     }
 
     /// Take a workspace edited on a remote device. Machine-specific settings (audio device,
@@ -206,6 +207,7 @@ impl Show {
         self.engine.set_playhead(self.ws.cue_list.first());
         self.engine.workspace_changed();
         let master = self.ws.settings.master_volume_db;
+        self.media.set_room(&self.ws.settings.speakers);
         self.media.reopen_audio(self.ws.settings.audio_device.as_deref(), master);
         if let Some(a) = &mut self.media.audio {
             a.set_master(master);
