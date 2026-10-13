@@ -1238,14 +1238,18 @@ impl App {
     fn title_bar(&mut self, ui: &mut egui::Ui, show: &Show) {
         use egui::text::{LayoutJob, TextFormat};
         let custom = custom_window_frame();
-        let h = if custom { CAPTION_H } else { 30.0 };
-        let sense = if custom { egui::Sense::click_and_drag() } else { egui::Sense::hover() };
+        let mac = mac_title_bar();
+        let h = if custom { CAPTION_H } else if mac { MAC_TITLE_H } else { 30.0 };
+        let sense = if custom || mac { egui::Sense::click_and_drag() } else { egui::Sense::hover() };
         let (rect, bar) = ui.allocate_exact_size(egui::vec2(ui.available_width(), h), sense);
+        // macOS draws its window buttons over the left end of the bar (hidden in fullscreen).
+        let fullscreen = ui.ctx().input(|i| i.viewport().fullscreen.unwrap_or(false));
+        let logo_x = rect.left() + if mac && !fullscreen { MAC_BUTTONS_W } else { 0.0 };
         let mut job = LayoutJob::default();
         job.append("Open", 0.0, TextFormat::simple(theme::title(26.0), theme::TEXT));
         job.append("Q", 0.0, TextFormat::simple(theme::title(26.0), theme::GREEN));
         let logo = ui.painter().layout_job(job);
-        ui.painter().galley(egui::pos2(rect.left(), rect.center().y - logo.size().y / 2.0), logo, theme::TEXT);
+        ui.painter().galley(egui::pos2(logo_x, rect.center().y - logo.size().y / 2.0), logo, theme::TEXT);
         // Workspace name, centred in the window.
         let name = show
             .path
@@ -1256,7 +1260,7 @@ impl App {
         let (name, dirty) = self.remote.title().unwrap_or((name, show.dirty));
         let label = format!("{name}{}", if dirty { "  •" } else { "" });
         ui.painter().text(rect.center(), egui::Align2::CENTER_CENTER, label, egui::FontId::proportional(14.0), theme::TEXT_DIM);
-        if custom {
+        if custom || mac {
             // The bar moves the window; a double-click maximises or restores it.
             let maximized = ui.ctx().input(|i| i.viewport().maximized.unwrap_or(false));
             if bar.double_clicked() {
@@ -1264,7 +1268,9 @@ impl App {
             } else if bar.drag_started() {
                 ui.ctx().send_viewport_cmd(egui::ViewportCommand::StartDrag);
             }
-            self.caption_buttons(ui, rect, maximized);
+            if custom {
+                self.caption_buttons(ui, rect, maximized);
+            }
         }
     }
 
@@ -2287,6 +2293,19 @@ pub fn custom_window_frame() -> bool {
 /// Height of the title bar in a custom window frame (the caption buttons fill it).
 const CAPTION_H: f32 = 34.0;
 
+/// True on macOS, where the system title bar is transparent and OpenQ's title bar takes its place:
+/// the window content starts at the top edge and macOS draws its close / minimise / zoom buttons
+/// over the left end of OpenQ's bar (`OPENQ_MAC_TITLEBAR=1` shows the layout elsewhere, for testing).
+pub fn mac_title_bar() -> bool {
+    cfg!(target_os = "macos") || std::env::var_os("OPENQ_MAC_TITLEBAR").is_some()
+}
+
+/// Height of OpenQ's title bar on macOS: the system title bar's, so the window buttons sit centred in it.
+const MAC_TITLE_H: f32 = 28.0;
+
+/// Room kept free for the macOS window buttons at the left of the title bar.
+const MAC_BUTTONS_W: f32 = 64.0;
+
 /// Fonts and visuals; call once at startup.
 pub fn install_theme(ctx: &egui::Context) {
     theme::install(ctx);
@@ -2416,7 +2435,7 @@ impl App {
             };
             // In a custom frame the caption buttons sit flush with the window's top-right corner.
             let title_margin =
-                if custom_window_frame() { egui::Margin { left: 14, right: 0, top: 0, bottom: 0 } } else { egui::Margin::symmetric(14, 6) };
+                if custom_window_frame() || mac_title_bar() { egui::Margin { left: 14, right: 0, top: 0, bottom: 0 } } else { egui::Margin::symmetric(14, 6) };
             egui::Panel::top("titlebar")
                 .frame(egui::Frame::new().fill(Color32::from_rgb(0x0e, 0x0f, 0x12)).inner_margin(title_margin))
                 .show_separator_line(false)

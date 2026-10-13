@@ -39,16 +39,19 @@ fn main() -> eframe::Result {
         recovery::spawn_autosave(show.clone(), a.clone(), autosave_now.clone());
     }
 
-    let options = eframe::NativeOptions {
-        viewport: egui::ViewportBuilder::default()
-            .with_title("OpenQ")
-            .with_inner_size([1280.0, 820.0])
-            .with_min_inner_size([900.0, 560.0])
-            .with_drag_and_drop(true)
-            // On Windows OpenQ draws its own title bar with the window buttons.
-            .with_decorations(!ui::custom_window_frame()),
-        ..Default::default()
-    };
+    let mut viewport = egui::ViewportBuilder::default()
+        .with_title("OpenQ")
+        .with_inner_size([1280.0, 820.0])
+        .with_min_inner_size([900.0, 560.0])
+        .with_drag_and_drop(true)
+        // On Windows OpenQ draws its own title bar with the window buttons.
+        .with_decorations(!ui::custom_window_frame());
+    if cfg!(target_os = "macos") {
+        // The system title bar becomes transparent and OpenQ's own bar takes its place; macOS
+        // keeps drawing its window buttons on top of it.
+        viewport = viewport.with_fullsize_content_view(true).with_titlebar_shown(false).with_title_shown(false);
+    }
+    let options = eframe::NativeOptions { viewport, ..Default::default() };
 
     eframe::run_native(
         "OpenQ",
