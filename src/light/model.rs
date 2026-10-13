@@ -484,12 +484,15 @@ pub struct Lighting {
     pub groups: Vec<Group>,
     /// Cue stacks.
     pub sequences: Vec<Sequence>,
+    /// DMX outputs.
+    pub outputs: Vec<super::dmx::OutputConfig>,
 }
 
 impl Lighting {
     /// Nothing designed yet (not written to the show file).
     pub fn is_empty(&self) -> bool {
         self.fixtures.is_empty() && self.fixture_types.is_empty() && self.groups.is_empty() && self.sequences.is_empty()
+            && self.outputs.is_empty()
     }
 
     /// A fixture by number.
