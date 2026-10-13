@@ -263,7 +263,9 @@ cargo run --release -- show.openq    # open a saved show</code></pre>
     <li><strong>Cue list tabs:</strong> one tab per cue list (see below).</li>
     <li><strong>Cue list:</strong> number, name, target (file details or the target cue), pre-wait,
     action time, post-wait and the continue arrow. Running cues turn green, and their action column
-    counts down. A red <span class="ms" style="color:var(--red)" aria-hidden="true">&#xf8b6;</span> icon marks a missing file or target.</li>
+    counts down. A red <span class="ms" style="color:var(--red)" aria-hidden="true">&#xf8b6;</span> icon marks a missing file or target.
+    Files are checked in the background every couple of seconds, so a slow network drive never freezes the
+    window, and a drive plugged back in clears the icon on its own.</li>
     <li><strong>Active cues:</strong> every running cue with elapsed and remaining time, plus its own pause and stop buttons.</li>
     <li><strong>Inspector:</strong> the settings of the selected cue, in tabs. Each tab groups its settings in
     cards. It opens tall enough to show a whole tab; drag its top edge to resize it.</li>
@@ -739,7 +741,7 @@ cargo run --release -- show.openq    # open a saved show</code></pre>
       <tr><td><kbd>Enter</kbd></td><td>Rename the selected cue in place</td></tr>
       <tr><td><kbd>Ctrl</kbd>+<kbd>1</kbd> … <kbd>0</kbd></td><td>New Audio, Video, Group, Wait, Memo, Fade, Start, Stop, Pause, Go To cue</td></tr>
       <tr><td><kbd>Ctrl</kbd>+<kbd>D</kbd> · <kbd>Ctrl</kbd>+<kbd>G</kbd> · <kbd>Del</kbd></td><td>Duplicate · group selection · delete</td></tr>
-      <tr><td><kbd>Ctrl</kbd>+<kbd>Z</kbd> · <kbd>Ctrl</kbd>+<kbd>Shift</kbd>+<kbd>Z</kbd></td><td>Undo · redo</td></tr>
+      <tr><td><kbd>Ctrl</kbd>+<kbd>Z</kbd> · <kbd>Ctrl</kbd>+<kbd>Shift</kbd>+<kbd>Z</kbd></td><td>Undo · redo (up to 200 steps; very large shows keep fewer, at least 10, to save memory)</td></tr>
       <tr><td><kbd>Ctrl</kbd>+<kbd>N</kbd> / <kbd>O</kbd> / <kbd>S</kbd> / <kbd>Shift</kbd>+<kbd>S</kbd></td><td>New / open / save / save as</td></tr>
       <tr><td><kbd>F1</kbd></td><td>Open this user manual</td></tr>
       <tr><td><kbd>F11</kbd></td><td>Fullscreen, in a stage window</td></tr>
@@ -763,7 +765,7 @@ cargo run --release -- show.openq    # open a saved show</code></pre>
       <tr><td>A Camera cue shows nothing</td><td>Check the device on its Camera tab (use <span class="ms" aria-hidden="true">&#xe5d5;</span>
       to look again) and the engine log. Another program using the camera can block it.</td></tr>
       <tr><td>A cue shows a red <span class="ms" style="color:var(--red)" aria-hidden="true">&#xf8b6;</span> icon</td><td>Its media file is missing or unreadable, or its target cue was deleted. If the file has moved, click <em>Browse…</em> on the cue's
-      Time tab to find it again.</td></tr>
+      Time tab to find it again. After reconnecting a drive, give it about two seconds to clear.</td></tr>
       <tr><td>A video doesn't appear</td><td>Open the stage window from the Video menu. Check the cue's stage, opacity
       and layer, and look in <span class="menu">View → Engine log</span> for decoder errors. A graphics card can only
       show pictures up to a certain size (often 8192 or 16384 pixels across). OpenQ shrinks still images, SVGs and text
