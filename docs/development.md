@@ -19,7 +19,7 @@ window and GPU, `tools/ui_perf.sh` drives the app with `OPENQ_DEBUG_SCRIPT` (tim
 
 **Stress tests** (`tests/stress.rs`) are `#[ignore]`d so everyday `cargo test` stays fast. Run
 `tools/stress.sh` before tagging a version and after big features; `.github/workflows/ci.yml` runs it
-on every `v*` tag (run it by hand on the commit first, since openqup offers a tag as soon as it exists). It needs no sound card (audio goes to a virtual output that records what
+on every `v*` tag (run it by hand on the commit first, since oqman offers a tag as soon as it exists). It needs no sound card (audio goes to a virtual output that records what
 it plays) and covers:
 
 - engine fuzzing (hundreds of random shows under random transport and edits) and scale (thousands
@@ -35,12 +35,12 @@ it plays) and covers:
 
 User manual: **Help → User manual** (F1) in the app, or open `docs/manual/index.html` in a browser. API documentation: `cargo doc --no-deps --open`.
 
-Video uses the FFmpeg libraries (the system's on Linux; on Windows and macOS openqup installs an
+Video uses the FFmpeg libraries (the system's on Linux; on Windows and macOS oqman installs an
 LGPL-only build inside the app), plus clang at build time, so anything FFmpeg can play works, with no codec plugins to
 install. Build without video with `--no-default-features`.
 
-**Versions** are `vX.Y.Z` tags; there are no binary releases. openqup
-(<https://github.com/iagonunez/openqup>, its own repository) builds the newest tag on the user's
+**Versions** are `vX.Y.Z` tags; there are no binary releases. oqman
+(<https://github.com/iagonunez/oqman>, its own repository) builds the newest tag on the user's
 computer: BtbN's LGPL-only FFmpeg on Windows, FFmpeg compiled from source without GPL parts on macOS,
 the distribution's FFmpeg on Linux. Its "End to end" workflow checks a full install on all three.
 

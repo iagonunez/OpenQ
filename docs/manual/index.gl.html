@@ -227,23 +227,23 @@ footer { margin-top: 56px; padding-top: 18px; border-top: 1px solid var(--border
 <section id="start">
   <h2><span class="n">01</span>Primeiros pasos</h2>
   <h3>Instalación</h3>
-  <p>OpenQ compílase no teu propio ordenador co seu instalador, <a href="https://github.com/iagonunez/openqup">openqup</a>.
+  <p>OpenQ compílase no teu propio ordenador co seu instalador, <a href="https://github.com/iagonunez/oqman">oqman</a>.
   Instala o que precisa a compilación (Rust, un compilador e FFmpeg para o vídeo), compila a versión máis recente
   e engade OpenQ ás túas aplicacións. A primeira instalación leva uns minutos; as actualizacións son máis rápidas.</p>
   <div class="table-wrap"><table>
     <thead><tr><th>Sistema</th><th>Como</th></tr></thead>
     <tbody>
       <tr><td>macOS 11 ou posterior, Linux</td><td>No Terminal, executa
-      <code>curl --proto '=https' --tlsv1.2 -fsSL https://github.com/iagonunez/openqup/releases/latest/download/install.sh | sh</code>.
+      <code>curl --proto '=https' --tlsv1.2 -fsSL https://github.com/iagonunez/oqman/releases/latest/download/install.sh | sh</code>.
       Nun Mac sen as Command Line Tools de Apple, macOS pide instalalas primeiro; despois volve executar a orde.
       OpenQ queda en <code>Applications</code> dentro do teu cartafol persoal (macOS) ou no menú de aplicacións (Linux).</td></tr>
       <tr><td>Windows 10/11 (64 bits)</td><td>En PowerShell, executa
-      <code>powershell -ExecutionPolicy Bypass -c "irm https://github.com/iagonunez/openqup/releases/latest/download/install.ps1 | iex"</code>.
+      <code>powershell -ExecutionPolicy Bypass -c "irm https://github.com/iagonunez/oqman/releases/latest/download/install.ps1 | iex"</code>.
       Sen as C++ Build Tools de Microsoft, primeiro ábrese o seu instalador: acéptao e deixa que remate.
       Despois OpenQ está no menú Inicio.</td></tr>
     </tbody>
   </table></div>
-  <p>Para obter unha versión máis nova, executa <code>openqup update</code>. Para quitar OpenQ, executa <code>openqup uninstall</code>
+  <p>Para obter unha versión máis nova, executa <code>oqman update</code>. Para quitar OpenQ, executa <code>oqman uninstall</code>
   (en Windows tamén podes usar <em>Configuración → Aplicacións → Aplicacións instaladas</em>). Os teus espectáculos nunca se tocan.</p>
   <p>Para executar unha copia na que esteas a traballar desde o código fonte:</p>
 <pre><code>cargo run --release                  # comezar cun espectáculo baleiro

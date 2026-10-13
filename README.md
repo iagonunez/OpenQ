@@ -32,29 +32,29 @@ message to the lighting desk. It is an open-source application written in Rust w
 
 ## 📦 Install
 
-OpenQ is built from source on your computer by **[openqup](https://github.com/iagonunez/openqup)**,
+OpenQ is built from source on your computer by **[oqman](https://github.com/iagonunez/oqman)**,
 an installer in the style of rustup. It installs Rust and the build dependencies if they're missing
 (on Windows and macOS an LGPL-only FFmpeg, on Linux your distribution's packages, asking first),
-builds the newest tagged version and installs the app with a menu entry. `openqup update` rebuilds
-when a new version is tagged; `openqup uninstall` removes it.
+builds the newest tagged version and installs the app with a menu entry. `oqman update` rebuilds
+when a new version is tagged; `oqman uninstall` removes it.
 
 ### 🐧 Linux and 🍎 macOS
 
 ```sh
-curl --proto '=https' --tlsv1.2 -fsSL https://github.com/iagonunez/openqup/releases/latest/download/install.sh | sh
+curl --proto '=https' --tlsv1.2 -fsSL https://github.com/iagonunez/oqman/releases/latest/download/install.sh | sh
 ```
 
 ### 🪟 Windows 10/11 (64-bit), in PowerShell
 
 ```powershell
-powershell -ExecutionPolicy Bypass -c "irm https://github.com/iagonunez/openqup/releases/latest/download/install.ps1 | iex"
+powershell -ExecutionPolicy Bypass -c "irm https://github.com/iagonunez/oqman/releases/latest/download/install.ps1 | iex"
 ```
 
 The app is installed to `~/Applications/OpenQ.app` (macOS, code-signed ad hoc or with your
 Developer ID: `--sign`), `%LOCALAPPDATA%\Programs\OpenQ` (Windows) or `~/.local/bin/openq` (Linux).
-openqup's README lists every download, its source and its license.
+oqman's README lists every download, its source and its license.
 
-### 🛠️ By hand (Linux; this is what openqup does there)
+### 🛠️ By hand (Linux; this is what oqman does there)
 
 ```sh
 # Debian/Ubuntu

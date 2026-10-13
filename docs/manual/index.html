@@ -225,23 +225,23 @@ footer { margin-top: 56px; padding-top: 18px; border-top: 1px solid var(--border
 <section id="start">
   <h2><span class="n">01</span>Getting started</h2>
   <h3>Installing</h3>
-  <p>OpenQ is built on your own computer by its installer, <a href="https://github.com/iagonunez/openqup">openqup</a>.
+  <p>OpenQ is built on your own computer by its installer, <a href="https://github.com/iagonunez/oqman">oqman</a>.
   It installs what the build needs (Rust, a compiler and FFmpeg for video), builds the newest version and adds OpenQ
   to your applications. The first install takes a few minutes; later updates are quicker.</p>
   <div class="table-wrap"><table>
     <thead><tr><th>System</th><th>How</th></tr></thead>
     <tbody>
       <tr><td>macOS 11 or later, Linux</td><td>In Terminal, run
-      <code>curl --proto '=https' --tlsv1.2 -fsSL https://github.com/iagonunez/openqup/releases/latest/download/install.sh | sh</code>.
+      <code>curl --proto '=https' --tlsv1.2 -fsSL https://github.com/iagonunez/oqman/releases/latest/download/install.sh | sh</code>.
       On a Mac without Apple's Command Line Tools, macOS asks to install them first; run the command again afterwards.
       OpenQ ends up in <code>Applications</code> in your home folder (macOS) or in your applications menu (Linux).</td></tr>
       <tr><td>Windows 10/11 (64-bit)</td><td>In PowerShell, run
-      <code>powershell -ExecutionPolicy Bypass -c "irm https://github.com/iagonunez/openqup/releases/latest/download/install.ps1 | iex"</code>.
+      <code>powershell -ExecutionPolicy Bypass -c "irm https://github.com/iagonunez/oqman/releases/latest/download/install.ps1 | iex"</code>.
       Without Microsoft's C++ Build Tools, their installer opens first: accept it and let it finish.
       OpenQ is then in the Start menu.</td></tr>
     </tbody>
   </table></div>
-  <p>To get a newer version, run <code>openqup update</code>. To remove OpenQ, run <code>openqup uninstall</code>
+  <p>To get a newer version, run <code>oqman update</code>. To remove OpenQ, run <code>oqman uninstall</code>
   (on Windows you can also use <em>Settings → Apps → Installed apps</em>). Your shows are never touched.</p>
   <p>To run a copy you are working on from source instead:</p>
 <pre><code>cargo run --release                  # start with an empty show

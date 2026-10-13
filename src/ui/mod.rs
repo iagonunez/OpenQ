@@ -2292,7 +2292,7 @@ pub fn custom_window_frame() -> bool {
 
 /// The app icon (`assets/icon/openq-256.png`) for the main and stage windows: taskbar, Alt-Tab and,
 /// while OpenQ runs, the macOS Dock. Installed apps also carry it in the `.exe` (`build.rs`), the
-/// macOS bundle and the Linux icon theme (openqup).
+/// macOS bundle and the Linux icon theme (oqman).
 pub fn app_icon() -> std::sync::Arc<egui::IconData> {
     static ICON: std::sync::OnceLock<std::sync::Arc<egui::IconData>> = std::sync::OnceLock::new();
     ICON.get_or_init(|| {

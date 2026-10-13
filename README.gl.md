@@ -33,29 +33,29 @@ en producións comerciais.
 
 ## 📦 Instalación
 
-OpenQ compílase desde o código fonte no teu ordenador con **[openqup](https://github.com/iagonunez/openqup)**,
+OpenQ compílase desde o código fonte no teu ordenador con **[oqman](https://github.com/iagonunez/oqman)**,
 un instalador ao estilo de rustup. Instala Rust e as dependencias de compilación se faltan (en
 Windows e macOS un FFmpeg só LGPL, en Linux os paquetes da túa distribución, preguntando antes),
 compila a versión etiquetada máis recente e instala a aplicación coa súa entrada no menú.
-`openqup update` volve compilar cando sae unha versión nova; `openqup uninstall` elimínaa.
+`oqman update` volve compilar cando sae unha versión nova; `oqman uninstall` elimínaa.
 
 ### 🐧 Linux e 🍎 macOS
 
 ```sh
-curl --proto '=https' --tlsv1.2 -fsSL https://github.com/iagonunez/openqup/releases/latest/download/install.sh | sh
+curl --proto '=https' --tlsv1.2 -fsSL https://github.com/iagonunez/oqman/releases/latest/download/install.sh | sh
 ```
 
 ### 🪟 Windows 10/11 (64 bits), en PowerShell
 
 ```powershell
-powershell -ExecutionPolicy Bypass -c "irm https://github.com/iagonunez/openqup/releases/latest/download/install.ps1 | iex"
+powershell -ExecutionPolicy Bypass -c "irm https://github.com/iagonunez/oqman/releases/latest/download/install.ps1 | iex"
 ```
 
 A aplicación instálase en `~/Applications/OpenQ.app` (macOS, asinada ad hoc ou co teu Developer ID:
 `--sign`), `%LOCALAPPDATA%\Programs\OpenQ` (Windows) ou `~/.local/bin/openq` (Linux). O README de
-openqup enumera cada descarga, a súa orixe e a súa licenza.
+oqman enumera cada descarga, a súa orixe e a súa licenza.
 
-### 🛠️ Á man (Linux; é o que fai openqup alí)
+### 🛠️ Á man (Linux; é o que fai oqman alí)
 
 ```sh
 # Debian/Ubuntu
