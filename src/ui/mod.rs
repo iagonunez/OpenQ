@@ -2,6 +2,7 @@
 
 mod about;
 mod animation;
+pub(crate) mod bench;
 #[cfg(feature = "video")]
 mod blend;
 mod debug;

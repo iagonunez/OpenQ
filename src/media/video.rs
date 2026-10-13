@@ -569,6 +569,28 @@ impl Converter {
     }
 }
 
+/// Per-frame cost of what a movie's decode thread does to each picture: convert a `w`×`h`
+/// picture in `format` to RGBA and publish it to a frame slot (benchmarks). One entry per frame.
+pub(crate) fn conversion_times(w: u32, h: u32, format: ff::format::Pixel, frames: usize) -> anyhow::Result<Vec<std::time::Duration>> {
+    init()?;
+    let mut src = ff::util::frame::video::Video::new(format, w, h);
+    for plane in 0..src.planes() {
+        for (i, b) in src.data_mut(plane).iter_mut().enumerate() {
+            *b = (i * 7 + plane * 31) as u8;
+        }
+    }
+    let slot = FrameSlot::default();
+    let mut conv = Converter::default();
+    let mut out = Vec::with_capacity(frames);
+    for _ in 0..frames {
+        let t = std::time::Instant::now();
+        conv.convert(&src, false)?;
+        conv.publish(&slot);
+        out.push(t.elapsed());
+    }
+    Ok(out)
+}
+
 // ---------------------------------------------------------------- live cameras
 
 /// This system's camera driver in FFmpeg.

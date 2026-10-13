@@ -37,6 +37,8 @@
 //!   the stage windows (spanned surfaces, edge blending, layer [`model::BlendMode`]s).
 //! * [`recovery`] — crash safety: panics in workers become errors, the engine thread recovers
 //!   in place, autosave plus crash detection bring unsaved work back after a crash.
+//! * [`mod@bench`] — benchmarks for comparing builds (`tools/bench.sh`); the mixer reports its
+//!   [DSP load](media::audio::AudioOutput::dsp_load).
 //!
 //! # Threads
 //!
@@ -71,6 +73,7 @@
 #![warn(missing_docs)]
 
 pub mod animation;
+pub mod bench;
 pub mod control;
 pub mod displays;
 pub mod dsp;

@@ -185,6 +185,32 @@ struct Health {
     xruns: AtomicU64,
     /// Callbacks run so far.
     callbacks: AtomicU64,
+    /// Time spent rendering, in nanoseconds (see [`DspLoad`]).
+    busy_ns: AtomicU64,
+    /// Audio rendered, in nanoseconds of sound.
+    audio_ns: AtomicU64,
+    /// Highest busy/audio ratio of a single callback, in millionths.
+    peak_ppm: AtomicU64,
+}
+
+/// How much of the audio thread's time budget the mixer uses. Above 1.0 the device runs dry
+/// (dropouts); a peak near it means one more voice or a busy machine could cause one.
+#[derive(Clone, Copy, Debug, Default, PartialEq)]
+pub struct DspLoad {
+    /// Time spent rendering since the output opened.
+    pub busy: Duration,
+    /// Sound rendered in that time.
+    pub audio: Duration,
+    /// Worst single callback: render time / length of its buffer.
+    pub peak: f64,
+}
+
+impl DspLoad {
+    /// Average load (render time / audio time) between `earlier` and this reading.
+    pub fn since(&self, earlier: &DspLoad) -> f64 {
+        let audio = self.audio.saturating_sub(earlier.audio).as_secs_f64();
+        if audio > 0.0 { self.busy.saturating_sub(earlier.busy).as_secs_f64() / audio } else { 0.0 }
+    }
 }
 
 /// Where an [`AudioOutput`] sends its sound.
@@ -468,6 +494,7 @@ impl Mixer {
     /// [`Mixer::fill`], but a panic silences the output for good and marks it lost instead of
     /// unwinding into the driver.
     fn fill_guarded<T: FromSample<f32>>(&mut self, failed: &mut bool, data: &mut [T]) {
+        let t0 = Instant::now();
         if !*failed && std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| self.fill(data))).is_err() {
             *failed = true;
             self.health.lost.store(true, Ordering::Release);
@@ -476,6 +503,14 @@ impl Mixer {
             for s in data.iter_mut() {
                 *s = T::from_sample_(0.0);
             }
+        }
+        // DSP load: two clock reads per callback (a vDSO call, no syscall), relaxed counters.
+        let busy = t0.elapsed().as_nanos() as u64;
+        let audio = (data.len() / self.channels.max(1)) as u64 * 1_000_000_000 / self.clock.rate.max(1) as u64;
+        self.health.busy_ns.fetch_add(busy, Ordering::Relaxed);
+        self.health.audio_ns.fetch_add(audio, Ordering::Relaxed);
+        if audio > 0 {
+            self.health.peak_ppm.fetch_max(busy * 1_000_000 / audio, Ordering::Relaxed);
         }
     }
 
@@ -922,6 +957,16 @@ impl AudioOutput {
     /// Device callbacks run so far.
     pub fn callbacks(&self) -> u64 {
         self.health.callbacks.load(Ordering::Relaxed)
+    }
+
+    /// Mixer load so far (see [`DspLoad::since`] for the load over an interval).
+    pub fn dsp_load(&self) -> DspLoad {
+        let h = &self.health;
+        DspLoad {
+            busy: Duration::from_nanos(h.busy_ns.load(Ordering::Relaxed)),
+            audio: Duration::from_nanos(h.audio_ns.load(Ordering::Relaxed)),
+            peak: h.peak_ppm.load(Ordering::Relaxed) as f64 / 1e6,
+        }
     }
 
     /// Voices the mixer holds or is about to (playing and preloaded).
