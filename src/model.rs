@@ -2080,6 +2080,9 @@ pub struct Workspace {
     pub settings: Settings,
     /// Video outputs.
     pub stages: Vec<Stage>,
+    /// Lighting design (patch, groups, lighting cue sequences).
+    #[serde(skip_serializing_if = "crate::light::Lighting::is_empty")]
+    pub lighting: crate::light::Lighting,
 }
 
 impl Default for Workspace {
@@ -2089,6 +2092,7 @@ impl Default for Workspace {
             cue_list: CueList::default(),
             settings: Settings::default(),
             stages: vec![Stage::default()],
+            lighting: Default::default(),
         }
     }
 }

@@ -35,6 +35,8 @@
 //! * [`effects`] — audio and video effect settings (effect stacks on cues); video
 //!   effects run in the stage windows' layer shader.
 //! * [`spatial`] — object audio: speakers in a room, objects placed by distance-based panning.
+//! * [`light`] — the lighting design (patch, groups, lighting cue sequences with tracking), kept
+//!   apart from the live show; Light cues target its cues.
 //! * [`osc`] — OSC input. [`remote`] — paired remote devices (encrypted, authenticated).
 //! * [`displays`] — system monitors for stage outputs. [`ui`] — the egui application, including
 //!   the stage windows (spanned surfaces, edge blending, layer [`model::BlendMode`]s).
@@ -91,6 +93,7 @@ pub mod effects;
 pub mod engine;
 pub mod errlog;
 pub mod geometry;
+pub mod light;
 pub mod media;
 pub mod model;
 pub mod osc;
