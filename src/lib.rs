@@ -40,6 +40,8 @@
 //!   the stage windows (spanned surfaces, edge blending, layer [`model::BlendMode`]s).
 //! * [`recovery`] — crash safety: panics in workers become errors, the engine thread recovers
 //!   in place, autosave plus crash detection bring unsaved work back after a crash.
+//! * [`errlog`] — warnings, errors and crashes are also appended to a local log file
+//!   (Help → Error log).
 //! * [`mod@bench`] — benchmarks for comparing builds (`tools/bench.sh`); the mixer reports its
 //!   [DSP load](media::audio::AudioOutput::dsp_load).
 //!
@@ -54,7 +56,7 @@
 //!
 //! See [`recovery`]: worker panics become per-cue errors, the engine thread recovers from its own
 //! panics, a failing or lost audio device is reopened, unsaved work is autosaved and offered back
-//! after a crash. `tests/stress.rs` (run with `tools/stress.sh`) exercises all of it.
+//! after a crash. Every warning and error lands in the [`errlog`] file. `tests/stress.rs` (run with `tools/stress.sh`) exercises all of it.
 //!
 //! # Example: drive a show without a UI
 //!
@@ -83,6 +85,7 @@ pub mod displays;
 pub mod dsp;
 pub mod effects;
 pub mod engine;
+pub mod errlog;
 pub mod geometry;
 pub mod media;
 pub mod model;

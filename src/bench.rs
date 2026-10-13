@@ -1,7 +1,9 @@
 //! Benchmarks for comparing builds: the engine tick, cue lookups, the audio mixer, start
 //! accuracy, video conversion, text rendering, waveforms, saving/loading, remote patches and the
 //! UI frame. Run them with `tools/bench.sh` (or `cargo run --release --example bench`), which
-//! saves a JSON [`Report`] and compares it with a baseline.
+//! saves a JSON [`Report`], compares it with the previous run in the [`History`] (or a baseline),
+//! adds it to the history and regenerates the results section of `docs/performance.html`
+//! ([`render_history`], [`update_page`]) with a chart per metric.
 //!
 //! Every benchmark is headless and deterministic in its input (fixed seeds, generated media), so
 //! two runs on the same machine differ only by noise. Lower is better for every value except
@@ -44,7 +46,10 @@ pub struct Metric {
 
 /// Everything one run measured, plus where it ran.
 #[derive(Clone, Debug, Default, Serialize, Deserialize)]
+#[serde(default)]
 pub struct Report {
+    /// OpenQ version (`Cargo.toml`) the run measured.
+    pub version: String,
     /// Git revision (with `-dirty` for uncommitted changes), from the caller.
     pub revision: String,
     /// Free-form label (e.g. "before fade rewrite").
@@ -59,6 +64,8 @@ pub struct Report {
     pub features: Vec<String>,
     /// Whether the run used `--quick` sizes (not comparable with full runs).
     pub quick: bool,
+    /// Some groups were left out (`--only`, `--no-realtime`): not kept in the [`History`].
+    pub partial: bool,
     /// The measurements.
     pub metrics: Vec<Metric>,
 }
@@ -84,11 +91,20 @@ pub fn run(opts: &Options) -> Report {
         machine: machine(),
         profile: if cfg!(debug_assertions) { "debug" } else { "release" }.into(),
         features: features(),
+        version: env!("CARGO_PKG_VERSION").into(),
         quick: opts.quick,
+        partial: !opts.filter.is_empty() || opts.no_realtime,
         ..Default::default()
     };
     let wanted = |g: &str| opts.filter.is_empty() || opts.filter.iter().any(|f| g.contains(f.as_str()));
     let q = opts.quick;
+    // Bring the CPU to its working clock first: without this the first group runs ~30 % slower,
+    // so `--only` runs didn't match the same group inside a full run.
+    let warm = Instant::now();
+    let mut spin = 0u64;
+    while warm.elapsed() < Duration::from_secs(1) {
+        spin = std::hint::black_box(spin.wrapping_mul(6_364_136_223_846_793_005).wrapping_add(1));
+    }
     for g in GROUPS {
         if !wanted(g) || (opts.no_realtime && matches!(*g, "mixer" | "timing")) {
             continue;
@@ -850,6 +866,276 @@ pub fn comparability(old: &Report, new: &Report) -> Vec<String> {
     w
 }
 
+// ------------------------------------------------------------------ history and the page
+
+/// Runs kept to compare versions over time (`bench/history.json`). Only complete runs
+/// (not `--quick`, no groups left out) are kept; a run of a revision already in the history
+/// replaces it.
+#[derive(Clone, Debug, Default, Serialize, Deserialize)]
+pub struct History {
+    /// Oldest first.
+    pub runs: Vec<Report>,
+}
+
+/// Runs kept in a [`History`] (the oldest are dropped).
+pub const MAX_HISTORY: usize = 100;
+
+impl History {
+    /// Read a history file; a missing file is an empty history.
+    pub fn load(path: &Path) -> anyhow::Result<Self> {
+        match std::fs::read_to_string(path) {
+            Ok(s) => Ok(serde_json::from_str(&s)?),
+            Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(Self::default()),
+            Err(e) => Err(e.into()),
+        }
+    }
+
+    /// Write the history, one run per line (small, readable diffs).
+    pub fn save(&self, path: &Path) -> anyhow::Result<()> {
+        let runs = self.runs.iter().map(serde_json::to_string).collect::<Result<Vec<_>, _>>()?;
+        if let Some(dir) = path.parent() {
+            std::fs::create_dir_all(dir)?;
+        }
+        crate::recovery::write_atomic(path, format!("{{\"runs\": [\n{}\n]}}\n", runs.join(",\n")).as_bytes())
+    }
+
+    /// Whether `r` can go into the history (and be compared with its runs).
+    pub fn accepts(r: &Report) -> bool {
+        !r.quick && !r.partial
+    }
+
+    /// Add a run (if [`Self::accepts`] it). Returns whether it was added.
+    pub fn add(&mut self, r: Report) -> bool {
+        if !Self::accepts(&r) {
+            return false;
+        }
+        self.runs.retain(|o| !(o.revision == r.revision && same_setup(o, &r)) || r.revision.is_empty());
+        self.runs.push(r);
+        self.runs.sort_by_key(|r| r.unix_time);
+        let extra = self.runs.len().saturating_sub(MAX_HISTORY);
+        self.runs.drain(..extra);
+        true
+    }
+
+    /// The runs comparable with `r` (same machine, profile and features), oldest first, `r`'s
+    /// own revision excluded.
+    pub fn comparable(&self, r: &Report) -> Vec<&Report> {
+        self.runs.iter().filter(|o| same_setup(o, r) && (o.revision != r.revision || o.revision.is_empty()) && o.unix_time <= r.unix_time).collect()
+    }
+
+    /// The latest comparable run before `r`.
+    pub fn previous(&self, r: &Report) -> Option<&Report> {
+        self.comparable(r).pop()
+    }
+
+    /// The latest comparable run of an earlier OpenQ version than `r`'s.
+    pub fn previous_version(&self, r: &Report) -> Option<&Report> {
+        self.comparable(r).into_iter().rfind(|o| !o.version.is_empty() && version_key(&o.version) < version_key(&r.version))
+    }
+}
+
+/// `"1.10.2"` → `[1, 10, 2]`, for ordering versions.
+fn version_key(v: &str) -> Vec<u64> {
+    v.split(['.', '-', '+']).map_while(|p| p.parse().ok()).collect()
+}
+
+fn same_setup(a: &Report, b: &Report) -> bool {
+    a.machine == b.machine && a.profile == b.profile && a.features == b.features && a.quick == b.quick
+}
+
+fn esc(s: &str) -> String {
+    s.replace('&', "&amp;").replace('<', "&lt;").replace('>', "&gt;").replace('"', "&quot;")
+}
+
+/// A value with sensible precision.
+pub fn fmt_value(v: f64) -> String {
+    if v == 0.0 || v.abs() >= 100.0 {
+        format!("{v:.0}")
+    } else if v.abs() >= 10.0 {
+        format!("{v:.1}")
+    } else {
+        format!("{v:.3}")
+    }
+}
+
+fn run_label(r: &Report) -> String {
+    let rev = if r.revision.is_empty() { "?" } else { &r.revision };
+    if r.version.is_empty() { rev.to_string() } else { format!("v{} {rev}", r.version) }
+}
+
+fn run_date(r: &Report) -> String {
+    let t = crate::errlog::timestamp(std::time::UNIX_EPOCH + Duration::from_secs(r.unix_time));
+    t[..16].to_string()
+}
+
+/// Round `v` up to 1, 2 or 5 × a power of ten (chart axis top).
+fn nice_ceil(v: f64) -> f64 {
+    if v <= 0.0 || !v.is_finite() {
+        return 1.0;
+    }
+    let p = 10f64.powf(v.log10().floor());
+    [1.0, 2.0, 5.0, 10.0].iter().map(|m| m * p).find(|x| *x >= v * 0.999).unwrap_or(10.0 * p)
+}
+
+/// One small line chart (inline SVG) of a metric over `runs`.
+fn chart(name: &str, runs: &[&Report]) -> String {
+    let points: Vec<(usize, &Report, &Metric)> =
+        runs.iter().enumerate().filter_map(|(i, r)| r.metrics.iter().find(|m| m.name == name).map(|m| (i, *r, m))).collect();
+    let Some(&(_, _, last)) = points.last() else { return String::new() };
+    let (w, h, left, right, top, bottom) = (240.0, 112.0, 38.0, 8.0, 8.0, 88.0);
+    let ymax = nice_ceil(points.iter().map(|p| p.2.value).fold(0.0, f64::max));
+    let n = runs.len().max(1);
+    let x = |i: usize| if n == 1 { (left + w - right) / 2.0 } else { left + (w - left - right) * i as f64 / (n - 1) as f64 };
+    let y = |v: f64| bottom - (bottom - top) * (v / ymax).clamp(0.0, 1.0);
+    let mut svg = format!(r#"<svg viewBox="0 0 {w} {h}" role="img" aria-label="{} over {} runs">"#, esc(name), points.len());
+    for (v, cls) in [(0.0, "base"), (ymax / 2.0, "grid"), (ymax, "grid")] {
+        svg += &format!(r#"<line class="{cls}" x1="{left}" x2="{}" y1="{y:.1}" y2="{y:.1}"/><text x="{}" y="{:.1}" text-anchor="end">{}</text>"#, w - right, left - 4.0, y(v) + 3.5, (v * 1e6).round() / 1e6, y = y(v));
+    }
+    if points.len() > 1 {
+        let path: Vec<String> = points.iter().map(|(i, _, m)| format!("{:.1},{:.1}", x(*i), y(m.value))).collect();
+        svg += &format!(r#"<polyline class="ln" points="{}"/>"#, path.join(" "));
+    }
+    for (i, r, m) in &points {
+        let tip = format!("{} · {} · {} {}", run_label(r), run_date(r), fmt_value(m.value), m.unit);
+        let (cx, cy) = (x(*i), y(m.value));
+        svg += &format!(r#"<g><title>{}</title><circle class="hit" cx="{cx:.1}" cy="{cy:.1}" r="9"/><circle class="pt" cx="{cx:.1}" cy="{cy:.1}" r="3.5"/></g>"#, esc(&tip));
+    }
+    let (first, latest) = (runs[0], runs[n - 1]);
+    svg += &format!(r#"<text x="{left}" y="{}" text-anchor="start">{}</text>"#, h - 6.0, esc(&run_label(first)));
+    if n > 1 {
+        svg += &format!(r#"<text x="{}" y="{}" text-anchor="end">{}</text>"#, w - right, h - 6.0, esc(&run_label(latest)));
+    }
+    svg += "</svg>";
+    let short = name.split_once('.').map_or(name, |(_, rest)| rest);
+    format!(
+        r#"<div class="bchart"><div class="bhead"><code title="{} — {}">{}</code><b>{} {}</b></div>{svg}</div>"#,
+        esc(name),
+        esc(&last.note),
+        esc(short),
+        fmt_value(last.value),
+        esc(&last.unit)
+    )
+}
+
+/// One "vs" cell: the relative change and whether it's beyond `tolerance`.
+fn change_cell(old: Option<&Report>, m: &Metric, tolerance: f64) -> String {
+    let Some(old) = old else { return "<td></td>".into() };
+    let one = Report { metrics: vec![m.clone()], ..Default::default() };
+    let Some(c) = compare(old, &one, tolerance).into_iter().find(|c| c.name == m.name) else { return "<td></td>".into() };
+    let Some(o) = c.old else { return r#"<td class="n">new</td>"#.into() };
+    let pct = format!("{:+.0}%", c.worse_by * 100.0);
+    let tag = if c.regression && c.noisy {
+        r#" <span class="tag warn">noisy</span>"#
+    } else if c.regression {
+        r#" <span class="tag bad">slower</span>"#
+    } else if c.improvement {
+        r#" <span class="tag good">faster</span>"#
+    } else {
+        ""
+    };
+    format!(r#"<td class="n" title="was {} {}">{pct}{tag}</td>"#, fmt_value(o), esc(&m.unit))
+}
+
+/// The generated part of `docs/performance.html`: the latest run, a comparison with the
+/// previous run and the previous version, and one chart per metric over the history. Uses the
+/// runs comparable with the latest one.
+pub fn render_history(h: &History, tolerance: f64) -> String {
+    let Some(latest) = h.runs.iter().rev().find(|r| History::accepts(r)) else {
+        return "<p>No benchmark runs yet: run <code>tools/bench.sh</code>.</p>".into();
+    };
+    let mut runs = h.comparable(latest);
+    runs.push(latest);
+    let skip = runs.len().saturating_sub(30);
+    let runs = &runs[skip..];
+    let prev = h.previous(latest);
+    let prev_ver = h.previous_version(latest);
+    let mut out = String::from(CHART_CSS);
+    out += &format!(
+        "<p>Latest run: <b>{}</b> · {} UTC · {} · {} {}. {} comparable run{} in <code>bench/history.json</code>{}.</p>\n",
+        esc(&run_label(latest)),
+        run_date(latest),
+        esc(&latest.machine),
+        esc(&latest.profile),
+        esc(&latest.features.join("+")),
+        runs.len(),
+        if runs.len() == 1 { "" } else { "s" },
+        if skip > 0 { " (charts show the last 30)" } else { "" }
+    );
+    let head = |r: Option<&Report>, what: &str| r.map_or(format!("vs {what} (none yet)"), |r| format!("vs {}", esc(&run_label(r))));
+    out += &format!(
+        "<div class=\"tbl\"><table>\n<tr><th>Metric</th><th>Latest</th><th>{}</th><th>{}</th></tr>\n",
+        head(prev, "previous run"),
+        head(prev_ver, "previous version")
+    );
+    for m in &latest.metrics {
+        out += &format!(
+            "<tr><td><code>{}</code></td><td class=\"n\" title=\"{}\">{} {}</td>{}{}</tr>\n",
+            esc(&m.name),
+            esc(&m.note),
+            fmt_value(m.value),
+            esc(&m.unit),
+            change_cell(prev, m, tolerance),
+            change_cell(prev_ver, m, tolerance)
+        );
+    }
+    out += "</table></div>\n<p class=\"loc\">Positive = slower/worse. Tags follow the regression rule above \
+            (tolerance and per-unit floor); <em>noisy</em> = a worst-case metric that moved, never a failure. \
+            Hover a chart point for its run.</p>\n";
+    let mut groups: Vec<&str> = Vec::new();
+    for m in &latest.metrics {
+        let g = m.name.split('.').next().unwrap_or("");
+        if !groups.contains(&g) {
+            groups.push(g);
+        }
+    }
+    for g in groups {
+        out += &format!("<h3>{}</h3>\n<div class=\"bcharts\">\n", esc(g));
+        for m in latest.metrics.iter().filter(|m| m.name.split('.').next() == Some(g)) {
+            out += &chart(&m.name, runs);
+            out += "\n";
+        }
+        out += "</div>\n";
+    }
+    out
+}
+
+const CHART_CSS: &str = "<style>
+.bcharts { display: grid; grid-template-columns: repeat(auto-fill, minmax(220px, 1fr)); gap: 10px; margin: 10px 0 18px; }
+.bchart { background: var(--surface); border: 1px solid var(--line); border-radius: 10px; padding: 8px 10px 4px; min-width: 0; }
+.bhead { display: flex; justify-content: space-between; gap: 8px; align-items: baseline; font-size: 13px; }
+.bhead code { background: none; padding: 0; color: var(--muted); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.bhead b { font-variant-numeric: tabular-nums; white-space: nowrap; }
+.bchart svg { display: block; width: 100%; height: auto; }
+.bchart text { fill: var(--muted); font: 9.5px system-ui, sans-serif; font-variant-numeric: tabular-nums; }
+.bchart .grid { stroke: var(--line); stroke-width: 1; stroke-dasharray: 2 3; }
+.bchart .base { stroke: var(--line); stroke-width: 1; }
+.bchart .ln { fill: none; stroke: var(--accent); stroke-width: 2; stroke-linejoin: round; stroke-linecap: round; }
+.bchart .pt { fill: var(--accent); stroke: var(--surface); stroke-width: 2; }
+.bchart .hit { fill: transparent; }
+.bchart g:hover .pt { r: 5; }
+</style>
+";
+
+/// Replace the text between `<!--bench:TAG-->` and `<!--/bench:TAG-->` in `page`.
+pub fn replace_marked(page: &str, tag: &str, content: &str) -> anyhow::Result<String> {
+    let (open, close) = (format!("<!--bench:{tag}-->"), format!("<!--/bench:{tag}-->"));
+    let start = page.find(&open).ok_or_else(|| anyhow::anyhow!("marker {open} not found"))? + open.len();
+    let end = start + page[start..].find(&close).ok_or_else(|| anyhow::anyhow!("marker {close} not found"))?;
+    Ok(format!("{}{content}{}", &page[..start], &page[end..]))
+}
+
+/// Regenerate the benchmark parts of the performance page at `path` from `h`: the results
+/// section (`results` markers) and the "latest numbers" line under the title (`latest`).
+pub fn update_page(path: &Path, h: &History, tolerance: f64) -> anyhow::Result<()> {
+    let page = std::fs::read_to_string(path)?;
+    let mut page = replace_marked(&page, "results", &format!("\n{}", render_history(h, tolerance)))?;
+    if let Some(r) = h.runs.iter().rev().find(|r| History::accepts(r)) {
+        let line = format!("latest benchmark run: {} on {} UTC", esc(&run_label(r)), run_date(r));
+        page = replace_marked(&page, "latest", &line)?;
+    }
+    crate::recovery::write_atomic(path, page.as_bytes())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -859,6 +1145,44 @@ mod tests {
             metrics: values.iter().map(|(n, v, u)| Metric { name: (*n).into(), value: *v, unit: (*u).into(), higher_is_better: false, note: String::new(), noisy: false }).collect(),
             ..Default::default()
         }
+    }
+
+    fn hrun(version: &str, rev: &str, time: u64, value: f64) -> Report {
+        Report { version: version.into(), revision: rev.into(), unix_time: time, machine: "m".into(), ..report(&[("engine.go", value, "us")]) }
+    }
+
+    #[test]
+    fn history_keeps_one_run_per_revision_and_finds_previous_versions() {
+        let mut h = History::default();
+        assert!(h.add(hrun("0.1.0", "a", 1, 10.0)));
+        assert!(h.add(hrun("0.1.0", "b", 2, 11.0)));
+        assert!(h.add(hrun("0.2.0", "c", 3, 30.0)));
+        assert!(h.add(hrun("0.2.0", "c", 4, 12.0)), "a re-run replaces the revision's run");
+        assert!(!h.add(Report { quick: true, ..hrun("0.2.0", "d", 5, 1.0) }));
+        assert!(h.add(Report { machine: "other".into(), ..hrun("0.2.0", "e", 6, 1.0) }));
+        assert_eq!(h.runs.len(), 4);
+        let latest = h.runs.iter().find(|r| r.revision == "c").unwrap().clone();
+        assert_eq!(latest.metrics[0].value, 12.0);
+        assert_eq!(h.previous(&latest).unwrap().revision, "b");
+        assert_eq!(h.previous_version(&latest).unwrap().revision, "b");
+        assert!(h.previous_version(&hrun("0.1.0", "x", 9, 1.0)).is_none());
+
+        // The page uses the latest run's machine: "e" is alone there.
+        assert!(render_history(&h, 0.15).contains("1 comparable run in"));
+        h.runs.retain(|r| r.machine == "m");
+        let html = render_history(&h, 0.15);
+        assert!(html.contains("3 comparable runs") && html.contains("vs v0.1.0 b") && html.contains("+9%"), "{html}");
+        assert_eq!(html.matches("<circle class=\"pt\"").count(), 3);
+
+        let page = "<p><!--bench:latest-->old<!--/bench:latest--></p>x<!--bench:results-->old<!--/bench:results-->";
+        let page = replace_marked(page, "results", "NEW").unwrap();
+        assert_eq!(page, "<p><!--bench:latest-->old<!--/bench:latest--></p>x<!--bench:results-->NEW<!--/bench:results-->");
+        assert!(replace_marked("nothing", "results", "x").is_err());
+
+        let path = std::env::temp_dir().join(format!("openq-bench-history-{}.json", std::process::id()));
+        h.save(&path).unwrap();
+        assert_eq!(History::load(&path).unwrap().runs.len(), 3);
+        let _ = std::fs::remove_file(&path);
     }
 
     #[test]

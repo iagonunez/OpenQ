@@ -134,7 +134,7 @@ impl App {
                 self.recovery.save_soon();
                 self.notify(format!("Recovered {} — save to keep it", o.name()));
             }
-            Err(e) => self.notify(format!("Cannot recover {}: {e:#}", o.name())),
+            Err(e) => self.notify_error(format!("Cannot recover {}: {e:#}", o.name())),
         }
     }
 }

@@ -33,6 +33,7 @@ use crate::model::{
     AudioCue, Cue, CueId, CueKind, GroupMode, KindTag, Stage, StageId, VideoCue, Workspace,
 };
 use crate::control::{Command, CueAction};
+use crate::errlog;
 use crate::show::{SharedShow, Show};
 use egui::{Color32, Key, KeyboardShortcut, Modifiers, RichText};
 use parking_lot::Mutex;
@@ -107,6 +108,8 @@ enum SettingsTab {
 /// Default height of the inspector panel: room for the tallest tab (the waveform plus a row of
 /// cards, or the level faders) without scrolling.
 const INSPECTOR_HEIGHT: f32 = 420.0;
+/// How long status bar messages (notifications, the latest engine log entry) stay visible.
+const STATUS_TIMEOUT: Duration = Duration::from_secs(6);
 
 /// The egui application: owns all UI state and draws the main window, stage windows and dialogs.
 pub struct App {
@@ -158,6 +161,9 @@ pub struct App {
     gpu: Option<eframe::egui_wgpu::RenderState>,
     meters: Vec<f32>,
     status: Option<(String, Instant)>,
+    /// The engine log entry shown in the status bar and when it appeared (hidden after
+    /// [`STATUS_TIMEOUT`]; View → Engine log keeps them all).
+    log_tail: (usize, String, Instant),
     show_settings: bool,
     show_log: bool,
     scroll_to: Option<CueId>,
@@ -225,6 +231,7 @@ impl App {
             gpu: None,
             meters: Vec::new(),
             status: None,
+            log_tail: (0, String::new(), Instant::now()),
             show_settings: false,
             show_log: false,
             scroll_to: None,
@@ -268,12 +275,29 @@ impl App {
     fn open_manual(&mut self) {
         match manual::open() {
             Ok(path) => self.notify(format!("Opened the user manual in your browser ({})", path.display())),
-            Err(e) => self.notify(format!("{e:#}")),
+            Err(e) => self.notify_error(format!("{e:#}")),
         }
     }
 
     fn notify(&mut self, msg: impl Into<String>) {
         self.status = Some((msg.into(), Instant::now()));
+    }
+
+    /// Like [`Self::notify`], for failures: also written to the error log.
+    fn notify_error(&mut self, msg: impl Into<String>) {
+        let msg = msg.into();
+        log::warn!(target: "openq::ui", "{msg}");
+        self.notify(msg);
+    }
+
+    /// Open the error log (warnings, errors, crashes) with the system's text viewer.
+    fn open_error_log(&mut self) {
+        let Some(path) = errlog::log_path() else {
+            return self.notify("No config folder: the error log is off");
+        };
+        if let Err(e) = manual::open_with_default_app(&path) {
+            self.notify(format!("Cannot open {}: {e}", path.display()));
+        }
     }
 
     /// Select one cue and put the playhead on it (selection drives standby).
@@ -923,6 +947,10 @@ impl App {
             ui.menu_button("Help", |ui| {
                 if ui.add(egui::Button::new(wi(I::NOTES, "User manual")).shortcut_text("F1")).clicked() {
                     self.open_manual();
+                }
+                ui.separator();
+                if ui.button(wi(I::RECEIPT_LONG, "Error log")).on_hover_text("Warnings, errors and crashes, kept in a local file").clicked() {
+                    self.open_error_log();
                 }
                 ui.separator();
                 if ui.button(wi(I::INFO, "About OpenQ and licenses…")).clicked() {
@@ -1592,7 +1620,8 @@ impl App {
                 theme::TEXT_DIM,
             );
             if let Some((msg, t)) = &self.status {
-                if t.elapsed() < Duration::from_secs(6) {
+                if t.elapsed() < STATUS_TIMEOUT {
+                    ui.ctx().request_repaint_after(STATUS_TIMEOUT.saturating_sub(t.elapsed()));
                     ui.add_space(10.0);
                     ui.label(RichText::new(msg).small().color(AMBER));
                 } else {
@@ -1611,7 +1640,14 @@ impl App {
                 if r.on_hover_cursor(egui::CursorIcon::PointingHand).clicked() {
                     self.show_settings = !open;
                 }
-                if let Some(l) = show.engine.log.last() {
+                let log = &show.engine.log;
+                if let Some(l) = log.last()
+                    && (log.len(), l) != (self.log_tail.0, &self.log_tail.1)
+                {
+                    self.log_tail = (log.len(), l.clone(), Instant::now());
+                }
+                if let Some(l) = log.last().filter(|_| self.log_tail.2.elapsed() < STATUS_TIMEOUT) {
+                    ui.ctx().request_repaint_after(STATUS_TIMEOUT.saturating_sub(self.log_tail.2.elapsed()));
                     ui.add_space(8.0);
                     if ui.link(RichText::new(theme::with_icon(icons::WARNING, l)).color(AMBER).small()).clicked() {
                         self.show_log = true;
@@ -1756,7 +1792,7 @@ impl App {
             engine.workspace_changed();
             show.edited();
             if let Some(e) = &show.media.audio_error {
-                self.notify(format!("Audio device failed: {e}"));
+                self.notify_error(format!("Audio device failed: {e}"));
             }
         }
     }
@@ -1933,7 +1969,7 @@ impl App {
                 drop(s);
                 self.notify(format!("Saved {}", path.display()));
             }
-            Err(e) => self.notify(format!("Save failed: {e:#}")),
+            Err(e) => self.notify_error(format!("Save failed: {e:#}")),
         }
     }
 
@@ -1952,7 +1988,7 @@ impl App {
                 drop(s);
                 self.notify(format!("Opened {}", path.display()));
             }
-            Err(e) => self.notify(format!("Open failed: {e:#}")),
+            Err(e) => self.notify_error(format!("Open failed: {e:#}")),
         }
     }
 

@@ -6,8 +6,9 @@
 //! * [`Autosave`] keeps a copy of the unsaved show in the config folder (`recovery/`). Each
 //!   running instance holds an OS file lock on its session; a copy whose lock nobody holds was
 //!   left behind by a crash, and [`find_orphans`] offers it back on the next start.
-//! * [`install_panic_hook`] writes a crash report (`crash/`) with a backtrace, and, when the
-//!   panicking thread isn't the engine (whose panics are recovered), a last-moment autosave.
+//! * [`install_panic_hook`] writes a crash report (`crash/`) with a backtrace, adds a line to the
+//!   [error log](crate::errlog), and, when the panicking thread is the UI thread (other threads'
+//!   panics are recovered), makes a last-moment autosave.
 //! * [`Fault`] points let the stress tests (feature `fault-injection`) make real code panic on
 //!   purpose; without the feature they compile to nothing.
 
@@ -359,9 +360,15 @@ pub fn install_panic_hook(show: &SharedShow, autosave: Arc<Mutex<Autosave>>) {
     let previous = std::panic::take_hook();
     std::panic::set_hook(Box::new(move |info| {
         previous(info);
-        if let Some(p) = write_crash_log(info) {
-            log::error!("crash report written to {}", p.display());
-        }
+        // One line in the error log for every panic, caught or not; the full report (with the
+        // backtrace) goes to its own file.
+        let report = write_crash_log(info).map(|p| format!(" (report: {})", p.display())).unwrap_or_default();
+        log::error!(
+            "panic in thread '{}' at {}: {}{report}",
+            std::thread::current().name().unwrap_or("?"),
+            info.location().map(|l| l.to_string()).unwrap_or_default(),
+            panic_message(info.payload())
+        );
         if std::thread::current().name() != Some("main") {
             // Worker, engine and audio-callback panics are caught and recovered; the show
             // keeps running.

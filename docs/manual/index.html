@@ -262,7 +262,7 @@ cargo run --release -- show.openq    # open a saved show</code></pre>
     minimise, maximise and close buttons: drag the bar to move the window, double-click it to maximise, and drag any
     window edge to resize.</li>
     <li><strong>Menus:</strong> File, Edit, Cue, Show, Video (stages and outputs), Remote, View
-    (geometry preview, engine log) and Help (this manual, about and licenses).</li>
+    (geometry preview, engine log) and Help (this manual, the error log, about and licenses).</li>
     <li><strong>GO</strong> fires the cue at the playhead. The <strong>standby</strong> card shows that cue,
     with its notes underneath so the operator can read them before pressing GO.</li>
     <li><strong>Transport:</strong> <span class="ms" aria-hidden="true">&#xe034;</span> pause all, <span class="ms" aria-hidden="true">&#xe037;</span> resume all,
@@ -278,7 +278,8 @@ cargo run --release -- show.openq    # open a saved show</code></pre>
     cards. It opens tall enough to show a whole tab; drag its top edge to resize it.</li>
     <li><strong>Status bar:</strong> the <strong>Edit / Show</strong> switch at the left, then the audio device, video
     status, OSC, remote connections and messages. The <span class="ms" aria-hidden="true">&#xe8b8;</span> button at the
-    right opens <a href="#settings">Settings</a>. A warning from the engine appears next to it and opens the engine log.</li>
+    right opens <a href="#settings">Settings</a>. A warning from the engine appears next to it for a few seconds and opens the engine log; messages on the
+    left of the bar also fade out after a few seconds.</li>
   </ul>
   <h3>Working with the cue list</h3>
   <ul>
@@ -811,6 +812,10 @@ cargo run --release -- show.openq    # open a saved show</code></pre>
   <code>~/Library/Application Support/OpenQ</code> on macOS, <code>%APPDATA%\OpenQ</code> on Windows, in
   <code>recovery</code> and <code>crash</code>. A crash report holds what went wrong and where; please
   attach it when you report a problem.</p>
+  <p><strong>Error log.</strong> Every warning and error (engine log entries, device failures, failed saves or
+  opens, crashes) is also written, with the date and time in UTC, to <code>logs/openq.log</code> in the same
+  folder, so you can look back after the show. <span class="menu">Help → Error log</span> opens it. When it grows
+  past 2 MB it is moved to <code>openq.old.log</code> the next time OpenQ starts.</p>
 </section>
 
 <section id="keys">

@@ -1,7 +1,7 @@
 // Release builds on Windows are GUI apps: no console window.
 #![cfg_attr(all(windows, not(debug_assertions)), windows_subsystem = "windows")]
 
-use openq::{displays, media, recovery, show, ui};
+use openq::{displays, errlog, media, recovery, show, ui};
 use parking_lot::Mutex;
 use std::sync::Arc;
 
@@ -13,7 +13,8 @@ fn main() -> eframe::Result {
         }
         return Ok(());
     }
-    env_logger::Builder::from_env(env_logger::Env::default().default_filter_or("openq=info")).init();
+    // stderr as before, plus warnings/errors/crashes in the error log file (Help → Error log).
+    errlog::init("openq=info");
 
     media::text::preload();
     let prober = media::Prober::new();
