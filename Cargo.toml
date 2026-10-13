@@ -1,6 +1,6 @@
 [package]
 name = "openq"
-version = "0.2.0"
+version = "0.2.1"
 license = "Apache-2.0"
 repository = "https://github.com/iagonunez/OpenQ"
 description = "Show-control and cue playback system"
@@ -37,6 +37,13 @@ symphonia = { version = "0.6.1", features = ["all"] }
 uuid = { version = "1.28.0", features = ["v4", "serde"] }
 cosmic-text = "0.19.0"
 resvg = { version = "0.48.1", default-features = false, features = ["text", "system-fonts", "memmap-fonts", "svgz", "raster-images"] }
+
+# macOS: native menu bar and the window-button position.
+[target.'cfg(target_os = "macos")'.dependencies]
+muda = { version = "0.21", default-features = false }
+objc2 = "0.5"
+objc2-app-kit = { version = "0.2", features = ["NSWindow", "NSResponder", "NSView", "NSControl", "NSButton"] }
+objc2-foundation = "0.2"
 
 [build-dependencies]
 # Windows: the icon in the .exe (build.rs).

@@ -14,6 +14,8 @@ mod icons;
 mod inspector;
 mod language;
 mod manual;
+#[cfg(target_os = "macos")]
+mod native_menu;
 mod outputs;
 #[cfg(all(test, feature = "video"))]
 mod perf_tests;
@@ -124,6 +126,9 @@ pub struct App {
     drag: Option<Vec<CueId>>,
     last_playhead: Option<CueId>,
     deferred: Vec<Deferred>,
+    /// The menu bar in the macOS system bar (installed on the first frame).
+    #[cfg(target_os = "macos")]
+    native_menu: Option<native_menu::NativeMenu>,
     /// Stage windows currently open / fullscreen / in mapping-edit mode.
     stage_open: HashSet<StageId>,
     stage_fullscreen: HashSet<StageId>,
@@ -205,6 +210,8 @@ impl App {
             drag: None,
             last_playhead: None,
             deferred: Vec::new(),
+            #[cfg(target_os = "macos")]
+            native_menu: None,
             stage_open: HashSet::new(),
             stage_fullscreen: HashSet::new(),
             mapping_edit: HashSet::new(),
@@ -1232,6 +1239,12 @@ impl App {
                 self.toggle_mode();
             }
         }
+    }
+
+    /// Whether the menus are in the system menu bar (macOS), so the window has none of its own.
+    #[cfg(not(target_os = "macos"))]
+    fn has_native_menu(&self) -> bool {
+        false
     }
 
     /// Branding strip above the menu bar.
@@ -2311,8 +2324,9 @@ pub fn mac_title_bar() -> bool {
     cfg!(target_os = "macos") || std::env::var_os("OPENQ_MAC_TITLEBAR").is_some()
 }
 
-/// Height of OpenQ's title bar on macOS: the system title bar's, so the window buttons sit centred in it.
-const MAC_TITLE_H: f32 = 28.0;
+/// Height of OpenQ's title bar on macOS: taller than the system's 28 pt so the title has room;
+/// `native_menu::place_window_buttons` keeps the window buttons centred in it.
+const MAC_TITLE_H: f32 = 40.0;
 
 /// Room kept free for the macOS window buttons at the left of the title bar.
 const MAC_BUTTONS_W: f32 = 64.0;
@@ -2391,6 +2405,8 @@ impl eframe::App for App {
             self.gpu = frame.wgpu_render_state().cloned();
         }
         self.draw(ui, frame.info().cpu_usage);
+        #[cfg(target_os = "macos")]
+        native_menu::place_window_buttons(frame, MAC_TITLE_H as f64);
     }
 }
 
@@ -2451,9 +2467,13 @@ impl App {
                 .frame(egui::Frame::new().fill(Color32::from_rgb(0x0e, 0x0f, 0x12)).inner_margin(title_margin))
                 .show_separator_line(false)
                 .show(ui, |ui| self.title_bar(ui, show));
-            egui::Panel::top("menu")
-                .frame(bar(theme::BG_APP))
-                .show(ui, |ui| self.menu_bar(ui, show));
+            #[cfg(target_os = "macos")]
+            self.native_menu_frame(&ctx, show);
+            if !self.has_native_menu() {
+                egui::Panel::top("menu")
+                    .frame(bar(theme::BG_APP))
+                    .show(ui, |ui| self.menu_bar(ui, show));
+            }
             egui::Panel::top("header")
                 .frame(
                     egui::Frame::new()
