@@ -61,7 +61,7 @@ Still open:
 - Rate-limit Edit messages on the server side.
 
 ## Reliability (done: stress suite, crash recovery; follow-ups)
-- Done: `tests/stress.rs` + `tools/stress.sh` (gate in the release workflow), autosave + crash
+- Done: `tests/stress.rs` + `tools/stress.sh` (run by the CI workflow on version tags), autosave + crash
   recovery window, crash reports, engine panic recovery, audio device reconnect, panic-safe
   workers, DLL-smoothed mixer clock, preloading of continue successors, cue-loop detection,
   voice cap (`MAX_VOICES`), bounded poster cache, atomic saves.

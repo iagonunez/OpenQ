@@ -66,11 +66,15 @@ Notable cases:
   > as a whole, with its complete source.
   > Distributing the source code is not affected.
 
-  The official Windows and macOS releases do this. They bundle FFmpeg 9.0 shared libraries
-  configured without GPL, version-3 or nonfree parts. The release workflow refuses any other
-  configuration. Each zip has the LGPL text and build details under `Licenses/ffmpeg`, and the
-  release page carries the exact FFmpeg source. The libraries stay replaceable, as the LGPL
-  requires (see `packaging/FFMPEG.md`).
+  OpenQ isn't distributed as binaries: the installer, openqup
+  (<https://github.com/iagonunez/openqup>), builds it on the user's own computer, which is not
+  distribution. On Windows and macOS it still uses FFmpeg 9.0 shared libraries configured without
+  GPL, version-3 or nonfree parts (BtbN's `lgpl-shared` build on Windows; compiled from the
+  official source on macOS) and refuses any other configuration, so the installed app can be
+  passed on: it carries the LGPL text and build details under `Licenses/ffmpeg`, the source is at
+  <https://ffmpeg.org>, and the libraries stay replaceable, as the LGPL requires. On Linux it uses
+  the distribution's FFmpeg (often GPL): such a build can only be passed on under GPL 3, with its
+  source.
 - **Audio, windowing and graphics:** the operating system's own libraries (ALSA/PipeWire, X11,
   Wayland, Vulkan/OpenGL, CoreAudio, WASAPI…), under their own terms.
 - **System fonts:** Text cues can use any font installed on the computer. The show file stores

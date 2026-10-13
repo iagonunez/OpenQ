@@ -1,0 +1,29 @@
+# Unit, stress, soak, fuzz and crash-recovery tests (tests/stress.rs). OpenQ isn't published as
+# binaries: users build it with openqup (https://github.com/iagonunez/openqup), which installs
+# the build dependencies and compiles a tagged version on their own computer. A `v*` tag marks a
+# version openqup offers, so tags run this; it can also be run by hand.
+# The tests run without a sound card (virtual audio output) and without FFmpeg (no `video`
+# feature). openqup's own "End to end" workflow builds the full app on Linux, macOS and Windows.
+name: CI
+
+on:
+  push:
+    tags: ["v*"]
+  workflow_dispatch:
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  stress:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Rust
+        run: rustup toolchain install stable --profile minimal && rustup default stable
+      - name: System libraries
+        run: sudo apt-get update && sudo apt-get install -y pkg-config libasound2-dev libudev-dev
+      - name: Unit tests
+        run: cargo test --release --locked --no-default-features
+      - name: Stress tests
+        run: CARGO_FLAGS="--locked --no-default-features" tools/stress.sh

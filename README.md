@@ -5,27 +5,45 @@ Free to use, including for commercial productions. See [Licence](#licence).
 
 ## Install
 
-- **Windows 10/11 (64-bit) and macOS 11+ (Apple silicon or Intel):** download the zip for your
-  system from the [Releases](https://github.com/iagonunez/OpenQ/releases) page. The zips include
-  FFmpeg for video, built without GPL parts. They aren't code-signed: on Windows choose
-  *More info → Run anyway*; on macOS right-click OpenQ.app and choose *Open*.
-- **Linux:** build from source, using your distribution's FFmpeg:
+OpenQ is built from source on your computer by **[openqup](https://github.com/iagonunez/openqup)**,
+an installer in the style of rustup. It installs Rust and the build dependencies if they're missing
+(on Windows and macOS an LGPL-only FFmpeg, on Linux your distribution's packages, asking first),
+builds the newest tagged version and installs the app with a menu entry. `openqup update` rebuilds
+when a new version is tagged; `openqup uninstall` removes it.
+
+- **Linux and macOS:**
 
   ```sh
-  # Debian/Ubuntu
-  sudo apt install build-essential clang pkg-config libasound2-dev libpipewire-0.3-dev libudev-dev \
-    libavcodec-dev libavformat-dev libavutil-dev libavdevice-dev libavfilter-dev \
-    libswscale-dev libswresample-dev
-  # Fedora:  sudo dnf install clang pkgconf alsa-lib-devel pipewire-devel systemd-devel ffmpeg-free-devel
-  # Arch:    sudo pacman -S --needed base-devel clang pkgconf alsa-lib libpipewire ffmpeg
-  curl https://sh.rustup.rs -sSf | sh          # Rust, if you don't have it
-  git clone https://github.com/iagonunez/OpenQ && cd OpenQ
-  cargo build --release && ./target/release/openq
+  curl --proto '=https' --tlsv1.2 -fsSL https://github.com/iagonunez/openqup/releases/latest/download/install.sh | sh
   ```
 
-  Audio goes through PipeWire when it is running (each sink and source is listed by name), and
-  through ALSA otherwise. Without the PipeWire headers, build with
-  `--no-default-features --features video` (ALSA only).
+- **Windows 10/11 (64-bit)**, in PowerShell:
+
+  ```powershell
+  powershell -ExecutionPolicy Bypass -c "irm https://github.com/iagonunez/openqup/releases/latest/download/install.ps1 | iex"
+  ```
+
+The app is installed to `~/Applications/OpenQ.app` (macOS, code-signed ad hoc or with your
+Developer ID: `--sign`), `%LOCALAPPDATA%\Programs\OpenQ` (Windows) or `~/.local/bin/openq` (Linux).
+openqup's README lists every download, its source and its licence.
+
+**By hand** (Linux; this is what openqup does there):
+
+```sh
+# Debian/Ubuntu
+sudo apt install build-essential clang pkg-config libasound2-dev libpipewire-0.3-dev libudev-dev \
+  libavcodec-dev libavformat-dev libavutil-dev libavdevice-dev libavfilter-dev \
+  libswscale-dev libswresample-dev
+# Fedora:  sudo dnf install clang pkgconf alsa-lib-devel pipewire-devel systemd-devel ffmpeg-free-devel
+# Arch:    sudo pacman -S --needed base-devel clang pkgconf alsa-lib libpipewire ffmpeg
+curl https://sh.rustup.rs -sSf | sh          # Rust, if you don't have it
+git clone https://github.com/iagonunez/OpenQ && cd OpenQ
+cargo build --release && ./target/release/openq
+```
+
+Audio goes through PipeWire when it is running (each sink and source is listed by name), and
+through ALSA otherwise. Without the PipeWire headers, build with
+`--no-default-features --features video` (ALSA only).
 
 ## Development
 
@@ -45,8 +63,8 @@ window and GPU, `tools/ui_perf.sh` drives the app with `OPENQ_DEBUG_SCRIPT` (tim
 `go`, `stop`, `scrub`, `drag`, `close`, `quit`) and `OPENQ_DEBUG_FRAMES` (per-frame CSV).
 
 **Stress tests** (`tests/stress.rs`) are `#[ignore]`d so everyday `cargo test` stays fast. Run
-`tools/stress.sh` before a release and after big features; the release workflow runs it too and
-won't publish if it fails. It needs no sound card (audio goes to a virtual output that records what
+`tools/stress.sh` before tagging a version and after big features; `.github/workflows/ci.yml` runs it
+on every `v*` tag (run it by hand on the commit first, since openqup offers a tag as soon as it exists). It needs no sound card (audio goes to a virtual output that records what
 it plays) and covers:
 
 - engine fuzzing (hundreds of random shows under random transport and edits) and scale (thousands
@@ -62,13 +80,14 @@ it plays) and covers:
 
 User manual: **Help → User manual** (F1) in the app, or open `docs/manual/index.html` in a browser. API documentation: `cargo doc --no-deps --open`.
 
-Video uses the FFmpeg libraries (the system's on Linux; bundled in the Windows and macOS
-releases), plus clang at build time, so anything FFmpeg can play works, with no codec plugins to
+Video uses the FFmpeg libraries (the system's on Linux; on Windows and macOS openqup installs an
+LGPL-only build inside the app), plus clang at build time, so anything FFmpeg can play works, with no codec plugins to
 install. Build without video with `--no-default-features`.
 
-**Releases** are built by `.github/workflows/release.yml` when a `v*` tag is pushed. It builds the
-Windows package with BtbN's LGPL-only FFmpeg, and the macOS packages (arm64 and x86_64) with FFmpeg
-compiled by `tools/build_ffmpeg_macos.sh`. It then attaches the matching FFmpeg sources to the release.
+**Versions** are `vX.Y.Z` tags; there are no binary releases. openqup
+(<https://github.com/iagonunez/openqup>, its own repository) builds the newest tag on the user's
+computer: BtbN's LGPL-only FFmpeg on Windows, FFmpeg compiled from source without GPL parts on macOS,
+the distribution's FFmpeg on Linux. Its "End to end" workflow checks a full install on all three.
 
 ## Cues
 

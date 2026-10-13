@@ -214,18 +214,25 @@ footer { margin-top: 56px; padding-top: 18px; border-top: 1px solid var(--border
 <section id="start">
   <h2><span class="n">01</span>Getting started</h2>
   <h3>Installing</h3>
+  <p>OpenQ is built on your own computer by its installer, <a href="https://github.com/iagonunez/openqup">openqup</a>.
+  It installs what the build needs (Rust, a compiler and FFmpeg for video), builds the newest version and adds OpenQ
+  to your applications. The first install takes a few minutes; later updates are quicker.</p>
   <div class="table-wrap"><table>
     <thead><tr><th>System</th><th>How</th></tr></thead>
     <tbody>
-      <tr><td>Windows 10/11 (64-bit)</td><td>Download <code>OpenQ-…-windows-x64.zip</code> from the
-      <a href="https://github.com/iagonunez/OpenQ/releases">Releases page</a>, unzip it anywhere and run <code>OpenQ.exe</code>.
-      Keep the <code>.dll</code> files next to it. If Windows says it protected your PC, choose <em>More info → Run anyway</em>.</td></tr>
-      <tr><td>macOS 11 or later</td><td>Download the zip for your Mac (<code>arm64</code> for Apple silicon, <code>x86_64</code> for Intel),
-      unzip it and drag <code>OpenQ.app</code> to Applications. The first time, right-click it and choose <em>Open</em>.</td></tr>
-      <tr><td>Linux</td><td>Build it from source with your distribution's FFmpeg. The commands are in the project README.</td></tr>
+      <tr><td>macOS 11 or later, Linux</td><td>In Terminal, run
+      <code>curl --proto '=https' --tlsv1.2 -fsSL https://github.com/iagonunez/openqup/releases/latest/download/install.sh | sh</code>.
+      On a Mac without Apple's Command Line Tools, macOS asks to install them first; run the command again afterwards.
+      OpenQ ends up in <code>Applications</code> in your home folder (macOS) or in your applications menu (Linux).</td></tr>
+      <tr><td>Windows 10/11 (64-bit)</td><td>In PowerShell, run
+      <code>powershell -ExecutionPolicy Bypass -c "irm https://github.com/iagonunez/openqup/releases/latest/download/install.ps1 | iex"</code>.
+      Without Microsoft's C++ Build Tools, their installer opens first: accept it and let it finish.
+      OpenQ is then in the Start menu.</td></tr>
     </tbody>
   </table></div>
-  <p>The Windows and macOS downloads include FFmpeg for video. To build from source on any system:</p>
+  <p>To get a newer version, run <code>openqup update</code>. To remove OpenQ, run <code>openqup uninstall</code>
+  (on Windows you can also use <em>Settings → Apps → Installed apps</em>). Your shows are never touched.</p>
+  <p>To run a copy you are working on from source instead:</p>
 <pre><code>cargo run --release                  # start with an empty show
 cargo run --release -- show.openq    # open a saved show</code></pre>
   <p>This manual is built into OpenQ: choose <span class="menu">Help → User manual</span> or press <kbd>F1</kbd>
@@ -803,9 +810,10 @@ cargo run --release -- show.openq    # open a saved show</code></pre>
   notice. These are the fonts (Inter, JetBrains Mono and Barlow Condensed under the SIL Open Font License; Material Symbols
   under Apache 2.0; the fonts built into egui) and the open-source Rust libraries OpenQ is built from, each under its
   own licence. The same texts are in <code>NOTICE.md</code> and <code>THIRD_PARTY_LICENSES.md</code> next to the program.</p>
-  <div class="note"><span class="label">Video and FFmpeg</span><p>OpenQ plays video with the FFmpeg libraries installed on
-  the computer. FFmpeg has its own licence. If you pass OpenQ on to others as a ready-built program, build it against an
-  FFmpeg configured without GPL parts. See <code>NOTICE.md</code>.</p></div>
+  <div class="note"><span class="label">Video and FFmpeg</span><p>OpenQ plays video with the FFmpeg libraries. On Windows and
+  macOS the installer puts a build without GPL parts inside OpenQ, with its licence in the <code>Licenses</code> folder;
+  on Linux OpenQ uses the system's FFmpeg. FFmpeg has its own licence. If you pass a built OpenQ on to others, use an
+  FFmpeg without GPL parts, or the GPL 3 covers the whole program. See <code>NOTICE.md</code>.</p></div>
   <footer>OpenQ · Apache 2.0. Fonts: Inter, JetBrains Mono, Barlow Condensed (SIL OFL 1.1) and Material Symbols (Apache 2.0).</footer>
 </section>
 </main>
