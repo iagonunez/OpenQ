@@ -1,7 +1,7 @@
 # OpenQ
 
 An open-source show-control / cue playback system, written in Rust with egui.
-Free to use, including for commercial productions. See [Licence](#licence).
+Free to use, including for commercial productions. See [License](#license).
 
 ## Install
 
@@ -25,7 +25,7 @@ when a new version is tagged; `openqup uninstall` removes it.
 
 The app is installed to `~/Applications/OpenQ.app` (macOS, code-signed ad hoc or with your
 Developer ID: `--sign`), `%LOCALAPPDATA%\Programs\OpenQ` (Windows) or `~/.local/bin/openq` (Linux).
-openqup's README lists every download, its source and its licence.
+openqup's README lists every download, its source and its license.
 
 **By hand** (Linux; this is what openqup does there):
 
@@ -294,7 +294,7 @@ rebuild with `python3 -I tools/build_fonts.py <dir with the upstream font files>
 regenerates `src/ui/icons.rs`.
 
 
-## Licence
+## License
 
 Copyright 2026 Iago Núñez. OpenQ is licensed under the **Apache License 2.0** ([LICENSE.md](LICENSE.md)):
 
@@ -304,9 +304,9 @@ Copyright 2026 Iago Núñez. OpenQ is licensed under the **Apache License 2.0** 
 - **Also allowed:** selling copies or changed versions of OpenQ, and hosting, support or
   consulting services built on it. Changed files must say that they were changed.
 
-Third-party fonts, crates and system libraries keep their own licences. They are listed in
+Third-party fonts, crates and system libraries keep their own licenses. They are listed in
 [NOTICE.md](NOTICE.md) and [THIRD_PARTY_LICENSES.md](THIRD_PARTY_LICENSES.md), and are also shown
-in the app under **Help → About OpenQ and licences**. Two points to note when distributing binaries:
+in the app under **Help → About OpenQ and licenses**. Two points to note when distributing binaries:
 
 - Ship `LICENSE.md`, `NOTICE.md`, `THIRD_PARTY_LICENSES.md` and `assets/fonts/*.txt` with them.
   The app also contains these texts.

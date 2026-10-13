@@ -1,4 +1,4 @@
-//! Help → About: version, licence and every attribution, compiled into the program so that each
+//! Help → About: version, license and every attribution, compiled into the program so that each
 //! copy carries its notices.
 
 use super::{App, icons, theme};
@@ -58,18 +58,18 @@ impl App {
                     ui.label(
                         "Licensed under the Apache License 2.0. Use it for anything, \
                          paid shows and productions included, and copy, change, share or sell it with this notice and \
-                         the licence.",
+                         the license.",
                     );
                     ui.add_space(8.0);
-                    egui::CollapsingHeader::new("Licence").show(ui, |ui| long_text(ui, "lic", LICENSE));
+                    egui::CollapsingHeader::new("License").show(ui, |ui| long_text(ui, "lic", LICENSE));
                     egui::CollapsingHeader::new("Notices and credits").default_open(true).show(ui, |ui| long_text(ui, "notice", NOTICE));
-                    egui::CollapsingHeader::new("Font licences").show(ui, |ui| {
+                    egui::CollapsingHeader::new("Font licenses").show(ui, |ui| {
                         for (name, text) in FONT_LICENSES {
                             egui::CollapsingHeader::new(name).show(ui, |ui| long_text(ui, name, text));
                         }
                     });
                     let crates = THIRD_PARTY.lines().filter(|l| l.starts_with("| ") && !l.starts_with("| Crate")).count();
-                    egui::CollapsingHeader::new(format!("Third-party software licences ({crates} crates)"))
+                    egui::CollapsingHeader::new(format!("Third-party software licenses ({crates} crates)"))
                         .show(ui, |ui| long_text(ui, "third", THIRD_PARTY));
                 });
             });

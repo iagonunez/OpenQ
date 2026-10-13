@@ -8,13 +8,13 @@ change, share and sell it for any purpose, including commercial productions such
 shows. Keep this notice, the copyright line and `LICENSE.md` with every copy, whether changed or
 not.
 
-The parts listed below belong to their authors and keep their own licences. OpenQ's own licence
+The parts listed below belong to their authors and keep their own licenses. OpenQ's own license
 doesn't apply to them. When distributing OpenQ (source or binaries), include this file,
-`LICENSE.md`, `THIRD_PARTY_LICENSES.md` and the `assets/fonts/*.txt` licence files.
+`LICENSE.md`, `THIRD_PARTY_LICENSES.md` and the `assets/fonts/*.txt` license files.
 
 ## Fonts bundled in `assets/fonts` (compiled into the program)
 
-| Font | Copyright | Licence | File |
+| Font | Copyright | License | File |
 |---|---|---|---|
 | Inter (Regular, SemiBold) | © 2020 The Inter Project Authors, <https://github.com/rsms/inter> | SIL Open Font License 1.1 | `assets/fonts/OFL-Inter.txt` |
 | JetBrains Mono (Medium) | © 2020 The JetBrains Mono Project Authors, <https://github.com/JetBrains/JetBrainsMono> | SIL Open Font License 1.1 | `assets/fonts/OFL-JetBrainsMono.txt` |
@@ -26,11 +26,11 @@ doesn't apply to them. When distributing OpenQ (source or binaries), include thi
 - It keeps only the characters and icons OpenQ uses.
 
 The modified fonts keep their original names, since none of these fonts declares a Reserved Font
-Name. The fonts remain under their own licences, and they are not sold on their own.
+Name. The fonts remain under their own licenses, and they are not sold on their own.
 
 ## Fonts built into egui (compiled into the program)
 
-These come with the `epaint_default_fonts` crate. Their licence texts are reproduced in
+These come with the `epaint_default_fonts` crate. Their license texts are reproduced in
 `THIRD_PARTY_LICENSES.md`.
 
 - **Hack:** © 2018 Source Foundry Authors, MIT License. It includes Bitstream Vera Sans Mono
@@ -42,14 +42,14 @@ These come with the `epaint_default_fonts` crate. Their licence texts are reprod
 ## Rust crates (compiled into the program)
 
 OpenQ is built from 541 open-source crates. Most are under MIT, Apache-2.0, BSD, Zlib, ISC or
-Unicode-3.0 terms. `THIRD_PARTY_LICENSES.md` lists every crate with its version, licence and source
-link, followed by the full licence texts. Regenerate it with `python3 -I tools/third_party_licenses.py`.
+Unicode-3.0 terms. `THIRD_PARTY_LICENSES.md` lists every crate with its version, license and source
+link, followed by the full license texts. Regenerate it with `python3 -I tools/third_party_licenses.py`.
 
 Notable cases:
 - **Symphonia** (audio decoding, 17 crates) and **serialport** are under the Mozilla Public
   License 2.0. OpenQ uses them unmodified. Their source is available from crates.io and from
   <https://github.com/pdeljanov/Symphonia> and <https://github.com/serialport/serialport-rs>.
-- Some crates offer several licences (for example "Apache-2.0 OR GPL-2.0" for `self_cell`, and
+- Some crates offer several licenses (for example "Apache-2.0 OR GPL-2.0" for `self_cell`, and
   "MIT OR GPL-3.0" for `unescaper`). OpenQ uses them under their permissive option.
 
 ## System libraries (not included, used from the computer)
@@ -78,7 +78,7 @@ Notable cases:
 - **Audio, windowing and graphics:** the operating system's own libraries (ALSA/PipeWire, X11,
   Wayland, Vulkan/OpenGL, CoreAudio, WASAPI…), under their own terms.
 - **System fonts:** Text cues can use any font installed on the computer. The show file stores
-  only the font's name. Each font's licence governs its use on stage.
+  only the font's name. Each font's license governs its use on stage.
 
 ## Media formats and patents
 
@@ -89,6 +89,6 @@ commercially where those apply, think about patent licensing, or build Symphonia
 
 ## User manual
 
-`docs/manual` is part of OpenQ and is under the same licence. Its screenshots show OpenQ itself. The web
+`docs/manual` is part of OpenQ and is under the same license. Its screenshots show OpenQ itself. The web
 page loads Inter, JetBrains Mono, Barlow Condensed and Material Symbols from Google Fonts, under
-the licences above.
+the licenses above.

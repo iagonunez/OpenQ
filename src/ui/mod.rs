@@ -925,7 +925,7 @@ impl App {
                     self.open_manual();
                 }
                 ui.separator();
-                if ui.button(wi(I::INFO, "About OpenQ and licences…")).clicked() {
+                if ui.button(wi(I::INFO, "About OpenQ and licenses…")).clicked() {
                     self.show_about = true;
                 }
             });
