@@ -41,20 +41,51 @@ pub struct Waveform {
     pub bucket_secs: f64,
     /// File duration in seconds.
     pub duration: f64,
+    /// Coarser copies of `peaks` (level k merges 2^(k+1) buckets), made on first use, so a
+    /// zoomed-out view of a long file doesn't scan every bucket per column.
+    #[serde(skip)]
+    levels: std::sync::OnceLock<Vec<Vec<[f32; 2]>>>,
+}
+
+fn merge(a: [f32; 2], b: [f32; 2]) -> [f32; 2] {
+    [a[0].min(b[0]), a[1].max(b[1])]
 }
 
 impl Waveform {
+    /// A waveform from its peaks.
+    pub fn new(peaks: Vec<[f32; 2]>, bucket_secs: f64, duration: f64) -> Self {
+        Self { peaks, bucket_secs, duration, levels: Default::default() }
+    }
+
     /// (min, max) over the time range [t0, t1).
     pub fn range(&self, t0: f64, t1: f64) -> [f32; 2] {
         if self.peaks.is_empty() || self.bucket_secs <= 0.0 {
             return [0.0, 0.0];
         }
         let n = self.peaks.len();
-        let i0 = ((t0 / self.bucket_secs).floor().max(0.0) as usize).min(n - 1);
-        let i1 = ((t1 / self.bucket_secs).ceil().max(0.0) as usize).clamp(i0 + 1, n);
-        self.peaks[i0..i1]
-            .iter()
-            .fold([0.0f32, 0.0f32], |a, p| [a[0].min(p[0]), a[1].max(p[1])])
+        let mut i = ((t0 / self.bucket_secs).floor().max(0.0) as usize).min(n - 1);
+        let end = ((t1 / self.bucket_secs).ceil().max(0.0) as usize).clamp(i + 1, n);
+        let levels = self.levels.get_or_init(|| {
+            let mut out: Vec<Vec<[f32; 2]>> = Vec::new();
+            let mut cur = &self.peaks;
+            while cur.len() > 1 {
+                let next: Vec<[f32; 2]> = cur.chunks(2).map(|c| c.iter().copied().fold(c[0], merge)).collect();
+                out.push(next);
+                cur = out.last().unwrap();
+            }
+            out
+        });
+        // Exact: cover [i, end) with the largest aligned blocks (O(log n) instead of O(n)).
+        let mut acc = [0.0f32, 0.0f32];
+        while i < end {
+            let mut k = 0;
+            while k < levels.len() && i.is_multiple_of(2 << k) && i + (2 << k) <= end {
+                k += 1;
+            }
+            acc = merge(acc, if k == 0 { self.peaks[i] } else { levels[k - 1][i >> k] });
+            i += 1 << k;
+        }
+        acc
     }
 }
 
@@ -110,6 +141,7 @@ pub fn waveform(path: &Path) -> anyhow::Result<Waveform> {
         peaks,
         bucket_secs: per_bucket as f64 / o.rate as f64,
         duration: total as f64 / o.rate as f64,
+        ..Default::default()
     })
 }
 
@@ -537,12 +569,12 @@ impl Sink {
 }
 
 #[cfg(test)]
-mod tests {
+pub(crate) mod tests {
     use super::*;
     use crate::model::{FadeCurve, Segment};
 
     /// A mono 16-bit WAV of a full-scale square-ish signal (constant ±0.5).
-    fn write_wav(path: &Path, rate: u32, secs: f32) {
+    pub(crate) fn write_wav(path: &Path, rate: u32, secs: f32) {
         let n = (rate as f32 * secs) as u32;
         let mut b = Vec::new();
         b.extend_from_slice(b"RIFF");
@@ -607,5 +639,27 @@ mod tests {
         assert!((peak(&out[94000..98000]) - 0.5).abs() < 0.01, "faded at the loop point");
         assert!(peak(&out[out.len() - 480..]) < 0.02);
         std::fs::remove_file(path).unwrap();
+    }
+
+    /// Range queries through the coarse levels give exactly what scanning every bucket does.
+    #[test]
+    fn waveform_range_matches_a_full_scan() {
+        let mut seed = 12345u32;
+        let mut rnd = || {
+            seed = seed.wrapping_mul(1664525).wrapping_add(1013904223);
+            (seed >> 8) as f32 / (1u32 << 24) as f32 * 2.0 - 1.0
+        };
+        for n in [1usize, 2, 3, 7, 64, 1000, 4097] {
+            let peaks: Vec<[f32; 2]> = (0..n).map(|_| { let (a, b) = (rnd(), rnd()); [a.min(b), a.max(b)] }).collect();
+            let w = Waveform { peaks: peaks.clone(), bucket_secs: 0.01, duration: n as f64 * 0.01, ..Default::default() };
+            for _ in 0..200 {
+                let t0 = (rnd() + 1.0) as f64 * 0.5 * w.duration;
+                let t1 = t0 + (rnd() + 1.0) as f64 * 0.5 * w.duration;
+                let i0 = ((t0 / 0.01).floor() as usize).min(n - 1);
+                let i1 = ((t1 / 0.01).ceil() as usize).clamp(i0 + 1, n);
+                let want = peaks[i0..i1].iter().fold([0.0f32, 0.0], |a, p| [a[0].min(p[0]), a[1].max(p[1])]);
+                assert_eq!(w.range(t0, t1), want, "n {n} [{t0}, {t1})");
+            }
+        }
     }
 }

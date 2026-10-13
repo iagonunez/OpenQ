@@ -210,3 +210,36 @@ fn frame_time_scales_with_cue_count() {
         assert!(large <= small * 3 + Duration::from_millis(3), "{tab:?}: 3000 cues take {large:?} per frame; 20 cues {small:?}");
     }
 }
+
+/// The engine thread needs the show lock every millisecond. The UI frame lets it in between
+/// panels, so the engine waits for one panel at most, never a whole frame.
+#[test]
+fn engine_waits_for_one_panel_not_a_frame() {
+    use std::sync::atomic::{AtomicBool, Ordering};
+    let (shared, prober) = show_with("lock wait test", 3000);
+    let mut app = App::new(shared.clone(), prober);
+    let ctx = context();
+    for _ in 0..5 {
+        frame(&ctx, &mut app, &shared);
+    }
+    let stop = Arc::new(AtomicBool::new(false));
+    let waits = {
+        let (shared, stop) = (shared.clone(), stop.clone());
+        std::thread::spawn(move || {
+            let mut worst = Duration::ZERO;
+            while !stop.load(Ordering::Relaxed) {
+                let t = Instant::now();
+                drop(shared.lock());
+                worst = worst.max(t.elapsed());
+                std::thread::sleep(Duration::from_millis(1));
+            }
+            worst
+        })
+    };
+    let frames: Vec<Duration> = (0..20).map(|_| frame(&ctx, &mut app, &shared)).collect();
+    stop.store(true, Ordering::Relaxed);
+    let worst_wait = waits.join().unwrap();
+    let frame_time = median(frames);
+    eprintln!("3000 cues: frame {frame_time:?}, engine waited at most {worst_wait:?}");
+    assert!(worst_wait < frame_time.mul_f32(0.75), "engine waited {worst_wait:?}; a frame takes {frame_time:?}");
+}

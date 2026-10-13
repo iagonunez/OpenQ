@@ -3,6 +3,7 @@
 use crate::animation::Animation;
 use serde::{Deserialize, Serialize};
 use std::path::{Path, PathBuf};
+use std::collections::HashMap;
 use uuid::Uuid;
 
 /// Unique id of a cue (stable across saves).
@@ -1267,6 +1268,59 @@ fn default_true() -> bool {
 }
 
 impl Cue {
+    /// A copy of the cue without a group's children (they're separate cues to compare/send).
+    pub fn shallow_clone(&self) -> Cue {
+        Cue {
+            id: self.id,
+            number: self.number.clone(),
+            name: self.name.clone(),
+            notes: self.notes.clone(),
+            color: self.color,
+            armed: self.armed,
+            pre_wait: self.pre_wait,
+            post_wait: self.post_wait,
+            continue_mode: self.continue_mode,
+            hotkey: self.hotkey.clone(),
+            timecode_trigger: self.timecode_trigger,
+            kind: match &self.kind {
+                CueKind::Group { mode, .. } => CueKind::Group { mode: *mode, children: Vec::new() },
+                k => k.clone(),
+            },
+        }
+    }
+
+    /// Equal apart from a group's children.
+    pub fn shallow_eq(&self, other: &Cue) -> bool {
+        // Naming every field: a new one fails to compile here until it is compared too.
+        let Cue { id: _, number: _, name: _, notes: _, color: _, armed: _, pre_wait: _, post_wait: _, continue_mode: _, hotkey: _, timecode_trigger: _, kind: _ } = self;
+        let (a, b) = (self, other);
+        a.id == b.id
+            && a.number == b.number
+            && a.name == b.name
+            && a.notes == b.notes
+            && a.color == b.color
+            && a.armed == b.armed
+            && a.pre_wait == b.pre_wait
+            && a.post_wait == b.post_wait
+            && a.continue_mode == b.continue_mode
+            && a.hotkey == b.hotkey
+            && a.timecode_trigger == b.timecode_trigger
+            && match (&self.kind, &other.kind) {
+                (CueKind::Group { mode: a, .. }, CueKind::Group { mode: b, .. }) => a == b,
+                (CueKind::Group { .. }, _) | (_, CueKind::Group { .. }) => false,
+                (a, b) => a == b,
+            }
+    }
+
+    /// Take `from`'s own fields (see [`Cue::shallow_clone`]), keeping this group's children.
+    pub fn assign_shallow(&mut self, from: Cue) {
+        let children = self.children_mut().map(std::mem::take);
+        *self = from;
+        if let (Some(kept), Some(ch)) = (children, self.children_mut()) {
+            *ch = kept;
+        }
+    }
+
     /// A new cue with a fresh id and default timing.
     pub fn new(kind: CueKind) -> Self {
         Self {
@@ -1485,9 +1539,102 @@ pub struct CueList {
     /// Tab position of the current list among all lists.
     #[serde(default)]
     pub pos: usize,
+    /// Where each cue sits, so lookups don't walk the tree (the engine looks cues up every tick).
+    #[serde(skip)]
+    pub(crate) index: CueIndex,
+}
+
+/// A cue's place in a [`CueList`]: which list (0 = current, k = `others[k - 1]`) and the
+/// indices down the groups.
+type CuePath = (usize, Vec<u32>);
+
+/// Lookup cache for [`CueList`]: cue id → path. Fields of the list are edited directly all over
+/// the app, so it is never trusted: a hit is checked against the cue it leads to, and a stale
+/// entry falls back to walking the tree and rebuilds the cache. Copies start empty.
+#[derive(Default)]
+pub(crate) struct CueIndex(parking_lot::Mutex<HashMap<CueId, CuePath>>);
+
+impl Clone for CueIndex {
+    fn clone(&self) -> Self {
+        Self::default()
+    }
+}
+
+impl PartialEq for CueIndex {
+    fn eq(&self, _: &Self) -> bool {
+        true
+    }
+}
+
+impl std::fmt::Debug for CueIndex {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str("CueIndex")
+    }
 }
 
 impl CueList {
+    /// The cue at `path`, if the tree still has one there.
+    fn lists_root(&self, root: usize) -> Option<&[Cue]> {
+        match root {
+            0 => Some(&self.cues),
+            k => Some(&self.others.get(k - 1)?.cues),
+        }
+    }
+
+    fn at_path(&self, (root, steps): &CuePath) -> Option<&Cue> {
+        let mut list = self.lists_root(*root)?;
+        let (last, groups) = steps.split_last()?;
+        for &i in groups {
+            list = list.get(i as usize)?.children();
+        }
+        list.get(*last as usize)
+    }
+
+    /// `f` of the cached path of `id`, if the cache knows it and the path still leads to it.
+    fn with_cached<'a, R>(&'a self, id: CueId, f: impl FnOnce(&CuePath, &'a Cue) -> Option<R>) -> Option<R> {
+        let map = self.index.0.lock();
+        let path = map.get(&id)?;
+        let cue = self.at_path(path).filter(|c| c.id == id)?;
+        f(path, cue)
+    }
+
+    /// Rebuild the lookup cache from the tree.
+    fn reindex(&self) {
+        fn rec(list: &[Cue], root: usize, prefix: &mut Vec<u32>, out: &mut HashMap<CueId, CuePath>) {
+            for (i, c) in list.iter().enumerate() {
+                prefix.push(i as u32);
+                out.insert(c.id, (root, prefix.clone()));
+                rec(c.children(), root, prefix, out);
+                prefix.pop();
+            }
+        }
+        let mut map = HashMap::new();
+        for (root, (_, cues)) in self.roots().enumerate() {
+            rec(cues, root, &mut Vec::new(), &mut map);
+        }
+        *self.index.0.lock() = map;
+    }
+
+    /// [`CueList::with_cached`], rebuilding the cache first if it doesn't know `id` but the tree
+    /// has it (the tree changed). Ids not in the tree cost a walk, as before the cache.
+    fn with_path<'a, R>(&'a self, id: CueId, f: impl Fn(&CuePath, &'a Cue) -> Option<R>) -> Option<R> {
+        if let Some(r) = self.with_cached(id, &f) {
+            return Some(r);
+        }
+        if !self.contains_slow(id) {
+            return None;
+        }
+        self.reindex();
+        self.with_cached(id, f)
+    }
+
+    fn contains_slow(&self, id: CueId) -> bool {
+        fn rec(list: &[Cue], id: CueId) -> bool {
+            list.iter().any(|c| c.id == id || rec(c.children(), id))
+        }
+        self.roots().any(|(_, l)| rec(l, id))
+    }
+
     /// Every list's top level with its parent id (None for the current list).
     fn roots(&self) -> impl Iterator<Item = (Option<CueId>, &[Cue])> {
         std::iter::once((None, self.cues.as_slice())).chain(self.others.iter().map(|o| (Some(o.info.id), o.cues.as_slice())))
@@ -1635,18 +1782,7 @@ impl CueList {
 
     /// Find a cue anywhere in the tree.
     pub fn find(&self, id: CueId) -> Option<&Cue> {
-        fn rec(list: &[Cue], id: CueId) -> Option<&Cue> {
-            for c in list {
-                if c.id == id {
-                    return Some(c);
-                }
-                if let Some(f) = rec(c.children(), id) {
-                    return Some(f);
-                }
-            }
-            None
-        }
-        self.roots().find_map(|(_, l)| rec(l, id))
+        self.with_path(id, |_, c| Some(c))
     }
 
     /// Find a cue anywhere in the tree, mutably.
@@ -1672,18 +1808,22 @@ impl CueList {
 
     /// Where a cue sits in the tree.
     pub fn location(&self, id: CueId) -> Option<Location> {
-        fn rec(list: &[Cue], parent: Option<CueId>, id: CueId) -> Option<Location> {
-            for (i, c) in list.iter().enumerate() {
-                if c.id == id {
-                    return Some(Location { parent, index: i });
+        self.with_path(id, |(root, steps), _| {
+            let (&index, groups) = steps.split_last()?;
+            let parent = match (groups.split_last(), root) {
+                (None, 0) => None,
+                (None, k) => Some(self.others[k - 1].info.id),
+                (Some((&g, outer)), _) => {
+                    // The enclosing group: walk down to it (no allocation).
+                    let mut list = self.lists_root(*root)?;
+                    for &i in outer {
+                        list = list.get(i as usize)?.children();
+                    }
+                    Some(list.get(g as usize)?.id)
                 }
-                if let Some(l) = rec(c.children(), Some(c.id), id) {
-                    return Some(l);
-                }
-            }
-            None
-        }
-        self.roots().find_map(|(parent, l)| rec(l, parent, id))
+            };
+            Some(Location { parent, index: index as usize })
+        })
     }
 
     /// Group containing a cue.
@@ -2112,5 +2252,43 @@ mod tests {
         assert_eq!(gone.len(), 2);
         assert_eq!(l.list_count(), 1);
         assert!(l.remove_current_list().is_none());
+    }
+
+    /// The lookup cache never answers from a stale tree: cues moved, deleted, regrouped or
+    /// moved between lists through the public fields are still found in the right place.
+    #[test]
+    fn lookups_follow_direct_edits() {
+        use super::*;
+        let memo = || Cue::new(CueKind::Memo);
+        let (a, b, inner) = (memo(), memo(), memo());
+        let mut g = Cue::new(CueKind::Group { mode: GroupMode::default(), children: vec![inner.clone()] });
+        g.number = "g".into();
+        let mut l = CueList { cues: vec![a.clone(), g.clone(), b.clone()], ..Default::default() };
+        l.others.push(OtherList { info: ListInfo::default(), cues: vec![memo()] });
+        let other = l.others[0].cues[0].id;
+        let bg = l.others[0].info.id;
+        assert_eq!(l.location(inner.id), Some(Location { parent: Some(g.id), index: 0 }));
+        assert_eq!(l.location(other), Some(Location { parent: Some(bg), index: 0 }));
+        assert_eq!(l.next_sibling(a.id), Some(g.id));
+
+        // Reorder and delete straight through the field.
+        l.cues.swap(0, 2);
+        assert_eq!(l.location(a.id), Some(Location { parent: None, index: 2 }));
+        assert_eq!(l.next_sibling(b.id), Some(g.id));
+        l.cues.remove(1);
+        assert!(l.find(g.id).is_none());
+        assert!(l.find(inner.id).is_none(), "children go with their group");
+        // Undo puts it back somewhere else.
+        l.cues.insert(0, g.clone());
+        assert_eq!(l.find(inner.id).map(|c| c.id), Some(inner.id));
+        assert_eq!(l.parent_of(inner.id), Some(g.id));
+        // Moved to the background list.
+        let moved = l.cues.pop().unwrap();
+        l.others[0].cues.insert(0, moved.clone());
+        assert_eq!(l.location(moved.id), Some(Location { parent: Some(bg), index: 0 }));
+        assert_eq!(l.location(other), Some(Location { parent: Some(bg), index: 1 }));
+        // A copy has its own (empty) cache and still works.
+        let copy = l.clone();
+        assert_eq!(copy.parent_of(inner.id), Some(g.id));
     }
 }

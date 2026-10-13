@@ -12,7 +12,14 @@ pub(super) struct DisplayList {
     pub loaded: bool,
     pub loading: bool,
     pub error: Option<String>,
+    /// When the list was last asked for (it is refreshed while stages are on displays).
+    pub asked: Option<std::time::Instant>,
 }
+
+/// How often the display list is refreshed while a stage is assigned to a display, so an
+/// unplugged projector is noticed and its stage goes back to it when it returns.
+#[cfg(feature = "video")]
+pub(super) const DISPLAY_RECHECK: std::time::Duration = std::time::Duration::from_secs(5);
 
 impl App {
     pub(super) fn refresh_displays(&self, ctx: &egui::Context) {
@@ -22,6 +29,7 @@ impl App {
                 return;
             }
             d.loading = true;
+            d.asked = Some(std::time::Instant::now());
         }
         let (list, ctx) = (self.displays.clone(), ctx.clone());
         std::thread::spawn(move || {

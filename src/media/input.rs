@@ -36,6 +36,8 @@ pub struct InputStream {
     pub device_name: String,
     /// Peak level of the most recent input, as f32 bits (for meters).
     pub peak: Arc<AtomicU32>,
+    /// The device went away (unplugged, or the sound server restarted).
+    lost: Arc<AtomicBool>,
 }
 
 impl Drop for InputStream {
@@ -49,6 +51,11 @@ impl InputStream {
     pub fn take_peak(&self) -> f32 {
         f32::from_bits(self.peak.swap(0, Ordering::Relaxed))
     }
+
+    /// True once the device has gone away; the stream won't deliver again (open a new one).
+    pub fn is_lost(&self) -> bool {
+        self.lost.load(Ordering::Acquire)
+    }
 }
 
 type OnData = Box<dyn FnMut(&[f32], usize) + Send>;
@@ -58,6 +65,8 @@ type OnData = Box<dyn FnMut(&[f32], usize) + Send>;
 pub fn open_input(device: Option<&str>, on_data: impl FnMut(&[f32], usize) + Send + 'static) -> anyhow::Result<InputStream> {
     let stop = Arc::new(AtomicBool::new(false));
     let peak = Arc::new(AtomicU32::new(0));
+    let lost = Arc::new(AtomicBool::new(false));
+    let lost2 = lost.clone();
     let (setup_tx, setup_rx) = std::sync::mpsc::channel::<anyhow::Result<(u32, usize, String)>>();
     let (stop2, peak2) = (stop.clone(), peak.clone());
     let wanted = device.map(str::to_string);
@@ -81,11 +90,11 @@ pub fn open_input(device: Option<&str>, on_data: impl FnMut(&[f32], usize) + Sen
                 on_data(data, ch);
             };
             let stream = match format {
-                SampleFormat::F32 => build::<f32>(&dev, config, move |d| cb(d))?,
-                SampleFormat::I16 => build::<i16>(&dev, config, move |d| cb(d))?,
-                SampleFormat::I32 => build::<i32>(&dev, config, move |d| cb(d))?,
-                SampleFormat::U16 => build::<u16>(&dev, config, move |d| cb(d))?,
-                SampleFormat::F64 => build::<f64>(&dev, config, move |d| cb(d))?,
+                SampleFormat::F32 => build::<f32>(&dev, config, lost2.clone(), move |d| cb(d))?,
+                SampleFormat::I16 => build::<i16>(&dev, config, lost2.clone(), move |d| cb(d))?,
+                SampleFormat::I32 => build::<i32>(&dev, config, lost2.clone(), move |d| cb(d))?,
+                SampleFormat::U16 => build::<u16>(&dev, config, lost2.clone(), move |d| cb(d))?,
+                SampleFormat::F64 => build::<f64>(&dev, config, lost2.clone(), move |d| cb(d))?,
                 f => return Err(anyhow!("unsupported input sample format {f}")),
             };
             stream.play()?;
@@ -106,10 +115,10 @@ pub fn open_input(device: Option<&str>, on_data: impl FnMut(&[f32], usize) + Sen
     })?;
     let (rate, channels, device_name) = setup_rx.recv().context("audio input thread died")??;
     log::info!("audio input: {device_name} @ {rate} Hz, {channels} ch");
-    Ok(InputStream { stop, rate, channels, device_name, peak })
+    Ok(InputStream { stop, rate, channels, device_name, peak, lost })
 }
 
-fn build<T>(dev: &cpal::Device, config: StreamConfig, mut f: impl FnMut(&[f32]) + Send + 'static) -> anyhow::Result<cpal::Stream>
+fn build<T>(dev: &cpal::Device, config: StreamConfig, lost: Arc<AtomicBool>, mut f: impl FnMut(&[f32]) + Send + 'static) -> anyhow::Result<cpal::Stream>
 where
     T: SizedSample,
     f32: FromSample<T>,
@@ -122,7 +131,13 @@ where
             buf.extend(data.iter().map(|s| <f32 as FromSample<T>>::from_sample_(*s)));
             f(&buf);
         },
-        |e| log::error!("audio input error: {e}"),
+        move |e| {
+            use cpal::ErrorKind as K;
+            log::error!("audio input error: {e}");
+            if matches!(e.kind(), K::DeviceNotAvailable | K::HostUnavailable | K::StreamInvalidated) {
+                lost.store(true, Ordering::Release);
+            }
+        },
         None,
     )?)
 }
@@ -179,6 +194,7 @@ pub struct MicFeeder {
     max_queued: usize,
     /// Output frames still to send (None = until stopped).
     remaining: Option<u64>,
+    out_rate: u32,
 }
 
 impl MicFeeder {
@@ -203,7 +219,13 @@ impl MicFeeder {
             out: Vec::new(),
             max_queued: ((MIC_LATENCY_SECS * out_rate as f64) as usize).max(256) * channels,
             remaining: (duration > 0.0).then_some((duration * out_rate as f64) as u64),
+            out_rate,
         }
+    }
+
+    /// The input was reopened at `in_rate` (a device that came back may run at another rate).
+    pub fn set_input_rate(&mut self, in_rate: u32) {
+        self.resampler = Resampler::new(in_rate, self.out_rate, self.channels);
     }
 
     /// Take one chunk of interleaved input with `in_ch` channels.
@@ -234,6 +256,51 @@ impl MicFeeder {
         }
         if self.remaining == Some(0) {
             self.shared.eof.store(true, Ordering::Release);
+        }
+    }
+}
+
+/// What a Mic cue's input stream feeds: builds its [`MicFeeder`] once the input rate is known.
+/// Shared with the stream callback, and kept when the stream is reopened (a device that came
+/// back), so the same voice continues.
+pub struct MicSink {
+    feeder: Option<MicFeeder>,
+    parts: Option<(rtrb::Producer<f32>, Arc<VoiceShared>)>,
+    first: usize,
+    channels: usize,
+    out_rate: u32,
+    duration: f64,
+    in_rate: u32,
+}
+
+impl MicSink {
+    /// Feed `channels` input channels from `first` on into `tx` (a mixer voice at `out_rate`).
+    pub fn new(tx: rtrb::Producer<f32>, shared: Arc<VoiceShared>, first: usize, channels: usize, out_rate: u32, duration: f64) -> Self {
+        Self { feeder: None, parts: Some((tx, shared)), first, channels, out_rate, duration, in_rate: 0 }
+    }
+
+    /// A stream opened at `rate`: chunks are taken from now on.
+    pub fn set_input_rate(&mut self, rate: u32) {
+        if rate != self.in_rate
+            && let Some(f) = &mut self.feeder
+        {
+            f.set_input_rate(rate);
+        }
+        self.in_rate = rate;
+    }
+
+    /// One chunk of interleaved input with `in_ch` channels.
+    pub fn push(&mut self, data: &[f32], in_ch: usize) {
+        if self.in_rate == 0 {
+            return;
+        }
+        if self.feeder.is_none()
+            && let Some((tx, shared)) = self.parts.take()
+        {
+            self.feeder = Some(MicFeeder::new(tx, shared, self.first, self.channels, self.in_rate, self.out_rate, self.duration));
+        }
+        if let Some(f) = &mut self.feeder {
+            f.push(data, in_ch);
         }
     }
 }
@@ -274,5 +341,27 @@ mod tests {
             f.push(&chunk, 4);
         }
         assert!(rx.slots() < (MIC_LATENCY_SECS * 48_000.0) as usize + 1024, "{}", rx.slots());
+    }
+
+    /// A Mic cue's sink drops input until the stream's rate is known, then feeds its voice, and
+    /// keeps feeding the same voice after a reopen at another rate.
+    #[test]
+    fn mic_sink_survives_a_reopen() {
+        let (tx, mut rx) = rtrb::RingBuffer::<f32>::new(48_000);
+        let shared = Arc::new(VoiceShared::default());
+        let mut sink = MicSink::new(tx, shared, 0, 1, 48_000, 0.0);
+        let chunk = vec![0.5f32; 480];
+        sink.push(&chunk, 1);
+        assert_eq!(rx.slots(), 0, "rate unknown yet");
+        sink.set_input_rate(48_000);
+        sink.push(&chunk, 1);
+        let first = rx.slots();
+        assert!(first > 400, "{first}");
+        rx.read_chunk(first).unwrap().commit_all();
+        // The device came back at 24 kHz: same voice, resampled to the mixer rate.
+        sink.set_input_rate(24_000);
+        sink.push(&chunk[..240], 1);
+        let again = rx.slots();
+        assert!((400..=500).contains(&again), "{again}");
     }
 }

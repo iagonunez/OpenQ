@@ -48,6 +48,8 @@ enum Deferred {
     SaveAs,
     PickMedia(CueId),
     AddMediaCues,
+    /// Open a show autosaved before a crash (may ask to discard the current one first).
+    Recover(crate::recovery::Orphan),
 }
 
 /// Edit mode allows changing the show; show mode locks it down for running a performance.
@@ -1309,77 +1311,39 @@ impl App {
         }
     }
 
-    /// Output level meter with a dB scale (one bar per device channel, up to 8).
+    /// Output level meter: one slim bar per device channel (up to 8), no scale or labels. The
+    /// green/amber/red zones show faintly at rest so the meter reads even when nothing plays.
     fn meter(&mut self, ui: &mut egui::Ui, show: &Show) {
         use egui::{Align2, CornerRadius, Rect, Sense, pos2, vec2};
         let n = self.meters.len().clamp(1, 8);
-        let bar = 7.0;
+        let bar = 4.0;
         let gap = 3.0;
-        let scale_w = 20.0;
-        let w = scale_w + n as f32 * (bar + gap) + 6.0;
+        let pad = 7.0;
+        let w = 2.0 * pad + n as f32 * bar + (n - 1) as f32 * gap;
         let (rect, resp) = ui.allocate_exact_size(vec2(w, 92.0), Sense::hover());
         let p = ui.painter();
-        p.rect_filled(rect, CornerRadius::same(8), theme::BG_INPUT);
-        let inner = Rect::from_min_max(
-            pos2(rect.left() + scale_w, rect.top() + 8.0),
-            pos2(rect.right() - 6.0, rect.bottom() - 16.0),
-        );
+        p.rect(rect, CornerRadius::same(6), theme::BG_INPUT, egui::Stroke::new(1.0, theme::BORDER), egui::StrokeKind::Inside);
+        let inner = rect.shrink2(vec2(pad, 8.0));
         let y_of = |db: f32| {
-            inner.bottom()
-                - ((db - crate::model::MIN_DB) / -crate::model::MIN_DB).clamp(0.0, 1.0)
-                    * inner.height()
+            inner.bottom() - ((db - crate::model::MIN_DB) / -crate::model::MIN_DB).clamp(0.0, 1.0) * inner.height()
         };
-        for db in [0.0, -12.0, -24.0, -48.0] {
-            let y = y_of(db);
-            p.text(
-                pos2(rect.left() + scale_w - 4.0, y),
-                Align2::RIGHT_CENTER,
-                format!("{}", db as i32),
-                theme::mono(8.5),
-                theme::TEXT_FAINT,
-            );
-            p.line_segment(
-                [pos2(inner.left(), y), pos2(inner.right(), y)],
-                egui::Stroke::new(0.5, theme::BORDER),
-            );
-        }
+        // Green up to -12 dB, amber to -3 dB, red above.
+        let zones = [(crate::model::MIN_DB, -12.0, theme::GREEN), (-12.0, -3.0, theme::AMBER), (-3.0, 0.0, theme::RED)];
         let audio_ok = show.media.audio.is_some();
         for i in 0..n {
             let x = inner.left() + i as f32 * (bar + gap);
-            let col = Rect::from_min_max(pos2(x, inner.top()), pos2(x + bar, inner.bottom()));
-            p.rect_filled(
-                col,
-                CornerRadius::same(2),
-                Color32::from_rgb(0x1f, 0x21, 0x26),
-            );
-            let level = self.meters.get(i).copied().unwrap_or(0.0);
-            let db = crate::model::gain_to_db(level);
-            if db > crate::model::MIN_DB {
-                // Green up to -12 dB, amber to -3 dB, red above.
-                for (lo, hi, c) in [
-                    (crate::model::MIN_DB, -12.0, theme::GREEN),
-                    (-12.0, -3.0, theme::AMBER),
-                    (-3.0, 0.0, theme::RED),
-                ] {
-                    if db > lo {
-                        let top = y_of(db.min(hi));
-                        let seg = Rect::from_min_max(pos2(x, top), pos2(x + bar, y_of(lo)));
-                        p.rect_filled(seg, CornerRadius::ZERO, c);
-                    }
+            let db = crate::model::gain_to_db(self.meters.get(i).copied().unwrap_or(0.0));
+            for (k, (lo, hi, c)) in zones.into_iter().enumerate() {
+                // Round only the ends of the whole bar.
+                let r = |top: bool| if (top && k == 2) || (!top && k == 0) { 2 } else { 0 };
+                let radius = CornerRadius { nw: r(true), ne: r(true), sw: r(false), se: r(false) };
+                let zone = Rect::from_min_max(pos2(x, y_of(hi)), pos2(x + bar, y_of(lo)));
+                p.rect_filled(zone, radius, c.gamma_multiply(if audio_ok { 0.32 } else { 0.12 }));
+                if db > lo {
+                    let lit = Rect::from_min_max(pos2(x, y_of(db.min(hi))), zone.max);
+                    p.rect_filled(lit, radius, c);
                 }
             }
-            let label = if n == 2 {
-                ["L", "R"][i].to_string()
-            } else {
-                format!("{}", i + 1)
-            };
-            p.text(
-                pos2(x + bar / 2.0, rect.bottom() - 8.0),
-                Align2::CENTER_CENTER,
-                label,
-                theme::semibold(8.5),
-                theme::TEXT_FAINT,
-            );
         }
         if !audio_ok {
             p.text(
@@ -1986,7 +1950,7 @@ impl App {
         for d in std::mem::take(&mut self.deferred) {
             if self.remote.is_replica() {
                 let why = match d {
-                    Deferred::New | Deferred::Open => Some("Disconnect from the main device first (Remote → Disconnect)"),
+                    Deferred::New | Deferred::Open | Deferred::Recover(_) => Some("Disconnect from the main device first (Remote → Disconnect)"),
                     Deferred::PickMedia(_) | Deferred::AddMediaCues => Some("Media files live on the main device: add them there"),
                     _ => None,
                 };
@@ -2014,6 +1978,7 @@ impl App {
                         self.open_path(p);
                     }
                 }
+                Deferred::Recover(o) => self.recover(o),
                 Deferred::Save => self.save_to(None),
                 Deferred::SaveAs => {
                     if let Some(p) = rfd::FileDialog::new()
@@ -2332,6 +2297,8 @@ impl App {
         let ctx = ui.ctx().clone();
         media::set_max_texture_side(ctx.input(|i| i.max_texture_side));
         let show_arc = self.show.clone();
+        #[cfg(feature = "video")]
+        let stage_input: Option<(Vec<crate::model::Stage>, Vec<media::video::StageLayer>)>;
         {
             let mut guard = show_arc.lock();
 
@@ -2392,6 +2359,9 @@ impl App {
             egui::Panel::bottom("status")
                 .frame(bar(theme::BG_APP))
                 .show(ui, |ui| self.status_bar(ui, show));
+            // Let a waiting engine tick in between panels: the engine never waits for a whole frame.
+            parking_lot::MutexGuard::bump(&mut guard);
+            let show: &mut Show = &mut guard;
             if self.mode == Mode::Edit {
                 // Tall enough for every tab's cards without scrolling. Until the user drags the edge,
                 // forget the stored height so a tiny first frame (or a window resize) can't shrink it.
@@ -2410,6 +2380,9 @@ impl App {
                     .min_size(120.0)
                     .show(ui, |ui| self.inspector(ui, show));
             }
+            // Let a waiting engine tick in between panels: the engine never waits for a whole frame.
+            parking_lot::MutexGuard::bump(&mut guard);
+            let show: &mut Show = &mut guard;
             egui::Panel::right("active")
                 .frame(
                     egui::Frame::new()
@@ -2436,6 +2409,9 @@ impl App {
                     self.cue_list(ui, show);
                 });
 
+            // Let a waiting engine tick in between panels: the engine never waits for a whole frame.
+            parking_lot::MutexGuard::bump(&mut guard);
+            let show: &mut Show = &mut guard;
             if self.show_settings {
                 self.settings_window(&ctx, show);
             }
@@ -2451,8 +2427,14 @@ impl App {
             self.track_undo(&ctx, show);
             self.sync_osc(&ctx, show);
 
+            // Stage windows are drawn after the lock is released, from this snapshot.
             #[cfg(feature = "video")]
-            let video_active = self.stages(&ctx, show);
+            let video_active = {
+                let layers = show.media.stage_layers();
+                let active = !layers.is_empty();
+                stage_input = Some((show.ws.stages.clone(), layers));
+                active
+            };
             #[cfg(not(feature = "video"))]
             let video_active = false;
 
@@ -2503,6 +2485,19 @@ impl App {
                     ctx.send_viewport_cmd(egui::ViewportCommand::Close);
                 }
                 return;
+            }
+        }
+        #[cfg(feature = "video")]
+        if let Some((stages, layers)) = stage_input {
+            let moved = self.stages(&ctx, stages, layers);
+            if !moved.is_empty() {
+                let mut show = self.show.lock();
+                for (id, corners) in moved {
+                    if let Some(s) = show.ws.stages.iter_mut().find(|s| s.id == id) {
+                        s.corners = corners;
+                    }
+                }
+                show.edited();
             }
         }
         self.run_deferred();

@@ -11,7 +11,6 @@ use crate::model::{
 };
 use crate::show::Show;
 use egui::{ComboBox, DragValue, RichText, Slider, TextEdit, Ui};
-use std::collections::HashMap;
 use std::path::Path;
 
 #[derive(Clone, Copy, PartialEq, Eq, Default, Debug)]
@@ -87,10 +86,10 @@ impl FadeCaps {
 }
 
 struct Ctx<'a> {
-    options: &'a [(CueId, String)],
-    geometries: &'a HashMap<CueId, Geometry>,
-    /// What a Fade cue can change on each cue (Settings tab only).
-    fade_caps: &'a HashMap<CueId, FadeCaps>,
+    /// Every cue, for targets (the cue being edited is a copy, so this is its saved state).
+    list: &'a crate::model::CueList,
+    /// The cue being edited.
+    id: CueId,
     stages: &'a [(StageId, String)],
     out_channels: usize,
     /// Name of the audio output device (None = no audio).
@@ -109,44 +108,57 @@ struct Ctx<'a> {
     mic_level: Option<f32>,
 }
 
+impl Ctx<'_> {
+    /// What a Fade cue can change on `target`.
+    fn fade_caps(&self, target: CueId) -> FadeCaps {
+        self.list.find(target).map(FadeCaps::of).unwrap_or_default()
+    }
+
+    /// Geometry of a picture cue.
+    fn geometry(&self, target: CueId) -> Option<Geometry> {
+        match &self.list.find(target)?.kind {
+            CueKind::Video(v) => Some(v.geometry),
+            CueKind::Text(t) => Some(t.geometry),
+            CueKind::Camera(k) => Some(k.geometry),
+            _ => None,
+        }
+    }
+}
+
+/// Name of the background list holding `id` (None in the current list).
+fn background_list(list: &crate::model::CueList, id: CueId) -> Option<&str> {
+    let mut top = id;
+    while let Some(p) = list.parent_of(top) {
+        if let Some(o) = list.others.iter().find(|o| o.info.id == p) {
+            return Some(&o.info.name);
+        }
+        top = p;
+    }
+    None
+}
+
+/// "number name" of a cue, plus its list's name when it's in a background list.
+fn target_label(cue: &Cue, other_list: Option<&str>) -> String {
+    let label = format!("{} {}", cue.number, cue.display_name()).trim().to_string();
+    match other_list {
+        Some(l) => format!("{label}  ({l})"),
+        None => label,
+    }
+}
+
 impl App {
     pub(super) fn inspector(&mut self, ui: &mut Ui, show: &mut Show) {
         let Some(id) = self.primary() else {
             ui.centered_and_justified(|ui| ui.label(RichText::new("No cue selected").weak()));
             return;
         };
-        let list = &show.ws.cue_list;
-        // Target menus and target geometry: only the Settings tab uses them, and they cover every
-        // cue, so they're built only for it (in one pass over the tree).
-        let all = if self.inspector_tab == Tab::Settings { list.iter_all_with_list() } else { Vec::new() };
-        let options: Vec<(CueId, String)> = all
-            .iter()
-            .filter(|(c, _)| c.id != id)
-            .map(|(c, other_list)| {
-                let label = format!("{} {}", c.number, c.display_name()).trim().to_string();
-                // Cues in a background list say which list they're in.
-                match other_list {
-                    Some(l) => (c.id, format!("{label}  ({l})")),
-                    None => (c.id, label),
-                }
-            })
-            .collect();
-        let geometries: HashMap<CueId, Geometry> = all
-            .iter()
-            .filter_map(|(c, _)| match &c.kind {
-                CueKind::Video(v) => Some((c.id, v.geometry)),
-                CueKind::Text(t) => Some((c.id, t.geometry)),
-                CueKind::Camera(k) => Some((c.id, k.geometry)),
-                _ => None,
-            })
-            .collect();
-        let fade_caps: HashMap<CueId, FadeCaps> = all.iter().map(|(c, _)| (c.id, FadeCaps::of(c))).collect();
         let stages: Vec<(StageId, String)> = show.ws.stages.iter().map(|s| (s.id, s.name.clone())).collect();
         let elapsed = show.engine.instances.get(&id).and_then(|_| show.media.elapsed(id));
+        // Edit a copy, so the tabs can look at the other cues (targets) while editing this one.
+        let Some(mut cue) = show.ws.cue_list.find(id).cloned() else { return };
         let ctx = Ctx {
-            options: &options,
-            geometries: &geometries,
-            fade_caps: &fade_caps,
+            list: &show.ws.cue_list,
+            id,
             stages: &stages,
             out_channels: show.media.audio.as_ref().map_or(2, |a| a.channels),
             device: show.media.audio.as_ref().map(|a| a.device_name.clone()),
@@ -164,11 +176,10 @@ impl App {
         if ctx.mic_level.is_some() || ctx.tc_in.is_some() {
             ui.ctx().request_repaint_after(std::time::Duration::from_millis(50));
         }
-        let Some(cue) = show.ws.cue_list.find_mut(id) else { return };
+        let cue = &mut cue;
         if matches!(cue.kind, CueKind::Mic(_) | CueKind::Camera(_)) {
             super::devices::ensure(&self.inputs, ui.ctx());
         }
-        let before = cue.clone();
         let mut refresh_devices = false;
         let mut pick_media = false;
 
@@ -296,8 +307,11 @@ impl App {
         if refresh_devices {
             super::devices::refresh(&self.inputs, ui.ctx());
         }
-        if *cue != before {
+        if show.ws.cue_list.find(id) != Some(&*cue) {
             let cue = cue.clone();
+            if let Some(c) = show.ws.cue_list.find_mut(id) {
+                *c = cue.clone();
+            }
             if show.engine.instances.contains_key(&id) {
                 show.media.update_live(&cue);
             }
@@ -378,15 +392,22 @@ fn basics(ui: &mut Ui, cue: &mut Cue, ctx: &Ctx, pick: &mut bool) {
     });
 }
 
-fn target_combo(ui: &mut Ui, salt: &str, target: &mut Option<CueId>, options: &[(CueId, String)], none_label: &str) {
-    let selected = target
-        .and_then(|t| options.iter().find(|o| o.0 == t))
-        .map(|o| o.1.clone())
-        .unwrap_or_else(|| if target.is_some() { super::theme::with_icon(super::icons::WARNING, "missing cue") } else { none_label.into() });
+/// Target picker. The menu lists every other cue; its labels are only made while it is open
+/// (formatting thousands of labels every frame shows up in big shows).
+fn target_combo(ui: &mut Ui, salt: &str, target: &mut Option<CueId>, ctx: &Ctx, none_label: &str) {
+    let selected = match *target {
+        None => none_label.into(),
+        Some(t) => match ctx.list.find(t) {
+            Some(c) => target_label(c, background_list(ctx.list, t)),
+            None => super::theme::with_icon(super::icons::WARNING, "missing cue"),
+        },
+    };
     ComboBox::from_id_salt(salt).width(220.0).selected_text(selected).show_ui(ui, |ui| {
         ui.selectable_value(target, None, none_label);
-        for (id, label) in options {
-            ui.selectable_value(target, Some(*id), label);
+        for (c, other_list) in ctx.list.iter_all_with_list() {
+            if c.id != ctx.id {
+                ui.selectable_value(target, Some(c.id), target_label(c, other_list));
+            }
         }
     });
 }
@@ -1060,14 +1081,13 @@ fn parse_pct(s: &str) -> Option<f64> {
 fn settings_tab(ui: &mut Ui, cue: &mut Cue, ctx: &Ctx, refresh: &mut bool) {
     use super::icons as ic;
     use super::theme::{Card, cards};
-    let options = ctx.options;
     // Cues that only point at another cue: one card with the target.
     let target_card = |ui: &mut Ui, label: &str, salt: &str, target: &mut Option<CueId>, none: &str, note: Option<&str>| {
         let specs = [Card::new(ic::ARROW_RIGHT, "Target", 420.0)];
         cards(ui, salt, &specs, |ui, _| {
             egui::Grid::new(salt).num_columns(2).spacing([10.0, 6.0]).show(ui, |ui| {
                 ui.label(label);
-                target_combo(ui, salt, target, options, none);
+                target_combo(ui, salt, target, ctx, none);
                 ui.end_row();
             });
             if let Some(note) = note {
@@ -1109,7 +1129,7 @@ fn settings_tab(ui: &mut Ui, cue: &mut Cue, ctx: &Ctx, refresh: &mut bool) {
         CueKind::Fade(f) => {
             // Only what the target can do: no geometry for a sound cue, no level for a text cue.
             // With no target yet, everything is offered.
-            let caps = f.target.map_or(FadeCaps { level: true, picture: true }, |t| ctx.fade_caps.get(&t).copied().unwrap_or_default());
+            let caps = f.target.map_or(FadeCaps { level: true, picture: true }, |t| ctx.fade_caps(t));
             let mut specs = vec![Card::new(ic::TUNE, "Changes", 300.0), Card::new(ic::TRENDING_DOWN, "Fade", 420.0)];
             if f.geometry.is_some() && caps.picture {
                 specs.push(Card::new(ic::OPEN_WITH, "Target geometry", f32::INFINITY));
@@ -1161,7 +1181,7 @@ fn settings_tab(ui: &mut Ui, cue: &mut Cue, ctx: &Ctx, refresh: &mut bool) {
                             if ui.checkbox(&mut on, "Animate position / scale / rotation").changed() {
                                 // Start from the target's own geometry so only what you change moves.
                                 f.geometry =
-                                    on.then(|| f.target.and_then(|t| ctx.geometries.get(&t).copied()).unwrap_or_default());
+                                    on.then(|| f.target.and_then(|t| ctx.geometry(t)).unwrap_or_default());
                             }
                             ui.end_row();
                         }
@@ -1170,7 +1190,7 @@ fn settings_tab(ui: &mut Ui, cue: &mut Cue, ctx: &Ctx, refresh: &mut bool) {
                 1 => {
                     egui::Grid::new("fade").num_columns(2).spacing([10.0, 6.0]).show(ui, |ui| {
                         ui.label("Target");
-                        target_combo(ui, "fade_target", &mut f.target, options, "— none —");
+                        target_combo(ui, "fade_target", &mut f.target, ctx, "— none —");
                         ui.end_row();
                         ui.label("Duration");
                         time_edit(ui, &mut f.duration);

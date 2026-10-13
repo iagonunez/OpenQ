@@ -3,6 +3,7 @@
 pub mod audio;
 pub mod decoder;
 pub mod input;
+pub mod pool;
 pub mod still;
 pub mod tcio;
 pub mod text;
@@ -37,8 +38,9 @@ pub fn max_texture_side() -> u32 {
 pub struct MediaInfo {
     /// File duration in seconds.
     pub duration: Option<f64>,
-    /// Human-readable summary (format, channels, resolution...).
-    pub detail: String,
+    /// Human-readable summary (format, channels, resolution...). Shared, so the per-frame
+    /// lookups of the cue list copy no text.
+    pub detail: Arc<str>,
     /// Audio channels (0 if none / unknown).
     pub channels: usize,
     /// True for still images.
@@ -48,13 +50,13 @@ pub struct MediaInfo {
 /// Background file prober with a cache, shared by the UI and the engine.
 pub struct Prober {
     cache: Mutex<HashMap<PathBuf, Option<Result<MediaInfo, String>>>>,
-    tx: Mutex<std::sync::mpsc::Sender<PathBuf>>,
+    probes: pool::Pool<PathBuf>,
     /// Replica mode: the main device pushes media info, nothing is probed locally.
     remote: std::sync::atomic::AtomicBool,
     /// File sizes (`Some(None)`: missing, None: first check pending) and when they were
     /// checked; see [`Prober::stat`].
     stats: Mutex<HashMap<PathBuf, StatEntry>>,
-    stat_tx: Mutex<std::sync::mpsc::Sender<PathBuf>>,
+    stat_jobs: pool::Pool<PathBuf>,
 }
 
 /// A cached [`Prober::stat`] answer and when it was (last asked to be) checked.
@@ -98,30 +100,56 @@ type WaveformResult = Result<Arc<decoder::Waveform>, String>;
 /// the main device, so requests go over the link instead of to a local decoder.
 pub type RemoteFetch = Box<dyn Fn(PathBuf) + Send + Sync>;
 
+/// Waveform cache: results (None while being built) and when each was last asked for.
+#[derive(Default)]
+struct WaveformCache {
+    map: HashMap<PathBuf, (Option<WaveformResult>, u64)>,
+    clock: u64,
+}
+
+impl WaveformCache {
+    /// Keep a result, then drop the least recently used ones over [`Waveforms::MAX_BYTES`].
+    fn insert(&mut self, path: PathBuf, result: WaveformResult) {
+        self.clock += 1;
+        self.map.insert(path, (Some(result), self.clock));
+        let size = |r: &Option<WaveformResult>| match r {
+            Some(Ok(w)) => w.peaks.len() * 16, // the peaks plus their coarser levels
+            _ => 0,
+        };
+        let mut total: usize = self.map.values().map(|(r, _)| size(r)).sum();
+        while total > Waveforms::MAX_BYTES {
+            let Some(old) = self.map.iter().filter(|(_, (r, _))| size(r) > 0).min_by_key(|(_, (_, used))| *used).map(|(p, _)| p.clone())
+            else {
+                break;
+            };
+            if self.map.len() == 1 {
+                break; // the one just made, however big
+            }
+            total -= self.map.remove(&old).map_or(0, |(r, _)| size(&r));
+        }
+    }
+}
+
 /// Background waveform builder with a cache (decoding a whole file can take a while).
 pub struct Waveforms {
-    cache: Mutex<HashMap<PathBuf, Option<WaveformResult>>>,
-    tx: Mutex<std::sync::mpsc::Sender<PathBuf>>,
+    cache: Mutex<WaveformCache>,
+    jobs: pool::Pool<PathBuf>,
     remote: Mutex<Option<RemoteFetch>>,
 }
 
 impl Waveforms {
-    /// Start the builder thread.
+    /// Set up the builders (threads start on first use).
     pub fn new() -> Arc<Self> {
-        let (tx, rx) = std::sync::mpsc::channel::<PathBuf>();
-        let w = Arc::new(Self { cache: Mutex::new(HashMap::new()), tx: Mutex::new(tx), remote: Mutex::new(None) });
-        let weak = Arc::downgrade(&w);
-        std::thread::Builder::new()
-            .name("openq-waveform".into())
-            .spawn(move || {
-                while let Ok(path) = rx.recv() {
-                    let res = crate::recovery::catch(|| decoder::waveform(&path)).map(Arc::new).map_err(|e| format!("{e:#}"));
-                    let Some(w) = weak.upgrade() else { break };
-                    w.cache.lock().insert(path, Some(res));
+        Arc::new_cyclic(|weak: &std::sync::Weak<Self>| {
+            let weak = weak.clone();
+            let jobs = pool::Pool::new("openq-waveform", 2, move |path: PathBuf| {
+                let res = crate::recovery::catch(|| decoder::waveform(&path)).map(Arc::new).map_err(|e| format!("{e:#}"));
+                if let Some(w) = weak.upgrade() {
+                    w.cache.lock().insert(path, res);
                 }
-            })
-            .expect("spawn waveform thread");
-        w
+            });
+            Self { cache: Mutex::new(WaveformCache::default()), jobs, remote: Mutex::new(None) }
+        })
     }
 
     /// The waveform if ready; queues it otherwise.
@@ -130,15 +158,18 @@ impl Waveforms {
             return None;
         }
         let mut c = self.cache.lock();
-        match c.get(path) {
-            Some(r) => r.clone(),
+        c.clock += 1;
+        let now = c.clock;
+        match c.map.get_mut(path) {
+            Some((r, used)) => {
+                *used = now;
+                r.clone()
+            }
             None => {
-                c.insert(path.to_path_buf(), None);
+                c.map.insert(path.to_path_buf(), (None, now));
                 match &*self.remote.lock() {
                     Some(fetch) => fetch(path.to_path_buf()),
-                    None => {
-                        let _ = self.tx.lock().send(path.to_path_buf());
-                    }
+                    None => self.jobs.push(path.to_path_buf()),
                 }
                 None
             }
@@ -147,14 +178,23 @@ impl Waveforms {
 
     /// Store a waveform (e.g. one received from a main device).
     pub fn insert(&self, path: PathBuf, result: WaveformResult) {
-        self.cache.lock().insert(path, Some(result));
+        self.cache.lock().insert(path, result);
+    }
+
+    /// Memory kept for waveforms (~0.8 KB per second of audio, twice that with the levels):
+    /// about 2 hours of audio files; older views are rebuilt when needed again.
+    pub const MAX_BYTES: usize = 64 << 20;
+
+    /// Paths with a cached result (tests).
+    pub fn cached(&self) -> usize {
+        self.cache.lock().map.values().filter(|(r, _)| r.is_some()).count()
     }
 
     /// Switch between local decoding (`None`) and fetching from a remote main device. Clears
     /// the cache either way.
     pub fn set_remote(&self, fetch: Option<RemoteFetch>) {
         *self.remote.lock() = fetch;
-        self.cache.lock().clear();
+        self.cache.lock().map.clear();
     }
 }
 
@@ -222,7 +262,7 @@ impl PosterCache {
 /// The cache is bounded ([`Posters::MAX_BYTES`]); the least recently used posters go first.
 pub struct Posters {
     cache: Mutex<PosterCache>,
-    tx: Mutex<std::sync::mpsc::Sender<PosterKey>>,
+    jobs: pool::Pool<PosterKey>,
 }
 
 impl Posters {
@@ -238,22 +278,18 @@ impl Posters {
         self.cache.lock().bytes
     }
 
-    /// Start the loader thread.
+    /// Set up the loaders (threads start on first use).
     pub fn new() -> Arc<Self> {
-        let (tx, rx) = std::sync::mpsc::channel::<PosterKey>();
-        let p = Arc::new(Self { cache: Mutex::new(PosterCache::default()), tx: Mutex::new(tx) });
-        let weak = Arc::downgrade(&p);
-        std::thread::Builder::new()
-            .name("openq-poster".into())
-            .spawn(move || {
-                while let Ok(key) = rx.recv() {
-                    let res = crate::recovery::catch(|| load_poster(&key.0, key.1 as f64 / 100.0)).map_err(|e| format!("{e:#}"));
-                    let Some(p) = weak.upgrade() else { break };
+        Arc::new_cyclic(|weak: &std::sync::Weak<Self>| {
+            let weak = weak.clone();
+            let jobs = pool::Pool::new("openq-poster", 2, move |key: PosterKey| {
+                let res = crate::recovery::catch(|| load_poster(&key.0, key.1 as f64 / 100.0)).map_err(|e| format!("{e:#}"));
+                if let Some(p) = weak.upgrade() {
                     p.cache.lock().insert(key, Some(res));
                 }
-            })
-            .expect("spawn poster thread");
-        p
+            });
+            Self { cache: Mutex::new(PosterCache::default()), jobs }
+        })
     }
 
     /// The poster if ready; queues it otherwise.
@@ -267,7 +303,7 @@ impl Posters {
             Some(r) => r.clone(),
             None => {
                 c.insert(key.clone(), None);
-                let _ = self.tx.lock().send(key);
+                self.jobs.push(key);
                 None
             }
         }
@@ -297,7 +333,7 @@ fn probe_now(path: &Path) -> Result<MediaInfo, String> {
         decoder::probe(path)
             .map(|i| MediaInfo {
                 duration: i.duration,
-                detail: format!("{} Hz, {} ch", i.sample_rate, i.channels),
+                detail: format!("{} Hz, {} ch", i.sample_rate, i.channels).into(),
                 channels: i.channels,
                 still: false,
             })
@@ -309,7 +345,7 @@ fn probe_now(path: &Path) -> Result<MediaInfo, String> {
     if is_image_path(path) {
         let (w, h) = still::dimensions(path).map_err(|e| format!("{e:#}"))?;
         let kind = if still::is_svg(path) { "SVG" } else { "still" };
-        return Ok(MediaInfo { duration: None, detail: format!("{w}×{h} {kind}"), channels: 0, still: true });
+        return Ok(MediaInfo { duration: None, detail: format!("{w}×{h} {kind}").into(), channels: 0, still: true });
     }
     // Anything else goes to FFmpeg, which knows far more containers.
     #[cfg(feature = "video")]
@@ -320,7 +356,7 @@ fn probe_now(path: &Path) -> Result<MediaInfo, String> {
                 channels: i.audio_channels,
                 still: false,
                 detail: if i.width > 0 {
-                    format!("{} {}×{}{}", i.codec, i.width, i.height, if i.has_audio { " + audio" } else { "" })
+                    format!("{} {}×{}{}", i.codec, i.width, i.height, if i.has_audio { " + audio" } else { "" }).into()
                 } else {
                     "audio only".into()
                 },
@@ -332,47 +368,32 @@ fn probe_now(path: &Path) -> Result<MediaInfo, String> {
 }
 
 impl Prober {
-    /// Start the probe thread.
+    /// Start the probe and stat workers (threads start on first use).
     pub fn new() -> Arc<Self> {
-        let (tx, rx) = std::sync::mpsc::channel::<PathBuf>();
-        let (stat_tx, stat_rx) = std::sync::mpsc::channel::<PathBuf>();
-        let p = Arc::new(Self {
-            cache: Mutex::new(HashMap::new()),
-            tx: Mutex::new(tx),
-            remote: Default::default(),
-            stats: Mutex::new(HashMap::new()),
-            stat_tx: Mutex::new(stat_tx),
-        });
-        let weak = Arc::downgrade(&p);
-        std::thread::Builder::new()
-            .name("openq-stat".into())
-            .spawn(move || {
-                while let Ok(path) = stat_rx.recv() {
-                    let size = std::fs::metadata(&path).ok().filter(|m| m.is_file()).map(|m| m.len());
-                    let Some(p) = weak.upgrade() else { break };
+        Arc::new_cyclic(|weak: &std::sync::Weak<Self>| {
+            let w = weak.clone();
+            let stat_jobs = pool::Pool::new("openq-stat", 8, move |path: PathBuf| {
+                let size = std::fs::metadata(&path).ok().filter(|m| m.is_file()).map(|m| m.len());
+                if let Some(p) = w.upgrade() {
                     p.stats.lock().insert(path, (Some(size), std::time::Instant::now()));
                 }
-            })
-            .expect("spawn stat thread");
-        let weak = Arc::downgrade(&p);
-        std::thread::Builder::new()
-            .name("openq-probe".into())
-            .spawn(move || {
-                while let Ok(path) = rx.recv() {
-                    let t = std::time::Instant::now();
-                    log::debug!("probing {}", path.display());
-                    let res = crate::recovery::catch(|| {
-                        crate::recovery::fault_point(crate::recovery::Fault::Prober);
-                        probe_now(&path).map_err(anyhow::Error::msg)
-                    })
-                    .map_err(|e| format!("{e:#}"));
-                    log::debug!("probed {} in {:?}: {}", path.display(), t.elapsed(), res.is_ok());
-                    let Some(p) = weak.upgrade() else { break };
+            });
+            let w = weak.clone();
+            let probes = pool::Pool::new("openq-probe", 4, move |path: PathBuf| {
+                let t = std::time::Instant::now();
+                log::debug!("probing {}", path.display());
+                let res = crate::recovery::catch(|| {
+                    crate::recovery::fault_point(crate::recovery::Fault::Prober);
+                    probe_now(&path).map_err(anyhow::Error::msg)
+                })
+                .map_err(|e| format!("{e:#}"));
+                log::debug!("probed {} in {:?}: {}", path.display(), t.elapsed(), res.is_ok());
+                if let Some(p) = w.upgrade() {
                     p.cache.lock().insert(path, Some(res));
                 }
-            })
-            .expect("spawn prober");
-        p
+            });
+            Self { cache: Mutex::new(HashMap::new()), probes, remote: Default::default(), stats: Mutex::new(HashMap::new()), stat_jobs }
+        })
     }
 
     /// Cached info, queueing a background probe if unknown. None = not known yet.
@@ -386,7 +407,7 @@ impl Prober {
             None => {
                 c.insert(path.to_path_buf(), None);
                 if !self.remote.load(std::sync::atomic::Ordering::Relaxed) {
-                    let _ = self.tx.lock().send(path.to_path_buf());
+                    self.probes.push(path.to_path_buf());
                 }
                 None
             }
@@ -409,14 +430,14 @@ impl Prober {
                 if now.duration_since(*checked) > STAT_TTL {
                     // Mark it fresh so it's queued once, not every frame until the answer.
                     *checked = now;
-                    let _ = self.stat_tx.lock().send(path.to_path_buf());
+                    self.stat_jobs.push(path.to_path_buf());
                 }
                 *size
             }
             None => {
                 // A pending entry, so the first check is queued once.
                 c.insert(path.to_path_buf(), (None, now));
-                let _ = self.stat_tx.lock().send(path.to_path_buf());
+                self.stat_jobs.push(path.to_path_buf());
                 None
             }
         }
@@ -493,13 +514,58 @@ pub struct Media {
     pub prober: Arc<Prober>,
     net: Option<std::net::UdpSocket>,
     /// Open inputs of running Mic cues.
-    mics: HashMap<CueId, input::InputStream>,
+    mics: HashMap<CueId, MicInput>,
     /// Set while a lost audio output is being reopened.
     reconnect: Option<Reconnect>,
     /// Messages for the engine log.
     notes: Vec<String>,
     /// Preloading skipped files still being probed: offer the preload set again at this time.
     preload_retry: Option<Instant>,
+    /// Audio cues started before their file was probed: they start once the background probe
+    /// answers (the engine thread never probes).
+    pending_audio: HashMap<CueId, PendingAudio>,
+}
+
+/// A Mic cue's live input. Opening a device can take a while, so it opens on its own thread;
+/// a device that goes away is reopened every [`AUDIO_RETRY`] while the cue runs.
+struct MicInput {
+    device: Option<String>,
+    sink: Arc<Mutex<input::MicSink>>,
+    stream: Option<input::InputStream>,
+    opening: Option<std::sync::mpsc::Receiver<anyhow::Result<input::InputStream>>>,
+    next_try: Instant,
+    /// The device was lost (so its return is announced).
+    lost: bool,
+    /// Its fade-in, applied when the input first opens.
+    fade_in: Option<(f32, f64, Instant)>,
+    first: u16,
+    channels: u16,
+}
+
+impl MicInput {
+    /// Open the input in the background.
+    fn open(&mut self) {
+        let (tx, rx) = std::sync::mpsc::channel();
+        let (device, sink) = (self.device.clone(), self.sink.clone());
+        let spawned = std::thread::Builder::new().name("openq-mic-open".into()).spawn(move || {
+            let r = input::open_input(device.as_deref(), move |data, in_ch| {
+                // A reopen swaps the rate under the lock; skipping one chunk then is fine.
+                if let Some(mut s) = sink.try_lock() {
+                    s.push(data, in_ch);
+                }
+            });
+            let _ = tx.send(r);
+        });
+        self.opening = spawned.is_ok().then_some(rx);
+        self.next_try = Instant::now() + AUDIO_RETRY;
+    }
+}
+
+/// An audio start waiting for its file's channel count.
+struct PendingAudio {
+    params: crate::model::AudioCue,
+    at: Instant,
+    paused: bool,
 }
 
 /// How often to try reopening a lost audio device.
@@ -547,6 +613,7 @@ impl Media {
             reconnect: None,
             notes: Vec::new(),
             preload_retry: None,
+            pending_audio: HashMap::new(),
         }
     }
 
@@ -601,9 +668,27 @@ impl Media {
         }
     }
 
-    /// Source channel count for an audio file (probing it if needed).
-    fn audio_channels(&self, path: &Path) -> usize {
-        self.prober.get_blocking(path).map(|i| i.channels).unwrap_or(2).max(1)
+    /// Start audio cues whose files have been probed since their GO (late by the probe time).
+    fn start_pending_audio(&mut self, now: Instant) {
+        if self.pending_audio.is_empty() {
+            return;
+        }
+        let ready: Vec<(CueId, Result<usize, String>)> = self
+            .pending_audio
+            .iter()
+            .filter(|(_, p)| !p.paused)
+            .filter_map(|(id, p)| Some((*id, self.prober.get(&p.params.path)?.map(|i| i.channels.max(1)))))
+            .collect();
+        for (id, r) in ready {
+            let p = self.pending_audio.remove(&id).expect("pending");
+            let r = r.and_then(|ch| match &mut self.audio {
+                Some(a) => a.start(id, &p.params, ch, p.at.max(now)),
+                None => Err("audio unavailable".into()),
+            });
+            if let Err(e) = r {
+                self.notes.push(format!("{}: {e}", p.params.path.display()));
+            }
+        }
     }
 
     /// How a video cue's soundtrack enters the mixer (None: no mixer, or the file has no audio).
@@ -679,6 +764,7 @@ impl Media {
 
     /// Silence everything at once: every voice, layer and live input (last-resort recovery).
     pub fn stop_everything(&mut self) {
+        self.pending_audio.clear();
         if let Some(a) = &mut self.audio {
             a.stop_all();
         }
@@ -693,6 +779,9 @@ impl Media {
     pub fn update_live(&mut self, cue: &Cue) {
         match &cue.kind {
             CueKind::Audio(p) => {
+                if let Some(pending) = self.pending_audio.get_mut(&cue.id) {
+                    pending.params = p.clone();
+                }
                 if let Some(a) = &mut self.audio {
                     a.update_live(cue.id, &audio::MixParams::from(p));
                 }
@@ -729,7 +818,7 @@ impl Media {
 
     /// Input peak of a running Mic cue since the last call (linear).
     pub fn mic_peak(&self, id: CueId) -> Option<f32> {
-        self.mics.get(&id).map(|m| m.take_peak())
+        self.mics.get(&id).and_then(|m| m.stream.as_ref()).map(|s| s.take_peak())
     }
 
     /// Open a Mic cue's input and feed it into a new mixer voice.
@@ -745,43 +834,74 @@ impl Media {
         }
         let label = format!("input {}", m.device.as_deref().unwrap_or("default"));
         let (tx, shared) = a.add_external(id, &mix, ch, &label, 0.25);
-        let out_rate = a.rate;
-        // The input rate is only known once the stream opens, so the feeder is built on the first chunk.
-        let mut feeder: Option<input::MicFeeder> = None;
-        let mut parts = Some((tx, shared.clone()));
-        let (first, duration) = (m.first_channel as usize, m.duration);
-        let rate_cell = Arc::new(std::sync::atomic::AtomicU32::new(0));
-        let rate_in = rate_cell.clone();
-        let stream = input::open_input(m.device.as_deref(), move |data, in_ch| {
-            if feeder.is_none() {
-                let in_rate = rate_in.load(std::sync::atomic::Ordering::Acquire);
-                if in_rate == 0 {
-                    return;
+        let sink = input::MicSink::new(tx, shared, m.first_channel as usize, ch, a.rate, m.duration);
+        let mut mic = MicInput {
+            device: m.device.clone(),
+            sink: Arc::new(Mutex::new(sink)),
+            stream: None,
+            opening: None,
+            next_try: at,
+            lost: false,
+            fade_in: (m.fade_in > 0.0).then_some((m.volume_db, m.fade_in, at)),
+            first: m.first_channel,
+            channels: m.channels,
+        };
+        // Never wait for the device on the engine thread: it opens in the background and the
+        // voice plays silence until then (errors reach the log through `notes`).
+        mic.open();
+        self.mics.insert(id, mic);
+        Ok(())
+    }
+
+    /// Mic inputs: take streams that finished opening, reopen lost ones.
+    fn watch_mics(&mut self, now: Instant) {
+        let Some(a) = &mut self.audio else { return };
+        let mut failed = Vec::new();
+        for (id, m) in self.mics.iter_mut() {
+            if let Some(rx) = &m.opening {
+                match rx.try_recv() {
+                    Ok(Ok(s)) => {
+                        m.opening = None;
+                        if (s.channels as u16) < m.first + m.channels {
+                            log::warn!("{}: has {} input channels; missing ones are silent", s.device_name, s.channels);
+                        }
+                        m.sink.lock().set_input_rate(s.rate);
+                        if let Some((db, secs, _)) = m.fade_in.take() {
+                            a.fade(*id, db, secs, crate::model::FadeCurve::SCurve, now);
+                        }
+                        if m.lost {
+                            m.lost = false;
+                            self.notes.push(format!("Audio input back: {}", s.device_name));
+                        }
+                        m.stream = Some(s);
+                    }
+                    Ok(Err(e)) => {
+                        m.opening = None;
+                        if m.lost {
+                            log::debug!("audio input still away: {e:#}");
+                        } else {
+                            // The first open failed: the cue can't run.
+                            failed.push((*id, format!("audio input: {e:#}")));
+                        }
+                    }
+                    Err(std::sync::mpsc::TryRecvError::Empty) => {}
+                    Err(std::sync::mpsc::TryRecvError::Disconnected) => m.opening = None,
                 }
-                let (tx, shared) = parts.take().expect("feeder parts");
-                feeder = Some(input::MicFeeder::new(tx, shared, first, ch, in_rate, out_rate, duration));
             }
-            if let Some(f) = &mut feeder {
-                f.push(data, in_ch);
+            if m.stream.as_ref().is_some_and(|s| s.is_lost()) {
+                let name = m.stream.take().map(|s| s.device_name.clone()).unwrap_or_default();
+                m.lost = true;
+                m.next_try = now + AUDIO_RETRY;
+                self.notes.push(format!("Audio input lost ({name}); reconnecting…"));
             }
-        });
-        match stream {
-            Ok(s) => {
-                if (s.channels as u16) < m.first_channel + m.channels {
-                    log::warn!("{}: has {} input channels; missing ones are silent", s.device_name, s.channels);
-                }
-                rate_cell.store(s.rate, std::sync::atomic::Ordering::Release);
-                if m.fade_in > 0.0 {
-                    a.fade(id, m.volume_db, m.fade_in, crate::model::FadeCurve::SCurve, at);
-                }
-                self.mics.insert(id, s);
-                Ok(())
+            if m.lost && m.stream.is_none() && m.opening.is_none() && now >= m.next_try {
+                m.open();
             }
-            Err(e) => {
-                shared.eof.store(true, std::sync::atomic::Ordering::Release);
-                a.stop(id);
-                Err(format!("audio input: {e:#}"))
-            }
+        }
+        for (id, e) in failed {
+            self.mics.remove(&id);
+            a.stop(id);
+            self.notes.push(e);
         }
     }
 
@@ -858,7 +978,7 @@ impl Backend for Media {
                 .iter()
                 .filter(|c| c.armed)
                 .filter_map(|c| match &c.kind {
-                    CueKind::Video(p) => Some((c.id, p, self.video_tap(p))),
+                    CueKind::Video(p) if self.prober.exists(&p.path) => Some((c.id, p, self.video_tap(p))),
                     _ => None,
                 })
                 .collect();
@@ -884,15 +1004,34 @@ impl Backend for Media {
 
     fn start(&mut self, cue: &Cue, at: Instant) -> Result<(), String> {
         match &cue.kind {
-            CueKind::Audio(p) => match self.audio.is_some() {
-                true => {
-                    let ch = self.audio_channels(&p.path);
-                    self.audio.as_mut().unwrap().start(cue.id, p, ch, at)
+            CueKind::Audio(p) => {
+                let Some(a) = &mut self.audio else {
+                    return Err(format!("audio unavailable: {}", self.audio_error.as_deref().unwrap_or("?")));
+                };
+                if p.path.as_os_str().is_empty() {
+                    return Err("no audio file".into());
                 }
-                false => Err(format!("audio unavailable: {}", self.audio_error.as_deref().unwrap_or("?"))),
-            },
+                if !self.prober.exists(&p.path) {
+                    return Err(format!("file not found: {}", p.path.display()));
+                }
+                self.pending_audio.remove(&cue.id);
+                match self.prober.get(&p.path) {
+                    Some(Ok(i)) => a.start(cue.id, p, i.channels.max(1), at),
+                    Some(Err(e)) => Err(e),
+                    None => {
+                        // Normally preloading has probed it. Never probe here (engine thread,
+                        // show locked): start when the background probe answers.
+                        a.stop(cue.id);
+                        self.pending_audio.insert(cue.id, PendingAudio { params: p.clone(), at, paused: false });
+                        Ok(())
+                    }
+                }
+            }
             #[cfg(feature = "video")]
             CueKind::Video(p) => {
+                if !p.path.as_os_str().is_empty() && !self.prober.exists(&p.path) {
+                    return Err(format!("file not found: {}", p.path.display()));
+                }
                 let tap = self.video_tap(p);
                 let Some(v) = &mut self.video else {
                     return Err(format!("video unavailable: {}", self.video_error.as_deref().unwrap_or("?")));
@@ -929,6 +1068,7 @@ impl Backend for Media {
     }
 
     fn stop(&mut self, id: CueId) {
+        self.pending_audio.remove(&id);
         if let Some(a) = &mut self.audio {
             a.stop(id);
         }
@@ -940,6 +1080,9 @@ impl Backend for Media {
     }
 
     fn pause(&mut self, id: CueId) {
+        if let Some(p) = self.pending_audio.get_mut(&id) {
+            p.paused = true;
+        }
         if let Some(a) = &mut self.audio {
             a.pause(id);
         }
@@ -950,6 +1093,10 @@ impl Backend for Media {
     }
 
     fn resume(&mut self, id: CueId, at: Instant) {
+        if let Some(p) = self.pending_audio.get_mut(&id) {
+            p.paused = false;
+            p.at = at;
+        }
         if let Some(a) = &mut self.audio {
             a.resume(id, at);
         }
@@ -1002,6 +1149,9 @@ impl Backend for Media {
     }
 
     fn is_finished(&self, id: CueId) -> bool {
+        if self.pending_audio.contains_key(&id) {
+            return false;
+        }
         let audio_done = self.audio.as_ref().is_none_or(|a| a.is_finished(id));
         #[cfg(feature = "video")]
         let video_done = self.video.as_ref().is_none_or(|v| v.is_finished(id));
@@ -1012,7 +1162,8 @@ impl Backend for Media {
 
     fn duration(&self, cue: &Cue) -> Option<f64> {
         let file = match &cue.kind {
-            CueKind::Audio(a) => self.prober.get_blocking(&a.path).ok()?.duration,
+            // Unknown until probed: the engine then waits for the media to report its end.
+            CueKind::Audio(a) => self.prober.get(&a.path)?.ok()?.duration,
             CueKind::Video(v) if is_image_path(&v.path) => None,
             CueKind::Text(t) => return (t.duration > 0.0).then_some(t.duration),
             CueKind::Mic(m) => return (m.duration > 0.0).then_some(m.duration),
@@ -1036,6 +1187,8 @@ impl Backend for Media {
 
     fn update(&mut self, now: Instant) {
         self.watch_audio(now);
+        self.watch_mics(now);
+        self.start_pending_audio(now);
         if let Some(a) = &mut self.audio {
             a.update();
             // Close the inputs of Mic cues whose voice has ended.
@@ -1119,5 +1272,94 @@ mod tests {
         assert!(!media.preload_retry(t0), "retries are throttled");
         assert!(media.preload_retry(t0 + std::time::Duration::from_millis(60)), "a retry is asked for");
         let _ = std::fs::remove_file(&fifo);
+    }
+
+    /// GO on an audio cue whose file hasn't been probed yet must not probe on the engine thread:
+    /// the start waits for the background probe (a stalled file never blocks the tick).
+    #[test]
+    fn starting_an_unprobed_file_never_blocks() {
+        use crate::engine::Backend;
+        let dir = std::env::temp_dir().join(format!("openq-cold-go-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let fifo = dir.join("stalled.wav");
+        let _ = std::fs::remove_file(&fifo);
+        assert!(std::process::Command::new("mkfifo").arg(&fifo).status().unwrap().success());
+        let wav = dir.join("cold.wav");
+        decoder::tests::write_wav(&wav, 48000, 0.5);
+
+        let mut media = Media::new(Prober::new());
+        media.audio = Some(audio::AudioOutput::open_virtual(48000, 2, None).unwrap());
+        let stalled = Cue::new(CueKind::Audio(crate::model::AudioCue { path: fifo.clone(), ..Default::default() }));
+        let t0 = Instant::now();
+        assert_eq!(media.start(&stalled, t0), Ok(()));
+        assert!(t0.elapsed() < std::time::Duration::from_millis(100), "start blocked for {:?}", t0.elapsed());
+        assert!(!media.is_finished(stalled.id), "a waiting start counts as playing");
+        assert_eq!(media.duration(&stalled), None, "unknown until probed");
+        media.update(Instant::now());
+        media.stop(stalled.id);
+        assert!(media.is_finished(stalled.id));
+        // Its probe is still stuck on the FIFO; other files are probed anyway.
+        let cold = Cue::new(CueKind::Audio(crate::model::AudioCue { path: wav.clone(), ..Default::default() }));
+        assert_eq!(media.start(&cold, Instant::now()), Ok(()));
+        let deadline = Instant::now() + std::time::Duration::from_secs(5);
+        while !media.audio.as_ref().unwrap().has(cold.id) {
+            assert!(Instant::now() < deadline, "the cue never started after its probe");
+            media.update(Instant::now());
+            std::thread::sleep(std::time::Duration::from_millis(5));
+        }
+        let d = media.duration(&cold).expect("probed");
+        assert!((d - 0.5).abs() < 0.01, "{d}");
+        media.stop(cold.id);
+
+        // Release the probe stuck opening the FIFO.
+        let _ = std::fs::OpenOptions::new().write(true).open(&fifo);
+        let _ = std::fs::remove_file(&fifo);
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    /// The waveform cache keeps to its memory budget, dropping the views not looked at lately.
+    #[test]
+    fn waveform_cache_is_bounded() {
+        let w = Waveforms::new();
+        let big = |n: usize| Ok(Arc::new(decoder::Waveform::new(vec![[0.0, 0.0]; n], 0.01, 0.0)));
+        let per = Waveforms::MAX_BYTES / 16 / 3; // three fit
+        for i in 0..3 {
+            w.insert(PathBuf::from(format!("/f{i}")), big(per));
+        }
+        assert_eq!(w.cached(), 3);
+        assert!(w.get(Path::new("/f0")).is_some(), "use the oldest again");
+        w.insert(PathBuf::from("/f3"), big(per));
+        assert_eq!(w.cached(), 3);
+        assert!(w.cache.lock().map.contains_key(Path::new("/f0")), "recently used is kept");
+        assert!(!w.cache.lock().map.contains_key(Path::new("/f1")), "least recently used goes");
+    }
+
+    /// A decoder that stops delivering without failing (a hung network share) is reported once.
+    #[test]
+    fn a_stalled_decoder_is_reported() {
+        let dir = std::env::temp_dir().join(format!("openq-stall-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let fifo = dir.join("hung.wav");
+        let _ = std::fs::remove_file(&fifo);
+        assert!(std::process::Command::new("mkfifo").arg(&fifo).status().unwrap().success());
+        let mut a = audio::AudioOutput::open_virtual(48000, 2, None).unwrap();
+        let cue = CueId::new_v4();
+        let params = crate::model::AudioCue { path: fifo.clone(), ..Default::default() };
+        a.start(cue, &params, 2, Instant::now()).unwrap();
+        let deadline = Instant::now() + std::time::Duration::from_secs(5);
+        let mut reports = Vec::new();
+        while reports.is_empty() {
+            assert!(Instant::now() < deadline, "stall never reported");
+            std::thread::sleep(std::time::Duration::from_millis(50));
+            a.update();
+            reports = a.drain_errors();
+        }
+        assert!(reports[0].contains("stopped loading"), "{reports:?}");
+        std::thread::sleep(std::time::Duration::from_millis(200));
+        assert!(a.drain_errors().is_empty(), "reported once");
+        a.stop(cue);
+        // Unblock the decoder thread stuck opening the FIFO.
+        let _ = std::fs::OpenOptions::new().write(true).open(&fifo);
+        let _ = std::fs::remove_dir_all(&dir);
     }
 }

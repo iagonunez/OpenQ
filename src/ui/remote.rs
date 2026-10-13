@@ -290,6 +290,19 @@ impl App {
                         new_ws = true;
                     }
                 }
+                ServerMsg::Cues(patch) => {
+                    let applied = match &mut r.synced {
+                        Some(synced) => crate::remote::apply_cue_patch(synced, &patch),
+                        None => false,
+                    };
+                    if applied {
+                        // Local edits not yet echoed are overwritten, as with a whole workspace.
+                        crate::remote::apply_cue_patch(&mut show.ws, &patch);
+                        show.engine.workspace_changed();
+                    } else {
+                        link.send(ClientMsg::Resync);
+                    }
+                }
                 ServerMsg::State(s) => {
                     let mut playhead = s.playhead;
                     match r.pending_playhead {

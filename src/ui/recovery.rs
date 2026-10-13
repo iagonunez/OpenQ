@@ -95,14 +95,27 @@ impl App {
             self.recovery.orphans.clear();
             return;
         }
-        let Some((i, recover)) = action else { return };
+        if let Some((i, recover)) = action {
+            self.recovery_choice(i, recover);
+        }
+    }
+
+    /// Recover or discard orphan `i`. Called while the frame holds the show lock, so it must not lock it.
+    fn recovery_choice(&mut self, i: usize, recover: bool) {
         let o = self.recovery.orphans.remove(i);
         if !recover {
             o.discard();
             return;
         }
+        // Recovering locks the show and may open a dialog: not while this frame holds the lock.
+        self.deferred.push(super::Deferred::Recover(o));
+    }
+
+    /// Replace the current show with an autosaved one. Runs without the show lock held.
+    pub(super) fn recover(&mut self, o: Orphan) {
         if !self.confirm_discard() {
-            self.recovery.orphans.insert(i, o);
+            // Offer it again.
+            self.recovery.orphans.insert(0, o);
             return;
         }
         match o.load() {
@@ -123,5 +136,96 @@ impl App {
             }
             Err(e) => self.notify(format!("Cannot recover {}: {e:#}", o.name())),
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::media::Prober;
+    use crate::model::{Cue, CueKind, Workspace};
+    use crate::show::{SharedShow, Show};
+    use egui::accesskit::Role;
+
+    /// One headless frame of the whole window with `events` as input; returns the AccessKit tree.
+    fn frame(ctx: &egui::Context, app: &mut App, events: Vec<egui::Event>) -> egui::accesskit::TreeUpdate {
+        let input = egui::RawInput {
+            screen_rect: Some(egui::Rect::from_min_size(egui::Pos2::ZERO, egui::vec2(1600.0, 1000.0))),
+            events,
+            ..Default::default()
+        };
+        let out = ctx.run_ui(input, |ui| app.draw(ui, None));
+        out.platform_output.accesskit_update.expect("accesskit enabled")
+    }
+
+    /// Centre of the button whose label contains `text`.
+    fn button(tree: &egui::accesskit::TreeUpdate, text: &str) -> Option<egui::Pos2> {
+        tree.nodes.iter().find_map(|(_, n)| {
+            let b = n.bounds()?;
+            (n.role() == Role::Button && n.label().is_some_and(|l| l.contains(text)))
+                .then(|| egui::pos2(((b.x0 + b.x1) / 2.0) as f32, ((b.y0 + b.y1) / 2.0) as f32))
+        })
+    }
+
+    /// Clicking Recover in the real window loads the autosaved show. It used to lock the show a
+    /// second time from inside the frame and freeze the app.
+    #[test]
+    fn recover_button_click() {
+        // A deadlock would hang the test run: fail it instead.
+        let done = Arc::new(AtomicBool::new(false));
+        let watchdog = done.clone();
+        std::thread::spawn(move || {
+            std::thread::sleep(std::time::Duration::from_secs(20));
+            if !watchdog.load(Ordering::Acquire) {
+                eprintln!("recover_button_click: the UI froze after clicking Recover");
+                std::process::exit(1);
+            }
+        });
+
+        let dir = std::env::temp_dir().join(format!("openq-recover-test-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        let mut ws = Workspace::default();
+        ws.cue_list.cues.push(Cue::new(CueKind::Memo));
+        // Dropping the session releases its lock like a crashed instance, leaving the copy behind.
+        Autosave::new_in(&dir).unwrap().write(&ws, None).unwrap();
+        let orphans = crate::recovery::find_orphans_in(&dir, None);
+        assert_eq!(orphans.len(), 1);
+
+        let prober = Prober::new();
+        let shared: SharedShow = Arc::new(Mutex::new(Show::new(prober.clone())));
+        let mut app = App::new(shared.clone(), prober);
+        app.recovery.orphans = orphans;
+
+        crate::media::set_max_texture_side(2048);
+        let ctx = egui::Context::default();
+        super::theme::install(&ctx);
+        ctx.enable_accesskit();
+        // Windows take a frame or two to size and place themselves.
+        let mut tree = frame(&ctx, &mut app, vec![]);
+        for _ in 0..3 {
+            tree = frame(&ctx, &mut app, vec![]);
+        }
+        let pos = button(&tree, "Recover").expect("Recover button on screen");
+        let press = |pressed| egui::Event::PointerButton {
+            pos,
+            button: egui::PointerButton::Primary,
+            pressed,
+            modifiers: Default::default(),
+        };
+        frame(&ctx, &mut app, vec![egui::Event::PointerMoved(pos)]);
+        frame(&ctx, &mut app, vec![press(true)]);
+        frame(&ctx, &mut app, vec![press(false)]);
+        let tree = frame(&ctx, &mut app, vec![]);
+        done.store(true, Ordering::Release);
+
+        let s = shared.lock();
+        assert_eq!(s.ws.cue_list.cues.len(), 1, "show recovered");
+        assert!(s.dirty, "recovered show is unsaved");
+        drop(s);
+        assert!(app.recovery.orphans.is_empty());
+        assert!(button(&tree, "Discard").is_none(), "recovery window closed");
+        assert!(crate::recovery::find_orphans_in(&dir, None).is_empty(), "autosaved copy removed");
+        let _ = std::fs::remove_dir_all(&dir);
     }
 }

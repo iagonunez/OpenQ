@@ -220,6 +220,9 @@ pub struct VoiceShared {
     pub error: parking_lot::Mutex<Option<String>>,
     /// The mixer had no room for this voice (more than [`MAX_VOICES`]).
     pub rejected: AtomicBool,
+    /// Frames the mixer wanted while playing but the decoder hadn't delivered (it fell behind or
+    /// stalled, e.g. on a network share that stopped answering).
+    pub starved: AtomicU64,
 }
 
 #[derive(Clone, Copy)]
@@ -550,6 +553,8 @@ fn render_voice(v: &mut Voice, out: &mut [f32], ch: usize, frames: usize, start_
         let (a, b) = chunk.as_slices();
         let mut samples = a.iter().chain(b.iter());
         let mut x = [0f32; MAX_SRC_CHANNELS];
+        // Frames actually heard: a stop ramp can end the voice inside the chunk.
+        let mut played = n;
         for f in i..i + n {
             let gf = start_frame + f as u64;
             let g = match &mut v.ramp {
@@ -590,16 +595,24 @@ fn render_voice(v: &mut Voice, out: &mut [f32], ch: usize, frames: usize, start_
                 out[base + o] += acc * g * p;
             }
             if v.done {
+                played = f + 1 - i;
                 break;
             }
         }
         chunk.commit_all();
-        v.shared.frames_played.fetch_add(n as u64, Ordering::Relaxed);
+        v.shared.frames_played.fetch_add(played as u64, Ordering::Relaxed);
     }
-    if !v.done && i + n < frames && v.rx.slots() < src && v.shared.eof.load(Ordering::Acquire) {
-        v.done = true;
+    if !v.done && i + n < frames && v.rx.slots() < src {
+        if v.shared.eof.load(Ordering::Acquire) {
+            v.done = true;
+        } else {
+            v.shared.starved.fetch_add((frames - i - n) as u64, Ordering::Relaxed);
+        }
     }
 }
+
+/// Seconds of silence from a decoder that fell behind before it is reported.
+const STALL_REPORT_SECS: f64 = 0.5;
 
 struct VoiceHandle {
     id: u64,
@@ -610,6 +623,8 @@ struct VoiceHandle {
     label: String,
     src_channels: usize,
     error_reported: bool,
+    /// The decoder stall was reported (once per voice).
+    stall_reported: bool,
 }
 
 /// An output device the user can pick.
@@ -973,6 +988,7 @@ impl AudioOutput {
             label: params.path.display().to_string(),
             src_channels: src,
             error_reported: false,
+            stall_reported: false,
         }
     }
 
@@ -1026,6 +1042,7 @@ impl AudioOutput {
                 label: label.to_string(),
                 src_channels: src,
                 error_reported: false,
+                stall_reported: false,
             },
         );
         (tx, shared)
@@ -1064,7 +1081,7 @@ impl AudioOutput {
             }
         }
         for (id, p, src) in cues {
-            if !self.preloaded.contains_key(id) && p.path.exists() && self.voice_count() < MAX_VOICES {
+            if !self.preloaded.contains_key(id) && self.voice_count() < MAX_VOICES {
                 let h = self.create_voice(p, *src);
                 self.preloaded.insert(*id, h);
             }
@@ -1076,9 +1093,8 @@ impl AudioOutput {
         if params.path.as_os_str().is_empty() {
             return Err("no audio file".into());
         }
-        if !params.path.exists() {
-            return Err(format!("file not found: {}", params.path.display()));
-        }
+        // Whether the file exists is checked by the caller from the prober's cache (a stat here
+        // would run on the engine thread); a missing file shows up as a decoder error.
         self.stop(cue);
         if !self.preloaded.contains_key(&cue) && self.voice_count() >= MAX_VOICES {
             return Err(format!("too many sounds at once (most is {MAX_VOICES})"));
@@ -1199,6 +1215,14 @@ impl AudioOutput {
             } else if h.shared.rejected.load(Ordering::Acquire) {
                 h.error_reported = true;
                 out.push(format!("{}: too many sounds at once (most is {MAX_VOICES})", h.label));
+            } else if h.params.is_some()
+                && !h.stall_reported
+                && h.shared.starved.load(Ordering::Relaxed) as f64 > STALL_REPORT_SECS * self.rate as f64
+            {
+                // Watchdog: the file stopped arriving without an error (a hung network share or
+                // a drive spinning up). The voice stays and plays on if the data comes back.
+                h.stall_reported = true;
+                out.push(format!("{}: the file stopped loading in time (slow or disconnected drive?); the sound has gaps", h.label));
             }
         }
         out

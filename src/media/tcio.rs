@@ -36,6 +36,9 @@ pub struct Reader {
     _input: Option<InputStream>,
     /// Why it couldn't open.
     pub error: Option<String>,
+    opened: Instant,
+    /// The MIDI port went away (MTC); the input is reopened when it's back.
+    midi_lost: Arc<AtomicBool>,
 }
 
 impl Drop for Reader {
@@ -52,7 +55,7 @@ impl Reader {
     pub fn open(sync: &TimecodeSync) -> Self {
         let latest = Arc::new(Mutex::new(None));
         let stop = Arc::new(AtomicBool::new(false));
-        let mut r = Self { latest: latest.clone(), stop: stop.clone(), _input: None, error: None };
+        let mut r = Self { latest: latest.clone(), stop: stop.clone(), _input: None, error: None, opened: Instant::now(), midi_lost: Arc::default() };
         let rate = sync.rate;
         match sync.source {
             TimecodeSource::Off => {}
@@ -88,6 +91,7 @@ impl Reader {
             }
             TimecodeSource::Mtc => {
                 let port_name = sync.mtc_port.clone();
+                let lost = r.midi_lost.clone();
                 let (tx, rx) = std::sync::mpsc::channel::<Result<(), String>>();
                 std::thread::Builder::new()
                     .name("openq-mtc-in".into())
@@ -102,6 +106,7 @@ impl Reader {
                             }
                             .ok_or_else(|| format!("MIDI input not found: {}", port_name.as_deref().unwrap_or("(none)")))?
                             .clone();
+                            let connected = m.port_name(&port).unwrap_or_default();
                             let mut dec = MtcDecoder::default();
                             m.connect(
                                 &port,
@@ -113,13 +118,24 @@ impl Reader {
                                 },
                                 (),
                             )
+                            .map(|c| (c, connected))
                             .map_err(|e| e.to_string())
                         })();
                         match res {
-                            Ok(conn) => {
+                            Ok((conn, connected)) => {
                                 let _ = tx.send(Ok(()));
+                                // midir doesn't report an unplugged port: look for it now and then.
+                                let mut checked = Instant::now();
                                 while !stop.load(Ordering::Acquire) {
                                     std::thread::park_timeout(Duration::from_millis(50));
+                                    if checked.elapsed() >= super::AUDIO_RETRY {
+                                        checked = Instant::now();
+                                        if !list_midi_inputs().contains(&connected) {
+                                            log::warn!("MTC input lost ({connected}); reconnecting…");
+                                            lost.store(true, Ordering::Release);
+                                            break;
+                                        }
+                                    }
                                 }
                                 drop(conn);
                             }
@@ -135,6 +151,15 @@ impl Reader {
             }
         }
         r
+    }
+
+    /// It failed to open, or its audio device went away: try a fresh one (after
+    /// [`super::AUDIO_RETRY`], so a missing device isn't hammered).
+    fn needs_reopen(&self) -> bool {
+        let broken = self.error.is_some()
+            || self._input.as_ref().is_some_and(|i| i.is_lost())
+            || self.midi_lost.load(Ordering::Acquire);
+        broken && self.opened.elapsed() >= super::AUDIO_RETRY
     }
 
     /// Where the timecode is now (label-seconds, running on from the last frame), or None if
@@ -171,17 +196,27 @@ impl Follower {
         std::thread::Builder::new()
             .name("openq-tc-follow".into())
             .spawn(move || {
+                // Errors already logged, so retries don't repeat them.
+                let mut logged: Vec<(TimecodeSync, String)> = Vec::new();
                 // Ends when the follower is dropped.
                 while let Some(w) = w.upgrade() {
                     let want = w.lock().clone();
                     drop(w);
-                    r.lock().retain(|(s, _)| want.contains(s));
+                    // Inputs that failed or were unplugged are reopened (the device may be back).
+                    r.lock().retain(|(s, reader)| want.contains(s) && !reader.needs_reopen());
+                    logged.retain(|(s, _)| want.contains(s));
                     let missing: Vec<TimecodeSync> =
                         want.into_iter().filter(|s| !r.lock().iter().any(|(k, _)| k == s)).collect();
                     for s in missing {
                         let reader = Arc::new(Reader::open(&s));
-                        if let Some(e) = &reader.error {
-                            log::warn!("{e}");
+                        match &reader.error {
+                            Some(e) if !logged.iter().any(|(k, old)| *k == s && old == e) => {
+                                log::warn!("{e}");
+                                logged.retain(|(k, _)| *k != s);
+                                logged.push((s.clone(), e.clone()));
+                            }
+                            Some(_) => {}
+                            None => logged.retain(|(k, _)| *k != s),
                         }
                         r.lock().push((s, reader));
                     }

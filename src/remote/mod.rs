@@ -23,7 +23,7 @@ use crate::control::Command;
 use crate::engine::InstanceSnapshot;
 use crate::media::MediaInfo;
 use crate::media::decoder::Waveform;
-use crate::model::{CueId, Workspace};
+use crate::model::{Cue, CueId, Workspace};
 use serde::{Deserialize, Serialize};
 use std::path::PathBuf;
 use uuid::Uuid;
@@ -33,7 +33,7 @@ pub const DEFAULT_PORT: u16 = 53200;
 /// UDP port for discovery queries.
 pub const DISCOVERY_PORT: u16 = 53201;
 /// Wire protocol version; both ends must match.
-pub const PROTOCOL: u32 = 1;
+pub const PROTOCOL: u32 = 2;
 
 /// What a paired device may do.
 #[derive(Serialize, Deserialize, Clone, Copy, PartialEq, Eq, Debug, Default)]
@@ -293,6 +293,10 @@ pub enum ServerMsg {
         /// File name for the title bar.
         title: String,
     },
+    /// Only these cues changed since the last workspace sent (their own fields; a group's
+    /// children come as separate entries). Sent instead of [`ServerMsg::Workspace`] when the
+    /// tree's shape and everything else stayed the same, e.g. while a slider is dragged.
+    Cues(Vec<Cue>),
     /// Live engine state (about 20 times a second while things change, else once a second).
     State(Box<LiveState>),
     /// Durations/details of media files (the files themselves stay on the main device).
@@ -314,13 +318,100 @@ pub enum ClientMsg {
     Edit(Box<Workspace>),
     /// Ask for a media file's waveform.
     Waveform(PathBuf),
+    /// Send the whole workspace again (a [`ServerMsg::Cues`] didn't fit this replica's copy).
+    Resync,
     /// Keep-alive.
     Ping,
+}
+
+/// The cues of `new` that differ from `old` (shallow copies), if the two differ only in cues'
+/// own fields: same lists, same ids in the same places, same settings and stages. None means
+/// the whole workspace has to go.
+pub fn cue_patch(old: &Workspace, new: &Workspace) -> Option<Vec<Cue>> {
+    fn walk(a: &[Cue], b: &[Cue], out: &mut Vec<Cue>) -> bool {
+        a.len() == b.len()
+            && a.iter().zip(b).all(|(x, y)| {
+                if x.id != y.id || x.is_group() != y.is_group() {
+                    return false;
+                }
+                if !x.shallow_eq(y) {
+                    out.push(y.shallow_clone());
+                }
+                walk(x.children(), y.children(), out)
+            })
+    }
+    let (a, b) = (&old.cue_list, &new.cue_list);
+    let same_rest = old.format_version == new.format_version
+        && old.settings == new.settings
+        && old.stages == new.stages
+        && a.info == b.info
+        && a.pos == b.pos
+        && a.others.len() == b.others.len()
+        && a.others.iter().zip(&b.others).all(|(x, y)| x.info == y.info);
+    if !same_rest {
+        return None;
+    }
+    let mut out = Vec::new();
+    let lists = std::iter::once((&a.cues, &b.cues)).chain(a.others.iter().zip(&b.others).map(|(x, y)| (&x.cues, &y.cues)));
+    for (x, y) in lists {
+        if !walk(x, y, &mut out) {
+            return None;
+        }
+    }
+    Some(out)
+}
+
+/// Apply a [`cue_patch`]. False if a cue isn't there (the copy has drifted; ask for a resync).
+pub fn apply_cue_patch(ws: &mut Workspace, patch: &[Cue]) -> bool {
+    let mut ok = true;
+    for c in patch {
+        match ws.cue_list.find_mut(c.id) {
+            Some(cue) if cue.is_group() == c.is_group() => cue.assign_shallow(c.clone()),
+            _ => ok = false,
+        }
+    }
+    ok
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// Edits that keep the tree's shape go as the changed cues only, and applying them gives the
+    /// same workspace; anything else needs the whole workspace.
+    #[test]
+    fn cue_patches() {
+        use crate::model::{CueKind, GroupMode};
+        let mut ws = Workspace::default();
+        let child = Cue::new(CueKind::Memo);
+        let group = Cue::new(CueKind::Group { mode: GroupMode::default(), children: vec![child.clone()] });
+        ws.cue_list.cues = vec![Cue::new(CueKind::Memo), group.clone()];
+        let base = ws.clone();
+
+        let mut edited = ws.clone();
+        edited.cue_list.find_mut(child.id).unwrap().name = "renamed".into();
+        edited.cue_list.find_mut(group.id).unwrap().pre_wait = 2.0;
+        let patch = cue_patch(&base, &edited).expect("same shape");
+        assert_eq!(patch.len(), 2);
+        assert!(patch.iter().all(|c| c.children().is_empty()), "groups go without children");
+        let mut copy = base.clone();
+        assert!(apply_cue_patch(&mut copy, &patch));
+        assert_eq!(copy, edited);
+        assert_eq!(cue_patch(&edited, &edited).unwrap().len(), 0);
+
+        let mut moved = base.clone();
+        moved.cue_list.cues.swap(0, 1);
+        assert!(cue_patch(&base, &moved).is_none(), "reordered");
+        let mut added = base.clone();
+        added.cue_list.cues.push(Cue::new(CueKind::Memo));
+        assert!(cue_patch(&base, &added).is_none(), "added");
+        let mut settings = base.clone();
+        settings.settings.osc_port += 1;
+        assert!(cue_patch(&base, &settings).is_none(), "settings");
+        // A copy without the cue can't take the patch.
+        let mut other = Workspace::default();
+        assert!(!apply_cue_patch(&mut other, &patch));
+    }
 
     #[test]
     fn codes_and_tokens() {

@@ -357,12 +357,14 @@ fn serve(shared: &Arc<Shared>, stream: TcpStream, addr: SocketAddr) -> anyhow::R
 
     let closed = Arc::new(AtomicBool::new(false));
     let (notice_tx, notice_rx) = std::sync::mpsc::channel::<ServerMsg>();
+    // Set by the replica's Resync: the next workspace goes whole.
+    let resync = Arc::new(AtomicBool::new(false));
     let writer = {
-        let (sh, closed) = (shared.clone(), closed.clone());
+        let (sh, closed, resync) = (shared.clone(), closed.clone(), resync.clone());
         std::thread::Builder::new()
             .name("openq-remote-send".into())
             .spawn(move || {
-                if let Err(e) = send_loop(&sh, &mut tx, hello.client_id, role, &closed, notice_rx) {
+                if let Err(e) = send_loop(&sh, &mut tx, hello.client_id, role, &closed, &resync, notice_rx) {
                     log::debug!("remote send: {e:#}");
                 }
                 closed.store(true, Ordering::Relaxed);
@@ -371,7 +373,7 @@ fn serve(shared: &Arc<Shared>, stream: TcpStream, addr: SocketAddr) -> anyhow::R
     };
 
     rx.set_timeout(Some(IDLE_TIMEOUT));
-    let result = receive_loop(shared, &mut rx, hello.client_id, &closed, &notice_tx);
+    let result = receive_loop(shared, &mut rx, hello.client_id, &closed, &resync, &notice_tx);
     closed.store(true, Ordering::Relaxed);
     let _ = writer.join();
     shared.clients.lock().retain(|c| c.conn != conn);
@@ -388,6 +390,7 @@ fn receive_loop(
     rx: &mut secure::Receiver,
     device: Uuid,
     closed: &AtomicBool,
+    resync: &AtomicBool,
     notices: &std::sync::mpsc::Sender<ServerMsg>,
 ) -> anyhow::Result<()> {
     while !closed.load(Ordering::Relaxed) && !shared.stop.load(Ordering::Relaxed) {
@@ -396,6 +399,7 @@ fn receive_loop(
         let Some(role) = role_of(shared, device) else { return Ok(()) };
         match msg {
             ClientMsg::Ping => {}
+            ClientMsg::Resync => resync.store(true, Ordering::Release),
             ClientMsg::Command(cmd) => {
                 if role.can_control() {
                     let r = crate::control::apply(&mut shared.show.lock(), cmd, Instant::now());
@@ -438,6 +442,7 @@ fn send_loop(
     device: Uuid,
     mut role: Role,
     closed: &AtomicBool,
+    resync: &AtomicBool,
     notices: std::sync::mpsc::Receiver<ServerMsg>,
 ) -> anyhow::Result<()> {
     let mut last_ws: Option<Workspace> = None;
@@ -465,6 +470,10 @@ fn send_loop(
             tx.send(&n)?;
         }
 
+        if resync.swap(false, Ordering::AcqRel) {
+            last_ws = None;
+            last_gen = None;
+        }
         let meters = shared.meters();
         let (ws, title, state, prober) = {
             let show = shared.show.lock();
@@ -488,7 +497,11 @@ fn send_loop(
             (ws, title_of(&show.path), state, show.media.prober.clone())
         };
         if let Some(ws) = ws {
-            tx.send(&ServerMsg::Workspace { ws: Box::new(ws.clone()), title })?;
+            // Small edits (a slider being dragged) go as the changed cues, not the whole show.
+            match last_ws.as_ref().and_then(|old| super::cue_patch(old, &ws)) {
+                Some(patch) => tx.send(&ServerMsg::Cues(patch))?,
+                None => tx.send(&ServerMsg::Workspace { ws: Box::new(ws.clone()), title })?,
+            }
             last_ws = Some(ws);
         }
         if let Some(ws) = &last_ws {

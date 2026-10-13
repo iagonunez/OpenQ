@@ -266,7 +266,7 @@ regenerates `src/ui/icons.rs`.
 
 ## Licence
 
-Copyright 2026 iagonunez. OpenQ is licensed under the **Apache License 2.0** ([LICENSE.md](LICENSE.md)):
+Copyright 2026 Iago Núñez. OpenQ is licensed under the **Apache License 2.0** ([LICENSE.md](LICENSE.md)):
 
 - **Allowed:** any use, including commercial productions. You may run paid shows, concerts,
   events and installations, and be paid to program or operate them. You may copy, change and share

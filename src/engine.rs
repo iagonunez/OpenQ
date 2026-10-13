@@ -636,16 +636,10 @@ impl Engine {
         // Groups with running children. Children that end during the pass leave their group
         // listed until the next pass; children fired during the pass are added by `fire`.
         self.busy_parents = self.instances.values().filter_map(|i| i.parent).collect();
-        // Finding a cue walks the cue tree; with many cues running, look them all up in one walk.
-        let index: HashMap<CueId, &Cue> = if ids.len() > 8 {
-            ws.cue_list.iter_all().into_iter().filter(|c| self.instances.contains_key(&c.id)).map(|c| (c.id, c)).collect()
-        } else {
-            HashMap::new()
-        };
         let mut changed = false;
         for (_, id) in ids {
             for _ in 0..100 {
-                if !self.advance(ws, &index, be, now, horizon, id) {
+                if !self.advance(ws, be, now, horizon, id) {
                     break;
                 }
                 changed = true;
@@ -658,7 +652,6 @@ impl Engine {
     fn advance(
         &mut self,
         ws: &Workspace,
-        index: &HashMap<CueId, &Cue>,
         be: &mut dyn Backend,
         now: Instant,
         horizon: Instant,
@@ -666,7 +659,7 @@ impl Engine {
     ) -> bool {
         {
             let Some(inst) = self.instances.get(&id) else { return false };
-            let Some(cue) = index.get(&id).copied().or_else(|| ws.cue_list.find(id)) else {
+            let Some(cue) = ws.cue_list.find(id) else {
                 // Cue deleted while running (paused or not).
                 let inst = self.instances.remove(&id).unwrap();
                 if inst.kind.is_media() {

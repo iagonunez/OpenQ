@@ -774,7 +774,7 @@ impl App {
         // Target column.
         let target_text = match &cue.kind {
             CueKind::Audio(_) | CueKind::Video(_) => match &probe {
-                Some(Ok(info)) => info.detail.clone(),
+                Some(Ok(info)) => info.detail.to_string(),
                 Some(Err(_)) => "unreadable".into(),
                 None if media_path.is_none() => "no file".into(),
                 None => "…".into(),

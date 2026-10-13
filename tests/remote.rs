@@ -106,6 +106,43 @@ fn pair_sync_control_and_revoke() {
     wait_for("role change", || link.drain().into_iter().find_map(|m| matches!(m, ServerMsg::Role(Role::Edit)).then_some(())));
     link.send(ClientMsg::Edit(Box::new(edited)));
     wait_for("edit applied", || (show.lock().ws.cue_list.cues[1].name == "From the tablet").then_some(()));
+    // Its echo comes back as that one cue.
+    wait_for("edit echoed", || {
+        link.drain().into_iter().find_map(|m| match m {
+            ServerMsg::Cues(c) if c.len() == 1 && c[0].name == "From the tablet" => Some(()),
+            _ => None,
+        })
+    });
+
+    // An edit on the main device that keeps the cue tree's shape reaches replicas as the changed
+    // cue only; a replica that asks for a resync gets the whole workspace again.
+    {
+        let mut s = show.lock();
+        s.ws.cue_list.cues[0].name = "Renamed on the main device".into();
+        s.edited();
+    }
+    let patch = wait_for("cue patch", || {
+        link.drain().into_iter().find_map(|m| match m {
+            ServerMsg::Cues(c) => Some(c),
+            _ => None,
+        })
+    });
+    assert_eq!(patch.len(), 1);
+    assert_eq!(patch[0].name, "Renamed on the main device");
+    link.send(ClientMsg::Resync);
+    {
+        // The resync is sent when there's something new to send.
+        let mut s = show.lock();
+        s.ws.cue_list.cues[0].notes = "after resync".into();
+        s.edited();
+    }
+    let ws = wait_for("whole workspace after resync", || {
+        link.drain().into_iter().find_map(|m| match m {
+            ServerMsg::Workspace { ws, .. } => Some(ws),
+            _ => None,
+        })
+    });
+    assert_eq!(ws.cue_list.cues[0].notes, "after resync");
     drop(link);
 
     // Reconnect with the stored token, no code.

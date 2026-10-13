@@ -38,8 +38,6 @@ const SEMIBOLD: &str = "semibold";
 const ICONS: &str = "icons";
 const ICONS_FILLED: &str = "icons-filled";
 const TITLE: &str = "title";
-/// Downward shift (fraction of font size) for icons mixed into Inter text.
-const INLINE_ICON_OFFSET: f32 = 0.2;
 
 /// Condensed display face for the app title.
 pub fn title(size: f32) -> FontId {
@@ -124,15 +122,14 @@ pub fn install(ctx: &egui::Context) {
         include_bytes!("../../assets/fonts/JetBrainsMono-Medium.ttf"),
         FontTweak::default(),
     );
-    // Material Symbols glyphs are centred in their own line box, so standalone icons need no
-    // tweak. When an icon is mixed into Inter text it sits on Inter's baseline, where its centre
-    // is ~0.21 em above Inter's cap-height centre: shift those down to line up with the text.
+    // Material Symbols glyphs are centred in their em box, and egui centres a fallback font's
+    // glyphs on the line, so icons mixed into Inter text already line up with its capitals (a
+    // downward y offset left a gap above them). Inline icons are only scaled to match the text.
     let outlined: &'static [u8] = include_bytes!("../../assets/fonts/MaterialSymbolsRounded.ttf");
     let filled: &'static [u8] =
         include_bytes!("../../assets/fonts/MaterialSymbolsRounded-Filled.ttf");
     let inline = FontTweak {
         scale: 1.15,
-        y_offset_factor: INLINE_ICON_OFFSET,
         ..Default::default()
     };
     add(&mut fonts, "SymbolsInline", outlined, inline);

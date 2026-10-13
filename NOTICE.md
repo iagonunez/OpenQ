@@ -1,7 +1,7 @@
 # OpenQ notices
 
 OpenQ
-Copyright 2026 iagonunez — OpenQ (https://github.com/iagonunez/OpenQ)
+Copyright 2026 Iago Núñez — OpenQ (https://github.com/iagonunez/OpenQ)
 
 This product is licensed under the Apache License 2.0 (see `LICENSE.md`). You may use, copy,
 change, share and sell it for any purpose, including commercial productions such as paid live

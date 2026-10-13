@@ -30,7 +30,7 @@ cat > "$app/Contents/Info.plist" <<EOF
   <key>CFBundleVersion</key><string>${version#v}</string>
   <key>LSMinimumSystemVersion</key><string>11.0</string>
   <key>NSHighResolutionCapable</key><true/>
-  <key>NSHumanReadableCopyright</key><string>Copyright 2026 iagonunez. Apache-2.0.</string>
+  <key>NSHumanReadableCopyright</key><string>Copyright 2026 Iago Núñez. Apache-2.0.</string>
   <key>NSLocalNetworkUsageDescription</key><string>OpenQ uses the local network for remote devices and OSC show control.</string>
   <key>NSMicrophoneUsageDescription</key><string>OpenQ plays live audio inputs in Mic cues and reads LTC timecode.</string>
   <key>NSCameraUsageDescription</key><string>OpenQ shows live cameras on stages in Camera cues.</string>

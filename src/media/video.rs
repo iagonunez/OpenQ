@@ -164,8 +164,23 @@ impl Drop for Movie {
         self.ctl.state.lock().quit = true;
         self.ctl.wake.notify_all();
         if let Some(t) = self.thread.take() {
-            let _ = t.join();
+            join_briefly(t, "video decoder");
         }
+    }
+}
+
+/// Join a worker that was asked to quit. Usually it ends at once; one stuck in a read (a hung
+/// network share, an unplugged camera) would block the engine thread here, so after a short
+/// wait it is left to end on its own.
+fn join_briefly(t: std::thread::JoinHandle<()>, what: &str) {
+    let deadline = Instant::now() + std::time::Duration::from_millis(50);
+    while !t.is_finished() && Instant::now() < deadline {
+        std::thread::sleep(std::time::Duration::from_millis(1));
+    }
+    if t.is_finished() {
+        let _ = t.join();
+    } else {
+        log::warn!("{what} still busy (stuck reading?); left to finish in the background");
     }
 }
 
@@ -638,7 +653,7 @@ impl Drop for Capture {
     fn drop(&mut self) {
         self.quit.store(true, Ordering::Release);
         if let Some(t) = self.thread.take() {
-            let _ = t.join();
+            join_briefly(t, "camera capture");
         }
     }
 }
@@ -733,6 +748,13 @@ enum Source {
     Camera(Capture),
 }
 
+/// How long a playing movie may show the same picture before the watchdog reports it (movies
+/// slower than one frame per this long would be reported too).
+#[cfg(not(test))]
+const MOVIE_STALL: std::time::Duration = std::time::Duration::from_secs(5);
+#[cfg(test)]
+const MOVIE_STALL: std::time::Duration = std::time::Duration::from_secs(1);
+
 struct Player {
     source: Source,
     frame: FrameSlot,
@@ -761,6 +783,9 @@ struct Player {
     text_job: Option<TextRender>,
     /// Text cues: the look last handed to this layer (shown, or rendering).
     text_look: Option<TextCue>,
+    /// Stall watchdog of a playing movie: the last frame generation seen and since when.
+    stall_watch: Option<(u64, Instant)>,
+    stall_reported: bool,
 }
 
 /// SVG rasterising scale for a layer: sharp at the largest size its geometry and animation
@@ -786,12 +811,14 @@ fn load_still(params: &VideoCue, slot: FrameSlot) -> Arc<Mutex<Option<String>>> 
             super::still::load(path, svg_scale(&params, w.max(h) as f32))
         });
         match res {
-            Ok(img) => {
+            Ok(mut img) => {
+                // Premultiply here, so the stage uploads it as is (no per-pixel pass on the UI thread).
+                premultiply(&mut img.rgba);
                 let mut f = slot.lock();
                 f.width = img.width;
                 f.height = img.height;
                 f.data = img.rgba;
-                f.premultiplied = false;
+                f.premultiplied = true;
                 f.density = img.density;
                 f.generation = f.generation.wrapping_add(1);
             }
@@ -853,6 +880,8 @@ impl Player {
             load_error: None,
             text_job: None,
             text_look: None,
+            stall_watch: None,
+            stall_reported: false,
         }
     }
 
@@ -901,6 +930,8 @@ impl Player {
             load_error,
             text_job: None,
             text_look: None,
+            stall_watch: None,
+            stall_reported: false,
         })
     }
 
@@ -953,6 +984,7 @@ impl Player {
             self.error = c.error.lock().take();
         }
         if self.paused_at.is_some() || self.finished {
+            self.stall_watch = None;
             return;
         }
         if !self.playing
@@ -977,6 +1009,26 @@ impl Player {
                 }
             }
         }
+        if self.playing
+            && matches!(self.source, Source::Movie(_))
+            && !self.stall_reported
+        {
+            // Watchdog: a movie whose picture stops changing without an error or its end (a
+            // hung network share, a stuck decoder) is reported once; it plays on if it recovers.
+            let generation = self.frame.lock().generation;
+            match self.stall_watch {
+                Some((g, since)) if g == generation => {
+                    if now.saturating_duration_since(since) >= MOVIE_STALL {
+                        self.stall_reported = true;
+                        self.error = Some(format!(
+                            "no new picture for {} s (slow or disconnected drive, or a broken file?)",
+                            MOVIE_STALL.as_secs()
+                        ));
+                    }
+                }
+                _ => self.stall_watch = Some((generation, now)),
+            }
+        }
         if let Some(r) = self.op_ramp {
             let t = r.progress(now);
             self.opacity = (r.from + (r.to - r.from) * shape(r.curve, t)).clamp(0.0, 1.0);
@@ -994,6 +1046,7 @@ impl Player {
     }
 
     fn pause(&mut self, now: Instant) {
+        self.stall_watch = None;
         if self.paused_at.is_some() {
             return;
         }
@@ -1053,7 +1106,7 @@ impl VideoOutput {
     pub fn set_preloaded(&mut self, cues: &[(CueId, &VideoCue, Option<AudioTap>)]) {
         self.preloaded.retain(|id, p| cues.iter().any(|(c, v, t)| c == id && **v == p.params && *t == p.tap));
         for (id, v, tap) in cues {
-            if !self.preloaded.contains_key(id) && v.path.exists() {
+            if !self.preloaded.contains_key(id) {
                 self.order += 1;
                 match Player::new(v, self.order, *tap) {
                     Ok(p) => {
@@ -1070,9 +1123,7 @@ impl VideoOutput {
         if params.path.as_os_str().is_empty() {
             return Err("no video file".into());
         }
-        if !params.path.exists() {
-            return Err(format!("file not found: {}", params.path.display()));
-        }
+        // The caller checks the file from the prober's cache (never stat on the engine thread).
         self.players.remove(&cue);
         self.order += 1;
         let mut p = match self.preloaded.remove(&cue) {
@@ -1547,5 +1598,37 @@ mod tests {
         }
         out.stop(id);
         assert!(!out.has(id));
+    }
+
+    /// A movie that stops delivering pictures without failing (a hung share) is reported once.
+    #[test]
+    fn a_stalled_movie_is_reported() {
+        let dir = std::env::temp_dir().join(format!("openq-movie-stall-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let fifo = dir.join("hung.mp4");
+        let _ = std::fs::remove_file(&fifo);
+        assert!(std::process::Command::new("mkfifo").arg(&fifo).status().unwrap().success());
+        let mut out = VideoOutput::new().unwrap();
+        let cue = CueId::new_v4();
+        let params = VideoCue { path: fifo.clone(), ..Default::default() };
+        out.start(cue, &params, Instant::now(), None).unwrap();
+        let deadline = Instant::now() + std::time::Duration::from_secs(5);
+        let mut reports = Vec::new();
+        while reports.is_empty() {
+            assert!(Instant::now() < deadline, "stall never reported");
+            std::thread::sleep(std::time::Duration::from_millis(50));
+            out.update(Instant::now());
+            reports = out.drain_errors();
+        }
+        assert!(reports[0].contains("no new picture"), "{reports:?}");
+        std::thread::sleep(std::time::Duration::from_millis(1200));
+        out.update(Instant::now());
+        assert!(out.drain_errors().is_empty(), "reported once");
+        // Stopping doesn't wait for the decode thread stuck opening the FIFO.
+        let t0 = Instant::now();
+        out.stop(cue);
+        assert!(t0.elapsed() < std::time::Duration::from_millis(500), "stop blocked for {:?}", t0.elapsed());
+        let _ = std::fs::OpenOptions::new().write(true).open(&fifo);
+        let _ = std::fs::remove_dir_all(&dir);
     }
 }

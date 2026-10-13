@@ -14,7 +14,6 @@ use crate::geometry::{Homography, blend_gain, layer_quad, to_crop};
 use crate::media::video::StageLayer;
 use crate::model::{CueId, Stage, StageId};
 use std::collections::HashMap;
-use crate::show::Show;
 use egui::epaint::Vertex;
 use egui::{Color32, Mesh, Pos2, Rect, Sense, Shape, Stroke, ViewportBuilder, ViewportCommand, ViewportId, pos2, vec2};
 
@@ -45,26 +44,31 @@ impl App {
         self.displays.lock().list.iter().position(|d| &d.name == name)
     }
 
-    /// Draw every open stage window. Returns true if any video is on screen.
-    pub(super) fn stages(&mut self, ctx: &egui::Context, show: &mut Show) -> bool {
+    /// Draw every open stage window from a snapshot of the stages and layers. Runs without the
+    /// show lock (uploading video frames copies megabytes per layer, and the engine thread must
+    /// not wait for it). Returns the corners dragged in mapping mode, to store in the show.
+    pub(super) fn stages(&mut self, ctx: &egui::Context, stages: Vec<Stage>, layers: Vec<StageLayer>) -> Vec<(StageId, [[f32; 2]; 4])> {
         {
             let d = self.displays.lock();
-            let needed = !d.loaded && !d.loading;
+            // Stages on displays: watch for displays leaving and coming back.
+            let on_display = stages.iter().any(|s| s.output.is_some() && self.stage_open.contains(&s.id));
+            let stale = d.asked.is_none_or(|t| t.elapsed() >= super::outputs::DISPLAY_RECHECK);
+            let needed = !d.loading && (!d.loaded || (on_display && stale));
             drop(d);
             if needed {
                 self.refresh_displays(ctx);
             }
         }
-        let layers = show.media.stage_layers();
-        let first = show.ws.stages.first().map(|s| s.id);
-        let ids: Vec<StageId> = show.ws.stages.iter().map(|s| s.id).collect();
+        let mut moved = Vec::new();
+        let first = stages.first().map(|s| s.id);
+        let ids: Vec<StageId> = stages.iter().map(|s| s.id).collect();
         let resolve = |s: Option<StageId>| s.filter(|id| ids.contains(id)).or(first);
         self.textures.retain(|(id, _), _| layers.iter().any(|l| l.id == *id));
         // Stages showing video open automatically: the layer's own stage, or the outputs spanning
         // it (a surface that only exists to be spanned doesn't open on its own).
         for l in &layers {
             if let Some(s) = resolve(l.stage) {
-                let spans: Vec<StageId> = show.ws.stages.iter().filter(|o| o.span_of == Some(s) && o.id != s).map(|o| o.id).collect();
+                let spans: Vec<StageId> = stages.iter().filter(|o| o.span_of == Some(s) && o.id != s).map(|o| o.id).collect();
                 if spans.is_empty() {
                     self.stage_open.insert(s);
                 } else {
@@ -72,10 +76,9 @@ impl App {
                 }
             }
         }
-        self.stage_open.retain(|id| show.ws.stages.iter().any(|s| s.id == *id));
+        self.stage_open.retain(|id| stages.iter().any(|s| s.id == *id));
 
-        let stages = show.ws.stages.clone();
-        for stage in stages.clone() {
+        for stage in stages.iter().cloned() {
             if !self.stage_open.contains(&stage.id) {
                 continue;
             }
@@ -95,6 +98,8 @@ impl App {
             if let Some(i) = monitor {
                 builder = builder.with_monitor(i);
             }
+            // On a projector the audience would see the hint: only show it in a desktop window.
+            let hint = !self.stage_fullscreen.contains(&stage.id) && monitor.is_none();
             let textures = &mut self.textures;
             let gpu = self.gpu.clone();
             ctx.show_viewport_immediate(
@@ -180,7 +185,7 @@ impl App {
                                 corners[k][1] += dy;
                             }
                         }
-                    } else if mine.is_empty() {
+                    } else if mine.is_empty() && hint {
                         painter.text(
                             rect.center(),
                             egui::Align2::CENTER_CENTER,
@@ -231,18 +236,15 @@ impl App {
                 self.stage_fullscreen.remove(&stage.id);
                 self.mapping_edit.remove(&stage.id);
             }
-            if corners != stage.corners
-                && let Some(s) = show.ws.stages.iter_mut().find(|s| s.id == stage.id)
-            {
-                s.corners = corners;
-                show.edited();
+            if corners != stage.corners {
+                moved.push((stage.id, corners));
             }
         }
         // Animations move even when the engine is idle (a held last frame keeps animating).
         if layers.iter().any(|l| l.animated) {
             ctx.request_repaint_after(std::time::Duration::from_millis(16));
         }
-        !layers.is_empty()
+        moved
     }
 }
 
