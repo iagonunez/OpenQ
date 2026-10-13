@@ -47,5 +47,10 @@ pipewire = ["cpal/pipewire"]
 # Lets the stress tests make chosen code paths panic on purpose (see `recovery::Fault`).
 fault-injection = []
 
+# The smoke test plays movies and stills, so it needs FFmpeg.
+[[example]]
+name = "smoke"
+required-features = ["video"]
+
 [profile.dev.package."*"]
 opt-level = 2
