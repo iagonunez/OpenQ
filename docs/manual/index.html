@@ -69,6 +69,12 @@ nav.toc {
 .brand { font: 700 34px/1 var(--display); letter-spacing: .01em; margin: 0 0 4px; }
 .brand b { color: var(--go); font-weight: 700; }
 .brand-sub { font: 600 11px/1 var(--body); letter-spacing: .14em; text-transform: uppercase; color: var(--faint); margin-bottom: 22px; }
+/* Language switcher under the brand (index.html, index.es.html, index.gl.html). */
+.langs { display: inline-flex; gap: 2px; padding: 3px; margin: -8px 0 18px; border: 1px solid var(--border); border-radius: 99px; }
+nav.toc .langs a { display: inline-block; padding: 1px 9px; border-radius: 99px; font: 600 11px/1.6 var(--body); letter-spacing: .06em; color: var(--dim); }
+nav.toc .langs a::before { content: none; }
+nav.toc .langs a:hover { background: none; color: var(--fg); }
+nav.toc .langs a[aria-current] { background: var(--raised); color: var(--fg); }
 nav.toc ol { list-style: none; margin: 0; padding: 0; display: grid; gap: 1px; counter-reset: ch; }
 nav.toc li { counter-increment: ch; }
 nav.toc a {
@@ -112,11 +118,13 @@ pre { background: var(--code-bg); border: 1px solid var(--border); border-radius
 pre code { background: none; border: 0; padding: 0; font-size: inherit; }
 
 /* Icons from the app's own Material Symbols subset, by codepoint, so they also work offline
-   (the copy opened from Help → User manual has the font in fonts/; the repo copy uses assets/). */
+   (the copy opened from Help → User manual has the font in fonts/; the repo copy uses assets/;
+   the website copy on GitHub Pages loads it from the repository through jsDelivr). */
 @font-face {
   font-family: "OpenQ Symbols";
   src: url("fonts/MaterialSymbolsRounded.ttf") format("truetype"),
-       url("../../assets/fonts/MaterialSymbolsRounded.ttf") format("truetype");
+       url("../../assets/fonts/MaterialSymbolsRounded.ttf") format("truetype"),
+       url("https://cdn.jsdelivr.net/gh/iagonunez/OpenQ@master/assets/fonts/MaterialSymbolsRounded.ttf") format("truetype");
   font-display: block;
 }
 .ms {
@@ -181,6 +189,7 @@ footer { margin-top: 56px; padding-top: 18px; border-top: 1px solid var(--border
 <nav class="toc" aria-label="Chapters">
   <div class="brand">Open<b>Q</b></div>
   <div class="brand-sub">User manual</div>
+  <div class="langs"><a href="index.html" hreflang="en" title="English" aria-current="page">EN</a><a href="index.es.html" hreflang="es" title="Español">ES</a><a href="index.gl.html" hreflang="gl" title="Galego">GL</a></div>
   <ol>
     <li><a href="#start">Getting started</a></li>
     <li><a href="#window">The main window</a></li>
@@ -870,6 +879,7 @@ cargo run --release -- show.openq    # open a saved show</code></pre>
       same network, then type the address shown on the main device.</td></tr>
       <tr><td>"Pair this device again" (remote)</td><td>The device was removed on the main device, or its key was forgotten. Open
       pairing on the main device and enter the new code.</td></tr>
+      <tr><td>Something fails and you don't know why</td><td>Open <span class="menu">Help → Error log</span>: every warning, error and crash is there with its time.</td></tr>
     </tbody>
   </table></div>
 

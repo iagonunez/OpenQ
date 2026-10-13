@@ -1,0 +1,92 @@
+<!doctype html>
+<html lang="es">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>OpenQ — control de espectáculos en directo para sonido, vídeo y escena</title>
+<meta name="description" content="OpenQ lleva un espectáculo desde una lista de cues: música, efectos, vídeo, texto, fundidos y OSC, con un solo botón GO. Gratis para cualquier producción.">
+<meta property="og:title" content="OpenQ">
+<meta property="og:description" content="OpenQ lleva un espectáculo desde una lista de cues: música, efectos, vídeo, texto, fundidos y OSC, con un solo botón GO. Gratis para cualquier producción.">
+<meta property="og:image" content="https://iagonunez.github.io/OpenQ/img/screenshot.webp">
+<meta name="theme-color" content="#141518">
+<link rel="alternate" hreflang="en" href="https://iagonunez.github.io/OpenQ/">
+<link rel="alternate" hreflang="es" href="https://iagonunez.github.io/OpenQ/es/">
+<link rel="alternate" hreflang="gl" href="https://iagonunez.github.io/OpenQ/gl/">
+<link rel="icon" href="../site/logo.svg" type="image/svg+xml">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Barlow+Condensed:wght@600&family=Inter:wght@400;600&family=JetBrains+Mono:wght@400&display=swap">
+<link rel="stylesheet" href="../site/site.css">
+</head>
+<body>
+<header class="top">
+  <a href="../es/" aria-label="OpenQ"><img class="mini" src="../site/logo.svg" alt="OpenQ"></a>
+  <nav>
+    <a class="hide-sm" href="#install">Instalar</a>
+    <a class="hide-sm" href="../manual/index.es.html">Manual de usuario</a>
+    <a href="https://github.com/iagonunez/OpenQ">GitHub</a>
+    <span class="langs"><a href="../" hreflang="en" title="English">EN</a><a href="../es/" hreflang="es" title="Español" aria-current="page">ES</a><a href="../gl/" hreflang="gl" title="Galego">GL</a></span>
+  </nav>
+</header>
+
+<main>
+<section class="hero">
+  <img class="logo" src="../site/logo.svg" alt="OpenQ" width="340" height="140">
+  <h1>Control de espectáculos en directo para sonido, vídeo y escena</h1>
+  <p>Monta una lista de cues — música, efectos, películas, rótulos, fundidos, mensajes a la mesa de luces — y lleva todo el espectáculo con un solo botón GO. Gratis para cualquier producción, también comercial.</p>
+  <div class="badges">
+    <a class="btn go" href="#install">Instalar</a>
+    <a class="btn" href="../manual/index.es.html">📖 Manual de usuario</a>
+    <a class="btn" href="https://github.com/iagonunez/OpenQ">⭐ Código fuente</a>
+  </div>
+</section>
+
+<section class="install" id="install">
+  <h2>Instala OpenQ</h2>
+  <div class="card">
+    <div class="tabs" role="tablist" aria-label="Instala OpenQ"><button role="tab" id="tab-linux" aria-controls="panel-linux" aria-selected="true"><span aria-hidden="true">🐧</span>Linux</button><button role="tab" id="tab-macos" aria-controls="panel-macos" aria-selected="false" tabindex="-1"><span aria-hidden="true">🍎</span>macOS</button><button role="tab" id="tab-windows" aria-controls="panel-windows" aria-selected="false" tabindex="-1"><span aria-hidden="true">🪟</span>Windows</button></div>
+<div class="panel" id="panel-linux" role="tabpanel" aria-labelledby="tab-linux">
+  <p class="where">En un terminal:</p>
+  <div class="cmd"><code>curl --proto '=https' --tlsv1.2 -fsSL https://github.com/iagonunez/openqup/releases/latest/download/install.sh | sh</code><button class="copy" type="button" data-done="Copiado">Copiar</button></div>
+  <p class="after">Instala las herramientas de compilación con los paquetes de tu distribución (pregunta antes), compila OpenQ y lo añade al menú de aplicaciones.</p>
+</div>
+<div class="panel" id="panel-macos" role="tabpanel" aria-labelledby="tab-macos" hidden>
+  <p class="where">En un terminal:</p>
+  <div class="cmd"><code>curl --proto '=https' --tlsv1.2 -fsSL https://github.com/iagonunez/openqup/releases/latest/download/install.sh | sh</code><button class="copy" type="button" data-done="Copiado">Copiar</button></div>
+  <p class="after">macOS 11 o posterior. En un Mac sin las Command Line Tools de Apple, macOS pide instalarlas primero; después vuelve a ejecutar la orden. OpenQ queda en Aplicaciones dentro de tu carpeta personal.</p>
+</div>
+<div class="panel" id="panel-windows" role="tabpanel" aria-labelledby="tab-windows" hidden>
+  <p class="where">En PowerShell:</p>
+  <div class="cmd ps"><code>powershell -ExecutionPolicy Bypass -c &quot;irm https://github.com/iagonunez/openqup/releases/latest/download/install.ps1 | iex&quot;</code><button class="copy" type="button" data-done="Copiado">Copiar</button></div>
+  <p class="after">Windows 10/11 de 64 bits. Sin las C++ Build Tools de Microsoft, primero se abre su instalador: acéptalo y deja que termine. Después OpenQ está en el menú Inicio.</p>
+</div>
+  </div>
+  <p class="more">El instalador, <a href="https://github.com/iagonunez/openqup">openqup</a>, compila OpenQ en tu ordenador. Más adelante: <code>openqup update</code> · <code>openqup uninstall</code>.</p>
+</section>
+
+<div class="shot"><img src="../img/screenshot.webp" width="1600" height="1466" alt="OpenQ llevando un espectáculo: el botón GO, la cue en espera, una lista con cues de audio, vídeo, texto, grupo, fundido y red, y las cues que están sonando" loading="lazy"></div>
+
+<section class="section">
+  <h2>Qué hace</h2>
+  <div class="features">
+  <div class="feature"><b>15 tipos de cue</b><span>Audio, vídeo, texto, cámara, micro en directo, grupos, esperas, fundidos, OSC y más.</span></div>
+  <div class="feature"><b>Tiempos a la muestra</b><span>Pre y post-esperas, autocontinuar y autoseguir, encadenados a la muestra exacta.</span></div>
+  <div class="feature"><b>Mezclador, EQ y efectos</b><span>Matriz de enrutado, EQ de 8 bandas, reverb, delay, dinámica y más, editados en directo.</span></div>
+  <div class="feature"><b>Audio por objetos</b><span>Coloca sonidos en una sala de altavoces y muévelos con fundidos.</span></div>
+  <div class="feature"><b>Vídeo y proyección</b><span>Películas, imágenes, SVG y rótulos en tantos escenarios como quieras, con mapping y edge blending.</span></div>
+  <div class="feature"><b>Animación y efectos de vídeo</b><span>Fotogramas clave, modos de fusión, efectos de color y croma, dibujados en directo por la GPU.</span></div>
+  <div class="feature"><b>Código de tiempo y OSC</b><span>Sigue LTC o MTC, recibe OSC de otros equipos y envíalo a mesas de luces.</span></div>
+  <div class="feature"><b>Dispositivos remotos</b><span>Lleva o edita el espectáculo desde un portátil o una tableta con conexión cifrada.</span></div>
+  <div class="feature"><b>Hecho para la cabina</b><span>Modo función, autoguardado y recuperación tras fallos, audio que se reconecta solo.</span></div>
+  </div>
+  <p class="more">Todo se explica paso a paso en el <a href="../manual/index.es.html">manual de usuario</a>, que también viene con la aplicación (Help → User manual, o F1).</p>
+</section>
+</main>
+
+<footer>
+  <span>© 2026 Iago Núñez · <a href="https://github.com/iagonunez/OpenQ/blob/master/LICENSE.md">Licencia</a>: Apache 2.0: uso gratuito, también en producciones comerciales; puedes modificarlo, compartirlo y venderlo.</span>
+  <span><a href="https://github.com/iagonunez/OpenQ/blob/master/README.es.md">README</a> · <a href="https://github.com/iagonunez/OpenQ">GitHub</a></span>
+</footer>
+<script src="../site/site.js"></script>
+</body>
+</html>

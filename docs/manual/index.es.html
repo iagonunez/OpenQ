@@ -1,0 +1,942 @@
+<!doctype html>
+<html lang="es">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<!--page-->
+<title>Manual de usuario de OpenQ</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Barlow+Condensed:wght@500;600;700&family=Inter:wght@400;500;600&family=JetBrains+Mono:wght@400;500&display=swap">
+<style>
+/* Layout: a sticky chapter rail on the left and a single reading column, like a console's
+   help screen. The colours come from the app's own theme (theme.rs). */
+:root {
+  --bg: #f6f7f9;
+  --panel: #ffffff;
+  --raised: #eceef2;
+  --border: #d9dce3;
+  --fg: #16171b;
+  --dim: #555a66;
+  --faint: #868b97;
+  --accent: #2f5fd6;
+  --accent-bg: rgba(47, 95, 214, .10);
+  --go: #1f8a3f;
+  --amber: #a86d00;
+  --red: #c2363b;
+  --code-bg: #eceef2;
+  --display: "Barlow Condensed", "Arial Narrow", system-ui, sans-serif;
+  --body: "Inter", system-ui, -apple-system, "Segoe UI", sans-serif;
+  --mono: "JetBrains Mono", ui-monospace, "SFMono-Regular", Menlo, monospace;
+}
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) {
+    --bg: #141518; --panel: #1b1c20; --raised: #24252b; --border: #32343b;
+    --fg: #e8e8eb; --dim: #9b9da6; --faint: #6c6e77;
+    --accent: #6f98f5; --accent-bg: rgba(74, 124, 240, .18);
+    --go: #3cc864; --amber: #f2b01e; --red: #ee6a6e; --code-bg: #101114;
+    color-scheme: dark;
+  }
+}
+:root[data-theme="dark"] {
+  --bg: #141518; --panel: #1b1c20; --raised: #24252b; --border: #32343b;
+  --fg: #e8e8eb; --dim: #9b9da6; --faint: #6c6e77;
+  --accent: #6f98f5; --accent-bg: rgba(74, 124, 240, .18);
+  --go: #3cc864; --amber: #f2b01e; --red: #ee6a6e; --code-bg: #101114;
+  color-scheme: dark;
+}
+
+* { box-sizing: border-box; }
+body {
+  margin: 0; background: var(--bg); color: var(--fg);
+  font: 15px/1.65 var(--body);
+  -webkit-font-smoothing: antialiased;
+}
+a { color: var(--accent); text-underline-offset: 2px; }
+a:focus-visible, button:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; border-radius: 4px; }
+
+.wrap {
+  display: grid; grid-template-columns: 240px minmax(0, 1fr); gap: 48px;
+  max-width: 1180px; margin: 0 auto; padding-inline: 24px; padding-block: 0 80px;
+}
+@media (max-width: 880px) { .wrap { grid-template-columns: minmax(0, 1fr); gap: 0; padding-inline: 16px; } }
+
+/* Chapter rail */
+nav.toc {
+  position: sticky; top: env(safe-area-inset-top, 0px); align-self: start;
+  max-height: 100vh; overflow-y: auto; padding-block: 28px 24px;
+}
+.brand { font: 700 34px/1 var(--display); letter-spacing: .01em; margin: 0 0 4px; }
+.brand b { color: var(--go); font-weight: 700; }
+.brand-sub { font: 600 11px/1 var(--body); letter-spacing: .14em; text-transform: uppercase; color: var(--faint); margin-bottom: 22px; }
+/* Language switcher under the brand (index.html, index.es.html, index.gl.html). */
+.langs { display: inline-flex; gap: 2px; padding: 3px; margin: -8px 0 18px; border: 1px solid var(--border); border-radius: 99px; }
+nav.toc .langs a { display: inline-block; padding: 1px 9px; border-radius: 99px; font: 600 11px/1.6 var(--body); letter-spacing: .06em; color: var(--dim); }
+nav.toc .langs a::before { content: none; }
+nav.toc .langs a:hover { background: none; color: var(--fg); }
+nav.toc .langs a[aria-current] { background: var(--raised); color: var(--fg); }
+nav.toc ol { list-style: none; margin: 0; padding: 0; display: grid; gap: 1px; counter-reset: ch; }
+nav.toc li { counter-increment: ch; }
+nav.toc a {
+  display: flex; gap: 10px; align-items: baseline; padding: 5px 10px; border-radius: 6px;
+  color: var(--dim); text-decoration: none; font-size: 14px;
+}
+nav.toc a::before { content: counter(ch); font: 500 11px var(--mono); color: var(--faint); min-width: 16px; }
+nav.toc a:hover { background: var(--raised); color: var(--fg); }
+nav.toc a.on { background: var(--accent-bg); color: var(--fg); }
+@media (max-width: 880px) {
+  nav.toc { position: static; max-height: none; padding-block: 24px 8px; border-bottom: 1px solid var(--border); }
+  nav.toc ol { grid-template-columns: repeat(auto-fill, minmax(170px, 1fr)); }
+}
+
+main { min-width: 0; max-width: 780px; padding-block: 28px 0; }
+header.hero { padding-block: 8px 28px; border-bottom: 1px solid var(--border); margin-bottom: 8px; }
+.eyebrow { font: 600 11px/1 var(--body); letter-spacing: .14em; text-transform: uppercase; color: var(--faint); }
+h1 { font: 700 clamp(40px, 6vw, 64px)/0.95 var(--display); margin: 10px 0 14px; text-wrap: balance; letter-spacing: .005em; }
+.lede { font-size: 17px; color: var(--dim); max-width: 62ch; margin: 0; }
+
+section { padding-block: 36px 8px; scroll-margin-top: 12px; }
+h2 {
+  font: 700 34px/1.05 var(--display); margin: 0 0 14px; text-wrap: balance;
+  display: flex; gap: 12px; align-items: baseline;
+}
+h2 .n { font: 500 13px var(--mono); color: var(--faint); }
+h3 { font: 600 22px/1.2 var(--display); margin: 28px 0 8px; letter-spacing: .01em; }
+p, ul, ol { max-width: 68ch; }
+ul, ol { padding-left: 1.25em; }
+li { margin-block: 4px; }
+strong { font-weight: 600; }
+
+code, kbd, .mono { font-family: var(--mono); font-size: .86em; }
+code { background: var(--code-bg); border: 1px solid var(--border); border-radius: 4px; padding: 1px 5px; }
+kbd {
+  display: inline-block; min-width: 1.7em; text-align: center; padding: 1px 6px;
+  border: 1px solid var(--border); border-bottom-width: 2px; border-radius: 5px;
+  background: var(--panel); color: var(--fg); line-height: 1.5; white-space: nowrap;
+}
+pre { background: var(--code-bg); border: 1px solid var(--border); border-radius: 8px; padding: 12px 14px; overflow-x: auto; font: 13px/1.6 var(--mono); }
+pre code { background: none; border: 0; padding: 0; font-size: inherit; }
+
+/* Icons from the app's own Material Symbols subset, by codepoint, so they also work offline
+   (the copy opened from Help → User manual has the font in fonts/; the repo copy uses assets/;
+   the website copy on GitHub Pages loads it from the repository through jsDelivr). */
+@font-face {
+  font-family: "OpenQ Symbols";
+  src: url("fonts/MaterialSymbolsRounded.ttf") format("truetype"),
+       url("../../assets/fonts/MaterialSymbolsRounded.ttf") format("truetype"),
+       url("https://cdn.jsdelivr.net/gh/iagonunez/OpenQ@master/assets/fonts/MaterialSymbolsRounded.ttf") format("truetype");
+  font-display: block;
+}
+.ms {
+  font-family: "OpenQ Symbols"; font-weight: normal; font-style: normal; font-size: 20px;
+  line-height: 1; letter-spacing: normal; text-transform: none; white-space: nowrap;
+  vertical-align: -4px; color: var(--dim);
+}
+.menu { font-weight: 600; white-space: nowrap; }
+
+figure { margin: 18px 0 22px; }
+figure img { display: block; width: 100%; height: auto; border-radius: 10px; border: 1px solid var(--border); background: #141518; }
+figcaption { font-size: 13px; color: var(--faint); margin-top: 8px; }
+figure.narrow { max-width: 560px; }
+
+.table-wrap { overflow-x: auto; margin: 14px 0 18px; border: 1px solid var(--border); border-radius: 10px; }
+table { border-collapse: collapse; width: 100%; font-size: 14px; }
+th, td { text-align: left; padding: 8px 12px; border-bottom: 1px solid var(--border); vertical-align: top; }
+th { font: 600 11px/1.4 var(--body); letter-spacing: .1em; text-transform: uppercase; color: var(--faint); background: var(--raised); }
+tr:last-child td { border-bottom: 0; }
+td:first-child { white-space: nowrap; }
+
+.note {
+  border: 1px solid var(--border); border-left: 3px solid var(--amber); border-radius: 8px;
+  background: var(--panel); padding: 10px 14px; margin: 16px 0; max-width: 68ch;
+}
+.note.tip { border-left-color: var(--go); }
+.note .label { font: 600 11px/1 var(--body); letter-spacing: .12em; text-transform: uppercase; color: var(--faint); display: block; margin-bottom: 4px; }
+.note p { margin: 0; }
+
+/* Cue timing diagram: pre-wait, action, post-wait on a common time axis. */
+.timing { border: 1px solid var(--border); border-radius: 10px; background: var(--panel); padding: 16px; margin: 16px 0 20px; }
+.lane { display: grid; grid-template-columns: 92px minmax(0, 1fr); align-items: center; gap: 12px; margin-block: 8px; }
+.lane .who { font: 500 12px var(--mono); color: var(--dim); }
+.track { position: relative; height: 26px; }
+.seg { position: absolute; top: 0; bottom: 0; border-radius: 5px; font: 500 11px/26px var(--mono); padding-inline: 8px; overflow: hidden; white-space: nowrap; }
+.seg.pre { background: var(--raised); color: var(--dim); border: 1px dashed var(--border); }
+.seg.act { background: var(--go); color: #fff; }
+.seg.post { background: transparent; color: var(--accent); border: 1px solid var(--accent); }
+.marker { position: absolute; top: -4px; bottom: -4px; width: 2px; background: var(--accent); }
+.axis { display: grid; grid-template-columns: 92px minmax(0, 1fr); gap: 12px; font: 11px var(--mono); color: var(--faint); }
+.axis .ticks { display: flex; justify-content: space-between; }
+
+.types { display: grid; grid-template-columns: repeat(auto-fill, minmax(220px, 1fr)); gap: 10px; margin: 16px 0; }
+.type { border: 1px solid var(--border); border-radius: 8px; padding: 10px 12px; background: var(--panel); }
+.type b { display: flex; align-items: center; gap: 8px; font-weight: 600; }
+.type span.d { display: block; font-size: 13.5px; color: var(--dim); margin-top: 3px; }
+
+.steps { counter-reset: s; list-style: none; padding: 0; }
+.steps > li { counter-increment: s; position: relative; padding-left: 36px; margin-block: 10px; }
+.steps > li::before {
+  content: counter(s); position: absolute; left: 0; top: 1px; width: 24px; height: 24px; border-radius: 50%;
+  background: var(--accent-bg); color: var(--accent); font: 600 12px/24px var(--mono); text-align: center;
+}
+
+footer { margin-top: 56px; padding-top: 18px; border-top: 1px solid var(--border); color: var(--faint); font-size: 13px; }
+@media (prefers-reduced-motion: no-preference) { html { scroll-behavior: smooth; } }
+</style>
+<!--/head-->
+</head>
+<body>
+<div class="wrap">
+<nav class="toc" aria-label="Capítulos">
+  <div class="brand">Open<b>Q</b></div>
+  <div class="brand-sub">Manual de usuario</div>
+  <div class="langs"><a href="index.html" hreflang="en" title="English">EN</a><a href="index.es.html" hreflang="es" title="Español" aria-current="page">ES</a><a href="index.gl.html" hreflang="gl" title="Galego">GL</a></div>
+  <ol>
+    <li><a href="#start">Primeros pasos</a></li>
+    <li><a href="#window">La ventana principal</a></li>
+    <li><a href="#modes">Modo edición y modo función</a></li>
+    <li><a href="#cues">Tipos de cue</a></li>
+    <li><a href="#timing">Tiempos y continuaciones</a></li>
+    <li><a href="#audio">Cues de audio</a></li>
+    <li><a href="#video">Cues de vídeo y texto</a></li>
+    <li><a href="#fades">Fundidos</a></li>
+    <li><a href="#timecode">Código de tiempo</a></li>
+    <li><a href="#stages">Escenarios y proyección</a></li>
+    <li><a href="#remote">Dispositivos remotos</a></li>
+    <li><a href="#osc">OSC y cues de red</a></li>
+    <li><a href="#settings">Ajustes</a></li>
+    <li><a href="#safety">Seguridad ante fallos</a></li>
+    <li><a href="#keys">Atajos de teclado</a></li>
+    <li><a href="#trouble">Solución de problemas</a></li>
+    <li><a href="#license">Licencia y créditos</a></li>
+  </ol>
+</nav>
+
+<main>
+<header class="hero">
+  <div class="eyebrow">Control de espectáculos · reproducción de cues</div>
+  <h1>Manual de usuario de OpenQ</h1>
+  <p class="lede">OpenQ lleva un espectáculo a partir de una lista de cues. Cada pulsación de GO dispara la
+  siguiente: sonido, vídeo, texto en una pantalla, fundidos, esperas o mensajes a otros equipos. Este manual
+  explica cómo montar una lista de cues, llevarla en directo y controlarla desde otros dispositivos.</p>
+  <div class="note tip"><span class="label">Idioma</span><p>La interfaz de OpenQ está en inglés, así que los
+  nombres de menús, pestañas y botones aparecen aquí tal como los verás en pantalla, por ejemplo
+  <span class="menu">Help → User manual</span>.</p></div>
+</header>
+
+<section id="start">
+  <h2><span class="n">01</span>Primeros pasos</h2>
+  <h3>Instalación</h3>
+  <p>OpenQ se compila en tu propio ordenador con su instalador, <a href="https://github.com/iagonunez/openqup">openqup</a>.
+  Instala lo que necesita la compilación (Rust, un compilador y FFmpeg para el vídeo), compila la versión más reciente
+  y añade OpenQ a tus aplicaciones. La primera instalación tarda unos minutos; las actualizaciones son más rápidas.</p>
+  <div class="table-wrap"><table>
+    <thead><tr><th>Sistema</th><th>Cómo</th></tr></thead>
+    <tbody>
+      <tr><td>macOS 11 o posterior, Linux</td><td>En el Terminal, ejecuta
+      <code>curl --proto '=https' --tlsv1.2 -fsSL https://github.com/iagonunez/openqup/releases/latest/download/install.sh | sh</code>.
+      En un Mac sin las Command Line Tools de Apple, macOS pide instalarlas primero; después vuelve a ejecutar la orden.
+      OpenQ queda en <code>Applications</code> dentro de tu carpeta personal (macOS) o en el menú de aplicaciones (Linux).</td></tr>
+      <tr><td>Windows 10/11 (64 bits)</td><td>En PowerShell, ejecuta
+      <code>powershell -ExecutionPolicy Bypass -c "irm https://github.com/iagonunez/openqup/releases/latest/download/install.ps1 | iex"</code>.
+      Sin las C++ Build Tools de Microsoft, primero se abre su instalador: acéptalo y deja que termine.
+      Después OpenQ está en el menú Inicio.</td></tr>
+    </tbody>
+  </table></div>
+  <p>Para obtener una versión más nueva, ejecuta <code>openqup update</code>. Para quitar OpenQ, ejecuta <code>openqup uninstall</code>
+  (en Windows también puedes usar <em>Configuración → Aplicaciones → Aplicaciones instaladas</em>). Tus espectáculos nunca se tocan.</p>
+  <p>Para ejecutar una copia en la que estés trabajando desde el código fuente:</p>
+<pre><code>cargo run --release                  # empezar con un espectáculo vacío
+cargo run --release -- show.openq    # abrir un espectáculo guardado</code></pre>
+  <p>Este manual viene dentro de OpenQ: elige <span class="menu">Help → User manual</span> o pulsa <kbd>F1</kbd>
+  para abrirlo en tu navegador. Funciona sin conexión a internet y siempre corresponde a tu versión de OpenQ.</p>
+  <h3>Tu primer espectáculo</h3>
+  <ol class="steps">
+    <li>Arrastra archivos de audio o vídeo desde tu gestor de archivos a la ventana. Cada archivo se convierte en una cue.
+    También puedes usar <span class="menu">File → Import media files…</span>.</li>
+    <li>Añade otras cues desde la barra de herramientas sobre la lista de cues, o pulsa <kbd>Ctrl</kbd>+<kbd>1</kbd>…<kbd>0</kbd>.</li>
+    <li>Selecciona una cue y ajusta sus opciones en el inspector, en la parte inferior de la ventana.</li>
+    <li>Haz clic en la primera cue para poner el <strong>cabezal</strong> (playhead) sobre ella y pulsa <kbd>Espacio</kbd> (GO).</li>
+    <li>Guarda con <kbd>Ctrl</kbd>+<kbd>S</kbd>. Los espectáculos se guardan como archivos <code>.openq</code>. Las rutas de los
+    medios se guardan relativas al archivo del espectáculo, así que puedes mover la carpeta del espectáculo entera.</li>
+  </ol>
+  <div class="note tip"><span class="label">Consejo</span><p>Guarda el archivo del espectáculo en la misma carpeta que sus medios.
+  Así la carpeta se puede copiar a otro ordenador y abrirse allí sin cambios.</p></div>
+</section>
+
+<section id="window">
+  <h2><span class="n">02</span>La ventana principal</h2>
+  <figure>
+    <img src="img/edit-mode.webp" width="1400" height="1525" alt="Ventana principal de OpenQ en modo edición: botón GO, tarjeta de espera, transporte, medidores, barra de herramientas, lista de cues e inspector.">
+    <figcaption>Modo edición con la primera cue seleccionada y el inspector mostrando su pestaña Time &amp; Loops.</figcaption>
+  </figure>
+  <ul>
+    <li><strong>Barra de título:</strong> el nombre del espectáculo (un punto indica cambios sin guardar). En Windows también
+    contiene los botones de minimizar, maximizar y cerrar: arrastra la barra para mover la ventana, haz doble clic para
+    maximizarla y arrastra cualquier borde para cambiar su tamaño.</li>
+    <li><strong>Menús:</strong> File, Edit, Cue, Show, Video (escenarios y salidas), Remote, View
+    (vista previa de geometría, registro del motor) y Help (este manual, el registro de errores, acerca de y licencias).</li>
+    <li><strong>GO</strong> dispara la cue que está bajo el cabezal. La tarjeta <strong>standby</strong> muestra esa cue,
+    con sus notas debajo para que el operador pueda leerlas antes de pulsar GO.</li>
+    <li><strong>Transporte:</strong> <span class="ms" aria-hidden="true">&#xe034;</span> pausar todo, <span class="ms" aria-hidden="true">&#xe037;</span> reanudar todo,
+    <span class="ms" aria-hidden="true">&#xe047;</span> parar todo. Al lado, los medidores de salida muestran cada canal del dispositivo en dB.</li>
+    <li><strong>Pestañas de listas:</strong> una pestaña por lista de cues (ver más abajo).</li>
+    <li><strong>Lista de cues:</strong> número, nombre, destino (datos del archivo o la cue de destino), pre-espera,
+    tiempo de acción, post-espera y la flecha de continuación. Las cues en marcha se vuelven verdes y su columna de
+    acción hace la cuenta atrás. Un icono rojo <span class="ms" style="color:var(--red)" aria-hidden="true">&#xf8b6;</span> marca un archivo o destino que falta.
+    Los archivos se comprueban en segundo plano cada par de segundos, así que una unidad de red lenta nunca congela la
+    ventana, y una unidad que se vuelve a conectar quita el icono por sí sola.</li>
+    <li><strong>Cues activas:</strong> cada cue en marcha con su tiempo transcurrido y restante, y sus propios botones de pausa y parada.</li>
+    <li><strong>Inspector:</strong> los ajustes de la cue seleccionada, en pestañas. Cada pestaña agrupa sus ajustes en
+    tarjetas. Se abre con altura suficiente para mostrar una pestaña entera; arrastra su borde superior para cambiar su tamaño.</li>
+    <li><strong>Barra de estado:</strong> el interruptor <strong>Edit / Show</strong> a la izquierda, y después el dispositivo de
+    audio, el estado del vídeo, OSC, las conexiones remotas y los mensajes. El botón <span class="ms" aria-hidden="true">&#xe8b8;</span>
+    de la derecha abre los <a href="#settings">ajustes</a>. Un aviso del motor aparece a su lado durante unos segundos y abre el
+    registro del motor; los mensajes de la parte izquierda de la barra también desaparecen al cabo de unos segundos.</li>
+  </ul>
+  <h3>Trabajar con la lista de cues</h3>
+  <ul>
+    <li>Haz clic en una cue para seleccionarla y mover el cabezal a ella. Usa <kbd>Ctrl</kbd>-clic para seleccionar
+    varias cues, <kbd>Mayús</kbd>-clic para un rango, y <kbd>↑</kbd> <kbd>↓</kbd> para mover el cabezal.</li>
+    <li>Arrastra las cues para reordenarlas. Suéltalas en el centro de la fila de un grupo para meterlas dentro.</li>
+    <li>Haz doble clic en un número, nombre, pre-espera o post-espera para editarlo en el sitio. <kbd>Intro</kbd>
+    confirma y <kbd>Esc</kbd> cancela.</li>
+    <li>Haz clic en la columna de continuación para pasar por <em>no continuar → autocontinuar → autoseguir</em>.</li>
+    <li>Haz clic derecho en una fila para iniciar, parar, duplicar, borrar y más.</li>
+  </ul>
+  <h3>Listas de cues</h3>
+  <p>Un espectáculo puede tener varias listas de cues, por ejemplo la secuencia principal y una lista de efectos de sonido
+  para disparar a mano. Cada lista tiene una pestaña sobre la barra de herramientas; haz clic en una pestaña para traer esa
+  lista al frente. GO, el cabezal y la tarjeta de espera trabajan sobre la lista del frente, y cada lista recuerda dónde
+  estaba su cabezal.</p>
+  <ul>
+    <li>Haz clic en <span class="ms" aria-hidden="true">&#xe145;</span> para añadir una lista. Haz clic derecho en la pestaña de la
+    lista actual para renombrarla (o doble clic), moverla, ajustar su <a href="#timecode">código de tiempo</a> o borrarla.</li>
+    <li>Las cues siguen sonando al cambiar de lista, y las cues Start, Stop, Fade y otras pueden apuntar a cues de cualquier lista.
+    En el menú de destino, las cues de otras listas muestran el nombre de su lista.</li>
+    <li>Los números de cue son comunes a todas las listas, así que OSC y los atajos llegan a cues de cualquier lista.</li>
+  </ul>
+</section>
+
+<section id="modes">
+  <h2><span class="n">03</span>Modo edición y modo función</h2>
+  <p>El <strong>modo edición</strong> (Edit) es para montar el espectáculo: todo se puede cambiar. El <strong>modo función</strong>
+  (Show) es para llevarlo. La lista queda bloqueada, la barra de herramientas y el inspector se ocultan, y las filas se hacen
+  más grandes para leerlas con facilidad en una cabina a oscuras. GO, parar, pausa, los atajos y mover el cabezal funcionan
+  en los dos modos.</p>
+  <p>Cambia con el interruptor a la izquierda de la barra de estado, <span class="menu">Show → Enter show mode</span>, o <kbd>Ctrl</kbd>+<kbd>E</kbd>.</p>
+  <figure>
+    <img src="img/show-mode.webp" width="1400" height="736" alt="Modo función: filas grandes, varias cues en marcha con cuenta atrás y el panel de cues activas a la derecha.">
+    <figcaption>Modo función mientras se ejecuta una secuencia. Las filas verdes están sonando y la columna de acción hace la cuenta atrás.</figcaption>
+  </figure>
+  <h3>Parar</h3>
+  <p><kbd>Esc</kbd> o el botón rojo de parada funde todo a silencio durante el <em>tiempo de fundido de parar todo</em>
+  (ver <a href="#settings">Ajustes</a>). Púlsalo otra vez durante ese fundido para parar al instante.</p>
+  <p>La <strong>protección contra doble GO</strong> ignora un segundo GO que llegue muy poco después del primero, para que
+  una tecla que rebota no se salte una cue.</p>
+</section>
+
+<section id="cues">
+  <h2><span class="n">04</span>Tipos de cue</h2>
+  <div class="types">
+    <div class="type"><b><span class="ms" aria-hidden="true">&#xe050;</span>Audio</b><span class="d">Reproduce un archivo de sonido por el mezclador de OpenQ, con recortes, bucles, fragmentos, EQ y enrutado.</span></div>
+    <div class="type"><b><span class="ms" aria-hidden="true">&#xe404;</span>Video</b><span class="d">Reproduce una película o una imagen fija en un escenario; su banda sonora pasa por el mezclador.</span></div>
+    <div class="type"><b><span class="ms" aria-hidden="true">&#xe262;</span>Text</b><span class="d">Muestra texto en un escenario, como títulos, sobretítulos o avisos para los intérpretes.</span></div>
+    <div class="type"><b><span class="ms" aria-hidden="true">&#xe2c7;</span>Group</b><span class="d">Contiene otras cues y las dispara de una de cuatro maneras.</span></div>
+    <div class="type"><b><span class="ms" aria-hidden="true">&#xe88b;</span>Wait</b><span class="d">Dura un tiempo fijo. Úsala para espaciar una cadena de autoseguir.</span></div>
+    <div class="type"><b><span class="ms" aria-hidden="true">&#xf1fc;</span>Memo</b><span class="d">No hace nada. Guarda notas y marca lugares del espectáculo.</span></div>
+    <div class="type"><b><span class="ms" aria-hidden="true">&#xe8e3;</span>Fade</b><span class="d">Cambia con el tiempo el nivel, la opacidad, la geometría, los efectos de vídeo o las posiciones de audio por objetos de otra cue.</span></div>
+    <div class="type"><b><span class="ms" aria-hidden="true">&#xe1c4;</span>Start</b><span class="d">Dispara otra cue.</span></div>
+    <div class="type"><b><span class="ms" aria-hidden="true">&#xef71;</span>Stop</b><span class="d">Para otra cue.</span></div>
+    <div class="type"><b><span class="ms" aria-hidden="true">&#xe1a2;</span>Pause</b><span class="d">Pausa otra cue.</span></div>
+    <div class="type"><b><span class="ms" aria-hidden="true">&#xe5da;</span>Go To</b><span class="d">Mueve el cabezal a otra cue.</span></div>
+    <div class="type"><b><span class="ms" aria-hidden="true">&#xe044;</span>Devamp</b><span class="d">Deja que un fragmento de audio en bucle termine su pasada y siga adelante.</span></div>
+    <div class="type"><b><span class="ms" aria-hidden="true">&#xeb2f;</span>Network</b><span class="d">Envía un mensaje OSC a otros equipos, como una mesa de luces.</span></div>
+    <div class="type"><b><span class="ms" aria-hidden="true">&#xe31d;</span>Mic</b><span class="d">Reproduce una entrada de audio en directo, como un micrófono, por el mezclador.</span></div>
+    <div class="type"><b><span class="ms" aria-hidden="true">&#xe412;</span>Camera</b><span class="d">Muestra una cámara o una capturadora en directo en un escenario.</span></div>
+  </div>
+  <p>Cada cue tiene un <strong>número</strong> (texto libre, como <code>4.2</code>), un <strong>nombre</strong>, <strong>notas</strong>,
+  un <strong>color</strong> y un interruptor de <strong>armado</strong> (Armed), todo en la pestaña Basics. GO se salta una cue desarmada.
+  Basics también ajusta la <strong>pre-espera</strong>, el modo de <strong>continuación</strong> y la <strong>post-espera</strong> de la
+  cue y, para cues de audio y vídeo, el <strong>archivo de medios</strong>.</p>
+  <p>La pestaña <strong>Triggers</strong> reúne las formas de disparar una cue además de GO: un <strong>atajo</strong> (hotkey), una tecla
+  que dispara la cue directamente esté donde esté el cabezal, y un <a href="#timecode">disparador por código de tiempo</a>.</p>
+</section>
+
+<section id="timing">
+  <h2><span class="n">05</span>Tiempos y continuaciones</h2>
+  <p>Cada cue tiene tres tiempos. La <strong>pre-espera</strong> transcurre entre GO y la acción de la cue. La
+  <strong>acción</strong> es la cue en sí: un sonido que suena, un fundido en marcha. La <strong>post-espera</strong> se cuenta
+  desde el inicio de la acción y la usa autocontinuar.</p>
+  <div class="timing" role="img" aria-label="Diagrama: la cue 1 tiene una pre-espera de 1 segundo y luego una acción de 6 segundos. Con autocontinuar y una post-espera de 3 segundos, la cue 2 se dispara 3 segundos después de que empiece la acción de la cue 1.">
+    <div class="lane"><span class="who">GO → 1</span>
+      <div class="track">
+        <div class="seg pre" style="left:0;width:10%">pre</div>
+        <div class="seg act" style="left:10%;width:60%">acción 0:06.00</div>
+      </div></div>
+    <div class="lane"><span class="who">post-espera</span>
+      <div class="track"><div class="seg post" style="left:10%;width:30%">0:03.00 → dispara 2</div></div></div>
+    <div class="lane"><span class="who">auto → 2</span>
+      <div class="track"><div class="seg act" style="left:40%;width:45%">acción</div><div class="marker" style="left:40%"></div></div></div>
+    <div class="axis"><span></span><div class="ticks"><span>0s</span><span>2</span><span>4</span><span>6</span><span>8</span><span>10s</span></div></div>
+  </div>
+  <div class="table-wrap"><table>
+    <thead><tr><th>Modo de continuación</th><th>Qué pasa después</th></tr></thead>
+    <tbody>
+      <tr><td>Do not continue</td><td>Nada. El cabezal pasa a la siguiente cue y espera a GO.</td></tr>
+      <tr><td>Auto-continue <span class="ms" aria-hidden="true">&#xe5db;</span></td><td>La siguiente cue se dispara cuando se agota la post-espera de esta.</td></tr>
+      <tr><td>Auto-follow <span class="ms" aria-hidden="true">&#xead0;</span></td><td>La siguiente cue se dispara cuando termina la acción de esta.</td></tr>
+    </tbody>
+  </table></div>
+  <p>Las cues encadenadas arrancan exactamente en el límite de una muestra, así que una secuencia mantiene su tiempo por mucho que dure.</p>
+  <h3>Grupos</h3>
+  <div class="table-wrap"><table>
+    <thead><tr><th>Modo de grupo</th><th>Comportamiento</th></tr></thead>
+    <tbody>
+      <tr><td>Start first child and enter group</td><td>Dispara la primera cue del grupo y mete el cabezal dentro.</td></tr>
+      <tr><td>Start first child and go to next cue</td><td>Una lista de reproducción: los hijos suenan uno tras otro mientras el cabezal pasa más allá del grupo.</td></tr>
+      <tr><td>Start all children simultaneously</td><td>Dispara todo lo que contiene a la vez, cada uno con su propia pre-espera.</td></tr>
+      <tr><td>Start random child and go to next cue</td><td>Dispara un hijo elegido al azar.</td></tr>
+    </tbody>
+  </table></div>
+  <p>Selecciona cues y pulsa <kbd>Ctrl</kbd>+<kbd>G</kbd> para agruparlas. <kbd>←</kbd> y <kbd>→</kbd> pliegan y despliegan un grupo.</p>
+</section>
+
+<section id="audio">
+  <h2><span class="n">06</span>Cues de audio</h2>
+  <h3>Time &amp; Loops</h3>
+  <figure>
+    <img src="img/waveform.webp" width="1400" height="369" alt="Pestaña Time and Loops: forma de onda con marcadores de recorte y curvas de fundido, y las tarjetas Trim, Loops, Playback y Fades.">
+    <figcaption>La pestaña Time &amp; Loops. Arrastra los marcadores verde y rojo para recortar; haz doble clic para añadir un fragmento.
+    Las curvas naranjas son la entrada y la salida en fundido de la cue.</figcaption>
+  </figure>
+  <ul>
+    <li><strong>Trim (recorte):</strong> arrastra los marcadores de inicio y fin, o escribe los tiempos. Arrastra la forma de onda para
+    desplazarte y usa <kbd>Ctrl</kbd>+rueda para hacer zoom. Una línea muestra la posición de reproducción mientras la cue suena.</li>
+    <li><strong>Loops (bucles):</strong> fija un número de reproducciones o repite hasta que se pare.</li>
+    <li><strong>Playback:</strong> la velocidad es varispeed. El tono cambia con la velocidad, como en un magnetófono.</li>
+    <li><strong>Fades:</strong> una entrada desde silencio al empezar la cue y una salida a silencio al final, con varias curvas a
+    elegir, sin necesidad de una cue Fade aparte. La salida necesita un final conocido, así que no ocurre mientras la cue se repite
+    indefinidamente; con un fragmento en vamp suena después del Devamp.</li>
+    <li><strong>Slices (fragmentos):</strong> haz doble clic en la forma de onda para añadir un marcador de fragmento. Arrástralo para
+    moverlo y haz clic derecho para borrarlo. Cada fragmento suena un número fijo de veces o se repite hasta que una cue
+    <strong>Devamp</strong> (o el mensaje OSC <code>/cue/&lt;n&gt;/devamp</code>) lo libera. Entonces termina la pasada actual y la
+    reproducción sigue. Úsalo para música que tiene que hacer vamp hasta la frase de un actor.</li>
+  </ul>
+  <h3>I/O</h3>
+  <figure>
+    <img src="img/io.webp" width="1400" height="348" alt="Pestaña I/O: datos del archivo de entrada, dispositivo de salida y la tarjeta de enrutado.">
+    <figcaption>De dónde viene el sonido y a dónde va.</figcaption>
+  </figure>
+  <ul>
+    <li><strong>Input:</strong> el archivo de medios, con su duración, formato, ubicación en disco (y un botón para mostrarlo en el
+    gestor de archivos), tamaño y número de canales. <em>Browse…</em> sustituye el archivo.</li>
+    <li><strong>Output:</strong> el dispositivo de audio por el que suena la cue y su número de salidas (se ajusta en Settings → Audio).</li>
+    <li><strong>Routing:</strong> automático, o una <strong>matriz de puntos de cruce</strong> de los canales del archivo a las salidas
+    del dispositivo. Cada punto de cruce tiene su propio nivel en dB, así que un archivo estéreo puede alimentar ocho altavoces.
+    O cambia a <strong>Object audio</strong> y coloca los canales en la sala (más abajo).</li>
+  </ul>
+  <h3>Audio por objetos</h3>
+  <figure>
+    <img src="img/object-audio.webp" width="1400" height="382" alt="Pestaña I/O en modo audio por objetos: una sala con cuatro altavoces y dos objetos numerados, y sus posiciones.">
+    <figcaption>Audio por objetos: cada canal del archivo es un objeto numerado en la sala. Los altavoces se iluminan con lo que reproducen.</figcaption>
+  </figure>
+  <p>El audio por objetos enruta el sonido según <em>de dónde debe venir</em> en lugar de por salida. Elige
+  <strong>Object audio</strong> en la tarjeta Routing: cada canal del archivo se convierte en un objeto que arrastras por la sala
+  (o cuya posición escribes). Los altavoces más cercanos a un objeto lo reproducen más fuerte; el nivel baja 6 dB cada vez que la
+  distancia se duplica, y la potencia total es la misma esté donde esté el objeto, así que moverlo nunca cambia su volumen.
+  <strong>Spread</strong> ensancha un objeto desde un punto (0 %) hasta toda la sala (100 %). Los faders de salida de la pestaña
+  Levels siguen aplicándose, y las cues Mic y las bandas sonoras de vídeo también pueden usar audio por objetos.</p>
+  <p>La sala se ajusta una vez por espectáculo en <a href="#settings">Settings → Audio</a>. Una <a href="#fades">cue Fade</a> puede
+  mover los objetos, para un sonido que vuela por la sala. Los movimientos se suavizan, así que arrastrar un objeto en una cue que
+  suena no produce chasquidos.</p>
+  <h3>Levels</h3>
+  <figure>
+    <img src="img/levels.webp" width="1400" height="314" alt="Pestaña Levels: faders verticales para el nivel principal y las salidas 1 y 2, y una tarjeta de panorama.">
+    <figcaption>Faders para el nivel principal de la cue y cada salida del dispositivo.</figcaption>
+  </figure>
+  <p>El fader <strong>Main</strong> fija el nivel de la cue. A su lado hay un fader por cada salida del dispositivo de audio, que
+  ajusta esa salida después de la matriz de enrutado. Arrastra un fader o escribe un valor en la casilla de encima; haz doble clic
+  en un fader para devolverlo a 0 dB. <strong>Pan</strong> mueve el sonido entre las salidas 1 y 2 mientras el enrutado es automático.</p>
+  <h3>EQ</h3>
+  <figure>
+    <img src="img/eq.webp" width="1400" height="421" alt="Ecualizador con una curva de respuesta y una lista de bandas.">
+    <figcaption>Hasta ocho bandas por cue. Arrastra los tiradores para ajustar frecuencia y ganancia, y usa la rueda sobre un tirador para cambiar la Q.</figcaption>
+  </figure>
+  <p>Los tipos de banda son paso alto, shelf de graves, pico, shelf de agudos y paso bajo. <strong>EQ enabled</strong> activa y
+  desactiva todo el ecualizador.</p>
+  <h3>Audio FX</h3>
+  <figure>
+    <img src="img/audio-fx.webp" width="1400" height="283" alt="Pestaña Audio FX: reverb, compresor y un delay desactivado como tarjetas, y una tarjeta para añadir efectos.">
+    <figcaption>Una cadena de efectos: reverb y después compresor; el delay está apagado.</figcaption>
+  </figure>
+  <p>Las cues de audio, Mic y vídeo tienen una pestaña <strong>Audio FX</strong>: una cadena de hasta ocho efectos que actúan de arriba
+  abajo sobre los canales de la cue, después del EQ y antes del enrutado. <em>Add…</em> pone un efecto nuevo al final; las flechas
+  cambian el orden, <strong>On</strong> puentea un efecto sin perder sus ajustes.</p>
+  <div class="table-wrap"><table>
+    <thead><tr><th>Efecto</th><th>Ajustes</th><th>Uso</th></tr></thead>
+    <tbody>
+      <tr><td>Delay</td><td>tiempo, realimentación, corte de agudos, mezcla</td><td>Ecos; el corte de agudos oscurece cada repetición.</td></tr>
+      <tr><td>Reverb</td><td>tamaño, amortiguación, pre-delay, anchura, mezcla</td><td>Sonido de sala para grabaciones secas o voces.</td></tr>
+      <tr><td>Compressor</td><td>umbral, ratio, ataque, liberación, ganancia</td><td>Iguala el nivel; todos los canales se mueven juntos.</td></tr>
+      <tr><td>Limiter</td><td>techo, liberación</td><td>Nunca deja pasar un pico por encima del techo.</td></tr>
+      <tr><td>Gate</td><td>umbral, rango, ataque, mantenimiento, liberación</td><td>Baja un micrófono entre frases.</td></tr>
+      <tr><td>Distortion</td><td>saturación, tono, salida, mezcla</td><td>Sonidos de radio, de teléfono o saturados.</td></tr>
+      <tr><td>Chorus</td><td>velocidad, profundidad, retardo, realimentación, mezcla</td><td>Engorda y ensancha un sonido.</td></tr>
+      <tr><td>Bitcrusher</td><td>bits, submuestreo, mezcla</td><td>Sonidos lo-fi, de videojuego retro.</td></tr>
+    </tbody>
+  </table></div>
+  <div class="note tip"><span class="label">Cambios en directo</span><p>Los cambios de nivel, fader de salida, panorama, EQ, efectos,
+  enrutado y objetos se oyen al momento en una cue que suena, así que puedes ajustarlos durante un pase. Las colas de reverb y
+  delay continúan a través de una edición.</p></div>
+  <h3>Cues Mic</h3>
+  <figure>
+    <img src="img/mic.webp" width="1400" height="312" alt="Pestaña I/O de una cue Mic: dispositivo de entrada, canales y medidor de nivel, tiempos y enrutado.">
+    <figcaption>La pestaña I/O de una cue Mic. La barra de nivel se mueve mientras la cue está en marcha.</figcaption>
+  </figure>
+  <p>Una cue Mic envía una entrada en directo (un micrófono, una entrada de línea, un reproductor) por el mezclador de OpenQ, así que
+  tiene los mismos faders de <strong>Levels</strong>, panorama, <strong>EQ</strong> y enrutado que una cue de audio, y las cues Fade
+  pueden fundirla. En la pestaña <strong>I/O</strong> elige el dispositivo de entrada y qué canales usar, por ejemplo las entradas
+  3–4 para un par estéreo. Una <strong>duración</strong> de 0 mantiene la entrada abierta hasta que se para la cue, y la
+  <strong>entrada en fundido</strong> la sube desde silencio. La entrada llega a las salidas con unos 30 ms de retraso, demasiado
+  poco para oírse como eco en la mayoría de salas.</p>
+</section>
+
+<section id="video">
+  <h2><span class="n">07</span>Cues de vídeo y texto</h2>
+  <p>Una cue de vídeo reproduce una película (todo lo que FFmpeg puede reproducir) o una imagen fija: PNG, JPEG, WebP, GIF, TIFF, BMP o
+  <strong>SVG</strong>. Las imágenes se muestran durante un tiempo fijo o hasta que se paran. Un SVG se dibuja al tamaño al que se va a
+  mostrar, incluida la mayor escala a la que llegan su geometría y su animación, así que logotipos y dibujos de línea se ven nítidos.
+  <strong>Time &amp; Loops</strong> tiene recortes de inicio y fin, bucles y <em>hold last frame</em> (mantener el último fotograma).
+  La pestaña <strong>Audio</strong> tiene los faders principal y de salida de la banda sonora, e <strong>I/O</strong> su archivo y
+  enrutado; la banda sonora suena por el mezclador como una cue de audio.</p>
+  <h3>Geometry</h3>
+  <ul>
+    <li><strong>Stage:</strong> a qué salida va la imagen. Sin ninguna, se usa el primer escenario.</li>
+    <li><strong>Fit:</strong> <em>Fit</em> muestra la imagen entera (con bandas), <em>Fill</em> cubre el escenario y recorta lo que
+    sobra, <em>Stretch</em> lo llena exactamente y <em>Native size</em> usa los píxeles propios del archivo.</li>
+    <li><strong>Layer</strong> (capa; las más altas se dibujan encima) y <strong>opacidad</strong>.</li>
+    <li><strong>Posición, escala y rotación.</strong> La posición es un porcentaje del escenario: <code>X 25%</code>
+    mueve la imagen un cuarto del escenario hacia la derecha. Activa <em>proportional</em> para escalar los dos ejes a la vez.</li>
+    <li><strong>Crop (recorte):</strong> quita un porcentaje por la izquierda, arriba, derecha y abajo. El resto de la imagen
+    se queda donde estaba.</li>
+  </ul>
+  <figure class="narrow">
+    <img src="img/geometry-preview.webp" width="660" height="460" alt="Ventana de vista previa de geometría con una capa girada y recortada en un escenario de 1920 por 1080.">
+    <figcaption>La vista previa de geometría. Una línea discontinua muestra la imagen sin recortar.</figcaption>
+  </figure>
+  <p>La <strong>vista previa de geometría</strong> (<span class="menu">View → Geometry preview</span>, o <em>Preview</em> en la pestaña Geometry)
+  dibuja el escenario de la cue seleccionada con la imagen en su sitio, sin abrir una salida de proyector. En modo edición,
+  arrastra en la vista previa para mover la imagen, usa la rueda para escalarla y haz doble clic para centrarla. Para una cue Fade que
+  cambia la geometría, la vista previa muestra dónde termina el fundido, con la posición inicial como contorno discontinuo.</p>
+  <h3>Cues Camera</h3>
+  <p>Una cue Camera muestra una cámara en directo (una webcam, una capturadora USB o HDMI) como capa en un escenario, con la misma
+  pestaña <strong>Geometry</strong> que el vídeo: posición, escala, rotación, recorte, opacidad y capa, y las cues Fade pueden moverla
+  y fundirla. En la pestaña <strong>Camera</strong> elige el dispositivo y, si lo necesitas, el tamaño de captura; <em>Mirror</em>
+  voltea la imagen como en un selfi. <em>Show for</em> 0 la mantiene hasta que se pare. El dispositivo y el tamaño se usan la
+  próxima vez que arranque la cue.</p>
+  <h3>Cues Text</h3>
+  <p>Las cues de texto muestran texto escrito en un escenario: títulos, sobretítulos, subtítulos o una cuenta atrás para el equipo.
+  Las pestañas <strong>Geometry</strong> y <strong>Animation</strong> funcionan como en el vídeo, y las cues Fade pueden mover y fundir
+  el texto. Los cambios en la pestaña <strong>Text</strong> aparecen al momento en una cue que se está mostrando.</p>
+  <figure>
+    <img src="img/text-cue.webp" width="1400" height="383" alt="Pestaña Text en tarjetas: el texto, la fuente (peso, tamaño, interlineado, espaciado), el aspecto (color, alineación, contorno, sombra, caja de fondo) y una muestra.">
+    <figcaption>La pestaña Text. Bajo los ajustes aparece una vista previa de la primera línea con el estilo elegido.</figcaption>
+  </figure>
+  <div class="table-wrap"><table>
+    <thead><tr><th>Ajuste</th><th>Qué hace</th></tr></thead>
+    <tbody>
+      <tr><td>Font</td><td>Cualquier fuente instalada en el ordenador. Escribe en la lista para buscar. <em>Inter (built-in)</em> está siempre disponible.</td></tr>
+      <tr><td>Weight · Italic</td><td>De Thin (100) a Black (900). Los pesos que la fuente no incluye aparecen en gris y se usa el instalado más cercano.</td></tr>
+      <tr><td>Size</td><td>Tamaño de letra en píxeles del escenario: 96 px en un escenario de 1080 líneas es una décima parte de su altura.</td></tr>
+      <tr><td>Line height · Spacing</td><td>Distancia entre líneas (como múltiplo del tamaño) y espacio extra entre letras en em.</td></tr>
+      <tr><td>Color · alineación</td><td>Color y transparencia del texto; líneas a la izquierda, centradas o a la derecha.</td></tr>
+      <tr><td>Outline</td><td>Un borde alrededor de cada letra, en píxeles del escenario, con su propio color. Mantiene el texto legible sobre vídeo cargado.</td></tr>
+      <tr><td>Shadow</td><td>Una sombra suave: color, desplazamiento a la derecha y abajo, y desenfoque.</td></tr>
+      <tr><td>Background</td><td>Una caja detrás del texto: color y transparencia, <em>padding</em> (espacio alrededor del texto, en píxeles del escenario) y <em>radius</em> para esquinas redondeadas. Buena para subtítulos y sobretítulos sobre vídeo.</td></tr>
+      <tr><td>Show for</td><td>Tiempo en pantalla; 0 la muestra hasta que se pare.</td></tr>
+    </tbody>
+  </table></div>
+  <p>El texto se compone correctamente en cualquier idioma. Pares como <em>AV</em> llevan kerning, se usan ligaduras y la escritura de
+  derecha a izquierda funciona. Los caracteres que no tiene la fuente elegida, como emoji o chino, se dibujan con otra fuente instalada.
+  El texto se renderiza al doble de la resolución del escenario, así que se ve nítido al ampliarlo y suave al reducirlo.</p>
+  <p>El texto se prepara en segundo plano antes de su GO, y otra vez después de cambiar su aspecto, así que arrancar o editar una cue de
+  texto nunca retiene el espectáculo. Los cambios de color, movimientos y animaciones no necesitan preparación. Tras cambiar el texto,
+  la fuente o el tamaño de una cue que se está mostrando, la versión nueva sustituye a la antigua un momento después.</p>
+  <div class="note"><span class="label">De gira</span><p>El archivo del espectáculo guarda el nombre de la fuente, no la fuente en sí.
+  Instala las mismas fuentes en cada ordenador que reproduzca el espectáculo. Si falta una fuente, la pestaña Text indica <em>not installed
+  here</em> y se usa una fuente de sustitución.</p></div>
+  <h3>Animation</h3>
+  <p>La pestaña <strong><span class="ms" aria-hidden="true">&#xe71c;</span> Animation</strong> de las cues de vídeo y texto mueve,
+  escala, gira, recorta, funde y cambia el color de la capa con fotogramas clave. La animación empieza cuando arranca la cue y sigue el
+  reloj de la propia cue: pausar la cue la pausa.</p>
+  <figure>
+    <img src="img/animation.webp" width="1400" height="427" alt="Pestaña Animation: una línea de tiempo con filas para X, Opacity, Scale X, Scale Y, Text colour y Background, cada una con fotogramas clave en forma de rombo, un cabezal azul en 2,2 segundos y, debajo, los ajustes de animación y el tiempo y valor del fotograma clave seleccionado.">
+    <figcaption>La pestaña Animation. Cada fila es una propiedad animada; los rombos son fotogramas clave.</figcaption>
+  </figure>
+  <ul>
+    <li><strong>Add track</strong> elige una propiedad. Su primer fotograma clave queda en el cabezal y no cambia nada,
+    así que después puedes poner los valores que quieras.</li>
+    <li><strong>Línea de tiempo:</strong> haz clic en la regla o en una fila para mover el cabezal. Haz clic en un fotograma clave para
+    seleccionarlo y arrástralo de lado para cambiar su tiempo. Haz doble clic en una fila para añadir un fotograma clave ahí.</li>
+    <li>Tarjeta <strong>Keyframe</strong>: el tiempo y el valor de la clave seleccionada, y <em>Then</em>, que indica cómo pasa el valor a
+    la clave siguiente: <em>Hold</em> (se queda y luego salta), <em>Linear</em>, <em>Ease in</em>, <em>Ease out</em>,
+    <em>Ease in-out</em> o una <em>Custom curve</em> (una Bézier cúbica, escrita como en CSS: x1 y1 x2 y2).
+    <em>Key at playhead</em> añade una clave con el valor que tiene la pista en el cabezal.</li>
+    <li><strong>Length</strong> es una pasada de la animación; 0 significa que termina en el último fotograma clave. Una línea ámbar
+    discontinua la marca en la línea de tiempo. <strong>Repeat</strong>: <em>Once</em> mantiene los últimos valores, <em>Loop</em> vuelve a
+    empezar, <em>Ping-pong</em> va hacia delante y luego hacia atrás.</li>
+    <li>Activa <strong>Preview</strong> para ver la capa en la vista previa de geometría tal como está en el cabezal. Un contorno
+    discontinuo muestra la posición propia de la cue.</li>
+  </ul>
+  <div class="table-wrap"><table>
+    <thead><tr><th>Propiedad</th><th>Valor</th><th>Cómo se combina con la cue</th></tr></thead>
+    <tbody>
+      <tr><td>X · Y</td><td>% del escenario</td><td>Se suma a la posición de la pestaña Geometry.</td></tr>
+      <tr><td>Scale X · Scale Y</td><td>%</td><td>Multiplica la escala de la pestaña Geometry: 200% la duplica.</td></tr>
+      <tr><td>Rotation</td><td>grados</td><td>Se suma a la rotación. 360° es una vuelta completa.</td></tr>
+      <tr><td>Crop left · top · right · bottom</td><td>% de la imagen</td><td>Se suma al recorte. Anímalo para cortinillas y revelados.</td></tr>
+      <tr><td>Opacity</td><td>%</td><td>Multiplica la opacidad de la cue.</td></tr>
+      <tr><td>Tint</td><td>color</td><td>Multiplica los colores de la imagen. El blanco la deja igual. Un tinte solo puede oscurecer o recolorear: el blanco se convierte en el color del tinte y el negro sigue negro.</td></tr>
+      <tr><td>Text colour · Outline colour · Shadow colour · Background</td><td>color (solo texto)</td><td>Sustituyen los colores de la pestaña Text.</td></tr>
+    </tbody>
+  </table></div>
+  <p>Como los valores son relativos, una cue Fade o un cambio en la pestaña Geometry siguen moviendo o fundiendo toda la capa animada.
+  Por ejemplo, una animación puede hacer que un logotipo suba y baje mientras una cue Fade lo desliza por el escenario.</p>
+  <figure class="narrow">
+    <img src="img/animation-stage.webp" width="900" height="449" alt="Un escenario con un título animado en ámbar sobre una caja roja redondeada y un logotipo SVG girado del revés y teñido de verde.">
+    <figcaption>En el escenario, a mitad de animación: el título ha entrado deslizándose, ha crecido y ha cambiado de color; el logotipo SVG gira con un tinte verde en bucle.</figcaption>
+  </figure>
+  <div class="note"><span class="label">Sin carga para el espectáculo</span><p>Las animaciones se calculan en directo mientras se dibuja
+  el escenario: unas pocas operaciones por capa, con el movimiento, la escala y el color a cargo de la tarjeta gráfica. No se renderiza
+  ni decodifica nada por adelantado, así que animar una capa cuesta lo mismo que mostrarla quieta. Los cambios que hagas aparecen al
+  momento, incluso en una cue en marcha, a cualquier resolución de escenario. El desenfoque y los cambios de color son
+  <a href="#videofx">efectos de vídeo</a>, que una cue Fade puede animar.</p></div>
+  <h3 id="videofx">Video FX</h3>
+  <figure>
+    <img src="img/video-fx.webp" width="1400" height="237" alt="Pestaña Video FX de una cue de texto: tarjetas Colourise, Blur y Vignette y una tarjeta para añadir efectos.">
+    <figcaption>Una cue de texto coloreada de naranja, algo desenfocada y con viñeta.</figcaption>
+  </figure>
+  <p>Las cues de vídeo, cámara y texto tienen una pestaña <strong>Video FX</strong>, una pila de efectos sobre la imagen. Añádelos,
+  reordénalos y actívalos como los efectos de audio. Los dibuja la tarjeta gráfica mientras dibuja el escenario, así que casi no cuestan
+  nada y cambian en directo, incluso en una cue en marcha.</p>
+  <figure class="narrow">
+    <img src="img/video-fx-stage.webp" width="750" height="285" alt="Un escenario con el título 'Act One' en naranja.">
+    <figcaption>El resultado en el escenario.</figcaption>
+  </figure>
+  <div class="table-wrap"><table>
+    <thead><tr><th>Efecto</th><th>Ajustes</th></tr></thead>
+    <tbody>
+      <tr><td>Colour controls</td><td>Brillo, contraste, saturación (0 = blanco y negro).</td></tr>
+      <tr><td>Exposure</td><td>Exposición en pasos, gamma.</td></tr>
+      <tr><td>Hue</td><td>Gira todos los colores por la rueda de color.</td></tr>
+      <tr><td>Colourise</td><td>Monocromo en el color que elijas.</td></tr>
+      <tr><td>Sepia · Invert</td><td>Cantidad.</td></tr>
+      <tr><td>Posterise</td><td>Número de niveles por color.</td></tr>
+      <tr><td>Threshold</td><td>Corte a blanco y negro en un nivel de brillo.</td></tr>
+      <tr><td>Vignette</td><td>Oscurece los bordes: radio, suavidad, cantidad.</td></tr>
+      <tr><td>Blur · Pixellate · Sharpen</td><td>Radio o tamaño de bloque en los píxeles propios de la imagen.</td></tr>
+      <tr><td>Chroma key</td><td>Hace transparente un color (croma verde o azul en una cue de cámara): color clave, umbral,
+      suavidad y spill, que quita el reflejo verde de los bordes que quedan.</td></tr>
+    </tbody>
+  </table></div>
+  <p>Los efectos de color actúan de arriba abajo; Blur, Pixellate y Sharpen cambian cómo se lee la imagen, así que siempre actúan
+  primero. Los efectos se aplican después del tinte y la opacidad de la capa, y funcionan con todos los modos de fusión.</p>
+</section>
+
+<section id="fades">
+  <h2><span class="n">08</span>Fundidos</h2>
+  <p>Una cue Fade cambia otra cue mientras suena. Elige la cue de <strong>destino</strong>, la <strong>duración</strong> y la
+  <strong>curva</strong> (lineal, en S o logarítmica), y marca lo que quieres cambiar:</p>
+  <ul>
+    <li><strong>Nivel</strong> en dB, para audio y para bandas sonoras de vídeo.</li>
+    <li><strong>Opacidad</strong>, para vídeo y texto.</li>
+    <li><strong>Geometría</strong>: posición, escala, rotación y recorte. Parte de la geometría propia del destino, así que solo
+    se mueven los valores que cambies.</li>
+    <li><strong>Efectos de vídeo</strong>: los ajustes de <a href="#videofx">Video FX</a> del destino se copian en el fundido al
+    marcarlo; cambia los valores hacia los que fundir. Un efecto apagado aquí se funde hacia fuera, y los efectos que el destino no
+    tiene entran fundiendo desde nada. <em>Take the target's effects</em> los vuelve a copiar después de cambiar de destino.</li>
+    <li><strong>Objetos</strong>, para destinos en modo <a href="#audio">audio por objetos</a>: las posiciones y la dispersión a las
+    que mover los objetos, editadas en la misma vista de sala.</li>
+  </ul>
+  <p>Marca <strong>Stop target</strong> para un fundido de salida: el destino se para al terminar el fundido. Pausar un fundido lo
+  congela, y reanudarlo continúa con el tiempo que quedaba.</p>
+</section>
+
+<section id="timecode">
+  <h2><span class="n">09</span>Código de tiempo</h2>
+  <p>OpenQ puede llevar una lista de cues a partir de código de tiempo SMPTE entrante, para un espectáculo sincronizado con un vídeo,
+  el click de una banda o una mesa de luces. Lee <strong>LTC</strong> (código de tiempo como señal de audio) en una entrada de audio o
+  <strong>MTC</strong> (MIDI Time Code) en una entrada MIDI, a 24, 25, 29,97 drop-frame o 30 fps.</p>
+  <h3>Configurar una lista de cues</h3>
+  <p>Haz clic derecho en la pestaña de la lista y elige <em>Timecode…</em>. Elige qué sigue la lista (LTC o MTC), la entrada de audio
+  y el canal o la entrada MIDI por la que llega, y la frecuencia de fotogramas. La ventana muestra el código de tiempo que entra, y
+  mientras esa lista está al frente la tarjeta de espera también lo muestra. Cada lista sigue su propia fuente, así que una lista puede
+  seguir el LTC de la banda mientras otra se lleva a mano.</p>
+  <h3>Disparadores por código de tiempo</h3>
+  <figure>
+    <img src="img/triggers.webp" width="1400" height="255" alt="Pestaña Triggers: una tarjeta de atajo y una tarjeta de código de tiempo con el tiempo de disparo, la fuente de la lista y lo que está recibiendo.">
+    <figcaption>La pestaña Triggers de una cue que se dispara en 01:00:05:00.</figcaption>
+  </figure>
+  <p>En la pestaña <strong>Triggers</strong> de una cue, marca <em>Fire at</em> y escribe el tiempo (hh:mm:ss:ff). Cuando el código de
+  tiempo de la lista pasa por ese momento, la cue se dispara, esté donde esté el cabezal, y sus continuaciones funcionan como siempre.
+  La pestaña muestra qué sigue la lista y qué está recibiendo; <em>Set up…</em> abre los ajustes de código de tiempo de la lista.</p>
+  <p>Solo el código de tiempo que avanza dispara cues. Cuando la fuente salta (un locate o un rebobinado) o se para, no se dispara nada,
+  y los disparos se retoman desde la nueva posición, así que ensayar una sección haciendo retroceder la fuente es seguro.</p>
+</section>
+
+<section id="stages">
+  <h2><span class="n">10</span>Escenarios y proyección</h2>
+  <p>Un <strong>escenario</strong> (stage) es una salida de vídeo, como un proyector o una pantalla. Añade escenarios en
+  <span class="menu">Settings → Stages</span>. Cada uno tiene un nombre y un tamaño de lienzo en píxeles.</p>
+  <h3>Enviar un escenario a una pantalla</h3>
+  <p>En <span class="menu">Video → Stage: <em>nombre</em> → Output</span>, o con el desplegable Output de Settings → Stages,
+  elige <em>Window</em> o una de las pantallas conectadas. Un escenario asignado a una pantalla se abre a pantalla completa en ella, y
+  vuelve a abrirse allí al cargar el espectáculo. Si una pantalla no aparece, usa <em>Refresh displays</em>. En una ventana de
+  escenario, haz doble clic o pulsa <kbd>F11</kbd> para alternar la pantalla completa.</p>
+  <h3>Mapping</h3>
+  <figure>
+    <img src="img/mapping.webp" width="1100" height="551" alt="Patrón de ajuste de mapping en un escenario con corrección de trapecio: lienzo blanco con cuadrícula, reglas de píxeles en cada borde, círculos y esquinas numeradas.">
+    <figcaption>El patrón de ajuste de mapping. Círculos que parecen óvalos, o cuadros de la cuadrícula que no son cuadrados, muestran lo que aún está desajustado.</figcaption>
+  </figure>
+  <p><em>Edit mapping</em> muestra un patrón de ajuste en el escenario: un lienzo blanco con una cuadrícula cuadrada, reglas de píxeles
+  en cada borde, círculos, diagonales y una cruz central, todo dibujado a través del mapping, además de cuatro esquinas numeradas.
+  Arrastra las esquinas para encajar la imagen en la pantalla (corrección de trapecio), o pasa el ratón por una esquina y muévela con
+  las flechas: un píxel cada vez, o diez con <kbd>Mayús</kbd>. <em>Reset mapping</em> devuelve las esquinas a su sitio.</p>
+</section>
+
+<section id="remote">
+  <h2><span class="n">11</span>Dispositivos remotos</h2>
+  <p>Un segundo ordenador con OpenQ en la misma red puede seguir el espectáculo y llevarlo. Puede ser el portátil del regidor
+  o una tableta en la mesa técnica. El ordenador que lleva el espectáculo es el <strong>dispositivo principal</strong>, y hace toda la
+  reproducción. El otro dispositivo muestra su lista de cues, cabezal, cues en marcha y medidores, y le envía GO y otras órdenes.</p>
+  <h3>Emparejar un dispositivo</h3>
+  <ol class="steps">
+    <li>En el dispositivo principal, abre <span class="menu">Remote → Share this OpenQ</span>, marca
+    <em>Let paired devices connect</em> y haz clic en <em>Pair a new device…</em>. Aparece un código como <code>C9XR-E9HJ</code>.</li>
+    <li>En el otro dispositivo, abre <span class="menu">Remote → Connect to another OpenQ</span>, haz clic en <em>Search</em> y elige el
+    dispositivo principal. Si la búsqueda no encuentra nada, escribe su dirección, que aparece en la ventana Remote del dispositivo principal.</li>
+    <li>Introduce el código y haz clic en <em>Connect</em>. A partir de la primera vez, conectar no necesita código.</li>
+  </ol>
+  <figure class="narrow">
+    <img src="img/remote-share.webp" width="700" height="680" alt="Ventana Remote del dispositivo principal con un código de emparejamiento y una lista de dispositivos emparejados.">
+    <figcaption>El dispositivo principal durante el emparejamiento. Los dispositivos emparejados aparecen bajo el código, con su rol.</figcaption>
+  </figure>
+  <h3>Roles</h3>
+  <div class="table-wrap"><table>
+    <thead><tr><th>Rol</th><th>El dispositivo puede</th></tr></thead>
+    <tbody>
+      <tr><td>View only</td><td>Seguir el espectáculo: lista de cues, cabezal, cues en marcha y medidores.</td></tr>
+      <tr><td>Control</td><td>Además, pulsar GO, parar, pausar y reanudar, mover el cabezal e iniciar o parar cues sueltas.</td></tr>
+      <tr><td>Control &amp; edit</td><td>Además, editar el espectáculo. Los cambios se guardan en el dispositivo principal.</td></tr>
+    </tbody>
+  </table></div>
+  <p>Ajusta el rol que reciben los dispositivos nuevos, y cambia el de cualquier dispositivo, en la ventana Remote del dispositivo
+  principal. Los cambios se aplican al momento. <strong>Remove</strong> desconecta un dispositivo enseguida, y tiene que volver a
+  emparejarse para reconectar. Cuando un dispositivo se desconecta, recupera su propio espectáculo. Los archivos de medios se quedan en
+  el dispositivo principal, así que añádelos allí.</p>
+  <div class="note"><span class="label">Seguridad</span><p>Las conexiones van cifradas y autenticadas. Un código de emparejamiento
+  vale 5 minutos y 5 intentos, y quien grabe el tráfico de red no puede deducirlo a partir de la grabación. Después del
+  emparejamiento, cada dispositivo entra con su propia clave secreta. Una dirección que falla una y otra vez se bloquea
+  5 minutos. La lista Activity muestra las conexiones y los intentos rechazados.</p></div>
+  <div class="note tip"><span class="label">Red</span><p>El acceso remoto usa el puerto TCP <code>53200</code>, y la búsqueda
+  usa el puerto UDP <code>53201</code>. Un cortafuegos en el dispositivo principal tiene que permitir los dos. En una wifi de invitados
+  la búsqueda puede no encontrar nada; escribir la dirección sigue funcionando.</p></div>
+</section>
+
+<section id="osc">
+  <h2><span class="n">12</span>OSC y cues de red</h2>
+  <p>Activa <strong>OSC remote control</strong> en <span class="menu">Settings → General</span>. Escucha en el puerto UDP 53000
+  por defecto. Las cues se identifican por su número.</p>
+  <div class="table-wrap"><table>
+    <thead><tr><th>Dirección</th><th>Acción</th></tr></thead>
+    <tbody>
+      <tr><td><code>/go</code></td><td>GO</td></tr>
+      <tr><td><code>/stop</code> · <code>/panic</code></td><td>Parar todo con el fundido · parar todo al instante</td></tr>
+      <tr><td><code>/pause</code> · <code>/resume</code></td><td>Pausar todo · reanudar todo</td></tr>
+      <tr><td><code>/playhead/next</code> · <code>/playhead/previous</code></td><td>Mover el cabezal</td></tr>
+      <tr><td><code>/playhead/4.2</code></td><td>Poner el cabezal en la cue 4.2</td></tr>
+      <tr><td><code>/cue/4.2/start</code></td><td>También <code>stop</code>, <code>pause</code>, <code>resume</code>, <code>devamp</code></td></tr>
+    </tbody>
+  </table></div>
+  <p>Una <strong>cue Network</strong> envía un mensaje OSC a otros equipos. Ajusta el host, el puerto, la dirección
+  (por ejemplo <code>/eos/cue/12/fire</code>) y los argumentos. Los argumentos se separan con espacios: los números se envían como
+  números y el texto entre comillas como texto.</p>
+</section>
+
+<section id="settings">
+  <h2><span class="n">13</span>Ajustes</h2>
+  <p><span class="menu">Edit → Settings…</span>, o el botón <span class="ms" aria-hidden="true">&#xe8b8;</span> a la
+  derecha de la barra de estado. Se guardan con el espectáculo.</p>
+  <div class="table-wrap"><table>
+    <thead><tr><th>Pestaña</th><th>Ajustes</th></tr></thead>
+    <tbody>
+      <tr><td>General</td><td>Tiempo de fundido de parar todo, protección contra doble GO, volumen maestro, OSC activado y puerto.</td></tr>
+      <tr><td>Audio</td><td>Dispositivo de salida. Cambiarlo para toda la reproducción. Las matrices de enrutado apuntan a las salidas de este dispositivo.
+      La <strong>sala para audio por objetos</strong>: los altavoces, dónde están y a qué salida va cada uno.</td></tr>
+      <tr><td>Stages</td><td>Añadir y nombrar escenarios, tamaño del lienzo, pantalla de salida, pantalla completa, mapping.</td></tr>
+    </tbody>
+  </table></div>
+  <figure class="narrow">
+    <img src="img/room.webp" width="731" height="465" alt="El editor de sala: una sala cuadrada con cuatro altavoces FL, FR, RL, RR y una tabla con sus salidas y posiciones.">
+    <figcaption>La sala para audio por objetos. Arrastra los altavoces o escribe sus posiciones.</figcaption>
+  </figure>
+  <p>Mientras no la cambies, la sala sigue al dispositivo de salida: un par estéreo, cuadrafónico, 5.1 o 7.1 (sin altavoz en la salida
+  LFE), o un anillo para otros números de canales. Los preajustes configuran esas salas, y <em>Use default</em> vuelve a seguir al
+  dispositivo. El frente, donde está el escenario, queda arriba. Varios altavoces pueden compartir una salida.</p>
+  <p>Los ajustes de acceso remoto y las claves de los dispositivos pertenecen al ordenador, no al espectáculo. Están en
+  <code>~/.config/openq/remote.json</code>, legible solo por tu cuenta de usuario.</p>
+</section>
+
+<section id="safety">
+  <h2><span class="n">14</span>Seguridad ante fallos</h2>
+  <p>Un espectáculo tiene que seguir cuando algo sale mal. OpenQ mantiene los problemas lo más pequeños posible y
+  recupera tu trabajo si llega a caerse.</p>
+  <h3>Autoguardado y recuperación</h3>
+  <p>Mientras un espectáculo tiene cambios sin guardar, OpenQ guarda una copia cada pocos segundos. Guardar el espectáculo,
+  o salir con normalidad, borra la copia. Si OpenQ o el ordenador se caen, el siguiente arranque te ofrece la copia:</p>
+  <figure class="narrow">
+    <img src="img/recovery.webp" width="702" height="382" alt="Ventana Recover unsaved work con dos espectáculos autoguardados, cada uno con botones Recover y Discard, y un botón Later.">
+    <figcaption>Después de un fallo: cada espectáculo con cambios sin guardar, cuándo se autoguardó y a qué archivo pertenece.</figcaption>
+  </figure>
+  <ul>
+    <li><strong>Recover</strong> abre la copia con los cambios sin guardar. Guárdala para conservarlos (se guarda en el
+    propio archivo del espectáculo).</li>
+    <li><strong>Discard</strong> borra la copia para siempre.</li>
+    <li><strong>Later</strong> cierra la ventana; vuelve a preguntar la próxima vez.</li>
+  </ul>
+  <p>Guardar un espectáculo escribe primero un archivo temporal y lo pone en su lugar cuando ya está a salvo en el disco, así que un
+  fallo o un corte de luz durante el guardado deja intacta la versión anterior.</p>
+  <h3>Cuando algo falla durante una función</h3>
+  <div class="table-wrap"><table>
+    <thead><tr><th>Qué pasa</th><th>Qué hace OpenQ</th></tr></thead>
+    <tbody>
+      <tr><td>El dispositivo de audio desaparece (desconectado, servidor de audio reiniciado)</td><td>Sus sonidos se paran y la
+      barra de estado muestra <em>audio lost · reconnecting…</em>. OpenQ intenta abrir el mismo dispositivo cada
+      2 segundos y sigue en cuanto vuelve. El vídeo y las demás cues siguen funcionando.</td></tr>
+      <tr><td>Un archivo de medios está dañado</td><td>Esa cue termina con un error en <span class="menu">View → Engine log</span>;
+      todas las demás cues siguen sonando.</td></tr>
+      <tr><td>Un error interno en el motor de cues</td><td>Todas las cues se paran a la vez, el cabezal se queda donde estaba y
+      el registro explica qué pasó. El siguiente GO funciona como siempre.</td></tr>
+      <tr><td>Una cue se inicia a sí misma en un bucle sin tiempo (una cue Start que apunta a sí misma, o dos que se apuntan
+      entre sí)</td><td>Se retiene y el registro nombra la cue, en lugar de ralentizar todo el espectáculo.</td></tr>
+      <tr><td>Más de 256 sonidos a la vez</td><td>Las cues de audio adicionales se rechazan con un error en el registro.</td></tr>
+    </tbody>
+  </table></div>
+  <p>Los autoguardados y los informes de fallos están en la carpeta de ajustes de OpenQ: <code>~/.config/openq</code> en Linux,
+  <code>~/Library/Application Support/OpenQ</code> en macOS, <code>%APPDATA%\OpenQ</code> en Windows, en
+  <code>recovery</code> y <code>crash</code>. Un informe de fallo contiene qué salió mal y dónde; adjúntalo, por favor,
+  cuando informes de un problema.</p>
+  <p><strong>Registro de errores.</strong> Cada aviso y error (entradas del registro del motor, fallos de dispositivos, guardados o
+  aperturas fallidos, caídas) también se escribe, con la fecha y la hora en UTC, en <code>logs/openq.log</code> dentro de la misma
+  carpeta, para que puedas revisarlo después de la función. <span class="menu">Help → Error log</span> lo abre. Cuando supera
+  los 2 MB, se mueve a <code>openq.old.log</code> la próxima vez que arranca OpenQ.</p>
+</section>
+
+<section id="keys">
+  <h2><span class="n">15</span>Atajos de teclado</h2>
+  <div class="table-wrap"><table>
+    <thead><tr><th>Teclas</th><th>Acción</th></tr></thead>
+    <tbody>
+      <tr><td><kbd>Espacio</kbd></td><td>GO</td></tr>
+      <tr><td><kbd>Esc</kbd></td><td>Parar todo (con fundido); pulsa otra vez para parar al instante. También cancela una edición en una fila.</td></tr>
+      <tr><td><kbd>P</kbd> / <kbd>R</kbd></td><td>Pausar todo / reanudar todo</td></tr>
+      <tr><td><kbd>↑</kbd> <kbd>↓</kbd></td><td>Mover el cabezal</td></tr>
+      <tr><td><kbd>←</kbd> <kbd>→</kbd></td><td>Plegar / desplegar un grupo</td></tr>
+      <tr><td><kbd>Ctrl</kbd>+<kbd>E</kbd></td><td>Cambiar entre modo edición y modo función</td></tr>
+      <tr><td><kbd>Intro</kbd></td><td>Renombrar en el sitio la cue seleccionada</td></tr>
+      <tr><td><kbd>Ctrl</kbd>+<kbd>1</kbd> … <kbd>0</kbd></td><td>Nueva cue Audio, Video, Group, Wait, Memo, Fade, Start, Stop, Pause, Go To</td></tr>
+      <tr><td><kbd>Ctrl</kbd>+<kbd>D</kbd> · <kbd>Ctrl</kbd>+<kbd>G</kbd> · <kbd>Supr</kbd></td><td>Duplicar · agrupar la selección · borrar</td></tr>
+      <tr><td><kbd>Ctrl</kbd>+<kbd>Z</kbd> · <kbd>Ctrl</kbd>+<kbd>Mayús</kbd>+<kbd>Z</kbd></td><td>Deshacer · rehacer (hasta 200 pasos; los espectáculos muy grandes guardan menos, al menos 10, para ahorrar memoria)</td></tr>
+      <tr><td><kbd>Ctrl</kbd>+<kbd>N</kbd> / <kbd>O</kbd> / <kbd>S</kbd> / <kbd>Mayús</kbd>+<kbd>S</kbd></td><td>Nuevo / abrir / guardar / guardar como</td></tr>
+      <tr><td><kbd>F1</kbd></td><td>Abrir este manual de usuario</td></tr>
+      <tr><td><kbd>F11</kbd></td><td>Pantalla completa, en una ventana de escenario</td></tr>
+      <tr><td><kbd>←</kbd> <kbd>→</kbd> <kbd>↑</kbd> <kbd>↓</kbd> (+<kbd>Mayús</kbd>)</td><td>Mover 1 (10) píxeles la esquina bajo el ratón al hacer mapping</td></tr>
+      <tr><td>Atajo de la cue</td><td>Dispara esa cue directamente (se ajusta en la pestaña Triggers)</td></tr>
+    </tbody>
+  </table></div>
+</section>
+
+<section id="trouble">
+  <h2><span class="n">16</span>Solución de problemas</h2>
+  <div class="table-wrap"><table>
+    <thead><tr><th>Problema</th><th>Prueba</th></tr></thead>
+    <tbody>
+      <tr><td>No hay sonido</td><td>Mira la barra de estado. Si dice <em>no audio</em>, elige otro dispositivo en Settings → Audio.
+      Comprueba el volumen maestro y el nivel y el enrutado de la cue.</td></tr>
+      <tr><td>Una cue Mic no suena</td><td>Comprueba el dispositivo de entrada y los canales en su pestaña I/O; la barra de nivel muestra
+      si llega algo. En macOS y Windows, OpenQ necesita permiso para usar el micrófono.</td></tr>
+      <tr><td>Los disparadores por código de tiempo no se disparan</td><td>Abre la ventana <em>Timecode…</em> de la lista y comprueba que
+      recibe código de tiempo a la frecuencia correcta. Las cues solo se disparan mientras el código avanza por su tiempo de disparo.</td></tr>
+      <tr><td>Una cue Camera no muestra nada</td><td>Comprueba el dispositivo en su pestaña Camera (usa <span class="ms" aria-hidden="true">&#xe5d5;</span>
+      para volver a buscar) y el registro del motor. Otro programa que use la cámara puede bloquearla.</td></tr>
+      <tr><td>Una cue muestra un icono rojo <span class="ms" style="color:var(--red)" aria-hidden="true">&#xf8b6;</span></td><td>Su archivo de medios falta o no se puede leer, o se borró su cue de destino. Si el archivo se movió, haz clic en <em>Browse…</em> en la pestaña
+      Time de la cue para encontrarlo de nuevo. Tras reconectar una unidad, dale unos dos segundos para que desaparezca.</td></tr>
+      <tr><td>Un vídeo no aparece</td><td>Abre la ventana del escenario desde el menú Video. Comprueba el escenario, la opacidad
+      y la capa de la cue, y busca errores del decodificador en <span class="menu">View → Engine log</span>. Una tarjeta gráfica solo
+      puede mostrar imágenes hasta cierto tamaño (a menudo 8192 o 16384 píxeles de ancho). OpenQ reduce imágenes fijas, SVG y texto
+      para que quepan, pero una película mayor se queda fuera: conviértela a un tamaño menor.</td></tr>
+      <tr><td>La barra de estado dice <em>audio lost · reconnecting…</em></td><td>El dispositivo de audio desapareció. Vuelve a conectarlo
+      o reinicia el servicio de audio; OpenQ se reconecta solo. Para usar otro dispositivo, elígelo en Settings → Audio.</td></tr>
+      <tr><td>OpenQ pide recuperar trabajo sin guardar</td><td>La última vez no se cerró con normalidad. Ver <a href="#safety">Seguridad ante fallos</a>.</td></tr>
+      <tr><td>GO parece no hacer nada</td><td>La cue bajo el cabezal puede estar desarmada, o la segunda pulsación puede haber
+      llegado dentro de la protección contra doble GO.</td></tr>
+      <tr><td>Un dispositivo remoto no encuentra el principal</td><td>Asegúrate de que el acceso remoto está activado y de que los dos
+      están en la misma red, y escribe la dirección que aparece en el dispositivo principal.</td></tr>
+      <tr><td>"Pair this device again" (remoto)</td><td>El dispositivo se quitó en el principal, o se olvidó su clave. Abre el
+      emparejamiento en el dispositivo principal e introduce el código nuevo.</td></tr>
+      <tr><td>Algo falla y no sabes por qué</td><td>Abre <span class="menu">Help → Error log</span>: cada aviso, error y caída queda allí con su hora.</td></tr>
+    </tbody>
+  </table></div>
+
+</section>
+
+<section id="license">
+  <h2><span class="n">17</span>Licencia y créditos</h2>
+  <p>OpenQ se distribuye bajo la <a href="https://www.apache.org/licenses/LICENSE-2.0">Apache License 2.0</a>. Este resumen es orientativo; el texto en inglés es el que vale.</p>
+  <div class="table-wrap"><table>
+    <thead><tr><th>Puedes</th><th>Debes</th></tr></thead>
+    <tbody><tr>
+      <td>Usar OpenQ para cualquier cosa, también comercial: hacer funciones, conciertos, giras, eventos e instalaciones de pago,
+      y cobrar por programarlos u operarlos. Copiarlo, modificarlo y compartirlo, conservando el aviso de copyright,
+      <code>LICENSE.md</code> y <code>NOTICE.md</code>. Vender copias, versiones
+      modificadas o servicios basados en él.</td>
+      <td>Conservar el aviso de copyright, <code>LICENSE.md</code> y <code>NOTICE.md</code> en cada copia, e indicar
+      en los archivos que modifiques que han cambiado. La licencia no da derecho a usar el nombre OpenQ como marca.</td>
+    </tr></tbody>
+  </table></div>
+  <pre><code>Copyright 2026 Iago Núñez — OpenQ (https://github.com/iagonunez/OpenQ)</code></pre>
+  <p><span class="menu">Help → About OpenQ and licenses</span> muestra la versión, la licencia y todos los avisos de terceros.
+  Son las fuentes (Inter, JetBrains Mono y Barlow Condensed bajo la SIL Open Font License; Material Symbols bajo Apache 2.0; las
+  fuentes incluidas en egui) y las bibliotecas Rust de código abierto con las que se construye OpenQ, cada una con su propia
+  licencia. Los mismos textos están en <code>NOTICE.md</code> y <code>THIRD_PARTY_LICENSES.md</code> junto al programa.</p>
+  <div class="note"><span class="label">Vídeo y FFmpeg</span><p>OpenQ reproduce vídeo con las bibliotecas FFmpeg. En Windows y
+  macOS el instalador pone dentro de OpenQ una compilación sin partes GPL, con su licencia en la carpeta <code>Licenses</code>;
+  en Linux OpenQ usa el FFmpeg del sistema. FFmpeg tiene su propia licencia. Si pasas un OpenQ compilado a otras personas, usa
+  un FFmpeg sin partes GPL, o la GPL 3 cubrirá todo el programa. Ver <code>NOTICE.md</code>.</p></div>
+  <footer>OpenQ · Apache 2.0. Fuentes: Inter, JetBrains Mono, Barlow Condensed (SIL OFL 1.1) y Material Symbols (Apache 2.0).</footer>
+</section>
+</main>
+</div>
+<!--script-->
+<script>
+// Highlight the chapter being read in the rail.
+(function () {
+  var links = Array.prototype.slice.call(document.querySelectorAll('nav.toc a'));
+  var byId = {};
+  links.forEach(function (a) { byId[a.getAttribute('href').slice(1)] = a; });
+  if (!('IntersectionObserver' in window)) return;
+  var obs = new IntersectionObserver(function (entries) {
+    entries.forEach(function (e) {
+      if (e.isIntersecting) {
+        links.forEach(function (a) { a.classList.remove('on'); });
+        var a = byId[e.target.id];
+        if (a) a.classList.add('on');
+      }
+    });
+  }, { rootMargin: '-20% 0px -70% 0px' });
+  document.querySelectorAll('main section[id]').forEach(function (s) { obs.observe(s); });
+})();
+</script>
+<!--/script-->
+</body>
+</html>

@@ -1623,7 +1623,12 @@ impl App {
                 if t.elapsed() < STATUS_TIMEOUT {
                     ui.ctx().request_repaint_after(STATUS_TIMEOUT.saturating_sub(t.elapsed()));
                     ui.add_space(10.0);
-                    ui.label(RichText::new(msg).small().color(AMBER));
+                    // At most 60 % of what's left, so the engine warning on the right keeps some room.
+                    let w = ui.available_width() * 0.6;
+                    ui.scope(|ui| {
+                        ui.set_max_width(w);
+                        ui.add(egui::Label::new(RichText::new(msg).small().color(AMBER)).truncate()).on_hover_text(msg);
+                    });
                 } else {
                     self.status = None;
                 }
@@ -1649,7 +1654,10 @@ impl App {
                 if let Some(l) = log.last().filter(|_| self.log_tail.2.elapsed() < STATUS_TIMEOUT) {
                     ui.ctx().request_repaint_after(STATUS_TIMEOUT.saturating_sub(self.log_tail.2.elapsed()));
                     ui.add_space(8.0);
-                    if ui.link(RichText::new(theme::with_icon(icons::WARNING, l)).color(AMBER).small()).clicked() {
+                    // Truncated to the space left, so a long entry never runs over the items on the left.
+                    let text = RichText::new(theme::with_icon(icons::WARNING, l)).color(AMBER).small();
+                    let r = ui.add(egui::Label::new(text).truncate().sense(egui::Sense::click()));
+                    if r.on_hover_cursor(egui::CursorIcon::PointingHand).on_hover_text(l).clicked() {
                         self.show_log = true;
                     }
                 }
