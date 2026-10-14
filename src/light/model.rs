@@ -454,6 +454,8 @@ pub struct LightCue {
     pub feature_times: BTreeMap<Feature, FeatureTime>,
     /// The values this cue sets don't track on: the next cue goes back to what was there before.
     pub cue_only: bool,
+    /// Effects this cue starts or stops (running effects track on).
+    pub effects: Vec<super::effects::EffectRun>,
 }
 
 /// Fade and delay for one attribute family of a cue.
@@ -494,6 +496,7 @@ impl Default for LightCue {
             values: Look::new(),
             feature_times: BTreeMap::new(),
             cue_only: false,
+            effects: Vec::new(),
         }
     }
 }
@@ -603,6 +606,8 @@ pub struct Lighting {
     pub outputs: Vec<super::dmx::OutputConfig>,
     /// Presets (palettes).
     pub presets: Vec<Preset>,
+    /// Effects pool.
+    pub effects: Vec<super::effects::Effect>,
 }
 
 impl Lighting {
@@ -611,6 +616,7 @@ impl Lighting {
         self.fixtures.is_empty() && self.fixture_types.is_empty() && self.groups.is_empty() && self.sequences.is_empty()
             && self.outputs.is_empty()
             && self.presets.is_empty()
+            && self.effects.is_empty()
     }
 
     /// A fixture by number.
@@ -643,6 +649,11 @@ impl Lighting {
     /// Find a lighting cue anywhere: (sequence, index).
     pub fn find_cue(&self, cue: LightCueId) -> Option<(&Sequence, usize)> {
         self.sequences.iter().find_map(|s| s.index_of(cue).map(|i| (s, i)))
+    }
+
+    /// An effect by number.
+    pub fn effect(&self, id: super::effects::EffectId) -> Option<&super::effects::Effect> {
+        self.effects.iter().find(|e| e.id == id)
     }
 
     /// A preset by number.

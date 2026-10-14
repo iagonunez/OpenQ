@@ -67,6 +67,10 @@ pub enum LightCommand {
     Blackout(bool),
     /// Programmer values (replace).
     Programmer(Vec<(FixtureId, Attribute, f32)>),
+    /// Programmer effects (replace).
+    ProgrammerEffects(Vec<(crate::light::effects::Effect, Vec<FixtureId>)>),
+    /// Tempo for effects that follow it, in BPM.
+    Tempo(f32),
     /// Replace the outputs.
     Outputs(Vec<OutputSender>),
 }
@@ -80,11 +84,13 @@ pub struct Masters {
     pub blackout: bool,
     /// Sequence levels (missing = full).
     pub levels: std::collections::HashMap<SequenceId, f32>,
+    /// Effects tempo, BPM.
+    pub bpm: f32,
 }
 
 impl Default for Masters {
     fn default() -> Self {
-        Self { grand_master: 1.0, blackout: false, levels: Default::default() }
+        Self { grand_master: 1.0, blackout: false, levels: Default::default(), bpm: 120.0 }
     }
 }
 
@@ -201,6 +207,17 @@ impl LightEngine {
     pub fn set_blackout(&mut self, on: bool) {
         self.masters.blackout = on;
         self.send(LightCommand::Blackout(on));
+    }
+
+    /// Replace the programmer's effects.
+    pub fn set_programmer_effects(&self, effects: Vec<(crate::light::effects::Effect, Vec<FixtureId>)>) {
+        self.send(LightCommand::ProgrammerEffects(effects));
+    }
+
+    /// Tempo for effects that follow it.
+    pub fn set_tempo(&mut self, bpm: f32) {
+        self.masters.bpm = bpm.clamp(1.0, 999.0);
+        self.send(LightCommand::Tempo(self.masters.bpm));
     }
 
     /// Master levels as last set.
@@ -383,6 +400,8 @@ fn apply(p: &mut Playback, cmd: LightCommand) -> Result<(), String> {
         LightCommand::GrandMaster(l) => p.grand_master = l,
         LightCommand::Blackout(b) => p.blackout = b,
         LightCommand::Programmer(v) => p.set_programmer(&v),
+        LightCommand::ProgrammerEffects(v) => p.set_programmer_effects(&v),
+        LightCommand::Tempo(bpm) => p.bpm = bpm.clamp(1.0, 999.0),
         LightCommand::Outputs(_) | LightCommand::Compiling(_) => {}
     }
     Ok(())

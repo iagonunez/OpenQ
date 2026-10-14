@@ -35,6 +35,8 @@ pub enum LightControl {
     GrandMaster(f32),
     /// Blackout on/off.
     Blackout(bool),
+    /// Effects tempo, BPM.
+    Tempo(f32),
 }
 
 /// A transport or playhead action, independent of where it came from.
@@ -110,6 +112,7 @@ pub fn apply(show: &mut Show, cmd: Command, now: Instant) -> Result<(), String> 
                 LightControl::Level(seq, v) => l.set_level(seq, v),
                 LightControl::GrandMaster(v) => l.set_grand_master(v),
                 LightControl::Blackout(b) => l.set_blackout(b),
+                LightControl::Tempo(bpm) => l.set_tempo(bpm),
             }
         }
         Command::Cue(id, action) => {

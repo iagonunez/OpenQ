@@ -3,6 +3,7 @@
 //!
 //! * [`model`] — the design data stored in the show file as `Workspace.lighting`.
 //! * [`library`] — built-in generic fixture types.
+//! * [`effects`] — effect waveforms run across fixtures (pool, runs in cues, evaluation).
 //! * [`playback`] — the compiled show and the playback state machine (fades, HTP/LTP, masters).
 //! * [`engine`] — the light thread ([`engine::LightEngine`]): playback at 44 Hz into the outputs.
 //! * [`dmx`] — DMX frames and output threads; protocols in [`artnet`], [`sacn`], [`enttec`].
@@ -12,6 +13,7 @@
 
 pub mod artnet;
 pub mod dmx;
+pub mod effects;
 pub mod engine;
 pub mod enttec;
 pub mod library;

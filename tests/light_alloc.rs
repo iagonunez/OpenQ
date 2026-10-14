@@ -34,7 +34,15 @@ static A: Counting = Counting;
 
 #[test]
 fn light_frame_does_not_allocate() {
-    let show = Arc::new(LightShow::compile(&bench_rig(300, 3, 5)));
+    use openq::light::effects::{Effect, EffectRun, Shape};
+    let mut rig = bench_rig(300, 3, 5);
+    // Effects running too: a chase in sequence 1, a circle in sequence 2.
+    rig.effects.push(Effect { id: 1, shape: Shape::Square, ..Default::default() });
+    rig.effects.push(Effect { id: 2, shape: Shape::Circle, attribute: openq::light::Attribute::Pan, relative: true, size: 0.2, ..Default::default() });
+    let all: Vec<u32> = rig.fixtures.iter().map(|f| f.id).collect();
+    rig.sequences[0].cues[0].effects.push(EffectRun { effect: 1, fixtures: all.clone(), stop: false });
+    rig.sequences[1].cues[1].effects.push(EffectRun { effect: 2, fixtures: all, stop: false });
+    let show = Arc::new(LightShow::compile(&rig));
     let t0 = Instant::now();
     let mut p = Playback::new(show, t0);
     p.set_programmer(&[(1, openq::light::Attribute::Dimmer, 0.5)]);
