@@ -4,7 +4,7 @@
 //!
 //!   --quick              smaller sizes (a quick check; not comparable with full runs)
 //!   --only a,b           only these groups (engine lookup mixer timing video text waveform
-//!                        workspace remote ui)
+//!                        workspace remote ui light)
 //!   --no-realtime        skip the real-time groups (mixer, timing)
 //!   --out FILE           write the JSON report there
 //!   --history FILE       history of complete runs: compare with the previous comparable run (and

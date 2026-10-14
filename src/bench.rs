@@ -1,6 +1,6 @@
 //! Benchmarks for comparing builds: the engine tick, cue lookups, the audio mixer, start
-//! accuracy, video conversion, text rendering, waveforms, saving/loading, remote patches and the
-//! UI frame. Run them with `tools/bench.sh` (or `cargo run --release --example bench`), which
+//! accuracy, video conversion, text rendering, waveforms, saving/loading, remote patches, the
+//! UI frame and lighting playback. Run them with `tools/bench.sh` (or `cargo run --release --example bench`), which
 //! saves a JSON [`Report`], compares it with the previous run in the [`History`] (or a baseline),
 //! adds it to the history and regenerates the results section of `docs/performance.html`
 //! ([`render_history`], [`update_page`]) with a chart per metric.
@@ -82,7 +82,7 @@ pub struct Options {
 }
 
 /// The benchmark groups, in the order they run.
-pub const GROUPS: &[&str] = &["engine", "lookup", "mixer", "timing", "video", "text", "waveform", "workspace", "remote", "ui"];
+pub const GROUPS: &[&str] = &["engine", "lookup", "mixer", "timing", "video", "text", "waveform", "workspace", "remote", "ui", "light"];
 
 /// Run the benchmarks chosen by `opts`, printing progress to stderr.
 pub fn run(opts: &Options) -> Report {
@@ -123,11 +123,43 @@ pub fn run(opts: &Options) -> Report {
             "workspace" => workspace(m, q),
             "remote" => remote(m, q),
             "ui" => ui(m, q),
+            "light" => light(m, q),
             _ => {}
         }
         eprintln!("bench: {g} done in {:.1} s", t.elapsed().as_secs_f64());
     }
     r
+}
+
+// ------------------------------------------------------------------ lighting
+
+/// Lighting playback: a frame with every sequence fading, and compiling the design.
+fn light(m: &mut Vec<Metric>, quick: bool) {
+    use crate::light::playback::{LightShow, Playback};
+    let (fixtures, cues) = if quick { (500, 20) } else { (2000, 100) };
+    let design = crate::light::library::bench_rig(fixtures, 3, cues);
+    let t = Instant::now();
+    let show = Arc::new(LightShow::compile(&design));
+    push(m, &format!("light.compile_{fixtures}"), t.elapsed().as_secs_f64() * 1e3, "ms", "compile the design (off the light thread)");
+    let t0 = Instant::now();
+    let mut p = Playback::new(show, t0);
+    for s in 1..=3 {
+        p.go(s, None, t0).expect("go");
+    }
+    // Every slot of every sequence fading over 10 s; time one frame per 22.7 ms step.
+    let reps = if quick { 200 } else { 1000 };
+    let mut v: Vec<Duration> = (0..reps)
+        .map(|i| {
+            let now = t0 + Duration::from_secs_f64(i as f64 * 0.0227 % 10.0);
+            let t = Instant::now();
+            std::hint::black_box(p.tick(now));
+            t.elapsed()
+        })
+        .collect();
+    let universes = p.frame().universes.len();
+    let note = format!("{fixtures} fixtures, {universes} universes, 3 sequences fading");
+    push(m, &format!("light.frame_{fixtures}"), quantile(&mut v, 0.5).as_secs_f64() * 1e6, "us", &note);
+    push(m, &format!("light.frame_{fixtures}.p99"), quantile(&mut v, 0.99).as_secs_f64() * 1e6, "us", &note);
 }
 
 // ------------------------------------------------------------------ helpers

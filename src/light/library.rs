@@ -102,6 +102,45 @@ pub fn generic(id: &str) -> Option<FixtureType> {
     generics().into_iter().find(|t| t.id == id)
 }
 
+/// A test/benchmark rig: `fixtures` fixtures (a mix of dimmers, RGBW washes and spots) patched
+/// from universe 1 on, and `sequences` sequences of `cues` cues that each set every fixture.
+pub fn bench_rig(fixtures: u32, sequences: u32, cues: u32) -> super::Lighting {
+    use super::model::{Fixture, LightCue, Sequence};
+    let mut l = super::Lighting::default();
+    let types: Vec<FixtureType> = ["generic/dimmer", "generic/drgbw", "generic/spot"].iter().filter_map(|id| generic(id)).collect();
+    for t in &types {
+        l.add_type(t);
+    }
+    let (mut universe, mut address) = (1u16, 1u16);
+    for i in 0..fixtures {
+        let t = &types[i as usize % types.len()];
+        let n = t.modes[0].footprint();
+        if address + n - 1 > 512 {
+            universe += 1;
+            address = 1;
+        }
+        l.fixtures.push(Fixture { id: i + 1, fixture_type: t.id.clone(), mode: t.modes[0].name.clone(), universe, address, ..Default::default() });
+        address += n;
+    }
+    for s in 1..=sequences {
+        let cues = (0..cues)
+            .map(|c| {
+                let mut cue = LightCue { number: (c + 1).to_string(), fade: 10.0, ..Default::default() };
+                for f in &l.fixtures {
+                    let attrs = l.mode_of(f).map(|m| m.attributes()).unwrap_or_default();
+                    let v = cue.values.entry(f.id).or_default();
+                    for (k, a) in attrs.into_iter().enumerate() {
+                        v.insert(a, ((f.id + c * 7 + s * 13 + k as u32) % 100) as f32 / 100.0);
+                    }
+                }
+                cue
+            })
+            .collect();
+        l.sequences.push(Sequence { id: s, name: String::new(), cues });
+    }
+    l
+}
+
 #[cfg(test)]
 mod tests {
     #[test]

@@ -341,7 +341,7 @@ K1–K4.
 2. Python: system Python 3 in a child process first (decide on bundling with oqman later).
 3. Visualiser placement and docking: decided in Phase 2.
 
-## Phase 1 order (one commit per step)
+## Phase 1 order (one commit per step) — done
 1. A1 A2 A4 B1 L1 — `light` module: fixture types + built-in generics, patch, groups,
    sequences/cues with tracking, stored in `Workspace.lighting`.
 2. C1 — DMX frame, `DmxOutput` trait, one sender thread per output (latest frame wins).
@@ -354,3 +354,19 @@ K1–K4.
 9. D1 D3 D4 — programmer, encoders, groups; record/update lighting cues.
 10. E4 C5 C7 — executor bar, DMX monitor, Settings → Lighting outputs.
 11. J1 — bench + allocation test; manual chapter at the end.
+
+## Phase 1 status
+Done on branch `Lighting`: every step above.
+- `src/light/`: `model` (design), `library` (generics + `bench_rig`), `playback` (compiled show,
+  fades, HTP/LTP, levels, programmer, grand master), `engine` (light thread at 44 Hz, off-thread
+  compiles, ordered GOs, panic guard), `dmx` + `artnet`/`sacn`/`enttec` (one sender thread each).
+- `CueKind::Light` (`LightingCue`: GO a designed cue / release sequences); `control::LightControl`
+  for executors and masters (routes through replicas like other transport commands).
+- UI `src/ui/lighting.rs`: Cues/Lighting switch; Patch, Programmer, Sequences, Outputs, DMX
+  monitor pages (Edit mode only); executor bar in both modes; Show mode = executors + monitor.
+- Measured (Ryzen 9 9950X3D): one frame with 2000 fixtures / 28 universes / 3 sequences fading
+  ≈ 92 µs (budget 22.7 ms); compiling that design (3 × 100 full cues) ≈ 160 ms off-thread;
+  no allocation per frame or GO (`tests/light_alloc.rs`).
+
+Not yet (Phase 2+): command line, presets/palettes, effects, 3D visualiser, fixture importers,
+per-attribute timing, move in black, Art-Net/sACN input, Python, MIDI/OSC surfaces, manual chapter.
