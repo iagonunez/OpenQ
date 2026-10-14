@@ -966,6 +966,37 @@ mod faults {
         wait_for("prober still serves", 5.0, || matches!(prober.get(&other), Some(Ok(_))));
         let _ = std::fs::remove_dir_all(&dir);
     }
+
+    /// A lighting frame panics: the light thread keeps sending the last good frame, reports it
+    /// once and goes on with the next GO.
+    #[test]
+    #[ignore = "stress"]
+    fn stress_light_panic_is_recovered() {
+        use openq::light::{engine::LightEngine, library, model::*};
+        let mut l = Lighting::default();
+        let t = library::generic("generic/dimmer").unwrap();
+        l.add_type(&t);
+        l.fixtures.push(Fixture { id: 1, fixture_type: t.id.clone(), mode: t.modes[0].name.clone(), address: 1, ..Default::default() });
+        let cues: Vec<LightCue> = [1.0, 0.5]
+            .iter()
+            .map(|v| {
+                let mut c = LightCue { fade: 0.0, ..Default::default() };
+                c.values.entry(1).or_default().insert(Attribute::Dimmer, *v);
+                c
+            })
+            .collect();
+        let ids: Vec<_> = cues.iter().map(|c| c.id).collect();
+        l.sequences.push(Sequence { id: 1, cues, ..Default::default() });
+        let mut e = LightEngine::start();
+        e.load(&l);
+        e.go_cue(ids[0], Instant::now()).unwrap();
+        wait_for("first look", 2.0, || e.frame().get(1).is_some_and(|u| u.data[0] == 255));
+        arm(Fault::LightTick);
+        wait_for("fault reported", 2.0, || e.drain_errors().iter().any(|m| m.contains("injected fault")));
+        assert_eq!(e.frame().get(1).unwrap().data[0], 255, "last good frame held");
+        e.go_cue(ids[1], Instant::now()).unwrap();
+        wait_for("next GO after the fault", 2.0, || e.frame().get(1).is_some_and(|u| u.data[0] == 128));
+    }
 }
 
 /// A long cue list with only a few cues running (the usual show): the tick must not walk the

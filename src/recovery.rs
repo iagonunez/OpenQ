@@ -61,10 +61,12 @@ pub enum Fault {
     Decoder,
     /// The next media probe.
     Prober,
+    /// The next lighting frame.
+    LightTick,
 }
 
 #[cfg(feature = "fault-injection")]
-static ARMED: [AtomicBool; 4] = [const { AtomicBool::new(false) }; 4];
+static ARMED: [AtomicBool; 5] = [const { AtomicBool::new(false) }; 5];
 
 /// Make the next pass through `fault`'s point panic. Only does anything with the
 /// `fault-injection` feature.

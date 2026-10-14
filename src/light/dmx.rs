@@ -167,6 +167,21 @@ pub struct OutputStatus {
     pub open: bool,
 }
 
+/// Reads an output's status (the sender itself lives on the light thread).
+#[derive(Clone)]
+pub struct OutputHandle {
+    /// Output name.
+    pub name: String,
+    shared: Arc<Shared>,
+}
+
+impl OutputHandle {
+    /// Current status.
+    pub fn status(&self) -> OutputStatus {
+        self.shared.status.lock().clone()
+    }
+}
+
 struct Slot {
     frame: Vec<Universe>,
     fresh: bool,
@@ -215,6 +230,11 @@ impl OutputSender {
     /// Current status.
     pub fn status(&self) -> OutputStatus {
         self.shared.status.lock().clone()
+    }
+
+    /// A handle that reads the status from another thread.
+    pub fn handle(&self) -> OutputHandle {
+        OutputHandle { name: self.config.name.clone(), shared: self.shared.clone() }
     }
 
     /// Hand over the latest frame. Copies the routed universes into the slot (no allocation once
