@@ -2198,10 +2198,10 @@ impl App {
                     self.light.selection = g.fixtures.clone();
                     for f in g.fixtures.iter().take(4) {
                         let v = self.light.programmer.entry(*f).or_default();
-                        v.insert(crate::light::Attribute::Dimmer, 0.75);
-                        v.insert(crate::light::Attribute::Red, 1.0);
-                        v.insert(crate::light::Attribute::Green, 0.45);
-                        v.insert(crate::light::Attribute::Blue, 0.1);
+                        v.insert(crate::light::Attribute::Dimmer, 0.75.into());
+                        v.insert(crate::light::Attribute::Red, 1.0.into());
+                        v.insert(crate::light::Attribute::Green, 0.45.into());
+                        v.insert(crate::light::Attribute::Blue, 0.1.into());
                     }
                 }
             }

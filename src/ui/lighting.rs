@@ -7,7 +7,9 @@
 
 use super::{App, Mode, icons, theme};
 use crate::i18n::t;
-use crate::light::model::{Attribute, Feature, FixtureId, FixtureType, Group, LightCue, LightCueId, Lighting, Look, PatchIssue, Sequence, SequenceId};
+use crate::light::model::{
+    Attribute, Feature, FixtureId, FixtureType, Group, LightCue, LightCueId, Lighting, Look, PatchIssue, Preset, PresetId, Sequence, SequenceId, Value,
+};
 use crate::light::{Fixture, library};
 use crate::show::Show;
 use egui::{Color32, DragValue, RichText, Ui};
@@ -91,6 +93,8 @@ pub(crate) struct LightUi {
     cue: Option<LightCueId>,
     /// Number for the next recorded cue (empty = after the last).
     record_number: String,
+    /// Feature stored by "New preset" (None = every attribute).
+    preset_feature: Option<Feature>,
     /// Universe shown in the DMX monitor.
     monitor_universe: u16,
     /// Art-Net nodes / serial ports found in the background.
@@ -184,7 +188,12 @@ impl App {
             l.programmer.clear();
         }
         if l.sent.as_ref() != Some(&l.programmer) {
-            let flat = l.programmer.iter().flat_map(|(f, v)| v.iter().map(move |(a, x)| (*f, *a, *x))).collect();
+            let design = &show.ws.lighting;
+            let flat = l
+                .programmer
+                .iter()
+                .flat_map(|(f, v)| v.iter().filter_map(move |(a, x)| design.resolve(*f, *a, *x).map(|x| (*f, *a, x))))
+                .collect();
             show.media.light.set_programmer(flat);
             l.sent = Some(l.programmer.clone());
         }
@@ -421,6 +430,8 @@ impl App {
                 }
             });
         });
+        ui.add_space(2.0);
+        self.preset_pool(ui, l);
         ui.add_space(4.0);
         ui.horizontal_wrapped(|ui| {
             let n = self.light.selection.len();
@@ -457,6 +468,75 @@ impl App {
             });
         ui.add_space(2.0);
         self.fixture_tiles(ui, l);
+    }
+
+    /// Presets: click applies to the selection (as references), right-click overwrites/deletes.
+    fn preset_pool(&mut self, ui: &mut Ui, l: &mut Lighting) {
+        ui.horizontal_wrapped(|ui| {
+            ui.label(theme::caption(t("Presets")));
+            enum Act {
+                Apply(PresetId),
+                Store(PresetId),
+                Delete(PresetId),
+            }
+            let mut action = None;
+            for p in &l.presets {
+                let glyph = p.feature.map_or(icons::CATEGORY, feature_icon);
+                let label = if p.name.is_empty() { p.id.to_string() } else { format!("{} {}", p.id, p.name) };
+                let r = ui.add(egui::Button::new(theme::with_icon(glyph, &label)).min_size(egui::vec2(0.0, 26.0)));
+                // A colour preset shows its colour (from its first fixture).
+                if p.feature == Some(Feature::Colour)
+                    && let Some(v) = p.values.values().next()
+                    && let (Some(r_), Some(g), Some(b)) = (v.get(&Attribute::Red), v.get(&Attribute::Green), v.get(&Attribute::Blue))
+                {
+                    let bar = egui::Rect::from_min_size(egui::pos2(r.rect.left() + 4.0, r.rect.bottom() - 4.0), egui::vec2(r.rect.width() - 8.0, 2.5));
+                    ui.painter().rect_filled(bar, 1.0, to_c32([*r_, *g, *b]));
+                }
+                let r = r.on_hover_text(p.feature.map_or_else(|| t("All attributes").to_string(), |f| f.label().to_string()));
+                if r.clicked() {
+                    action = Some(Act::Apply(p.id));
+                }
+                r.context_menu(|ui| {
+                    if ui.button(theme::with_icon(icons::SAVE, t("Store the programmer here"))).clicked() {
+                        action = Some(Act::Store(p.id));
+                    }
+                    if ui.button(theme::with_icon(icons::DELETE, t("Delete preset"))).clicked() {
+                        action = Some(Act::Delete(p.id));
+                    }
+                });
+            }
+            match action {
+                Some(Act::Apply(id)) => self.apply_preset(l, id),
+                Some(Act::Delete(id)) => {
+                    crate::light::model::unlink_preset(l, id, &mut self.light.programmer);
+                    l.delete_preset(id);
+                }
+                Some(Act::Store(id)) => {
+                    let feature = l.preset(id).and_then(|p| p.feature);
+                    let values = self.programmer_values(l, feature);
+                    if let Some(p) = l.presets.iter_mut().find(|p| p.id == id) {
+                        p.values = values;
+                    }
+                }
+                None => {}
+            }
+            let label = self.light.preset_feature.map_or_else(|| t("All attributes").to_string(), |f| f.label().to_string());
+            egui::ComboBox::from_id_salt("preset_feature").selected_text(label).width(110.0).show_ui(ui, |ui| {
+                ui.selectable_value(&mut self.light.preset_feature, None, t("All attributes"));
+                for f in Feature::ALL {
+                    ui.selectable_value(&mut self.light.preset_feature, Some(f), f.label());
+                }
+            });
+            let values = self.programmer_values(l, self.light.preset_feature);
+            if ui
+                .add_enabled(!values.is_empty(), egui::Button::new(theme::with_icon(icons::ADD, t("Preset from programmer"))))
+                .on_hover_text(t("Stores the selected fixtures' programmer values; right-click a preset to overwrite or delete it"))
+                .clicked()
+            {
+                let id = l.presets.iter().map(|p| p.id).max().unwrap_or(0) + 1;
+                l.presets.push(Preset { id, name: String::new(), feature: self.light.preset_feature, values });
+            }
+        });
     }
 
     /// Record / update controls (programmer → a sequence).
@@ -553,12 +633,12 @@ impl App {
                     let bar = egui::Rect::from_min_max(egui::pos2(inner.left(), inner.bottom() - 5.0), inner.right_bottom());
                     p.rect_filled(bar, 2.0, theme::BG_INPUT);
                     if let Some(v) = prog {
-                        if let Some(d) = v.get(&Attribute::Dimmer) {
+                        let c = |a| v.get(&a).and_then(|x| l.resolve(f.id, a, *x));
+                        if let Some(d) = c(Attribute::Dimmer) {
                             let lit = egui::Rect::from_min_size(bar.min, egui::vec2(bar.width() * d, bar.height()));
                             p.rect_filled(lit, 2.0, theme::AMBER);
                             p.text(egui::pos2(inner.right(), bar.top() - 3.0), egui::Align2::RIGHT_BOTTOM, format!("{:.0}%", d * 100.0), theme::mono(11.0), theme::AMBER);
                         }
-                        let c = |a| v.get(&a).copied();
                         if let (Some(r), Some(g), Some(b)) = (c(Attribute::Red), c(Attribute::Green), c(Attribute::Blue)) {
                             let at = egui::pos2(inner.right() - 7.0, inner.top() + if order.is_some() { 24.0 } else { 8.0 });
                             p.circle_filled(at, 7.0, Color32::from_rgb((r * 255.0) as u8, (g * 255.0) as u8, (b * 255.0) as u8));
@@ -582,15 +662,48 @@ impl App {
     }
 
     /// Value of an attribute for the selection (the first selected fixture that has it).
-    fn selection_value(&self, attr: Attribute) -> Option<f32> {
-        self.light.selection.iter().find_map(|f| self.light.programmer.get(f).and_then(|v| v.get(&attr)).copied())
+    fn selection_value(&self, l: &Lighting, attr: Attribute) -> Option<f32> {
+        self.light.selection.iter().find_map(|f| self.light.programmer.get(f).and_then(|v| v.get(&attr)).and_then(|v| l.resolve(*f, attr, *v)))
+    }
+
+    /// The preset an attribute of the selection refers to (first selected fixture that has it).
+    fn selection_preset(&self, attr: Attribute) -> Option<PresetId> {
+        self.light.selection.iter().find_map(|f| match self.light.programmer.get(f)?.get(&attr)? {
+            Value::Preset { preset } => Some(*preset),
+            Value::Level(_) => None,
+        })
+    }
+
+    /// Put a preset into the programmer for the selected fixtures it has values for.
+    fn apply_preset(&mut self, l: &Lighting, preset: PresetId) {
+        for f in &self.light.selection {
+            for a in l.preset_attributes(preset, *f) {
+                self.light.programmer.entry(*f).or_default().insert(a, Value::Preset { preset });
+            }
+        }
+    }
+
+    /// The selection's programmer values (levels, presets resolved) for a feature.
+    fn programmer_values(&self, l: &Lighting, feature: Option<Feature>) -> std::collections::BTreeMap<FixtureId, std::collections::BTreeMap<Attribute, f32>> {
+        self.light
+            .selection
+            .iter()
+            .filter_map(|f| {
+                let v: std::collections::BTreeMap<Attribute, f32> = self.light.programmer.get(f)?
+                    .iter()
+                    .filter(|(a, _)| feature.is_none_or(|x| a.feature() == x))
+                    .filter_map(|(a, v)| l.resolve(*f, *a, *v).map(|v| (*a, v)))
+                    .collect();
+                (!v.is_empty()).then_some((*f, v))
+            })
+            .collect()
     }
 
     /// Set an attribute on every selected fixture that has it.
     fn set_selection(&mut self, l: &Lighting, attr: Attribute, value: f32) {
         for f in &self.light.selection {
             if attributes_of(l, *f).contains(&attr) {
-                self.light.programmer.entry(*f).or_default().insert(attr, value.clamp(0.0, 1.0));
+                self.light.programmer.entry(*f).or_default().insert(attr, Value::Level(value.clamp(0.0, 1.0)));
             }
         }
     }
@@ -638,13 +751,14 @@ impl App {
         // Room for the scroll bar on the right.
         let bar_w = ui.available_width() - 92.0 - 26.0 - 2.0 * gap - 10.0;
         for a in page {
-            let current = self.selection_value(a);
+            let current = self.selection_value(l, a);
+            let preset = self.selection_preset(a);
             ui.horizontal(|ui| {
                 let (r, _) = ui.allocate_exact_size(egui::vec2(92.0, 26.0), egui::Sense::hover());
                 let fg = if current.is_some() { theme::TEXT } else { theme::TEXT_DIM };
                 ui.painter().with_clip_rect(r).text(r.left_center(), egui::Align2::LEFT_CENTER, a.label(), egui::FontId::proportional(13.0), fg);
                 let w = bar_w;
-                if let Some(v) = attr_bar(ui, current, w) {
+                if let Some(v) = attr_bar(ui, current, preset, w) {
                     self.set_selection(l, a, v);
                 }
                 let clear = ui.add_enabled(current.is_some(), egui::Button::new(icons::CLOSE).min_size(egui::vec2(26.0, 26.0))).on_hover_text(t("Remove from the programmer"));
@@ -669,7 +783,7 @@ impl App {
         if !rgb && !cmy {
             return;
         }
-        let get = |a| self.selection_value(a).unwrap_or(0.0);
+        let get = |a| self.selection_value(l, a).unwrap_or(0.0);
         let c = if rgb {
             [get(Attribute::Red), get(Attribute::Green), get(Attribute::Blue)]
         } else {
@@ -700,8 +814,8 @@ impl App {
         p.rect_stroke(rect, 6.0, egui::Stroke::new(1.0, theme::BORDER), egui::StrokeKind::Inside);
         p.line_segment([rect.center_top(), rect.center_bottom()], egui::Stroke::new(1.0, theme::BORDER));
         p.line_segment([rect.left_center(), rect.right_center()], egui::Stroke::new(1.0, theme::BORDER));
-        let pan = self.selection_value(Attribute::Pan).unwrap_or(0.5);
-        let tilt = self.selection_value(Attribute::Tilt).unwrap_or(0.5);
+        let pan = self.selection_value(l, Attribute::Pan).unwrap_or(0.5);
+        let tilt = self.selection_value(l, Attribute::Tilt).unwrap_or(0.5);
         let dot = egui::pos2(rect.left() + pan * rect.width(), rect.bottom() - tilt * rect.height());
         p.circle_filled(dot, 6.0, theme::ACCENT);
         if (r.dragged() || r.clicked())
@@ -1253,9 +1367,10 @@ fn colour_field(ui: &mut Ui, rgb: [f32; 3]) -> Option<[f32; 3]> {
     out
 }
 
-/// An attribute value bar (0..=1; `None` = not in the programmer, drawn empty with "—").
+/// An attribute value bar (0..=1; `None` = not in the programmer, drawn empty with "—"; a
+/// preset reference shows its number).
 /// Click/drag sets the value, the mouse wheel steps it by 1 %. Returns the new value if changed.
-fn attr_bar(ui: &mut Ui, value: Option<f32>, width: f32) -> Option<f32> {
+fn attr_bar(ui: &mut Ui, value: Option<f32>, preset: Option<PresetId>, width: f32) -> Option<f32> {
     let (rect, r) = ui.allocate_exact_size(egui::vec2(width.max(60.0), 26.0), egui::Sense::click_and_drag());
     let mut out = None;
     if let Some(pos) = r.interact_pointer_pos()
@@ -1278,7 +1393,10 @@ fn attr_bar(ui: &mut Ui, value: Option<f32>, width: f32) -> Option<f32> {
     }
     let stroke = if r.hovered() { theme::TEXT_FAINT } else { theme::BORDER };
     p.rect_stroke(rect, 5.0, egui::Stroke::new(1.0, stroke), egui::StrokeKind::Inside);
-    let text = shown.map_or_else(|| "—".to_string(), |v| format!("{:.1} %", v * 100.0));
+    let mut text = shown.map_or_else(|| "—".to_string(), |v| format!("{:.1} %", v * 100.0));
+    if let (Some(p), None) = (preset, out) {
+        text = format!("P{p} · {text}");
+    }
     p.text(rect.center(), egui::Align2::CENTER_CENTER, text, theme::mono(12.0), if shown.is_some() { Color32::WHITE } else { theme::TEXT_FAINT });
     r.on_hover_cursor(egui::CursorIcon::ResizeHorizontal);
     out

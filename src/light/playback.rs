@@ -127,7 +127,7 @@ impl LightShow {
                 .map(|c| {
                     for (fixture, values) in &c.values {
                         for (attr, v) in values {
-                            if let Some(&slot) = show.index.get(&(*fixture, *attr)) {
+                            if let (Some(&slot), Some(v)) = (show.index.get(&(*fixture, *attr)), l.resolve(*fixture, *attr, *v)) {
                                 running.insert(slot, v.clamp(0.0, 1.0));
                             }
                         }
@@ -491,7 +491,7 @@ mod tests {
         let cue = |vals: &[(FixtureId, Attribute, f32)], fade: f64| {
             let mut c = LightCue { fade, ..Default::default() };
             for (f, a, v) in vals {
-                c.values.entry(*f).or_default().insert(*a, *v);
+                c.values.entry(*f).or_default().insert(*a, (*v).into());
             }
             c
         };
@@ -579,6 +579,22 @@ mod tests {
         let f = p.tick(at(t0, 3.0)).get(1).unwrap().data;
         assert_eq!((f[0], f[1]), (255, 255));
         assert_eq!(p.status()[0].cue, Some(l.sequences[0].cues[0].id));
+    }
+
+    #[test]
+    fn cues_follow_preset_edits() {
+        use crate::light::model::{Preset, Value};
+        let t0 = Instant::now();
+        let mut l = design();
+        l.presets.push(Preset { id: 1, values: [(2, [(Attribute::Red, 0.2)].into_iter().collect())].into_iter().collect(), ..Default::default() });
+        l.sequences[0].cues[0].values.get_mut(&2).unwrap().insert(Attribute::Red, Value::Preset { preset: 1 });
+        let mut p = Playback::new(Arc::new(LightShow::compile(&l)), t0);
+        p.go(1, None, t0).unwrap();
+        assert_eq!(p.tick(at(t0, 5.0)).get(1).unwrap().data[1], 51);
+        l.presets[0].values.get_mut(&2).unwrap().insert(Attribute::Red, 1.0);
+        p.set_show(Arc::new(LightShow::compile(&l)));
+        p.go(1, Some(l.sequences[0].cues[0].id), at(t0, 5.0)).unwrap();
+        assert_eq!(p.tick(at(t0, 10.0)).get(1).unwrap().data[1], 255, "the cue follows the preset");
     }
 
     #[test]

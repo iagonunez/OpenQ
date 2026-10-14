@@ -417,7 +417,7 @@ mod tests {
         l.add_type(&t);
         l.fixtures.push(Fixture { id: 1, fixture_type: t.id.clone(), mode: t.modes[0].name.clone(), address: 1, ..Default::default() });
         let mut c = LightCue { fade: 0.0, ..Default::default() };
-        c.values.entry(1).or_default().insert(Attribute::Dimmer, 1.0);
+        c.values.entry(1).or_default().insert(Attribute::Dimmer, 1.0.into());
         let id = c.id;
         l.sequences.push(Sequence { id: 1, cues: vec![c], ..Default::default() });
 

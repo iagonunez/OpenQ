@@ -370,3 +370,16 @@ Done on branch `Lighting`: every step above.
 
 Not yet (Phase 2+): command line, presets/palettes, effects, 3D visualiser, fixture importers,
 per-attribute timing, move in black, Art-Net/sACN input, Python, MIDI/OSC surfaces, manual chapter.
+
+## Phase 2 order (one commit per step)
+1. D4 I3 — presets (Intensity/Colour/Position/Beam/All) referenced by cues and the programmer, so a
+   preset edit updates every cue using it; preset pool on the Programmer page.
+2. D5 D6 — programmer tools: fan/spread across the selection, blind, highlight.
+3. E5 — cue timing per feature, cue only, block, move in black.
+4. F1 F3 — effects engine (shapes, phase spread, groups/wings, BPM) in the light thread, tap tempo.
+5. F2 — effects pool and editor; effects in cues and the programmer.
+6. D2 I5 — command line (`1 thru 10 at 50`, `group 2 at full`, `record cue 5`, …) and keypad.
+7. E6 — Stop/Fade/Panic cues and the lighting (Stop releases, Panic option).
+8. H1 — 3D visualiser: wgpu renderer, orbit camera, stage floor, fixtures, picking.
+9. H2 H3 — beams (cones, colour, zoom, haze), moving heads from pan/tilt, click to focus.
+10. B2 — Open Fixture Library import.

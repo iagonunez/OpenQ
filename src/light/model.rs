@@ -391,8 +391,46 @@ pub struct Group {
     pub fixtures: Vec<FixtureId>,
 }
 
+/// User-facing preset number.
+pub type PresetId = u32;
+
+/// A value in a cue or the programmer: a level, or a reference to a preset (so editing the
+/// preset changes every cue that uses it). Saved as a bare number or `{"preset": n}`.
+#[derive(Serialize, Deserialize, Clone, Copy, PartialEq, Debug)]
+#[serde(untagged)]
+pub enum Value {
+    /// Normalised level, 0..=1.
+    Level(f32),
+    /// The preset's value for this fixture and attribute.
+    Preset {
+        /// Preset number.
+        preset: PresetId,
+    },
+}
+
+impl From<f32> for Value {
+    fn from(v: f32) -> Self {
+        Value::Level(v)
+    }
+}
+
 /// Attribute values per fixture.
-pub type Look = BTreeMap<FixtureId, BTreeMap<Attribute, f32>>;
+pub type Look = BTreeMap<FixtureId, BTreeMap<Attribute, Value>>;
+
+/// Stored values for one feature (or all), per fixture. Cues and the programmer refer to them.
+#[derive(Serialize, Deserialize, Clone, PartialEq, Debug, Default)]
+#[serde(default)]
+pub struct Preset {
+    /// Preset number (unique across features).
+    pub id: PresetId,
+    /// Name.
+    pub name: String,
+    /// The family it stores (None = any attribute).
+    pub feature: Option<Feature>,
+    /// Values per fixture. A fixture without its own values takes those of the first fixture
+    /// of the same type in the preset, so one fixture's values work for the whole type.
+    pub values: BTreeMap<FixtureId, BTreeMap<Attribute, f32>>,
+}
 
 /// A lighting cue: the values it changes (tracking) and its timing.
 #[derive(Serialize, Deserialize, Clone, PartialEq, Debug)]
@@ -466,6 +504,24 @@ impl Sequence {
     }
 }
 
+/// Replace references to preset `id` in `look` by the levels they stand for (dropped if none).
+pub fn unlink_preset(l: &Lighting, id: PresetId, look: &mut Look) {
+    for (f, values) in look.iter_mut() {
+        values.retain(|a, v| {
+            if *v != (Value::Preset { preset: id }) {
+                return true;
+            }
+            match l.resolve(*f, *a, *v) {
+                Some(x) => {
+                    *v = Value::Level(x);
+                    true
+                }
+                None => false,
+            }
+        });
+    }
+}
+
 /// A patch problem shown in the patch window.
 #[derive(Clone, PartialEq, Debug)]
 pub enum PatchIssue {
@@ -493,6 +549,8 @@ pub struct Lighting {
     pub sequences: Vec<Sequence>,
     /// DMX outputs.
     pub outputs: Vec<super::dmx::OutputConfig>,
+    /// Presets (palettes).
+    pub presets: Vec<Preset>,
 }
 
 impl Lighting {
@@ -500,6 +558,7 @@ impl Lighting {
     pub fn is_empty(&self) -> bool {
         self.fixtures.is_empty() && self.fixture_types.is_empty() && self.groups.is_empty() && self.sequences.is_empty()
             && self.outputs.is_empty()
+            && self.presets.is_empty()
     }
 
     /// A fixture by number.
@@ -532,6 +591,57 @@ impl Lighting {
     /// Find a lighting cue anywhere: (sequence, index).
     pub fn find_cue(&self, cue: LightCueId) -> Option<(&Sequence, usize)> {
         self.sequences.iter().find_map(|s| s.index_of(cue).map(|i| (s, i)))
+    }
+
+    /// A preset by number.
+    pub fn preset(&self, id: PresetId) -> Option<&Preset> {
+        self.presets.iter().find(|p| p.id == id)
+    }
+
+    /// The level a value stands for on a fixture attribute (None: a preset that doesn't exist
+    /// or has nothing for this fixture/attribute).
+    pub fn resolve(&self, fixture: FixtureId, attr: Attribute, value: Value) -> Option<f32> {
+        match value {
+            Value::Level(v) => Some(v),
+            Value::Preset { preset } => {
+                let p = self.preset(preset)?;
+                if let Some(v) = p.values.get(&fixture).and_then(|v| v.get(&attr)) {
+                    return Some(*v);
+                }
+                let ty = &self.fixture(fixture)?.fixture_type;
+                p.values
+                    .iter()
+                    .find(|(f, _)| self.fixture(**f).is_some_and(|x| &x.fixture_type == ty))
+                    .and_then(|(_, v)| v.get(&attr).copied())
+            }
+        }
+    }
+
+    /// Delete a preset; cues that referred to it keep its values as plain levels.
+    pub fn delete_preset(&mut self, id: PresetId) {
+        let mut cues: Vec<LightCue> = self.sequences.iter().flat_map(|s| s.cues.iter().cloned()).collect();
+        for c in &mut cues {
+            unlink_preset(self, id, &mut c.values);
+        }
+        let mut it = cues.into_iter();
+        for c in self.sequences.iter_mut().flat_map(|s| s.cues.iter_mut()) {
+            *c = it.next().expect("same cues");
+        }
+        self.presets.retain(|p| p.id != id);
+    }
+
+    /// Attributes a preset holds for a fixture (its own or its type's).
+    pub fn preset_attributes(&self, preset: PresetId, fixture: FixtureId) -> Vec<Attribute> {
+        let Some(p) = self.preset(preset) else { return Vec::new() };
+        if let Some(v) = p.values.get(&fixture) {
+            return v.keys().copied().collect();
+        }
+        let Some(ty) = self.fixture(fixture).map(|f| &f.fixture_type) else { return Vec::new() };
+        p.values
+            .iter()
+            .find(|(f, _)| self.fixture(**f).is_some_and(|x| &x.fixture_type == ty))
+            .map(|(_, v)| v.keys().copied().collect())
+            .unwrap_or_default()
     }
 
     /// "1/5 Name": sequence number / cue number and name, for menus and the cue list.
@@ -683,7 +793,7 @@ mod tests {
         let mut l = rig();
         l.groups.push(Group { id: 1, name: String::new(), fixtures: vec![101, 102] });
         let mut c = LightCue::default();
-        c.values.entry(101).or_default().insert(Attribute::Red, 1.0);
+        c.values.entry(101).or_default().insert(Attribute::Red, 1.0.into());
         l.sequences.push(Sequence { id: 1, name: String::new(), cues: vec![c] });
         assert!(!l.renumber_fixture(101, 102), "taken");
         assert!(l.renumber_fixture(101, 201));
@@ -701,13 +811,13 @@ mod tests {
         let mut s = Sequence::default();
         for (fix, attr, v) in [(1, Attribute::Dimmer, 1.0), (2, Attribute::Red, 0.5), (1, Attribute::Dimmer, 0.2)] {
             let mut c = LightCue::default();
-            c.values.entry(fix).or_default().insert(attr, v);
+            c.values.entry(fix).or_default().insert(attr, v.into());
             s.cues.push(c);
         }
-        assert_eq!(s.tracked(0)[&1][&Attribute::Dimmer], 1.0);
+        assert_eq!(s.tracked(0)[&1][&Attribute::Dimmer], 1.0.into());
         let t = s.tracked(2);
-        assert_eq!(t[&1][&Attribute::Dimmer], 0.2);
-        assert_eq!(t[&2][&Attribute::Red], 0.5);
+        assert_eq!(t[&1][&Attribute::Dimmer], 0.2.into());
+        assert_eq!(t[&2][&Attribute::Red], 0.5.into());
     }
 
     #[test]
@@ -734,10 +844,37 @@ mod tests {
     }
 
     #[test]
+    fn presets_resolve_per_fixture_or_type() {
+        let mut l = rig();
+        let mut values = BTreeMap::new();
+        values.insert(101, [(Attribute::Red, 0.7)].into_iter().collect());
+        l.presets.push(Preset { id: 1, name: "Red".into(), feature: Some(Feature::Colour), values });
+        let p = Value::Preset { preset: 1 };
+        assert_eq!(l.resolve(101, Attribute::Red, p), Some(0.7));
+        assert_eq!(l.resolve(103, Attribute::Red, p), Some(0.7), "same type");
+        assert_eq!(l.resolve(103, Attribute::Green, p), None);
+        assert_eq!(l.resolve(103, Attribute::Red, Value::Preset { preset: 9 }), None);
+        assert_eq!(l.preset_attributes(1, 104), [Attribute::Red]);
+        let mut cue = LightCue::default();
+        cue.values.entry(103).or_default().insert(Attribute::Red, p);
+        l.sequences.push(Sequence { id: 1, name: String::new(), cues: vec![cue] });
+        let mut d = l.clone();
+        d.delete_preset(1);
+        assert_eq!(d.sequences[0].cues[0].values[&103][&Attribute::Red], Value::Level(0.7), "unlinked, not lost");
+        // Saved as a bare number or {"preset": n}.
+        let mut c = LightCue::default();
+        c.values.entry(101).or_default().insert(Attribute::Red, p);
+        c.values.entry(101).or_default().insert(Attribute::Dimmer, 0.5.into());
+        let json = serde_json::to_string(&c.values).unwrap();
+        assert_eq!(json, r#"{"101":{"Dimmer":0.5,"Red":{"preset":1}}}"#);
+        assert_eq!(serde_json::from_str::<Look>(&json).unwrap(), c.values);
+    }
+
+    #[test]
     fn roundtrip_json() {
         let mut l = rig();
         let mut c = LightCue::default();
-        c.values.entry(101).or_default().insert(Attribute::Red, 0.25);
+        c.values.entry(101).or_default().insert(Attribute::Red, 0.25.into());
         l.sequences.push(Sequence { id: 1, name: "Main".into(), cues: vec![c] });
         let s = serde_json::to_string(&l).unwrap();
         assert_eq!(serde_json::from_str::<Lighting>(&s).unwrap(), l);

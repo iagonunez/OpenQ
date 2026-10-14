@@ -981,7 +981,7 @@ mod faults {
             .iter()
             .map(|v| {
                 let mut c = LightCue { fade: 0.0, ..Default::default() };
-                c.values.entry(1).or_default().insert(Attribute::Dimmer, *v);
+                c.values.entry(1).or_default().insert(Attribute::Dimmer, (*v).into());
                 c
             })
             .collect();

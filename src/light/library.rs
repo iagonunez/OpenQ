@@ -130,7 +130,7 @@ pub fn bench_rig(fixtures: u32, sequences: u32, cues: u32) -> super::Lighting {
                     let attrs = l.mode_of(f).map(|m| m.attributes()).unwrap_or_default();
                     let v = cue.values.entry(f.id).or_default();
                     for (k, a) in attrs.into_iter().enumerate() {
-                        v.insert(a, ((f.id + c * 7 + s * 13 + k as u32) % 100) as f32 / 100.0);
+                        v.insert(a, (((f.id + c * 7 + s * 13 + k as u32) % 100) as f32 / 100.0).into());
                     }
                 }
                 cue
