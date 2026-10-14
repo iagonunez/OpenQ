@@ -1196,13 +1196,14 @@ impl Backend for Media {
         effective_duration(cue, file)
     }
 
-    fn light(&mut self, c: &crate::model::LightingCue, at: Instant) -> Result<f64, String> {
+    fn light(&mut self, c: &crate::model::LightingCue, design: &crate::light::Lighting, at: Instant) -> Result<f64, String> {
         use crate::model::LightAction;
         match c.action {
             LightAction::Go => {
                 let id = c.cue.ok_or("no lighting cue chosen")?;
-                self.light.go_cue(id, at)?;
-                Ok(self.light.cue_duration(id).unwrap_or(0.0))
+                let (seq, i) = design.find_cue(id).ok_or("lighting cue not found in the design")?;
+                self.light.go_cue(id, at);
+                Ok(seq.cues[i].duration())
             }
             LightAction::Release => {
                 match c.sequence {

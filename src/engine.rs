@@ -86,7 +86,8 @@ pub trait Backend {
     }
     /// Run a Light cue (GO a lighting cue, release a sequence) at `at`. Returns how long its
     /// fades take, in seconds.
-    fn light(&mut self, _cue: &LightingCue, _at: Instant) -> Result<f64, String> {
+    /// `design` is the workspace's lighting design (for the cue's timing).
+    fn light(&mut self, _cue: &LightingCue, _design: &crate::light::Lighting, _at: Instant) -> Result<f64, String> {
         Err("lighting unavailable".into())
     }
 }
@@ -872,7 +873,7 @@ impl Engine {
                 }
                 Some(0.0)
             }
-            CueKind::Light(l) => match be.light(l, at) {
+            CueKind::Light(l) => match be.light(l, &ws.lighting, at) {
                 Ok(d) => Some(d),
                 Err(e) => {
                     self.log(format!("Light cue {}: {e}", cue.number));

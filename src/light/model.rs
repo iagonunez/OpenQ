@@ -414,6 +414,13 @@ pub struct LightCue {
     pub values: Look,
 }
 
+impl LightCue {
+    /// Seconds from GO until every fade of this cue is complete.
+    pub fn duration(&self) -> f64 {
+        self.delay.max(0.0) + self.fade.max(self.down_fade.unwrap_or(self.fade)).max(0.0)
+    }
+}
+
 impl Default for LightCue {
     fn default() -> Self {
         Self {

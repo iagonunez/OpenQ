@@ -989,12 +989,12 @@ mod faults {
         l.sequences.push(Sequence { id: 1, cues, ..Default::default() });
         let mut e = LightEngine::start();
         e.load(&l);
-        e.go_cue(ids[0], Instant::now()).unwrap();
+        e.go_cue(ids[0], Instant::now());
         wait_for("first look", 2.0, || e.frame().get(1).is_some_and(|u| u.data[0] == 255));
         arm(Fault::LightTick);
         wait_for("fault reported", 2.0, || e.drain_errors().iter().any(|m| m.contains("injected fault")));
         assert_eq!(e.frame().get(1).unwrap().data[0], 255, "last good frame held");
-        e.go_cue(ids[1], Instant::now()).unwrap();
+        e.go_cue(ids[1], Instant::now());
         wait_for("next GO after the fault", 2.0, || e.frame().get(1).is_some_and(|u| u.data[0] == 128));
     }
 }

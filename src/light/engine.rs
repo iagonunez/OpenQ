@@ -16,13 +16,24 @@ use std::time::{Duration, Instant};
 
 /// Frames per second (the DMX refresh rate of a full universe).
 pub const RATE: f64 = 44.0;
+/// Commands wait at most this long for a recompiled show.
+const HOLD_LIMIT: Duration = Duration::from_secs(5);
 /// Name of the light thread.
 pub const THREAD: &str = "openq-light";
 
 /// A command for the light thread.
 pub enum LightCommand {
+    /// A recompile started: hold GOs until its show arrives (keeps their order with the edit).
+    Compiling(u64),
     /// Swap in a recompiled show.
-    Show(Arc<LightShow>),
+    Show(u64, Arc<LightShow>),
+    /// GO a lighting cue wherever it is in the design.
+    GoCue {
+        /// Cue.
+        cue: LightCueId,
+        /// When.
+        at: Instant,
+    },
     /// GO a lighting cue (None = next in the sequence) at a moment (may be slightly ahead).
     Go {
         /// Sequence.
@@ -74,7 +85,7 @@ pub struct LightEngine {
     tx: mpsc::Sender<LightCommand>,
     shared: Arc<Shared>,
     thread: Option<JoinHandle<()>>,
-    show: Arc<LightShow>,
+    compiles: u64,
     outputs: Vec<OutputConfig>,
     handles: Vec<OutputHandle>,
 }
@@ -86,17 +97,29 @@ impl LightEngine {
         let shared = Arc::new(Shared::default());
         let s = shared.clone();
         let thread = std::thread::Builder::new().name(THREAD.into()).spawn(move || run(rx, s)).ok();
-        Self { tx, shared, thread, show: Arc::new(LightShow::default()), outputs: Vec::new(), handles: Vec::new() }
+        Self { tx, shared, thread, compiles: 0, outputs: Vec::new(), handles: Vec::new() }
     }
 
     fn send(&self, cmd: LightCommand) {
         let _ = self.tx.send(cmd);
     }
 
-    /// Compile a design and send it to the light thread; restart the outputs if they changed.
+    /// Compile a design (on a worker thread, so a big design never holds up the caller) and
+    /// hand it to the light thread; restart the outputs if they changed. Commands sent after
+    /// this wait for the new show.
     pub fn load(&mut self, lighting: &Lighting) {
-        self.show = Arc::new(LightShow::compile(lighting));
-        self.send(LightCommand::Show(self.show.clone()));
+        self.compiles += 1;
+        let generation = self.compiles;
+        self.send(LightCommand::Compiling(generation));
+        let design = lighting.clone();
+        let tx = self.tx.clone();
+        let compile = move || {
+            let show = Arc::new(LightShow::compile(&design));
+            let _ = tx.send(LightCommand::Show(generation, show));
+        };
+        if std::thread::Builder::new().name("openq-light-compile".into()).spawn(compile).is_err() {
+            log::error!("lighting: can't start the compile thread");
+        }
         if lighting.outputs != self.outputs {
             self.set_outputs(lighting.outputs.clone());
         }
@@ -115,21 +138,15 @@ impl LightEngine {
         self.send(LightCommand::Outputs(senders));
     }
 
-    /// The compiled show last loaded.
-    pub fn show(&self) -> &Arc<LightShow> {
-        &self.show
-    }
-
     /// GO a lighting cue (`cue` None = next in the sequence).
     pub fn go(&self, seq: SequenceId, cue: Option<LightCueId>, at: Instant) {
         self.send(LightCommand::Go { seq, cue, at });
     }
 
-    /// GO a lighting cue by its id alone. Err when the cue isn't in the design.
-    pub fn go_cue(&self, cue: LightCueId, at: Instant) -> Result<(), String> {
-        let (si, _) = self.show.find_cue(cue).ok_or("lighting cue not found")?;
-        self.go(self.show.sequences[si].id, Some(cue), at);
-        Ok(())
+    /// GO a lighting cue wherever it is (a missing cue is reported through
+    /// [`LightEngine::drain_errors`]).
+    pub fn go_cue(&self, cue: LightCueId, at: Instant) {
+        self.send(LightCommand::GoCue { cue, at });
     }
 
     /// Fade a sequence out.
@@ -160,12 +177,6 @@ impl LightEngine {
     /// Replace the programmer.
     pub fn set_programmer(&self, values: Vec<(FixtureId, Attribute, f32)>) {
         self.send(LightCommand::Programmer(values));
-    }
-
-    /// Seconds from GO until a lighting cue's fades are complete.
-    pub fn cue_duration(&self, cue: LightCueId) -> Option<f64> {
-        let (si, ci) = self.show.find_cue(cue)?;
-        Some(self.show.sequences[si].cues[ci].duration())
     }
 
     /// Copy of the latest frame (DMX monitor, visualiser).
@@ -213,6 +224,10 @@ fn run(rx: mpsc::Receiver<LightCommand>, shared: Arc<Shared>) {
     let mut last_good = DmxFrame::default();
     let mut next = Instant::now();
     let mut n: u64 = 0;
+    // Latest compile announced, newest show applied, commands held until they match.
+    let (mut expected, mut applied) = (0u64, 0u64);
+    let mut held: std::collections::VecDeque<LightCommand> = std::collections::VecDeque::new();
+    let mut held_since: Option<Instant> = None;
     loop {
         // Commands, until the frame is due.
         let mut quit = false;
@@ -234,12 +249,33 @@ fn run(rx: mpsc::Receiver<LightCommand>, shared: Arc<Shared>) {
                         let _ = std::thread::Builder::new().name("openq-dmx-close".into()).spawn(move || drop(old));
                     }
                 }
-                Ok(cmd) => {
-                    let r = crate::recovery::catch(|| apply(&mut playback, cmd).map_err(anyhow::Error::msg));
-                    if let Err(e) = r {
-                        shared.errors.lock().push(format!("{e:#}"));
+                Ok(LightCommand::Compiling(g)) => expected = expected.max(g),
+                Ok(LightCommand::Show(g, show)) => {
+                    // Compiles can finish out of order: never go back to an older one.
+                    if g > applied {
+                        applied = g;
+                        run_command(&mut playback, LightCommand::Show(g, show), &shared);
+                    }
+                    if applied >= expected {
+                        held_since = None;
+                        for cmd in held.drain(..) {
+                            run_command(&mut playback, cmd, &shared);
+                        }
                     }
                 }
+                Ok(cmd) if applied < expected && held_since.is_some_and(|t: Instant| t.elapsed() > HOLD_LIMIT) => {
+                    // The compile never came back (thread couldn't start): don't hold GOs forever.
+                    expected = applied;
+                    for c in held.drain(..) {
+                        run_command(&mut playback, c, &shared);
+                    }
+                    run_command(&mut playback, cmd, &shared);
+                }
+                Ok(cmd) if applied < expected => {
+                    held_since.get_or_insert_with(Instant::now);
+                    held.push_back(cmd);
+                }
+                Ok(cmd) => run_command(&mut playback, cmd, &shared),
                 Err(mpsc::TryRecvError::Empty) => break,
                 Err(mpsc::TryRecvError::Disconnected) => {
                     quit = true;
@@ -285,11 +321,23 @@ fn run(rx: mpsc::Receiver<LightCommand>, shared: Arc<Shared>) {
     }
 }
 
+fn run_command(p: &mut Playback, cmd: LightCommand, shared: &Shared) {
+    let r = crate::recovery::catch(|| apply(p, cmd).map_err(anyhow::Error::msg));
+    if let Err(e) = r {
+        shared.errors.lock().push(format!("lighting: {e:#}"));
+    }
+}
+
 fn apply(p: &mut Playback, cmd: LightCommand) -> Result<(), String> {
     match cmd {
-        LightCommand::Show(s) => p.set_show(s),
+        LightCommand::Show(_, s) => p.set_show(s),
         LightCommand::Go { seq, cue, at } => {
             p.go(seq, cue, at)?;
+        }
+        LightCommand::GoCue { cue, at } => {
+            let (si, _) = p.show().find_cue(cue).ok_or("lighting cue not found")?;
+            let seq = p.show().sequences[si].id;
+            p.go(seq, Some(cue), at)?;
         }
         LightCommand::Release { seq, fade, at } => p.release(seq, fade, at),
         LightCommand::ReleaseAll { fade, at } => p.release_all(fade, at),
@@ -297,7 +345,7 @@ fn apply(p: &mut Playback, cmd: LightCommand) -> Result<(), String> {
         LightCommand::GrandMaster(l) => p.grand_master = l,
         LightCommand::Blackout(b) => p.blackout = b,
         LightCommand::Programmer(v) => p.set_programmer(&v),
-        LightCommand::Outputs(_) => {}
+        LightCommand::Outputs(_) | LightCommand::Compiling(_) => {}
     }
     Ok(())
 }
@@ -345,14 +393,14 @@ mod tests {
         let s2 = seen.clone();
         let cfg = OutputConfig { routes: vec![UniverseRoute { universe: 1, wire: 0 }], ..Default::default() };
         e.set_senders(vec![OutputSender::with_opener(cfg, Box::new(move || Ok(Box::new(Probe(s2.clone())) as Box<dyn DmxOutput>)))]);
-        assert_eq!(e.cue_duration(id), Some(0.0));
-        e.go_cue(id, Instant::now()).unwrap();
+        e.go_cue(id, Instant::now());
         assert!(wait(|| *seen.lock() == 255), "GO reached the device");
         assert!(wait(|| e.status().first().is_some_and(|s| s.cue == Some(id))));
         assert_eq!(e.frame().get(1).unwrap().data[0], 255);
         e.set_blackout(true);
         assert!(wait(|| *seen.lock() == 0));
-        assert!(e.go_cue(uuid::Uuid::new_v4(), Instant::now()).is_err());
+        e.go_cue(uuid::Uuid::new_v4(), Instant::now());
+        assert!(wait(|| e.drain_errors().iter().any(|m| m.contains("not found"))), "unknown cue reported");
         e.go(9, None, Instant::now());
         assert!(wait(|| !e.drain_errors().is_empty()), "unknown sequence reported");
         assert!(e.frames() > 0);
