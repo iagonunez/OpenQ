@@ -546,6 +546,37 @@ impl Lighting {
         self.sequence(id).map(|s| format!("{} {}", s.id, s.name).trim_end().to_string())
     }
 
+    /// Give a fixture a new number, updating groups and cue values. False if `new` is taken.
+    pub fn renumber_fixture(&mut self, old: FixtureId, new: FixtureId) -> bool {
+        if old == new || self.fixture(new).is_some() || new == 0 {
+            return false;
+        }
+        let Some(f) = self.fixtures.iter_mut().find(|f| f.id == old) else { return false };
+        f.id = new;
+        for g in &mut self.groups {
+            g.fixtures.iter_mut().filter(|x| **x == old).for_each(|x| *x = new);
+        }
+        for c in self.sequences.iter_mut().flat_map(|s| s.cues.iter_mut()) {
+            if let Some(v) = c.values.remove(&old) {
+                c.values.insert(new, v);
+            }
+        }
+        true
+    }
+
+    /// Unpatch fixtures and drop them from groups and cues.
+    pub fn remove_fixtures(&mut self, ids: &std::collections::HashSet<FixtureId>) {
+        self.fixtures.retain(|f| !ids.contains(&f.id));
+        for g in &mut self.groups {
+            g.fixtures.retain(|f| !ids.contains(f));
+        }
+        for c in self.sequences.iter_mut().flat_map(|s| s.cues.iter_mut()) {
+            c.values.retain(|f, _| !ids.contains(f));
+        }
+        let used: std::collections::HashSet<&str> = self.fixtures.iter().map(|f| f.fixture_type.as_str()).collect();
+        self.fixture_types.retain(|t| used.contains(t.id.as_str()));
+    }
+
     /// Lowest unused fixture number at or above `from`.
     pub fn next_fixture_id(&self, from: FixtureId) -> FixtureId {
         let mut id = from.max(1);
@@ -645,6 +676,24 @@ mod tests {
         assert_eq!(l.validate(), vec![PatchIssue::OutOfRange(102)]);
         l.fixtures[1].id = 101;
         assert!(l.validate().contains(&PatchIssue::DuplicateId(101)));
+    }
+
+    #[test]
+    fn renumber_and_remove() {
+        let mut l = rig();
+        l.groups.push(Group { id: 1, name: String::new(), fixtures: vec![101, 102] });
+        let mut c = LightCue::default();
+        c.values.entry(101).or_default().insert(Attribute::Red, 1.0);
+        l.sequences.push(Sequence { id: 1, name: String::new(), cues: vec![c] });
+        assert!(!l.renumber_fixture(101, 102), "taken");
+        assert!(l.renumber_fixture(101, 201));
+        assert_eq!(l.groups[0].fixtures, [201, 102]);
+        assert!(l.sequences[0].cues[0].values.contains_key(&201));
+        l.remove_fixtures(&[201].into_iter().collect());
+        assert_eq!(l.groups[0].fixtures, [102]);
+        assert!(l.sequences[0].cues[0].values.is_empty());
+        l.remove_fixtures(&l.fixtures.iter().map(|f| f.id).collect());
+        assert!(l.fixture_types.is_empty(), "unused types dropped");
     }
 
     #[test]

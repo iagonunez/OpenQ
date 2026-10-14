@@ -13,6 +13,7 @@ mod effects;
 mod icons;
 mod inspector;
 mod language;
+mod lighting;
 mod manual;
 #[cfg(target_os = "macos")]
 mod native_menu;
@@ -72,6 +73,7 @@ pub(crate) enum Mode {
 struct UndoState {
     cues: crate::model::CueList,
     stages: Vec<Stage>,
+    lighting: crate::light::Lighting,
     /// Cues in `cues` (for the history's memory budget).
     size: usize,
 }
@@ -79,7 +81,7 @@ struct UndoState {
 impl UndoState {
     fn of(show: &Show) -> Self {
         let cues = show.ws.cue_list.clone();
-        Self { size: cues.iter_all().len(), cues, stages: show.ws.stages.clone() }
+        Self { size: cues.iter_all().len(), cues, stages: show.ws.stages.clone(), lighting: show.ws.lighting.clone() }
     }
 }
 
@@ -197,6 +199,10 @@ pub struct App {
     recovery: recovery::Recovery,
     /// Audio was reconnecting at the last frame (to announce changes).
     audio_reconnecting: bool,
+    /// Cue lists or the Lighting workspace.
+    view: lighting::View,
+    /// Lighting workspace state.
+    light: lighting::LightUi,
 }
 
 impl App {
@@ -265,6 +271,8 @@ impl App {
             debug_gos: 0,
             recovery: Default::default(),
             audio_reconnecting: false,
+            view: Default::default(),
+            light: Default::default(),
         }
     }
 
@@ -679,8 +687,10 @@ impl App {
     fn apply_undo_state(&mut self, show: &mut Show, st: UndoState) {
         show.ws.cue_list = st.cues.clone();
         show.ws.stages = st.stages.clone();
+        show.ws.lighting = st.lighting.clone();
         show.dirty = true;
         show.engine.workspace_changed();
+        show.sync_lighting();
         self.undo_base = Some(st);
         self.undo_seen_gen = show.edit_gen;
         self.inline = None;
@@ -2128,6 +2138,7 @@ impl App {
     /// `OPENQ_SCREENSHOT_GOS` times (default 0), captures its window a couple of frames later and exits.
     /// `OPENQ_SCREENSHOT_CUE` / `OPENQ_SCREENSHOT_TAB` pick the cue and inspector tab shown
     /// (`OPENQ_SCREENSHOT_ANIM_TIME` sets the Animation tab playhead);
+    /// `OPENQ_SCREENSHOT_LIGHTING=<page>` opens the Lighting workspace on a page;
     /// `OPENQ_SCREENSHOT_MODE=show` starts in show mode; `OPENQ_SCREENSHOT_INLINE=1` opens an
     /// in-place pre-wait editor on the selected cue.
     /// `OPENQ_SCREENSHOT_STAGE=1` embeds stage windows in the main window for the capture
@@ -2174,6 +2185,10 @@ impl App {
             };
             if std::env::var("OPENQ_SCREENSHOT_MODE").as_deref() == Ok("show") {
                 self.mode = Mode::Show;
+            }
+            if let Ok(page) = std::env::var("OPENQ_SCREENSHOT_LIGHTING") {
+                self.view = lighting::View::Lighting;
+                self.light.tab = lighting::LightTab::from_name(&page);
             }
             if std::env::var_os("OPENQ_SCREENSHOT_INLINE").is_some()
                 && let Some(id) = self.primary()
@@ -2487,7 +2502,7 @@ impl App {
             // Let a waiting engine tick in between panels: the engine never waits for a whole frame.
             parking_lot::MutexGuard::bump(&mut guard);
             let show: &mut Show = &mut guard;
-            if self.mode == Mode::Edit {
+            if self.mode == Mode::Edit && self.view == lighting::View::Cues {
                 // Tall enough for every tab's cards without scrolling. Until the user drags the edge,
                 // forget the stored height so a tiny first frame (or a window resize) can't shrink it.
                 let id = egui::Id::new("inspector");
@@ -2524,6 +2539,11 @@ impl App {
                         .inner_margin(egui::Margin::symmetric(10, 8)),
                 )
                 .show(ui, |ui| {
+                    self.view_tabs(ui);
+                    if self.view == lighting::View::Lighting {
+                        self.lighting_view(ui, show);
+                        return;
+                    }
                     if show.ws.cue_list.list_count() > 1 || self.mode == Mode::Edit {
                         self.list_tabs(ui, show);
                     }
@@ -2643,7 +2663,7 @@ mod tests {
     /// holding hundreds of megabytes, a small one keeps the full history.
     #[test]
     fn undo_history_has_a_memory_budget() {
-        let step = |size| UndoState { cues: Default::default(), stages: Vec::new(), size };
+        let step = |size| UndoState { cues: Default::default(), stages: Vec::new(), lighting: Default::default(), size };
         let mut small: Vec<UndoState> = (0..UNDO_STEPS + 50).map(|_| step(50)).collect();
         trim_undo(&mut small);
         assert_eq!(small.len(), UNDO_STEPS);
