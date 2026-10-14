@@ -658,7 +658,7 @@ impl App {
             let seq = match seq_id {
                 Some(id) => id,
                 None => {
-                    l.sequences.push(Sequence { id: 1, name: t("Main").into(), cues: Vec::new() });
+                    l.sequences.push(Sequence { id: 1, name: t("Main").into(), ..Default::default() });
                     1
                 }
             };
@@ -977,6 +977,14 @@ impl App {
         let status = show.media.light.status();
         let l = &mut show.ws.lighting;
         let light = &show.media.light;
+        egui::Panel::right("cue_details")
+            .frame(egui::Frame::new().fill(theme::BG_PANEL).corner_radius(8.0).inner_margin(egui::Margin::same(10)))
+            .resizable(true)
+            .default_size(330.0)
+            .size_range(280.0..=480.0)
+            .show(ui, |ui| {
+                egui::ScrollArea::vertical().id_salt("cue_details_scroll").auto_shrink(false).show(ui, |ui| self.cue_details(ui, l));
+            });
         ui.horizontal_top(|ui| {
             // Sequence list.
             ui.vertical(|ui| {
@@ -985,7 +993,7 @@ impl App {
                     ui.label(theme::caption(t("Sequences")));
                     if ui.small_button(icons::ADD).on_hover_text(t("New sequence")).clicked() {
                         let id = l.sequences.iter().map(|s| s.id).max().unwrap_or(0) + 1;
-                        l.sequences.push(Sequence { id, name: String::new(), cues: Vec::new() });
+                        l.sequences.push(Sequence { id, ..Default::default() });
                         self.light.sequence = Some(id);
                     }
                 });
@@ -1057,8 +1065,7 @@ impl App {
                     }
                     ui.label(theme::caption(t("Fixtures")));
                 });
-                // Leave room under the list for the selected cue's name.
-                egui::ScrollArea::vertical().id_salt("light_cues").auto_shrink(false).max_height(ui.available_height() - 44.0).show_rows(ui, 28.0, s.cues.len(), |ui, range| {
+                egui::ScrollArea::vertical().id_salt("light_cues").auto_shrink(false).show_rows(ui, 28.0, s.cues.len(), |ui, range| {
                     for c in &mut s.cues[range] {
                         let selected = self.light.cue == Some(c.id);
                         ui.horizontal(|ui| {
@@ -1090,13 +1097,71 @@ impl App {
                         });
                     }
                 });
-                if let Some(c) = self.light.cue.and_then(|id| s.cues.iter_mut().find(|c| c.id == id)) {
-                    ui.separator();
-                    ui.horizontal(|ui| {
-                        ui.label(t("Name"));
-                        ui.add(egui::TextEdit::singleline(&mut c.name).desired_width(260.0));
-                    });
+            });
+        });
+    }
+
+    /// The selected cue (name, options, timing per feature) and its sequence's settings.
+    fn cue_details(&mut self, ui: &mut Ui, l: &mut Lighting) {
+        let seq = self.light.sequence.filter(|s| l.sequence(*s).is_some()).or(l.sequences.first().map(|s| s.id));
+        let Some(s) = seq.and_then(|id| l.sequences.iter_mut().find(|s| s.id == id)) else { return };
+        let index = self.light.cue.and_then(|c| s.index_of(c));
+        if let Some(i) = index {
+            let mut block = false;
+            let c = &mut s.cues[i];
+            ui.label(theme::caption(&tr!("Cue {n}", n = c.number.clone())));
+            ui.add(egui::TextEdit::singleline(&mut c.name).hint_text(t("Name")).desired_width(f32::INFINITY));
+            ui.add_space(4.0);
+            ui.checkbox(&mut c.cue_only, t("Cue only")).on_hover_text(t("Its changes don't track: the next cue goes back to what was there before"));
+            if ui.button(theme::with_icon(icons::LOCK, t("Block"))).on_hover_text(t("Store every tracked value in this cue, so edits to earlier cues no longer change it")).clicked() {
+                block = true;
+            }
+            ui.add_space(8.0);
+            ui.label(theme::caption(t("Timing per feature")));
+            egui::Grid::new("feature_times").num_columns(3).spacing([8.0, 4.0]).show(ui, |ui| {
+                ui.label("");
+                ui.label(RichText::new(t("Fade")).small().weak());
+                ui.label(RichText::new(t("Delay")).small().weak());
+                ui.end_row();
+                for f in Feature::ALL {
+                    let mut on = c.feature_times.contains_key(&f);
+                    if ui.checkbox(&mut on, f.label()).changed() {
+                        if on {
+                            c.feature_times.insert(f, crate::light::model::FeatureTime { fade: c.fade, delay: c.delay });
+                        } else {
+                            c.feature_times.remove(&f);
+                        }
+                    }
+                    match c.feature_times.get_mut(&f) {
+                        Some(ft) => {
+                            ui.add(DragValue::new(&mut ft.fade).range(0.0..=600.0).speed(0.05).suffix(" s"));
+                            ui.add(DragValue::new(&mut ft.delay).range(0.0..=600.0).speed(0.05).suffix(" s"));
+                        }
+                        None => {
+                            ui.label(RichText::new(format!("{:.2} s", c.fade)).weak());
+                            ui.label(RichText::new(format!("{:.2} s", c.delay)).weak());
+                        }
+                    }
+                    ui.end_row();
                 }
+            });
+            if block {
+                s.block(i);
+            }
+            ui.add_space(8.0);
+            ui.separator();
+        } else {
+            ui.label(RichText::new(t("Select a cue to edit its options.")).color(theme::TEXT_DIM));
+            ui.separator();
+        }
+        ui.label(theme::caption(&tr!("Sequence {n}", n = s.id.to_string())));
+        ui.checkbox(&mut s.move_in_black, t("Move in black")).on_hover_text(t("Dark fixtures take their next cue's position, colour and beam before they come up"));
+        ui.add_enabled_ui(s.move_in_black, |ui| {
+            ui.horizontal(|ui| {
+                ui.label(t("Delay"));
+                ui.add(DragValue::new(&mut s.mib_delay).range(0.0..=600.0).speed(0.05).suffix(" s"));
+                ui.label(t("Move"));
+                ui.add(DragValue::new(&mut s.mib_fade).range(0.0..=600.0).speed(0.05).suffix(" s"));
             });
         });
     }

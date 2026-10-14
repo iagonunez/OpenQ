@@ -61,7 +61,7 @@ pub enum Attribute {
 }
 
 /// Attribute families, as on a desk's encoder bar.
-#[derive(Serialize, Deserialize, Clone, Copy, PartialEq, Eq, Debug)]
+#[derive(Serialize, Deserialize, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Debug)]
 #[allow(missing_docs)]
 pub enum Feature {
     Intensity,
@@ -450,12 +450,35 @@ pub struct LightCue {
     pub delay: f64,
     /// Values this cue sets; everything else tracks from earlier cues.
     pub values: Look,
+    /// Own fade/delay for some attribute families (the others use the cue's).
+    pub feature_times: BTreeMap<Feature, FeatureTime>,
+    /// The values this cue sets don't track on: the next cue goes back to what was there before.
+    pub cue_only: bool,
+}
+
+/// Fade and delay for one attribute family of a cue.
+#[derive(Serialize, Deserialize, Clone, Copy, PartialEq, Debug, Default)]
+#[serde(default)]
+pub struct FeatureTime {
+    /// Fade, seconds.
+    pub fade: f64,
+    /// Delay, seconds.
+    pub delay: f64,
 }
 
 impl LightCue {
     /// Seconds from GO until every fade of this cue is complete.
     pub fn duration(&self) -> f64 {
-        self.delay.max(0.0) + self.fade.max(self.down_fade.unwrap_or(self.fade)).max(0.0)
+        let base = self.delay.max(0.0) + self.fade.max(self.down_fade.unwrap_or(self.fade)).max(0.0);
+        self.feature_times.values().map(|t| t.delay.max(0.0) + t.fade.max(0.0)).fold(base, f64::max)
+    }
+
+    /// (delay, fade up, fade down) for an attribute.
+    pub fn timing(&self, attr: Attribute) -> (f64, f64, f64) {
+        match self.feature_times.get(&attr.feature()) {
+            Some(t) => (t.delay.max(0.0), t.fade.max(0.0), t.fade.max(0.0)),
+            None => (self.delay.max(0.0), self.fade.max(0.0), self.down_fade.unwrap_or(self.fade).max(0.0)),
+        }
     }
 }
 
@@ -469,12 +492,14 @@ impl Default for LightCue {
             down_fade: None,
             delay: 0.0,
             values: Look::new(),
+            feature_times: BTreeMap::new(),
+            cue_only: false,
         }
     }
 }
 
 /// A list of lighting cues played in order (a cue stack), with tracking.
-#[derive(Serialize, Deserialize, Clone, PartialEq, Debug, Default)]
+#[derive(Serialize, Deserialize, Clone, PartialEq, Debug)]
 #[serde(default)]
 pub struct Sequence {
     /// Sequence number.
@@ -483,16 +508,43 @@ pub struct Sequence {
     pub name: String,
     /// Cues in order.
     pub cues: Vec<LightCue>,
+    /// Move in black: fixtures that are dark move to their next cue's position, colour and beam
+    /// while still dark, so they don't move live.
+    pub move_in_black: bool,
+    /// Move in black: wait this long after the cue's fades before moving.
+    pub mib_delay: f64,
+    /// Move in black: move time.
+    pub mib_fade: f64,
+}
+
+impl Default for Sequence {
+    fn default() -> Self {
+        Self { id: 1, name: String::new(), cues: Vec::new(), move_in_black: false, mib_delay: 0.5, mib_fade: 2.0 }
+    }
 }
 
 impl Sequence {
-    /// Full state at cue `index`: every value set by it or tracked from an earlier cue.
+    /// Store every tracked value in cue `index` itself (a block): later edits to earlier cues
+    /// no longer change it.
+    pub fn block(&mut self, index: usize) {
+        if index < self.cues.len() {
+            let t = self.tracked(index);
+            self.cues[index].values = t;
+        }
+    }
+
+    /// Full state at cue `index`: every value set by it or tracked from an earlier cue
+    /// (values of earlier cue-only cues don't track).
     pub fn tracked(&self, index: usize) -> Look {
         let mut look = Look::new();
-        for cue in self.cues.iter().take(index + 1) {
+        for (i, cue) in self.cues.iter().take(index + 1).enumerate() {
+            let before = (cue.cue_only && i < index).then(|| look.clone());
             for (fixture, values) in &cue.values {
                 let state = look.entry(*fixture).or_default();
                 state.extend(values.iter().map(|(a, v)| (*a, *v)));
+            }
+            if let Some(b) = before {
+                look = b;
             }
         }
         look
@@ -794,7 +846,7 @@ mod tests {
         l.groups.push(Group { id: 1, name: String::new(), fixtures: vec![101, 102] });
         let mut c = LightCue::default();
         c.values.entry(101).or_default().insert(Attribute::Red, 1.0.into());
-        l.sequences.push(Sequence { id: 1, name: String::new(), cues: vec![c] });
+        l.sequences.push(Sequence { id: 1, cues: vec![c], ..Default::default() });
         assert!(!l.renumber_fixture(101, 102), "taken");
         assert!(l.renumber_fixture(101, 201));
         assert_eq!(l.groups[0].fixtures, [201, 102]);
@@ -818,6 +870,26 @@ mod tests {
         let t = s.tracked(2);
         assert_eq!(t[&1][&Attribute::Dimmer], 0.2.into());
         assert_eq!(t[&2][&Attribute::Red], 0.5.into());
+    }
+
+    #[test]
+    fn cue_only_and_block() {
+        let mut s = Sequence::default();
+        for (v, only) in [(1.0, false), (0.5, true), (0.2, false)] {
+            let mut c = LightCue { cue_only: only, ..Default::default() };
+            c.values.entry(1).or_default().insert(Attribute::Dimmer, Value::Level(v));
+            if v == 0.2 {
+                c.values.clear();
+                c.values.entry(2).or_default().insert(Attribute::Red, Value::Level(v));
+            }
+            s.cues.push(c);
+        }
+        assert_eq!(s.tracked(1)[&1][&Attribute::Dimmer], Value::Level(0.5));
+        assert_eq!(s.tracked(2)[&1][&Attribute::Dimmer], Value::Level(1.0), "cue only doesn't track");
+        s.block(2);
+        assert_eq!(s.cues[2].values.len(), 2);
+        s.cues[0].values.get_mut(&1).unwrap().insert(Attribute::Dimmer, Value::Level(0.3));
+        assert_eq!(s.tracked(2)[&1][&Attribute::Dimmer], Value::Level(1.0), "blocked");
     }
 
     #[test]
@@ -857,7 +929,7 @@ mod tests {
         assert_eq!(l.preset_attributes(1, 104), [Attribute::Red]);
         let mut cue = LightCue::default();
         cue.values.entry(103).or_default().insert(Attribute::Red, p);
-        l.sequences.push(Sequence { id: 1, name: String::new(), cues: vec![cue] });
+        l.sequences.push(Sequence { id: 1, cues: vec![cue], ..Default::default() });
         let mut d = l.clone();
         d.delete_preset(1);
         assert_eq!(d.sequences[0].cues[0].values[&103][&Attribute::Red], Value::Level(0.7), "unlinked, not lost");
@@ -875,7 +947,7 @@ mod tests {
         let mut l = rig();
         let mut c = LightCue::default();
         c.values.entry(101).or_default().insert(Attribute::Red, 0.25.into());
-        l.sequences.push(Sequence { id: 1, name: "Main".into(), cues: vec![c] });
+        l.sequences.push(Sequence { id: 1, name: "Main".into(), cues: vec![c], ..Default::default() });
         let s = serde_json::to_string(&l).unwrap();
         assert_eq!(serde_json::from_str::<Lighting>(&s).unwrap(), l);
     }

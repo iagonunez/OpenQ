@@ -16,6 +16,9 @@ use std::collections::{BTreeMap, HashMap, HashSet};
 use std::sync::Arc;
 use std::time::Instant;
 
+/// Error of a GO past the last cue of a sequence.
+pub const END_OF_SEQUENCE: &str = "end of sequence";
+
 /// One controllable value: an attribute of a fixture.
 #[derive(Clone, Debug, PartialEq)]
 pub struct SlotInfo {
@@ -39,6 +42,21 @@ struct FixtureOut {
     invert_tilt: bool,
 }
 
+/// One slot of a compiled cue: its value and when/how fast it gets there.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct Entry {
+    /// Slot.
+    pub slot: u32,
+    /// Target value.
+    pub value: f32,
+    /// Delay, seconds.
+    pub delay: f64,
+    /// Fade, seconds (intensity going up, and every other attribute).
+    pub fade: f64,
+    /// Fade when intensity goes down.
+    pub down: f64,
+}
+
 /// A lighting cue ready for playback: timing plus its full tracked state.
 #[derive(Clone, Debug)]
 pub struct CompiledCue {
@@ -51,13 +69,13 @@ pub struct CompiledCue {
     /// Delay, seconds.
     pub delay: f64,
     /// Tracked state, sorted by slot.
-    pub state: Vec<(u32, f32)>,
+    pub state: Vec<Entry>,
 }
 
 impl CompiledCue {
     /// Seconds from GO until every fade of this cue is complete.
     pub fn duration(&self) -> f64 {
-        self.delay + self.fade.max(self.down_fade)
+        self.state.iter().map(|e| e.delay + e.fade.max(e.down)).fold(self.delay + self.fade.max(self.down_fade), f64::max)
     }
 }
 
@@ -120,30 +138,73 @@ impl LightShow {
         show.universes.sort();
         show.universes.dedup();
         for s in &l.sequences {
-            let mut running: BTreeMap<u32, f32> = BTreeMap::new();
-            let cues = s
-                .cues
-                .iter()
-                .map(|c| {
-                    for (fixture, values) in &c.values {
-                        for (attr, v) in values {
-                            if let (Some(&slot), Some(v)) = (show.index.get(&(*fixture, *attr)), l.resolve(*fixture, *attr, *v)) {
-                                running.insert(slot, v.clamp(0.0, 1.0));
-                            }
+            let mut cues: Vec<CompiledCue> = Vec::with_capacity(s.cues.len());
+            // Tracked state: slot → (value, the cue that set it).
+            let mut running: BTreeMap<u32, (f32, usize)> = BTreeMap::new();
+            for (ci, c) in s.cues.iter().enumerate() {
+                let before = c.cue_only.then(|| running.clone());
+                for (fixture, values) in &c.values {
+                    for (attr, v) in values {
+                        if let (Some(&slot), Some(v)) = (show.index.get(&(*fixture, *attr)), l.resolve(*fixture, *attr, *v)) {
+                            running.insert(slot, (v.clamp(0.0, 1.0), ci));
                         }
                     }
-                    CompiledCue {
-                        id: c.id,
-                        fade: c.fade.max(0.0),
-                        down_fade: c.down_fade.unwrap_or(c.fade).max(0.0),
-                        delay: c.delay.max(0.0),
-                        state: running.iter().map(|(k, v)| (*k, *v)).collect(),
-                    }
-                })
-                .collect();
+                }
+                let state = running
+                    .iter()
+                    .map(|(slot, (value, _))| {
+                        let (delay, fade, down) = c.timing(show.slots[*slot as usize].attr);
+                        Entry { slot: *slot, value: *value, delay, fade, down }
+                    })
+                    .collect();
+                cues.push(CompiledCue {
+                    id: c.id,
+                    fade: c.fade.max(0.0),
+                    down_fade: c.down_fade.unwrap_or(c.fade).max(0.0),
+                    delay: c.delay.max(0.0),
+                    state,
+                });
+                if let Some(b) = before {
+                    running = b;
+                }
+            }
+            if s.move_in_black {
+                show.move_in_black(&mut cues, s.mib_delay.max(0.0), s.mib_fade.max(0.0));
+            }
             show.sequences.push(CompiledSequence { id: s.id, cues });
         }
         show
+    }
+
+    /// Move in black: for each cue, fixtures whose intensity ends at 0 there and comes up in the
+    /// next cue get the next cue's other values already, after this cue's fades plus `delay`.
+    fn move_in_black(&self, cues: &mut [CompiledCue], delay: f64, fade: f64) {
+        for i in 0..cues.len().saturating_sub(1) {
+            let (head, tail) = cues.split_at_mut(i + 1);
+            let (cur, next) = (&mut head[i], &tail[0]);
+            let at = cur.duration() + delay;
+            let value = |state: &[Entry], slot: u32| state.binary_search_by_key(&slot, |e| e.slot).ok().map(|k| state[k].value);
+            // Fixtures dark at the end of `cur` and lit in `next`.
+            let mut moved = Vec::new();
+            for e in &next.state {
+                let info = &self.slots[e.slot as usize];
+                if info.attr.is_htp() || value(&cur.state, e.slot) == Some(e.value) {
+                    continue;
+                }
+                let Some(dim) = self.slot(info.fixture, Attribute::Dimmer) else { continue };
+                let dark_now = value(&cur.state, dim).unwrap_or(0.0) <= 0.0;
+                let lit_next = value(&next.state, dim).unwrap_or(0.0) > 0.0;
+                if dark_now && lit_next {
+                    moved.push(Entry { delay: at, fade, down: fade, ..*e });
+                }
+            }
+            for m in moved {
+                match cur.state.binary_search_by_key(&m.slot, |e| e.slot) {
+                    Ok(k) => cur.state[k] = m,
+                    Err(k) => cur.state.insert(k, m),
+                }
+            }
+        }
     }
 
     /// Slot of a fixture attribute.
@@ -312,7 +373,7 @@ impl Playback {
             Some(id) => sequence.cues.iter().position(|c| c.id == id).ok_or("unknown lighting cue")?,
             None => self.seqs[si].cue.map_or(0, |c| c + 1),
         };
-        let compiled = sequence.cues.get(ci).ok_or("end of sequence")?;
+        let compiled = sequence.cues.get(ci).ok_or(END_OF_SEQUENCE)?;
         let t = self.time(at);
         let show = self.show.clone();
         let st = &mut self.seqs[si];
@@ -322,10 +383,10 @@ impl Playback {
         let (mut i, mut j) = (0, 0);
         while i < old.len() || j < new.len() {
             let os = old.get(i).map_or(u32::MAX, |t| t.slot);
-            let ns = new.get(j).map_or(u32::MAX, |n| n.0);
+            let ns = new.get(j).map_or(u32::MAX, |n| n.slot);
             let slot = os.min(ns);
             let o = (os == slot).then(|| old[i]);
-            let n = (ns == slot).then(|| new[j].1);
+            let n = (ns == slot).then(|| new[j]);
             i += o.is_some() as usize;
             j += n.is_some() as usize;
             let info = &show.slots[slot as usize];
@@ -336,9 +397,18 @@ impl Playback {
                 None => self.values[slot as usize],
             };
             let (to, release) = match n {
-                Some(v) => (v, false),
+                Some(e) => (e.value, false),
                 None => (if htp { 0.0 } else { info.home }, true),
             };
+            // Same target as the running track: let its fade carry on.
+            if let Some(o) = o
+                && !o.release
+                && !release
+                && o.to == to
+            {
+                st.tracks.push(o);
+                continue;
+            }
             let changed = match o {
                 Some(o) => o.release || o.to != to,
                 None => true,
@@ -349,8 +419,9 @@ impl Playback {
             } else {
                 o.map_or(0, |o| o.stamp)
             };
-            let dur = if htp && to < from { compiled.down_fade } else { compiled.fade };
-            st.tracks.push(Track { slot, from, to, start: t + compiled.delay, dur, stamp, release });
+            let (delay, fade, down) = n.map_or((compiled.delay, compiled.fade, compiled.down_fade), |e| (e.delay, e.fade, e.down));
+            let dur = if htp && to < from { down } else { fade };
+            st.tracks.push(Track { slot, from, to, start: t + delay, dur, stamp, release });
         }
         st.cue = Some(ci);
         Ok(compiled.id)
@@ -502,8 +573,9 @@ mod tests {
                 cue(&[(1, Attribute::Dimmer, 1.0), (2, Attribute::Dimmer, 1.0), (2, Attribute::Red, 1.0)], 2.0),
                 cue(&[(1, Attribute::Dimmer, 0.0), (3, Attribute::Pan, 1.0), (3, Attribute::Dimmer, 0.5)], 0.0),
             ],
+            ..Default::default()
         });
-        l.sequences.push(Sequence { id: 2, name: "Sub".into(), cues: vec![cue(&[(1, Attribute::Dimmer, 0.4), (3, Attribute::Pan, 0.25)], 0.0)] });
+        l.sequences.push(Sequence { id: 2, name: "Sub".into(), cues: vec![cue(&[(1, Attribute::Dimmer, 0.4), (3, Attribute::Pan, 0.25)], 0.0)], ..Default::default() });
         l
     }
 
@@ -579,6 +651,32 @@ mod tests {
         let f = p.tick(at(t0, 3.0)).get(1).unwrap().data;
         assert_eq!((f[0], f[1]), (255, 255));
         assert_eq!(p.status()[0].cue, Some(l.sequences[0].cues[0].id));
+    }
+
+    #[test]
+    fn feature_timing_and_move_in_black() {
+        use crate::light::model::{Feature, FeatureTime};
+        let t0 = Instant::now();
+        let mut l = design();
+        // Cue 1 snaps; the spot's pan in cue 2 has its own 4 s fade.
+        l.sequences[0].cues[0].fade = 0.0;
+        l.sequences[0].cues[1].feature_times.insert(Feature::Position, FeatureTime { fade: 4.0, delay: 0.0 });
+        let mut p = Playback::new(Arc::new(LightShow::compile(&l)), t0);
+        p.go(1, None, t0).unwrap();
+        p.go(1, None, at(t0, 1.0)).unwrap();
+        assert_eq!(p.tick(at(t0, 3.0)).get(1).unwrap().data[9], 191, "pan halfway (home 0.5 → 1) through its own fade");
+        assert_eq!(p.show().sequences[0].cues[1].duration(), 4.0);
+        // Move in black: the spot is dark in cue 1 and lit in cue 2, so cue 1 pre-sets its pan.
+        l.sequences[0].move_in_black = true;
+        l.sequences[0].mib_delay = 1.0;
+        let show = LightShow::compile(&l);
+        let pan = show.slot(3, Attribute::Pan).unwrap();
+        let e = show.sequences[0].cues[0].state.iter().find(|e| e.slot == pan).expect("moved in cue 1");
+        assert_eq!((e.value, e.delay), (1.0, 1.0));
+        let mut p = Playback::new(Arc::new(show), t0);
+        p.go(1, None, t0).unwrap();
+        assert_eq!(p.tick(at(t0, 3.5)).get(1).unwrap().data[9], 255, "pan moved while dark (1 s delay + 2 s move)");
+        assert_eq!(p.frame().get(1).unwrap().data[12], 0, "spot still dark");
     }
 
     #[test]

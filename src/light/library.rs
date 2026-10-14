@@ -136,7 +136,7 @@ pub fn bench_rig(fixtures: u32, sequences: u32, cues: u32) -> super::Lighting {
                 cue
             })
             .collect();
-        l.sequences.push(Sequence { id: s, name: String::new(), cues });
+        l.sequences.push(Sequence { id: s, cues, ..Default::default() });
     }
     l
 }

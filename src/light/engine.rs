@@ -365,9 +365,13 @@ fn run_command(p: &mut Playback, cmd: LightCommand, shared: &Shared) {
 fn apply(p: &mut Playback, cmd: LightCommand) -> Result<(), String> {
     match cmd {
         LightCommand::Show(_, s) => p.set_show(s),
-        LightCommand::Go { seq, cue, at } => {
-            p.go(seq, cue, at)?;
-        }
+        LightCommand::Go { seq, cue, at } => match p.go(seq, cue, at) {
+            // GO past the last cue does nothing; not worth a warning.
+            Err(e) if cue.is_none() && e == crate::light::playback::END_OF_SEQUENCE => {}
+            r => {
+                r?;
+            }
+        },
         LightCommand::GoCue { cue, at } => {
             let (si, _) = p.show().find_cue(cue).ok_or("lighting cue not found")?;
             let seq = p.show().sequences[si].id;
