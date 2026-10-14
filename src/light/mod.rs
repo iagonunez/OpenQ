@@ -7,7 +7,6 @@
 //! * [`effects`] — effect waveforms run across fixtures (pool, runs in cues, evaluation).
 //! * [`playback`] — the compiled show and the playback state machine (fades, HTP/LTP, masters).
 //! * [`engine`] — the light thread ([`engine::LightEngine`]): playback at 44 Hz into the outputs.
-//! * [`visual`] — fixtures as the 3D visualiser shows them (from a DMX frame) and aiming maths.
 //! * [`dmx`] — DMX frames and output threads; protocols in [`artnet`], [`sacn`], [`enttec`].
 //!
 //! OpenQ Light cues in the main cue list target a designed lighting cue and GO it; the design
@@ -24,6 +23,5 @@ pub mod model;
 pub mod ofl;
 pub mod playback;
 pub mod sacn;
-pub mod visual;
 
 pub use model::{Attribute, Feature, Fixture, FixtureType, Lighting, Look, LightCue, Sequence};

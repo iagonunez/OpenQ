@@ -42,7 +42,7 @@ Still open:
   - A documented OpenQ serial protocol for the user's custom hardware
 - **Monitoring and preview:**
   - DMX monitor grid.
-  - 3D visualiser drawn with egui: orbit camera, beam cones, floor spots.
+  - 3D visualiser: a separate program (future) that connects to OpenQ; not part of the app.
 
 ## Animation (done: live keyframes for video/text layers; follow-ups)
 - **Bake to file**: render heavy effects (animated blur, typewriter/reflowing text, morphing SVG)

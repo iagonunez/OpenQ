@@ -1,7 +1,8 @@
 # Lighting — design plan
 
-A lighting design and playback system inside OpenQ: patch, programmer, palettes, effects, a 3D
-visualiser and Python scripting for design, plus Light cues in the main cue list for playback.
+A lighting design and playback system inside OpenQ: patch, programmer, palettes, effects and
+Python scripting for design, plus Light cues in the main cue list for playback. The 3D visualiser
+is a separate program (future) that connects to OpenQ (see §H).
 It should follow the workflow of large lighting desks (command line, programmer, pools, executors)
 and be ready for a custom hardware console later.
 
@@ -13,8 +14,8 @@ Task ids (`A1`, `B2`…) are referenced from the phase plan at the end. Sizes: *
 ## 0. Principles
 
 1. **Show mode is sacred.** In Show mode, design edits are locked. Only playback works (GO, executors,
-   grand master, blackout). The lighting engine never waits on the UI, the show lock, Python or the
-   visualiser.
+   grand master, blackout). The lighting engine never waits on the UI, the show lock, Python or a
+   connected visualiser.
 2. **Design and playback are separate.** Design data (patch, palettes, cues, effects, scripts) is
    *compiled* into a flat, read-only playback representation (`LightShow`). The DMX thread only
    reads that representation, so it never allocates, locks or parses.
@@ -44,9 +45,10 @@ Task ids (`A1`, `B2`…) are referenced from the phase plan at the end. Sizes: *
                                          │ resolve HTP/LTP + priority + grand master
                                          ▼
                                    DMX frame [universes × 512] ─► outputs (Art-Net, sACN, USB…)
-                                         │ (triple buffer, latest frame)
+                                         │ (latest frame)
                                          ▼
-                                   Visualiser (wgpu, reads latest frame; drops frames freely)
+                                   External visualiser (separate program: patch + positions from
+                                   OpenQ, DMX over Art-Net/sACN or the link; drops frames freely)
 
  Python worker (child process "openq --py-worker")
    design time: scripts → effect tables / generated cues / palettes (cached, compiled into LightShow)
@@ -222,43 +224,40 @@ Tasks
 - **G5 (L)** Live script effects through shared memory + bake.
 - **G6 (S)** Sandbox / trust prompt when opening a show with scripts.
 
-## H. 3D visualiser
+## H. Visualiser link (the visualiser itself is a separate program)
 
-Ideas
-- wgpu renderer through the existing egui paint callback (`App.gpu`), in a dockable panel and a
-  separate window (second monitor).
-- Scene: stage set from **glTF/GLB** (or simple primitives: floor, truss, flats, a person for
-  scale), fixtures with real bodies (GDTF models) or primitives, moving yokes/heads from pan/tilt.
-- Beams: volumetric cones with additive blending + haze amount, colour, zoom, iris, gobo
-  (projected texture), prism (multiple beams), strobe; floor/set projections (spot lighting with
-  shadow maps on the set as an option, off by default for speed).
-- Interaction: orbit/pan/zoom camera, saved camera views, click to select fixtures (syncs the
-  programmer), drag to place fixtures, "focus" a mover by clicking a point on the stage (solves
-  pan/tilt from the 3D position).
-- Performance: instanced rendering of beams/fixtures, LOD by distance, quality slider, frame cap,
-  reads the DMX frame (or programmer preview) only. Hundreds of beams at 60 fps on an iGPU.
-- Plot view: 2D top view for patching/positions and printed plot export (SVG/PDF).
+Decision (2026-10-14): no 3D renderer inside OpenQ. A first in-app wgpu visualiser was built in
+Phase 2 and removed again; the visualiser will be its own program (future, separate repo) that
+connects to OpenQ, so its GPU load, crashes and window management stay out of the show machine's
+process and it can run on another computer.
+
+What OpenQ provides for it
+- Fixture positions/rotations in the patch (`Fixture.position`/`rotation`, metres/degrees) and
+  physical data in the types (`Physical`: pan/tilt range, beam angles, moving head).
+- DMX out over Art-Net/sACN (already there): any visualiser can listen to it.
+- A link (later): patch, positions, fixture types and the selection over the network, so the
+  visualiser follows edits live and can send "select fixture" / "focus here" back. Candidates: the
+  remote protocol (a View-role replica that only reads the lighting design) or MVR export (+ GDTF)
+  for standard visualisers.
 
 Tasks
-- **H1 (M)** Renderer skeleton: camera, grid floor, primitives, fixtures as boxes, picking.
-- **H2 (M)** Beams: cone shader, colour, intensity, zoom, haze, additive.
-- **H3 (M)** Moving heads (pan/tilt kinematics) + click-to-focus.
-- **H4 (M)** glTF stage import; fixture placement tools (array/line/circle, snap to truss).
-- **H5 (M)** Gobos, prisms, strobe, floor projections.
-- **H6 (S)** 2D plot view + export.
-- **H7 (S)** Detached visualiser window on another display.
+- **H4 (M)** Fixture placement in OpenQ: position/rotation columns in the patch sheet, array tools
+  (line, arc, grid), a 2D top view for placing fixtures.
+- **H6 (S)** 2D plot view + export (SVG/PDF).
+- **H8 (M)** Visualiser link: lighting design + selection to a connected visualiser; MVR export.
+- (H1–H3, H5, H7 now belong to the separate visualiser program.)
 
 ## I. Lighting UI (console-style workspace)
 
 Ideas
 - A **Lighting workspace** (tab/mode beside the cue list) laid out like a desk: fixture sheet,
-  pools (groups/presets/effects/sequences), command line, encoder bar, executor bar, visualiser.
+  pools (groups/presets/effects/sequences), command line, encoder bar, executor bar.
 - **User layouts/views**: dockable panels (egui_dock or our own), saved per show and per screen,
   quick view buttons (like desk "views"). Touch-friendly sizes for a touch screen.
 - Dark desk theme consistent with `ui/theme.rs`; feature colours (intensity yellow, position blue,
   colour…) consistent everywhere.
 - Keyboard-first: number pad, `Thru` `+` `-` `@` `Full`, Enter; everything on the command line.
-- Show mode: the workspace becomes **playback only** (executor bar, grand master, visualiser,
+- Show mode: the workspace becomes **playback only** (executor bar, grand master,
   monitor). Programmer/design panels are hidden or read-only.
 
 Tasks
@@ -273,7 +272,7 @@ Tasks
 Ideas and budgets
 - Light thread: < 0.5 ms per frame for 64 universes / 2000 fixtures with effects, no allocation in
   steady state (checked by a test with a counting allocator).
-- UI: the lighting workspace keeps < 4 ms per frame with 1000 fixtures; the visualiser has its own budget.
+- UI: the lighting workspace keeps < 4 ms per frame with 1000 fixtures.
 - Edits compile `LightShow` on a worker and swap it in; the light thread never waits for it.
 - No lock shared with the audio callback or the 1 kHz engine tick. Light cue GO crosses through
   an `rtrb` queue (same as audio commands).
@@ -324,11 +323,11 @@ A1 A2 A4 · B1 · C1 C2 C3 C4 C5 C7 · D1 D3 D4(groups) · E1 E2 E3 E4 · I1 I2 
 cue list in sync with sound/video, out over Art-Net/sACN/USB, DMX monitor.
 
 **Phase 2 — "designer's desk"**
-A3 · B2 · D2 D4(presets) D5 D6 · E5 E6 · F1 F2 F3 · H1 H2 H3 · I3 I5
-→ Command line, presets, effects, and a 3D visualiser with moving heads.
+A3 · B2 · D2 D4(presets) D5 D6 · E5 E6 · F1 F2 F3 · I3 I5
+→ Command line, presets, effects. (H1–H3, a 3D visualiser, were built and later removed: see §H.)
 
 **Phase 3 — "power tools"**
-G1–G6 (Python) · H4–H7 · B3 B4 B5 · C6 · F4 · J2 · L2 L3
+G1–G6 (Python) · H4 H6 H8 · B3 B4 B5 · C6 · F4 · J2 · L2 L3
 
 **Phase 4 — "the console"**
 K1–K4.
@@ -339,7 +338,7 @@ K1–K4.
    edited only in Edit mode. OpenQ **Light cues** in the main cue list *target* a designed
    lighting cue (sequence + cue) and GO it; they hold no values of their own.
 2. Python: system Python 3 in a child process first (decide on bundling with oqman later).
-3. Visualiser placement and docking: decided in Phase 2.
+3. The 3D visualiser is a separate program connecting to OpenQ, not part of the app (2026-10-14).
 
 ## Phase 1 order (one commit per step) — done
 1. A1 A2 A4 B1 L1 — `light` module: fixture types + built-in generics, patch, groups,
@@ -382,6 +381,7 @@ per-attribute timing, move in black, Art-Net/sACN input, Python, MIDI/OSC surfac
 7. E6 — Stop/Fade/Panic cues and the lighting (Stop releases, Panic option).
 8. H1 — 3D visualiser: wgpu renderer, orbit camera, stage floor, fixtures, picking.
 9. H2 H3 — beams (cones, colour, zoom, haze), moving heads from pan/tilt, click to focus.
+   (Steps 8–9 were removed again on 2026-10-14: the visualiser becomes a separate program.)
 10. B2 — Open Fixture Library import.
 
 ## Phase 2 status
@@ -395,14 +395,12 @@ Done on branch `Lighting`:
   with live preview; effects from the programmer.
 - Command line (`light::command`) with abbreviations and history, desk keypad window.
 - Stop cues aimed at Light cues release their sequences; optional release on Stop all / Panic.
-- 3D visualiser (`light::visual` + `ui/visualiser.rs`): offscreen HDR wgpu render, floor pools of
-  light, fixtures and moving heads, additive beams with haze, orbit camera, picking, click to aim.
+- (3D visualiser built, then removed: it will be a separate program, §H.)
 - Open Fixture Library import (`light::ofl`).
 - Measured: frame with 2000 fixtures ≈ 95 µs, with two effects on every fixture ≈ 110 µs.
 
-Left for Phase 3+: Python, GDTF/QLC+ import, glTF stage models and placement tools (fixture
-rotation is only in the file/visual maths so far), gobos/prisms in the visualiser, Art-Net/sACN
-input, audio-reactive effects, MIDI/OSC surfaces, remote mirroring of executor levels, Fade cues on
+Left for Phase 3+: Python, GDTF/QLC+ import, placement tools (fixture position/rotation are only
+in the file so far), visualiser link, Art-Net/sACN input, audio-reactive effects, MIDI/OSC surfaces, remote mirroring of executor levels, Fade cues on
 lighting, manual chapter.
 
 ## Progress overview (end of session, 2026-10-14)
@@ -415,32 +413,31 @@ lighting, manual chapter.
 | E Light cues and playback | E1–E6 | done (Fade cues on lighting still open) |
 | F Effects | F1 F2 F3 | done · F4 audio-reactive open |
 | G Python | G1–G6 | open (Phase 3) |
-| H 3D visualiser | H1 H2 H3 | done · H4 glTF/placement, H5 gobos/prisms, H6 plot, H7 detached window open |
+| H Visualiser link | — | in-app 3D view removed (separate program) · H4 placement, H6 plot, H8 link open |
 | I Lighting UI | I1–I5 | done (pools are rows on the Programmer page, no docking) |
 | J Performance | J1 J3 J2 (light panic stress test) | done |
 | K Hardware console | K1–K4 | open (Phase 4) |
 | L Persistence, remote, docs | L1 | done · L2 remote mirroring, L3 USITT ASCII, L4 manual chapter open |
 
-## Next session
-Phase 3 proposal, in order (one commit per step, as before):
-1. H4 — fixture placement: rotation in the patch sheet and the 3D page, array tools (line, arc,
-   grid), snapping; simple stage objects (deck, truss, flats) before glTF import.
-2. G1 G2 — Python worker process (`openq --py-worker`, system Python 3, JSON over stdin/stdout,
-   timeouts, restart) and the `openq` API module with a `.pyi` stub.
-3. G3 G4 G6 — design-time scripts (generate cues, presets, effects, positions), script editor
+## Phase 3 order (one commit per step)
+1. G1 G2 — Python worker process (`openq --py-worker`, system Python 3, JSON lines over
+   stdin/stdout, timeouts, restart) and the `openq` API module with a `.pyi` stub.
+2. G3 G4 G6 — design-time scripts (generate cues, presets, effects, positions), script editor
    window with console, trust prompt for shows that contain scripts.
-4. G5 — live script effects through shared memory, with bake to a table.
-5. B3 — GDTF import (also gives real 3D models for H5); H5 gobos/prisms/strobe in the visualiser.
+3. G5 — live script effects through shared memory, with bake to a table.
+4. H4 — fixture placement: position/rotation in the patch sheet, array tools, 2D top view.
+5. B3 — GDTF import.
 6. C6 — Art-Net/sACN input: merge or record from another desk.
 7. L2 — remote: mirror executor levels/masters to replicas, lighting design edits in the Edit role.
-8. L4 — manual chapter (en/es/gl) with screenshots (`OPENQ_SCREENSHOT_LIGHTING=…`).
+8. H8 — visualiser link (design + selection to a connected visualiser; MVR export).
+9. L4 — manual chapter (en/es/gl) with screenshots (`OPENQ_SCREENSHOT_LIGHTING=…`).
 
 Known issues to look at:
-- The fixture rotation can't be edited in the UI yet (only in the file).
+- Fixture position/rotation can't be edited in the UI yet (only in the file).
 - Sequences page and executor levels are local to each device; replicas show their own masters.
 - `Show::sync_lighting` compares the whole design on every edit under the show lock (fine at
   normal sizes; a change counter would be cheaper for very large designs).
 - Duplicate attributes in one fixture mode (two Control channels) share one value; OFL import
   leaves the repeats unused.
 - Untested on real hardware: Art-Net nodes, sACN receivers, Enttec USB Pro; OFL import only on a
-  hand-written sample; the visualiser only on this Linux machine.
+  hand-written sample.

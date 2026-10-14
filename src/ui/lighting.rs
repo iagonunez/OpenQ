@@ -38,8 +38,6 @@ pub(crate) enum LightTab {
     Effects,
     /// Cue stacks.
     Sequences,
-    /// 3D visualiser.
-    Stage,
     /// DMX outputs.
     Outputs,
     /// DMX monitor.
@@ -52,7 +50,6 @@ impl LightTab {
         match name {
             "programmer" | "colour" | "keypad" => LightTab::Programmer,
             "effects" => LightTab::Effects,
-            "3d" => LightTab::Stage,
             "sequences" => LightTab::Sequences,
             "outputs" => LightTab::Outputs,
             "monitor" => LightTab::Monitor,
@@ -234,19 +231,8 @@ impl App {
                 ui.label(RichText::new(icons::LOCK).font(theme::icon_font(16.0)).color(theme::TEXT_DIM));
                 ui.label(RichText::new(t("The lighting design is locked in Show mode.")).color(theme::TEXT_DIM));
             });
-            ui.horizontal(|ui| {
-                ui.spacing_mut().item_spacing.x = 4.0;
-                let mut tab = if self.light.tab == LightTab::Stage { LightTab::Stage } else { LightTab::Monitor };
-                theme::tab(ui, &mut tab, LightTab::Stage, icons::VIEW_IN_AR, t("3D"));
-                theme::tab(ui, &mut tab, LightTab::Monitor, icons::GRID_VIEW, t("DMX monitor"));
-                self.light.tab = tab;
-            });
             ui.separator();
-            if self.light.tab == LightTab::Stage {
-                self.visualiser_page(ui, show);
-            } else {
-                self.monitor_page(ui, show);
-            }
+            self.monitor_page(ui, show);
             return;
         }
         ui.horizontal(|ui| {
@@ -255,7 +241,6 @@ impl App {
             theme::tab(ui, &mut self.light.tab, LightTab::Programmer, icons::TUNE, t("Programmer"));
             theme::tab(ui, &mut self.light.tab, LightTab::Effects, icons::AUTO_FIX_HIGH, t("Effects"));
             theme::tab(ui, &mut self.light.tab, LightTab::Sequences, icons::PLAY_CIRCLE, t("Sequences"));
-            theme::tab(ui, &mut self.light.tab, LightTab::Stage, icons::VIEW_IN_AR, t("3D"));
             theme::tab(ui, &mut self.light.tab, LightTab::Outputs, icons::ROUTER, t("Outputs"));
             theme::tab(ui, &mut self.light.tab, LightTab::Monitor, icons::GRID_VIEW, t("DMX monitor"));
         });
@@ -266,7 +251,6 @@ impl App {
             LightTab::Programmer => self.programmer_page(ui, &mut show.ws.lighting),
             LightTab::Effects => self.effects_page(ui, &mut show.ws.lighting),
             LightTab::Sequences => self.sequences_page(ui, show),
-            LightTab::Stage => self.visualiser_page(ui, show),
             LightTab::Outputs => self.outputs_page(ui, show),
             LightTab::Monitor => self.monitor_page(ui, show),
         }

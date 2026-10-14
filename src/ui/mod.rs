@@ -28,7 +28,6 @@ mod room;
 #[cfg(feature = "video")]
 mod stage;
 mod theme;
-mod visualiser;
 mod waveform;
 mod widgets;
 
@@ -168,8 +167,8 @@ pub struct App {
     devices: Option<Vec<DeviceEntry>>,
     #[cfg(feature = "video")]
     textures: stage::LayerTextures,
-    /// The wgpu renderer, for stage layers with a blend mode and the lighting visualiser
-    /// (None when headless).
+    /// The wgpu renderer, for stage layers with a blend mode (None when headless).
+    #[cfg(feature = "video")]
     gpu: Option<eframe::egui_wgpu::RenderState>,
     meters: Vec<f32>,
     status: Option<(String, Instant)>,
@@ -206,8 +205,6 @@ pub struct App {
     view: lighting::View,
     /// Lighting workspace state.
     light: lighting::LightUi,
-    /// 3D visualiser state.
-    vis: visualiser::VisUi,
 }
 
 impl App {
@@ -249,6 +246,7 @@ impl App {
             devices: None,
             #[cfg(feature = "video")]
             textures: Default::default(),
+            #[cfg(feature = "video")]
             gpu: None,
             meters: Vec::new(),
             status: None,
@@ -277,7 +275,6 @@ impl App {
             audio_reconnecting: false,
             view: Default::default(),
             light: Default::default(),
-            vis: Default::default(),
         }
     }
 
@@ -2440,6 +2437,7 @@ impl eframe::App for App {
     }
 
     fn ui(&mut self, ui: &mut egui::Ui, frame: &mut eframe::Frame) {
+        #[cfg(feature = "video")]
         if self.gpu.is_none() {
             self.gpu = frame.wgpu_render_state().cloned();
         }

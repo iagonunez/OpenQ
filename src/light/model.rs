@@ -291,7 +291,7 @@ impl FixtureMode {
     }
 }
 
-/// Physical properties used for units in the UI and by the visualiser.
+/// Physical properties used for units in the UI and exported to visualisers.
 #[derive(Serialize, Deserialize, Clone, PartialEq, Debug)]
 #[serde(default)]
 pub struct Physical {
@@ -303,7 +303,7 @@ pub struct Physical {
     pub beam_min: f32,
     /// See `beam_min`.
     pub beam_max: f32,
-    /// Moving head (has a yoke), so the visualiser draws one.
+    /// Moving head (has a yoke).
     pub moving: bool,
 }
 
