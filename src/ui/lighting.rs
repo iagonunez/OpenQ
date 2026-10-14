@@ -10,6 +10,7 @@ use crate::i18n::t;
 use crate::light::model::{
     Attribute, Feature, FixtureId, FixtureType, Group, LightCue, LightCueId, Lighting, Look, PatchIssue, Preset, PresetId, Sequence, SequenceId, Value,
 };
+use crate::light::effects::{Effect, EffectId, EffectRun, Shape};
 use crate::light::{Fixture, library};
 use crate::show::Show;
 use egui::{Color32, DragValue, RichText, Ui};
@@ -33,6 +34,8 @@ pub(crate) enum LightTab {
     Patch,
     /// Select fixtures, set values, record cues.
     Programmer,
+    /// Effects pool and editor.
+    Effects,
     /// Cue stacks.
     Sequences,
     /// DMX outputs.
@@ -46,6 +49,7 @@ impl LightTab {
     pub(crate) fn from_name(name: &str) -> Self {
         match name {
             "programmer" | "colour" => LightTab::Programmer,
+            "effects" => LightTab::Effects,
             "sequences" => LightTab::Sequences,
             "outputs" => LightTab::Outputs,
             "monitor" => LightTab::Monitor,
@@ -83,6 +87,16 @@ pub(crate) struct LightUi {
     pub(crate) selection: Vec<FixtureId>,
     /// Programmer values (override playback while set; recorded into cues).
     pub(crate) programmer: Look,
+    /// Effects running from the programmer (recorded into cues).
+    pub(crate) programmer_effects: Vec<EffectRun>,
+    /// Effects as last sent to the light thread.
+    sent_effects: Option<Vec<(Effect, Vec<FixtureId>)>>,
+    /// Show edit generation when they were sent.
+    sent_gen: u64,
+    /// Effect shown in the editor.
+    pub(crate) effect: Option<EffectId>,
+    /// Tap tempo: recent taps.
+    taps: Vec<std::time::Instant>,
     /// The programmer as last sent to the light thread.
     sent: Option<(Look, bool, Option<Vec<FixtureId>>)>,
     /// Blind: the programmer isn't output (still recordable).
@@ -179,6 +193,7 @@ impl App {
             ui.spacing_mut().item_spacing.x = 4.0;
             theme::tab(ui, &mut self.light.tab, LightTab::Patch, icons::CABLE, t("Patch"));
             theme::tab(ui, &mut self.light.tab, LightTab::Programmer, icons::TUNE, t("Programmer"));
+            theme::tab(ui, &mut self.light.tab, LightTab::Effects, icons::AUTO_FIX_HIGH, t("Effects"));
             theme::tab(ui, &mut self.light.tab, LightTab::Sequences, icons::PLAY_CIRCLE, t("Sequences"));
             theme::tab(ui, &mut self.light.tab, LightTab::Outputs, icons::ROUTER, t("Outputs"));
             theme::tab(ui, &mut self.light.tab, LightTab::Monitor, icons::GRID_VIEW, t("DMX monitor"));
@@ -188,6 +203,7 @@ impl App {
         match self.light.tab {
             LightTab::Patch => self.patch_page(ui, &mut show.ws.lighting),
             LightTab::Programmer => self.programmer_page(ui, &mut show.ws.lighting),
+            LightTab::Effects => self.effects_page(ui, &mut show.ws.lighting),
             LightTab::Sequences => self.sequences_page(ui, show),
             LightTab::Outputs => self.outputs_page(ui, show),
             LightTab::Monitor => self.monitor_page(ui, show),
@@ -202,8 +218,21 @@ impl App {
     pub(super) fn lighting_frame(&mut self, show: &mut Show) {
         let designing = self.can_design();
         let l = &mut self.light;
-        if !designing && !l.programmer.is_empty() {
+        if !designing && (!l.programmer.is_empty() || !l.programmer_effects.is_empty()) {
             l.programmer.clear();
+            l.programmer_effects.clear();
+        }
+        let design = &show.ws.lighting;
+        let effects: Vec<(Effect, Vec<FixtureId>)> = if l.blind {
+            Vec::new()
+        } else {
+            l.programmer_effects.iter().filter_map(|r| Some((design.effect(r.effect)?.clone(), r.fixtures.clone()))).collect()
+        };
+        // Sent again after a recompile too (the light thread drops them when slots move).
+        if l.sent_effects.as_ref() != Some(&effects) || show.edit_gen != l.sent_gen {
+            show.media.light.set_programmer_effects(effects.clone());
+            l.sent_effects = Some(effects);
+            l.sent_gen = show.edit_gen;
         }
         if !designing {
             l.highlight = false;
@@ -412,6 +441,111 @@ fn highlight_value(mode: &crate::light::model::FixtureMode, a: Attribute) -> Opt
     }
 }
 
+/// Tap tempo: add a tap and return the tempo of the recent taps (a pause over 2 s starts again).
+fn tap(taps: &mut Vec<std::time::Instant>, now: std::time::Instant) -> Option<f32> {
+    if taps.last().is_some_and(|l| now.duration_since(*l).as_secs_f32() > 2.0) {
+        taps.clear();
+    }
+    taps.push(now);
+    if taps.len() > 5 {
+        taps.remove(0);
+    }
+    let n = taps.len();
+    (n >= 2).then(|| 60.0 * (n - 1) as f32 / taps[n - 1].duration_since(taps[0]).as_secs_f32())
+}
+
+/// Effect parameters.
+fn effect_editor(ui: &mut Ui, e: &mut Effect) {
+    egui::Grid::new("effect_editor").num_columns(2).spacing([12.0, 6.0]).show(ui, |ui| {
+        ui.label(t("Name"));
+        ui.add(egui::TextEdit::singleline(&mut e.name).desired_width(220.0));
+        ui.end_row();
+        ui.label(t("Shape"));
+        egui::ComboBox::from_id_salt("fx_shape").selected_text(e.shape.label()).show_ui(ui, |ui| {
+            for s in Shape::ALL {
+                ui.selectable_value(&mut e.shape, s, s.label());
+            }
+        });
+        ui.end_row();
+        ui.label(t("Attribute"));
+        if e.shape == Shape::Circle {
+            e.attribute = Attribute::Pan;
+            ui.label(RichText::new(t("Pan and tilt")).color(theme::TEXT_DIM));
+        } else {
+            egui::ComboBox::from_id_salt("fx_attr").selected_text(e.attribute.label()).show_ui(ui, |ui| {
+                for a in Attribute::ALL {
+                    ui.selectable_value(&mut e.attribute, a, a.label());
+                }
+            });
+        }
+        ui.end_row();
+        ui.label(t("Speed"));
+        ui.horizontal(|ui| {
+            let unit = if e.sync { t(" per beat") } else { " Hz" };
+            ui.add(DragValue::new(&mut e.speed).range(0.01..=50.0).speed(0.01).max_decimals(2).suffix(unit));
+            ui.checkbox(&mut e.sync, t("Follow tempo"));
+        });
+        ui.end_row();
+        ui.label(t("Size"));
+        ui.add(percent_drag(&mut e.size));
+        ui.end_row();
+        ui.label(t("Mode"));
+        ui.horizontal(|ui| {
+            ui.selectable_value(&mut e.relative, true, t("Around the cue's value"));
+            ui.selectable_value(&mut e.relative, false, t("Absolute"));
+        });
+        ui.end_row();
+        if !e.relative {
+            ui.label(t("Base"));
+            ui.add(percent_drag(&mut e.base));
+            ui.end_row();
+        }
+        if e.shape == Shape::Square {
+            ui.label(t("On time"));
+            ui.add(percent_drag(&mut e.duty));
+            ui.end_row();
+        }
+        ui.label(t("Phase spread"));
+        ui.add(DragValue::new(&mut e.spread).range(0.0..=1440.0).speed(1.0).suffix("°"));
+        ui.end_row();
+        ui.label(t("Groups"));
+        ui.add(DragValue::new(&mut e.groups).range(1..=64)).on_hover_text(t("Fixtures per group: a group moves together"));
+        ui.end_row();
+        ui.label(t("Wings"));
+        ui.add(DragValue::new(&mut e.wings).range(1..=16)).on_hover_text(t("Mirror the pattern across this many parts of the selection"));
+        ui.end_row();
+    });
+}
+
+/// The waveform over two cycles with a moving dot per fixture.
+fn effect_preview(ui: &mut Ui, e: &Effect, n: usize) {
+    let w = ui.available_width().min(640.0);
+    let (rect, _) = ui.allocate_exact_size(egui::vec2(w, 140.0), egui::Sense::hover());
+    let p = ui.painter();
+    p.rect_filled(rect, 6.0, theme::BG_INPUT);
+    let plot = rect.shrink(10.0);
+    let y = |v: f32| plot.bottom() - v.clamp(0.0, 1.0) * plot.height();
+    let pts: Vec<egui::Pos2> = (0..=200)
+        .map(|i| {
+            let x = i as f64 / 100.0;
+            egui::pos2(plot.left() + plot.width() * (x / 2.0) as f32, y(e.shape.eval(x, e.duty, 1)))
+        })
+        .collect();
+    p.add(egui::Shape::line(pts, egui::Stroke::new(1.5, theme::ACCENT)));
+    let t = ui.input(|i| i.time);
+    let rate = e.rate(120.0) as f64;
+    for i in 0..n {
+        let x = (t * rate + e.phase(i, n) as f64).rem_euclid(1.0);
+        let v = e.shape.eval(t * rate + e.phase(i, n) as f64, e.duty, i as u32 + 1);
+        let pos = egui::pos2(plot.left() + plot.width() * (x / 2.0) as f32, y(v));
+        p.circle_filled(pos, 4.0, theme::AMBER);
+        // A bar per fixture along the bottom shows its level now.
+        let bw = plot.width() / n as f32;
+        let bar = egui::Rect::from_min_size(egui::pos2(plot.left() + i as f32 * bw + 1.0, rect.bottom() - 6.0), egui::vec2(bw - 2.0, 4.0));
+        p.rect_filled(bar, 1.0, theme::AMBER.gamma_multiply(v.clamp(0.05, 1.0)));
+    }
+}
+
 /// A DragValue editing a 0..=1 level as a percentage.
 fn percent_drag(v: &mut f32) -> DragValue<'_> {
     DragValue::from_get_set(move |n| {
@@ -510,6 +644,8 @@ impl App {
         });
         ui.add_space(2.0);
         self.preset_pool(ui, l);
+        ui.add_space(2.0);
+        self.effect_pool_row(ui, l);
         ui.add_space(4.0);
         ui.horizontal_wrapped(|ui| {
             let n = self.light.selection.len();
@@ -521,10 +657,11 @@ impl App {
                 self.light.selection.clear();
             }
             ui.separator();
-            let busy = !self.light.programmer.is_empty();
+            let busy = !self.light.programmer.is_empty() || !self.light.programmer_effects.is_empty();
             ui.add_enabled_ui(busy, |ui| {
                 if ui.button(theme::with_icon(icons::CLOSE, t("Clear programmer"))).clicked() {
                     self.light.programmer.clear();
+                    self.light.programmer_effects.clear();
                 }
             });
             if busy {
@@ -640,6 +777,91 @@ impl App {
         });
     }
 
+    /// Effects: click runs the effect on the selection from the programmer (click again stops).
+    fn effect_pool_row(&mut self, ui: &mut Ui, l: &Lighting) {
+        ui.horizontal_wrapped(|ui| {
+            ui.label(theme::caption(t("Effects")));
+            for e in &l.effects {
+                let stopping = self.light.programmer_effects.iter().any(|r| r.effect == e.id && r.stop);
+                let running = self.light.programmer_effects.iter().any(|r| r.effect == e.id && !r.stop);
+                let label = if e.name.is_empty() { e.id.to_string() } else { format!("{} {}", e.id, e.name) };
+                let (fill, fg) = match (running, stopping) {
+                    (true, _) => (theme::RED.gamma_multiply(0.6), Color32::WHITE),
+                    (_, true) => (theme::BG_RAISED, theme::RED),
+                    _ => (theme::BG_RAISED, theme::TEXT),
+                };
+                let r = ui
+                    .add(egui::Button::new(RichText::new(theme::with_icon(icons::AUTO_FIX_HIGH, &label)).color(fg)).fill(fill).min_size(egui::vec2(0.0, 26.0)))
+                    .on_hover_text(format!("{} · {}", e.attribute.label(), e.shape.label()));
+                if r.clicked() {
+                    if running || stopping {
+                        self.light.programmer_effects.retain(|r| r.effect != e.id);
+                    } else if !self.light.selection.is_empty() {
+                        self.light.programmer_effects.push(EffectRun { effect: e.id, fixtures: self.light.selection.clone(), stop: false });
+                    }
+                }
+                r.context_menu(|ui| {
+                    if ui.button(theme::with_icon(icons::STOP, t("Stop it in the recorded cue"))).clicked() {
+                        self.light.programmer_effects.retain(|r| r.effect != e.id);
+                        self.light.programmer_effects.push(EffectRun { effect: e.id, fixtures: Vec::new(), stop: true });
+                    }
+                });
+            }
+            if l.effects.is_empty() {
+                ui.label(RichText::new(t("Build effects on the Effects page.")).color(theme::TEXT_DIM));
+            }
+        });
+    }
+
+    /// The effects pool and the editor of the chosen effect, with a live preview.
+    fn effects_page(&mut self, ui: &mut Ui, l: &mut Lighting) {
+        ui.ctx().request_repaint_after(std::time::Duration::from_millis(33));
+        ui.horizontal_top(|ui| {
+            ui.vertical(|ui| {
+                ui.set_width(240.0);
+                ui.horizontal(|ui| {
+                    ui.label(theme::caption(t("Effects")));
+                    if ui.small_button(icons::ADD).on_hover_text(t("New effect")).clicked() {
+                        let id = l.effects.iter().map(|e| e.id).max().unwrap_or(0) + 1;
+                        l.effects.push(Effect { id, ..Default::default() });
+                        self.light.effect = Some(id);
+                    }
+                });
+                let mut delete = None;
+                for e in &l.effects {
+                    ui.horizontal(|ui| {
+                        let label = if e.name.is_empty() { format!("{} · {}", e.id, e.shape.label()) } else { format!("{} {}", e.id, e.name) };
+                        if ui.selectable_label(self.light.effect == Some(e.id), label).clicked() {
+                            self.light.effect = Some(e.id);
+                        }
+                        if ui.small_button(icons::DELETE).on_hover_text(t("Delete effect")).clicked() {
+                            delete = Some(e.id);
+                        }
+                    });
+                }
+                if let Some(id) = delete {
+                    l.effects.retain(|e| e.id != id);
+                    for c in l.sequences.iter_mut().flat_map(|s| s.cues.iter_mut()) {
+                        c.effects.retain(|r| r.effect != id);
+                    }
+                    self.light.programmer_effects.retain(|r| r.effect != id);
+                }
+            });
+            ui.separator();
+            ui.vertical(|ui| {
+                let Some(e) = self.light.effect.and_then(|id| l.effects.iter_mut().find(|e| e.id == id)) else {
+                    ui.label(RichText::new(t("Choose or add an effect.")).color(theme::TEXT_DIM));
+                    return;
+                };
+                effect_editor(ui, e);
+                ui.add_space(10.0);
+                let n = self.light.selection.len().clamp(1, 24);
+                ui.label(theme::caption(&tr!("Preview across {n} fixtures", n = n.to_string())));
+                effect_preview(ui, e, n);
+            });
+        });
+    }
+
     /// Record / update controls (programmer → a sequence).
     fn record_controls(&mut self, ui: &mut Ui, l: &mut Lighting) {
         let seq_id = self.light.sequence.filter(|s| l.sequence(*s).is_some()).or(l.sequences.first().map(|s| s.id));
@@ -652,7 +874,7 @@ impl App {
             });
         let hint = seq_id.and_then(|s| l.sequence(s)).map_or_else(|| "1".to_string(), next_cue_number);
         ui.add(egui::TextEdit::singleline(&mut self.light.record_number).hint_text(hint.clone()).desired_width(50.0));
-        let can = !self.light.programmer.is_empty();
+        let can = !self.light.programmer.is_empty() || !self.light.programmer_effects.is_empty();
         if ui.add_enabled(can, egui::Button::new(theme::with_icon(icons::FIBER_MANUAL_RECORD, t("Record cue")))).clicked() {
             let number = Some(self.light.record_number.trim().to_string()).filter(|n| !n.is_empty()).unwrap_or(hint);
             let seq = match seq_id {
@@ -664,11 +886,14 @@ impl App {
             };
             let s = l.sequences.iter_mut().find(|s| s.id == seq).expect("sequence");
             let values = self.light.programmer.clone();
+            let effects = self.light.programmer_effects.clone();
             if let Some(c) = s.cues.iter_mut().find(|c| c.number == number) {
-                c.values = values; // re-record over an existing number
+                // Re-record over an existing number.
+                c.values = values;
+                c.effects = effects;
                 self.light.cue = Some(c.id);
             } else {
-                let c = LightCue { number, values, ..Default::default() };
+                let c = LightCue { number, values, effects, ..Default::default() };
                 self.light.cue = Some(c.id);
                 let at = s.cues.iter().position(|x| number_key(&x.number) > number_key(&c.number)).unwrap_or(s.cues.len());
                 s.cues.insert(at, c);
@@ -685,6 +910,10 @@ impl App {
         {
             for (f, vals) in &self.light.programmer {
                 c.values.entry(*f).or_default().extend(vals.iter().map(|(a, v)| (*a, *v)));
+            }
+            for r in &self.light.programmer_effects {
+                c.effects.retain(|x| x.effect != r.effect);
+                c.effects.push(r.clone());
             }
         }
     }
@@ -1044,6 +1273,7 @@ impl App {
                             && let Some(c) = sel.and_then(|c| l.find_cue(c))
                         {
                             self.light.programmer = c.0.cues[c.1].values.clone();
+                            self.light.programmer_effects = c.0.cues[c.1].effects.iter().filter(|r| !r.stop).cloned().collect();
                             self.light.selection = self.light.programmer.keys().copied().collect();
                         }
                         if ui.button(theme::with_icon(icons::DELETE, t("Delete cue"))).clicked()
@@ -1145,6 +1375,23 @@ impl App {
                     ui.end_row();
                 }
             });
+            if !c.effects.is_empty() {
+                ui.add_space(8.0);
+                ui.label(theme::caption(t("Effects")));
+                let mut remove = None;
+                for (k, r) in c.effects.iter().enumerate() {
+                    ui.horizontal(|ui| {
+                        let what = if r.stop { tr!("stop effect {n}", n = r.effect.to_string()) } else { tr!("effect {n} on {count} fixtures", n = r.effect.to_string(), count = r.fixtures.len().to_string()) };
+                        ui.label(what);
+                        if ui.small_button(icons::CLOSE).clicked() {
+                            remove = Some(k);
+                        }
+                    });
+                }
+                if let Some(k) = remove {
+                    c.effects.remove(k);
+                }
+            }
             if block {
                 s.block(i);
             }
@@ -1203,6 +1450,18 @@ impl App {
                     let (fill, fg) = if masters.blackout { (theme::RED, Color32::WHITE) } else { (theme::BG_INPUT, theme::TEXT) };
                     if ui.add(egui::Button::new(RichText::new(t("Blackout")).color(fg)).fill(fill).min_size(egui::vec2(138.0, 24.0))).clicked() {
                         cmds.push(LightControl::Blackout(!masters.blackout));
+                    }
+                });
+                card(ui, &mut |ui| {
+                    ui.label(theme::caption(t("Tempo")));
+                    let mut bpm = masters.bpm;
+                    if ui.add(DragValue::new(&mut bpm).range(20.0..=300.0).speed(0.5).max_decimals(1).suffix(" BPM")).changed() {
+                        cmds.push(LightControl::Tempo(bpm));
+                    }
+                    if ui.add(egui::Button::new(t("Tap")).min_size(egui::vec2(138.0, 24.0))).on_hover_text(t("Tap on the beat")).clicked()
+                        && let Some(bpm) = tap(&mut self.light.taps, std::time::Instant::now())
+                    {
+                        cmds.push(LightControl::Tempo(bpm));
                     }
                 });
                 for seq in &l.sequences {
@@ -1662,6 +1921,18 @@ fn add_fixtures(l: &mut Lighting, ty: &FixtureType, form: &mut AddForm) -> u32 {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn tap_tempo() {
+        let t0 = std::time::Instant::now();
+        let mut taps = Vec::new();
+        assert_eq!(tap(&mut taps, t0), None);
+        for i in 1..4 {
+            let bpm = tap(&mut taps, t0 + std::time::Duration::from_millis(500 * i)).unwrap();
+            assert!((bpm - 120.0).abs() < 0.01);
+        }
+        assert_eq!(tap(&mut taps, t0 + std::time::Duration::from_secs(10)), None, "a pause starts again");
+    }
 
     #[test]
     fn fan() {

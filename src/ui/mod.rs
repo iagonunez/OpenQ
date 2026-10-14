@@ -2193,6 +2193,9 @@ impl App {
                 if page == "colour" {
                     self.light.feature = Some(crate::light::Feature::Colour);
                 }
+                if page == "effects" {
+                    self.light.effect = show.ws.lighting.effects.first().map(|e| e.id);
+                }
                 // A selection and some programmer values to look at.
                 if let Some(g) = show.ws.lighting.groups.first() {
                     self.light.selection = g.fixtures.clone();
