@@ -10,7 +10,8 @@ use crate::i18n::t;
 use crate::light::model::{
     Attribute, Feature, FixtureId, FixtureType, Group, LightCue, LightCueId, Lighting, Look, PatchIssue, Preset, PresetId, Sequence, SequenceId, Value,
 };
-use crate::light::effects::{Effect, EffectId, EffectRun, Shape};
+use crate::light::effects::{Effect, EffectId, EffectRun, EffectTable, Shape};
+use crate::light::script::{Python, Request, ScriptRun};
 use crate::light::{Fixture, library};
 use crate::show::Show;
 use egui::{Color32, DragValue, RichText, Ui};
@@ -49,6 +50,7 @@ impl LightTab {
     pub(crate) fn from_name(name: &str) -> Self {
         match name {
             "programmer" | "colour" | "keypad" => LightTab::Programmer,
+            "patch" | "plan" => LightTab::Patch,
             "effects" => LightTab::Effects,
             "sequences" => LightTab::Sequences,
             "outputs" => LightTab::Outputs,
@@ -81,7 +83,7 @@ impl Default for AddForm {
 pub(crate) struct LightUi {
     pub(crate) tab: LightTab,
     /// Selected rows of the patch sheet.
-    patch_sel: HashSet<FixtureId>,
+    pub(crate) patch_sel: HashSet<FixtureId>,
     add: AddForm,
     /// Programmer selection, in selection order.
     pub(crate) selection: Vec<FixtureId>,
@@ -128,6 +130,52 @@ pub(crate) struct LightUi {
     monitor_universe: u16,
     /// Art-Net nodes / serial ports found in the background.
     found: std::sync::Arc<parking_lot::Mutex<Found>>,
+    /// Patch page shows the plan (top view) instead of the sheet.
+    pub(crate) patch_plan: bool,
+    /// Arrange tool settings.
+    arrange: ArrangeTool,
+    /// Plan view: pixels per metre (0 = default) and pan in pixels.
+    plan_zoom: f32,
+    plan_pan: egui::Vec2,
+    /// Effect scripts: the sandbox host (started when an effect script is first shown).
+    python: Option<Python>,
+    /// Script being edited: (effect, text); written into the effect when run or left.
+    script_buf: Option<(EffectId, String)>,
+    /// Script running for an effect (true: a new effect, which takes the script's settings too).
+    script_run: Option<(EffectId, ScriptRun, bool)>,
+    /// Last run of an effect's script: (effect, what it printed, error).
+    script_out: Option<(EffectId, String, Option<String>)>,
+}
+
+/// Arrange tool: a layout kind and the settings of each.
+#[derive(Clone, Copy)]
+struct ArrangeTool {
+    /// 0 line, 1 arc, 2 grid.
+    kind: u8,
+    from: [f32; 3],
+    to: [f32; 3],
+    centre: [f32; 3],
+    radius: f32,
+    angles: [f32; 2],
+    cols: u32,
+    spacing: [f32; 2],
+}
+
+impl Default for ArrangeTool {
+    fn default() -> Self {
+        Self { kind: 0, from: [-4.0, 6.0, 0.0], to: [4.0, 6.0, 0.0], centre: [0.0, 6.0, -2.0], radius: 4.0, angles: [-60.0, 60.0], cols: 4, spacing: [1.0, 1.0] }
+    }
+}
+
+impl ArrangeTool {
+    fn layout(&self) -> crate::light::place::Layout {
+        use crate::light::place::Layout;
+        match self.kind {
+            1 => Layout::Arc { centre: self.centre, radius: self.radius, from: self.angles[0], to: self.angles[1] },
+            2 => Layout::Grid { origin: self.from, cols: self.cols, spacing: self.spacing },
+            _ => Layout::Line { from: self.from, to: self.to },
+        }
+    }
 }
 
 /// Spread tool: attribute, from, to, centre-out.
@@ -200,6 +248,65 @@ impl App {
                 self.notify(msg);
             }
             Err(e) => self.notify_error(tr!("Can't import the fixture: {e}", e = format!("{e:#}"))),
+        }
+    }
+
+    /// Pick effect files (`.oqfx`) and add them to the effects pool (outside the show lock: the
+    /// dialog blocks). Files are data only; their scripts don't run.
+    pub(super) fn import_effects(&mut self) {
+        if !self.can_design() {
+            return;
+        }
+        let Some(paths) = rfd::FileDialog::new().add_filter(t("OpenQ effect"), &[crate::light::fxfile::EXTENSION]).pick_files() else { return };
+        let mut added = Vec::new();
+        for path in paths {
+            let read = || -> anyhow::Result<Effect> {
+                if std::fs::metadata(&path)?.len() as usize > crate::light::fxfile::MAX_FILE {
+                    anyhow::bail!("the file is too large");
+                }
+                Ok(crate::light::fxfile::read(&std::fs::read_to_string(&path)?)?.effect)
+            };
+            match read() {
+                Ok(e) => added.push(e),
+                Err(e) => {
+                    let file = path.file_name().map(|n| n.to_string_lossy().into_owned()).unwrap_or_default();
+                    self.notify_error(tr!("Can't import {file}: {e}", file = file, e = format!("{e:#}")));
+                }
+            }
+        }
+        if added.is_empty() {
+            return;
+        }
+        let n = added.len();
+        {
+            let mut show = self.show.lock();
+            let l = &mut show.ws.lighting;
+            for mut e in added {
+                e.id = l.effects.iter().map(|e| e.id).max().unwrap_or(0) + 1;
+                self.light.effect = Some(e.id);
+                l.effects.push(e);
+            }
+            show.edited();
+        }
+        self.light.tab = LightTab::Effects;
+        self.notify(tr!("Imported {n} effects", n = n.to_string()));
+    }
+
+    /// Save an effect as an effect file (outside the show lock).
+    pub(super) fn export_effect(&mut self, id: EffectId) {
+        let Some(e) = self.show.lock().ws.lighting.effect(id).cloned() else { return };
+        let name = if e.name.trim().is_empty() { format!("effect-{id}") } else { e.name.trim().to_string() };
+        let Some(path) = rfd::FileDialog::new()
+            .add_filter(t("OpenQ effect"), &[crate::light::fxfile::EXTENSION])
+            .set_file_name(format!("{name}.{}", crate::light::fxfile::EXTENSION))
+            .save_file()
+        else {
+            return;
+        };
+        let text = crate::light::fxfile::write(&e, "", "");
+        match crate::recovery::write_atomic(&path, text.as_bytes()) {
+            Ok(()) => self.notify(tr!("Saved {file}", file = path.display().to_string())),
+            Err(e) => self.notify_error(tr!("Can't save the effect: {e}", e = format!("{e:#}"))),
         }
     }
 
@@ -388,13 +495,86 @@ impl App {
                 ui.label(RichText::new(format!("{} {}{more}", icons::WARNING, issue_text(first))).color(theme::AMBER));
             }
         });
+        ui.horizontal(|ui| {
+            ui.spacing_mut().item_spacing.x = 4.0;
+            theme::tab(ui, &mut self.light.patch_plan, false, icons::NOTES, t("Sheet"));
+            theme::tab(ui, &mut self.light.patch_plan, true, icons::OPEN_WITH, t("Plan"));
+        });
+        self.arrange_bar(ui, l);
         ui.add_space(4.0);
-        self.patch_sheet(ui, l, &issues);
+        if self.light.patch_plan {
+            plan_view(ui, &mut self.light, l, &issues);
+        } else {
+            self.patch_sheet(ui, l, &issues);
+        }
+    }
+
+    /// Lay the selected fixtures out (in fixture-number order) along a line, an arc or a grid.
+    fn arrange_bar(&mut self, ui: &mut Ui, l: &mut Lighting) {
+        let n = self.light.patch_sel.len();
+        if n == 0 {
+            return;
+        }
+        let a = &mut self.light.arrange;
+        let xyz = |ui: &mut Ui, v: &mut [f32; 3]| {
+            for c in v.iter_mut() {
+                ui.add(DragValue::new(c).speed(0.05).max_decimals(2).suffix(" m"));
+            }
+        };
+        let mut apply = false;
+        ui.horizontal_wrapped(|ui| {
+            ui.label(theme::caption(t("Arrange")));
+            let kinds = [t("Line"), t("Arc"), t("Grid")];
+            egui::ComboBox::from_id_salt("arrange_kind").selected_text(kinds[a.kind as usize % 3]).show_ui(ui, |ui| {
+                for (i, k) in kinds.iter().enumerate() {
+                    ui.selectable_value(&mut a.kind, i as u8, *k);
+                }
+            });
+            match a.kind {
+                1 => {
+                    ui.label(t("Centre"));
+                    xyz(ui, &mut a.centre);
+                    ui.label(t("Radius"));
+                    ui.add(DragValue::new(&mut a.radius).range(0.0..=100.0).speed(0.05).max_decimals(2).suffix(" m"));
+                    ui.label(t("From"));
+                    ui.add(DragValue::new(&mut a.angles[0]).range(-360.0..=360.0).suffix("°"));
+                    ui.label(t("to"));
+                    ui.add(DragValue::new(&mut a.angles[1]).range(-360.0..=360.0).suffix("°"));
+                }
+                2 => {
+                    ui.label(t("First"));
+                    xyz(ui, &mut a.from);
+                    ui.label(t("Columns"));
+                    ui.add(DragValue::new(&mut a.cols).range(1..=512));
+                    ui.label(t("Spacing"));
+                    for c in a.spacing.iter_mut() {
+                        ui.add(DragValue::new(c).speed(0.05).max_decimals(2).suffix(" m"));
+                    }
+                }
+                _ => {
+                    ui.label(t("From"));
+                    xyz(ui, &mut a.from);
+                    ui.label(t("to"));
+                    xyz(ui, &mut a.to);
+                }
+            }
+            apply = ui.button(theme::with_icon(icons::CHECK_CIRCLE, &tr!("Arrange {n} fixtures", n = n.to_string()))).clicked();
+        });
+        if apply {
+            let mut ids: Vec<FixtureId> = self.light.patch_sel.iter().copied().collect();
+            ids.sort_unstable();
+            let pos = crate::light::place::positions(self.light.arrange.layout(), ids.len());
+            for (id, p) in ids.iter().zip(pos) {
+                if let Some(f) = l.fixtures.iter_mut().find(|f| f.id == *id) {
+                    f.position = p;
+                }
+            }
+        }
     }
 
     /// The fixture table (only visible rows are laid out, so big rigs stay fast).
     fn patch_sheet(&mut self, ui: &mut Ui, l: &mut Lighting, issues: &[PatchIssue]) {
-        const COLS: [f32; 8] = [60.0, 180.0, 200.0, 120.0, 70.0, 70.0, 50.0, 200.0];
+        const COLS: [f32; 10] = [60.0, 160.0, 180.0, 110.0, 64.0, 64.0, 44.0, 162.0, 162.0, 80.0];
         let bad: HashSet<FixtureId> = issues
             .iter()
             .flat_map(|i| match i {
@@ -402,7 +582,8 @@ impl App {
                 PatchIssue::DuplicateId(f) | PatchIssue::UnknownType(f) | PatchIssue::OutOfRange(f) => vec![*f],
             })
             .collect();
-        let header = [t("No."), t("Name"), t("Type"), t("Mode"), t("Universe"), t("Address"), t("Slots"), t("Position (m)")];
+        let header =
+            [t("No."), t("Name"), t("Type"), t("Mode"), t("Universe"), t("Address"), t("Slots"), t("Position (m)"), t("Rotation (°)"), t("Invert")];
         ui.horizontal(|ui| {
             for (h, w) in header.iter().zip(COLS) {
                 ui.add_sized([w, 18.0], egui::Label::new(theme::caption(h)));
@@ -447,9 +628,16 @@ impl App {
                     }));
                     let slots = ty.and_then(|t| t.mode(&f.mode)).map_or(0, |m| m.footprint());
                     ui.add_sized([COLS[6], 20.0], egui::Label::new(RichText::new(slots.to_string()).color(theme::TEXT_DIM)));
+                    ui.spacing_mut().interact_size.x = 50.0;
                     for v in &mut f.position {
                         ui.add(DragValue::new(v).speed(0.05).max_decimals(2));
                     }
+                    ui.add_space(6.0);
+                    for v in &mut f.rotation {
+                        ui.add(DragValue::new(v).range(-360.0..=360.0).speed(1.0).max_decimals(1));
+                    }
+                    ui.toggle_value(&mut f.invert_pan, t("Pan")).on_hover_text(t("Reverse pan"));
+                    ui.toggle_value(&mut f.invert_tilt, t("Tilt")).on_hover_text(t("Reverse tilt"));
                 });
                 let r = row.response.rect;
                 if bad.contains(&f.id) {
@@ -519,14 +707,26 @@ fn effect_editor(ui: &mut Ui, e: &mut Effect) {
         ui.add(egui::TextEdit::singleline(&mut e.name).desired_width(220.0));
         ui.end_row();
         ui.label(t("Shape"));
-        egui::ComboBox::from_id_salt("fx_shape").selected_text(e.shape.label()).show_ui(ui, |ui| {
-            for s in Shape::ALL {
-                ui.selectable_value(&mut e.shape, s, s.label());
-            }
-        });
+        if let (Shape::Custom, Some(table)) = (e.shape, &e.table) {
+            let summary = tr!(
+                "Custom: {steps} steps, {rows} pattern rows",
+                steps = table.steps.to_string(),
+                rows = table.width.to_string()
+            );
+            ui.label(RichText::new(theme::with_icon(icons::CODE, &summary)).color(theme::TEXT_DIM));
+        } else {
+            egui::ComboBox::from_id_salt("fx_shape").selected_text(e.shape.label()).show_ui(ui, |ui| {
+                for s in Shape::ALL {
+                    ui.selectable_value(&mut e.shape, s, s.label());
+                }
+            });
+        }
         ui.end_row();
         ui.label(t("Attribute"));
-        if e.shape == Shape::Circle {
+        if let (Shape::Custom, Some(table)) = (e.shape, &e.table) {
+            let names: Vec<&str> = table.attributes.iter().map(|a| a.label()).collect();
+            ui.label(RichText::new(names.join(", ")).color(theme::TEXT_DIM));
+        } else if e.shape == Shape::Circle {
             e.attribute = Attribute::Pan;
             ui.label(RichText::new(t("Pan and tilt")).color(theme::TEXT_DIM));
         } else {
@@ -575,7 +775,29 @@ fn effect_editor(ui: &mut Ui, e: &mut Effect) {
     });
 }
 
-/// The waveform over two cycles with a moving dot per fixture.
+/// Level of the `i`-th of `n` fixtures at `x` cycles in attribute column `col` (custom effects).
+fn effect_level(e: &Effect, i: usize, n: usize, x: f64, col: u32) -> f32 {
+    let x = x + e.phase(i, n) as f64;
+    match (&e.table, e.shape) {
+        (Some(t), Shape::Custom) => t.sample((e.position(i) % t.width.max(1) as usize) as u32, col, x),
+        _ => e.shape.eval(x, e.duty, i as u32 + 1),
+    }
+}
+
+/// Colour a curve of an attribute is drawn in.
+fn attribute_colour(a: Attribute) -> Color32 {
+    match a {
+        Attribute::Red => Color32::from_rgb(0xf0, 0x50, 0x50),
+        Attribute::Green => Color32::from_rgb(0x50, 0xd0, 0x70),
+        Attribute::Blue => Color32::from_rgb(0x60, 0x90, 0xff),
+        Attribute::White => Color32::from_gray(0xe0),
+        Attribute::Amber => theme::AMBER,
+        _ => theme::ACCENT,
+    }
+}
+
+/// The waveform over two cycles with a moving dot per fixture (custom effects: one curve per
+/// attribute of the first pattern row, and colour bars when the effect moves red/green/blue).
 fn effect_preview(ui: &mut Ui, e: &Effect, n: usize) {
     let w = ui.available_width().min(640.0);
     let (rect, _) = ui.allocate_exact_size(egui::vec2(w, 140.0), egui::Sense::hover());
@@ -583,24 +805,275 @@ fn effect_preview(ui: &mut Ui, e: &Effect, n: usize) {
     p.rect_filled(rect, 6.0, theme::BG_INPUT);
     let plot = rect.shrink(10.0);
     let y = |v: f32| plot.bottom() - v.clamp(0.0, 1.0) * plot.height();
-    let pts: Vec<egui::Pos2> = (0..=200)
-        .map(|i| {
-            let x = i as f64 / 100.0;
-            egui::pos2(plot.left() + plot.width() * (x / 2.0) as f32, y(e.shape.eval(x, e.duty, 1)))
-        })
-        .collect();
-    p.add(egui::Shape::line(pts, egui::Stroke::new(1.5, theme::ACCENT)));
-    let t = ui.input(|i| i.time);
-    let rate = e.rate(120.0) as f64;
+    let table = e.table.as_ref().filter(|_| e.shape == Shape::Custom);
+    let curves: Vec<(u32, Color32)> = match table {
+        Some(t) => t.attributes.iter().enumerate().take(6).map(|(c, a)| (c as u32, attribute_colour(*a))).collect(),
+        None => vec![(0, theme::ACCENT)],
+    };
+    for (col, colour) in &curves {
+        let pts: Vec<egui::Pos2> = (0..=200)
+            .map(|i| {
+                let x = i as f64 / 100.0;
+                let v = match table {
+                    Some(t) => t.sample(0, *col, x),
+                    None => e.shape.eval(x, e.duty, 1),
+                };
+                egui::pos2(plot.left() + plot.width() * (x / 2.0) as f32, y(v))
+            })
+            .collect();
+        p.add(egui::Shape::line(pts, egui::Stroke::new(1.5, *colour)));
+    }
+    let col_of = |a: Attribute| table.and_then(|t| t.attributes.iter().position(|x| *x == a)).map(|c| c as u32);
+    let rgb = (col_of(Attribute::Red), col_of(Attribute::Green), col_of(Attribute::Blue));
+    let t = ui.input(|i| i.time) * e.rate(120.0) as f64;
     for i in 0..n {
-        let x = (t * rate + e.phase(i, n) as f64).rem_euclid(1.0);
-        let v = e.shape.eval(t * rate + e.phase(i, n) as f64, e.duty, i as u32 + 1);
-        let pos = egui::pos2(plot.left() + plot.width() * (x / 2.0) as f32, y(v));
-        p.circle_filled(pos, 4.0, theme::AMBER);
-        // A bar per fixture along the bottom shows its level now.
+        let v = effect_level(e, i, n, t, 0);
+        let x = (t + e.phase(i, n) as f64).rem_euclid(1.0);
+        p.circle_filled(egui::pos2(plot.left() + plot.width() * (x / 2.0) as f32, y(v)), 4.0, theme::AMBER);
+        // A bar per fixture along the bottom shows its level (or colour) now.
         let bw = plot.width() / n as f32;
         let bar = egui::Rect::from_min_size(egui::pos2(plot.left() + i as f32 * bw + 1.0, rect.bottom() - 6.0), egui::vec2(bw - 2.0, 4.0));
-        p.rect_filled(bar, 1.0, theme::AMBER.gamma_multiply(v.clamp(0.05, 1.0)));
+        let fill = if rgb.0.is_some() || rgb.1.is_some() || rgb.2.is_some() {
+            let c = |col: Option<u32>| col.map_or(0, |c| (effect_level(e, i, n, t, c) * 255.0) as u8);
+            Color32::from_rgb(c(rgb.0), c(rgb.1), c(rgb.2))
+        } else {
+            theme::AMBER.gamma_multiply(v.clamp(0.05, 1.0))
+        };
+        p.rect_filled(bar, 1.0, fill);
+    }
+}
+
+/// Top view of the patch (x right, z towards the audience at the bottom): click selects
+/// (Ctrl/Shift adds), dragging a selected fixture moves the selection (snapped to 5 cm), dragging
+/// empty space pans, scrolling zooms, double-click recentres.
+fn plan_view(ui: &mut Ui, light: &mut LightUi, l: &mut Lighting, issues: &[PatchIssue]) {
+    let size = ui.available_size().max(egui::vec2(200.0, 200.0));
+    let (rect, resp) = ui.allocate_exact_size(size, egui::Sense::click_and_drag());
+    let p = ui.painter_at(rect);
+    p.rect_filled(rect, 6.0, theme::BG_INPUT);
+    if light.plan_zoom <= 0.0 {
+        light.plan_zoom = 40.0;
+    }
+    if resp.hovered() {
+        let scroll = ui.input(|i| i.smooth_scroll_delta.y);
+        if scroll != 0.0 {
+            light.plan_zoom = (light.plan_zoom * (scroll / 200.0).exp()).clamp(5.0, 400.0);
+        }
+    }
+    if resp.double_clicked() {
+        light.plan_pan = egui::Vec2::ZERO;
+    }
+    let (zoom, origin) = (light.plan_zoom, rect.center() + light.plan_pan);
+    let to_screen = |x: f32, z: f32| origin + egui::vec2(x, z) * zoom;
+    // A 1 m grid (5 m lines stronger) and the origin.
+    let (lo, hi) = (((rect.min - origin) / zoom).floor(), ((rect.max - origin) / zoom).ceil());
+    if hi.x - lo.x < 400.0 {
+        for i in lo.x as i32..=hi.x as i32 {
+            let x = origin.x + i as f32 * zoom;
+            let c = if i == 0 { theme::TEXT_FAINT } else if i % 5 == 0 { theme::BG_TOOL_HOVER } else { theme::BG_RAISED };
+            p.line_segment([egui::pos2(x, rect.top()), egui::pos2(x, rect.bottom())], egui::Stroke::new(1.0, c));
+        }
+        for i in lo.y as i32..=hi.y as i32 {
+            let y = origin.y + i as f32 * zoom;
+            let c = if i == 0 { theme::TEXT_FAINT } else if i % 5 == 0 { theme::BG_TOOL_HOVER } else { theme::BG_RAISED };
+            p.line_segment([egui::pos2(rect.left(), y), egui::pos2(rect.right(), y)], egui::Stroke::new(1.0, c));
+        }
+    }
+    p.text(rect.center_bottom() - egui::vec2(0.0, 8.0), egui::Align2::CENTER_BOTTOM, t("Audience"), egui::FontId::proportional(12.0), theme::TEXT_DIM);
+    let bad: HashSet<FixtureId> = issues
+        .iter()
+        .flat_map(|i| match i {
+            PatchIssue::Overlap(a, b) => vec![*a, *b],
+            PatchIssue::DuplicateId(f) | PatchIssue::UnknownType(f) | PatchIssue::OutOfRange(f) => vec![*f],
+        })
+        .collect();
+    let radius = 10.0;
+    let hit = |pos: egui::Pos2, l: &Lighting| {
+        l.fixtures.iter().rev().find(|f| to_screen(f.position[0], f.position[2]).distance(pos) <= radius).map(|f| f.id)
+    };
+    let pointer = resp.interact_pointer_pos();
+    if resp.clicked()
+        && let Some(pos) = pointer
+    {
+        let m = ui.input(|i| i.modifiers);
+        let sel = &mut light.patch_sel;
+        match hit(pos, l) {
+            Some(id) if m.command || m.shift => {
+                if !sel.remove(&id) {
+                    sel.insert(id);
+                }
+            }
+            Some(id) => *sel = [id].into_iter().collect(),
+            None if !(m.command || m.shift) => sel.clear(),
+            None => {}
+        }
+    }
+    let drag_id = egui::Id::new("plan_drag");
+    if resp.drag_started()
+        && let Some(pos) = pointer
+    {
+        let on = hit(pos, l);
+        if let Some(id) = on
+            && !light.patch_sel.contains(&id)
+        {
+            light.patch_sel = [id].into_iter().collect();
+        }
+        // Moving fixtures: remember where each started, so snapping doesn't drift.
+        let start: Option<Vec<(FixtureId, [f32; 3])>> =
+            on.map(|_| l.fixtures.iter().filter(|f| light.patch_sel.contains(&f.id)).map(|f| (f.id, f.position)).collect());
+        ui.data_mut(|d| d.insert_temp(drag_id, (start, pos)));
+    }
+    if resp.dragged()
+        && let Some((start, from)) = ui.data(|d| d.get_temp::<(Option<Vec<(FixtureId, [f32; 3])>>, egui::Pos2)>(drag_id))
+    {
+        let now = pointer.unwrap_or(from);
+        match start {
+            Some(start) => {
+                let d = (now - from) / zoom;
+                let snap = |v: f32| (v * 20.0).round() / 20.0;
+                for (id, p0) in start {
+                    if let Some(f) = l.fixtures.iter_mut().find(|f| f.id == id) {
+                        f.position[0] = snap(p0[0] + d.x);
+                        f.position[2] = snap(p0[2] + d.y);
+                    }
+                }
+            }
+            None => light.plan_pan += resp.drag_delta(),
+        }
+    }
+    for f in &l.fixtures {
+        let c = to_screen(f.position[0], f.position[2]);
+        if !rect.expand(radius).contains(c) {
+            continue;
+        }
+        let selected = light.patch_sel.contains(&f.id);
+        let fill = if selected { theme::ACCENT } else { theme::BG_RAISED };
+        p.circle(c, radius, fill, egui::Stroke::new(1.0, if bad.contains(&f.id) { theme::AMBER } else { theme::TEXT_DIM }));
+        // Heading: the rotation round the vertical axis (0 = towards the audience).
+        let a = f.rotation[1].to_radians();
+        p.line_segment([c, c + egui::vec2(a.sin(), a.cos()) * (radius + 5.0)], egui::Stroke::new(1.5, theme::TEXT_DIM));
+        p.text(c, egui::Align2::CENTER_CENTER, f.id.to_string(), egui::FontId::proportional(10.0), if selected { Color32::WHITE } else { theme::TEXT });
+    }
+    if let Some(pos) = resp.hover_pos()
+        && let Some(f) = hit(pos, l).and_then(|id| l.fixture(id))
+    {
+        let [x, y, z] = f.position;
+        let name = if f.name.is_empty() { f.fixture_type.clone() } else { f.name.clone() };
+        resp.on_hover_text(format!("{} {name}\nx {x:.2} · y {y:.2} · z {z:.2} m", f.id));
+    }
+}
+
+/// Run `code` for effect `e` in the sandbox (the code is stored in the effect first).
+fn start_script(light: &mut LightUi, e: &mut Effect, code: String, fresh: bool) {
+    e.script = code.clone();
+    light.script_buf = Some((e.id, code.clone()));
+    let python = light.python.get_or_insert_with(Python::default);
+    let name = if e.name.is_empty() { format!("effect {}", e.id) } else { e.name.clone() };
+    light.script_run = Some((e.id, python.run(Request::new(&name, &code)), fresh));
+    light.script_out = None;
+}
+
+/// Take a finished script run into the design: the first effect it made replaces the table of
+/// the effect it belongs to (a new effect also takes its name and settings), further effects
+/// are added to the pool.
+fn poll_script(light: &mut LightUi, l: &mut Lighting) {
+    let Some((id, run, fresh)) = &light.script_run else { return };
+    let Some(f) = run.poll() else { return };
+    let (id, fresh) = (*id, *fresh);
+    light.script_run = None;
+    let err = match f.result {
+        Ok(made) if made.is_empty() => Some(t("The script made no effects: openq.effect(…) creates one.").to_string()),
+        Ok(made) => {
+            let mut made = made.into_iter();
+            if let (Some(first), Some(e)) = (made.next(), l.effects.iter_mut().find(|e| e.id == id)) {
+                if fresh {
+                    *e = Effect { id, ..first };
+                } else {
+                    e.shape = Shape::Custom;
+                    e.attribute = first.attribute;
+                    e.table = first.table;
+                    if e.name.is_empty() {
+                        e.name = first.name;
+                    }
+                }
+            }
+            for extra in made {
+                let nid = l.effects.iter().map(|e| e.id).max().unwrap_or(0) + 1;
+                l.effects.push(Effect { id: nid, ..extra });
+            }
+            None
+        }
+        Err(e) => Some(e.to_string()),
+    };
+    light.script_out = Some((id, f.output, err));
+}
+
+/// The script of a custom effect: editor, Run/Stop and what the last run printed.
+fn script_card(ui: &mut Ui, light: &mut LightUi, e: &mut Effect) {
+    ui.add_space(12.0);
+    ui.horizontal(|ui| {
+        ui.label(theme::caption(t("Script")));
+        ui.label(RichText::new(t("Runs in a sandbox: no files, network or other programs.")).small().color(theme::TEXT_DIM));
+    });
+    // Starting the host now loads (and the first time compiles) the interpreter in the background.
+    let python = light.python.get_or_insert_with(|| {
+        let p = Python::default();
+        p.prepare();
+        p
+    });
+    match python.status() {
+        crate::light::script::Status::Missing => {
+            ui.label(RichText::new(theme::with_icon(icons::WARNING, &crate::light::script::ScriptError::NotInstalled.to_string())).color(theme::AMBER));
+        }
+        crate::light::script::Status::Broken => {
+            ui.label(RichText::new(theme::with_icon(icons::WARNING, t("Python for effect scripts is installed but doesn't load; see the error log."))).color(theme::AMBER));
+        }
+        _ => {}
+    }
+    if light.script_buf.as_ref().is_none_or(|(id, _)| *id != e.id) {
+        light.script_buf = Some((e.id, e.script.clone()));
+    }
+    let running = light.script_run.as_ref().is_some_and(|r| r.0 == e.id);
+    let mut run = false;
+    ui.horizontal(|ui| {
+        if running {
+            ui.spinner();
+            if ui.button(theme::with_icon(icons::STOP, t("Stop"))).clicked()
+                && let Some((_, r, _)) = &light.script_run
+            {
+                r.cancel();
+            }
+        } else {
+            run = ui.button(theme::with_icon(icons::PLAY_ARROW, t("Run"))).on_hover_text(t("Ctrl+Enter in the editor")).clicked();
+        }
+    });
+    let (_, buf) = light.script_buf.as_mut().expect("set");
+    let r = ui.add(
+        egui::TextEdit::multiline(buf)
+            .code_editor()
+            .font(theme::mono(13.0))
+            .desired_rows(16)
+            .desired_width(ui.available_width().min(900.0))
+            .lock_focus(true),
+    );
+    if r.has_focus() && ui.input(|i| i.modifiers.command && i.key_pressed(egui::Key::Enter)) {
+        run = !running;
+    }
+    if r.lost_focus() && *buf != e.script {
+        e.script = buf.clone();
+    }
+    if run {
+        let code = buf.clone();
+        start_script(light, e, code, false);
+    }
+    if let Some((_, output, err)) = light.script_out.as_ref().filter(|o| o.0 == e.id) {
+        if !output.is_empty() {
+            ui.add(egui::Label::new(RichText::new(output.trim_end()).font(theme::mono(12.0)).color(theme::TEXT_DIM)).wrap());
+        }
+        match err {
+            Some(err) => ui.label(RichText::new(theme::with_icon(icons::ERROR, err)).color(theme::RED)),
+            None => ui.label(RichText::new(theme::with_icon(icons::CHECK_CIRCLE, t("Effect generated."))).color(theme::GREEN)),
+        };
     }
 }
 
@@ -874,6 +1347,7 @@ impl App {
     /// The effects pool and the editor of the chosen effect, with a live preview.
     fn effects_page(&mut self, ui: &mut Ui, l: &mut Lighting) {
         ui.ctx().request_repaint_after(std::time::Duration::from_millis(33));
+        poll_script(&mut self.light, l);
         ui.horizontal_top(|ui| {
             ui.vertical(|ui| {
                 ui.set_width(240.0);
@@ -884,11 +1358,23 @@ impl App {
                         l.effects.push(Effect { id, ..Default::default() });
                         self.light.effect = Some(id);
                     }
+                    if ui.small_button(icons::CODE).on_hover_text(t("New script effect")).clicked() {
+                        let id = l.effects.iter().map(|e| e.id).max().unwrap_or(0) + 1;
+                        let placeholder = EffectTable { attributes: vec![Attribute::Dimmer], steps: 1, width: 1, smooth: false, values: vec![0.0] };
+                        l.effects.push(Effect { id, shape: Shape::Custom, table: Some(placeholder.into()), ..Default::default() });
+                        self.light.effect = Some(id);
+                        let e = l.effects.last_mut().expect("pushed");
+                        start_script(&mut self.light, e, crate::light::script::EXAMPLE.to_string(), true);
+                    }
+                    if ui.small_button(icons::UPLOAD_FILE).on_hover_text(t("Import effect files")).clicked() {
+                        self.deferred.push(super::Deferred::ImportEffects);
+                    }
                 });
                 let mut delete = None;
                 for e in &l.effects {
                     ui.horizontal(|ui| {
-                        let label = if e.name.is_empty() { format!("{} · {}", e.id, e.shape.label()) } else { format!("{} {}", e.id, e.name) };
+                        let name = if e.name.is_empty() { format!("{} · {}", e.id, e.shape.label()) } else { format!("{} {}", e.id, e.name) };
+                        let label = if e.shape == Shape::Custom { theme::with_icon(icons::CODE, &name) } else { name };
                         if ui.selectable_label(self.light.effect == Some(e.id), label).clicked() {
                             self.light.effect = Some(e.id);
                         }
@@ -906,16 +1392,24 @@ impl App {
                 }
             });
             ui.separator();
-            ui.vertical(|ui| {
-                let Some(e) = self.light.effect.and_then(|id| l.effects.iter_mut().find(|e| e.id == id)) else {
-                    ui.label(RichText::new(t("Choose or add an effect.")).color(theme::TEXT_DIM));
-                    return;
-                };
-                effect_editor(ui, e);
-                ui.add_space(10.0);
-                let n = self.light.selection.len().clamp(1, 24);
-                ui.label(theme::caption(&tr!("Preview across {n} fixtures", n = n.to_string())));
-                effect_preview(ui, e, n);
+            egui::ScrollArea::vertical().id_salt("effect_scroll").show(ui, |ui| {
+                ui.vertical(|ui| {
+                    let Some(e) = self.light.effect.and_then(|id| l.effects.iter_mut().find(|e| e.id == id)) else {
+                        ui.label(RichText::new(t("Choose or add an effect.")).color(theme::TEXT_DIM));
+                        return;
+                    };
+                    effect_editor(ui, e);
+                    if ui.button(theme::with_icon(icons::DOWNLOAD, t("Export effect file…"))).clicked() {
+                        self.deferred.push(super::Deferred::ExportEffect(e.id));
+                    }
+                    ui.add_space(10.0);
+                    let n = self.light.selection.len().clamp(1, 24);
+                    ui.label(theme::caption(&tr!("Preview across {n} fixtures", n = n.to_string())));
+                    effect_preview(ui, e, n);
+                    if e.shape == Shape::Custom {
+                        script_card(ui, &mut self.light, e);
+                    }
+                });
             });
         });
     }
@@ -2262,6 +2756,32 @@ fn add_fixtures(l: &mut Lighting, ty: &FixtureType, form: &mut AddForm) -> u32 {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// A script run lands in the effect it belongs to; extra effects join the pool.
+    #[test]
+    fn script_results_apply_to_the_effect() {
+        let Some(rt) = crate::light::script::find_runtime().filter(|_| cfg!(feature = "scripting")) else {
+            eprintln!("no sandboxed Python: skipped");
+            return;
+        };
+        let mut light = LightUi { python: Some(Python::new(Some(rt))), ..Default::default() };
+        let mut l = Lighting::default();
+        l.effects.push(Effect { id: 4, name: "Mine".into(), speed: 2.0, ..Default::default() });
+        let code = "import openq\nopenq.effect('A', 'dimmer', steps=2).fill(lambda t, r, w: t)\nopenq.effect('B', 'red', steps=3).speed = 3";
+        start_script(&mut light, &mut l.effects[0], code.into(), false);
+        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(30);
+        while light.script_run.is_some() && std::time::Instant::now() < deadline {
+            poll_script(&mut light, &mut l);
+            std::thread::sleep(std::time::Duration::from_millis(5));
+        }
+        let (id, _, err) = light.script_out.clone().unwrap();
+        assert_eq!((id, err), (4, None));
+        let e = &l.effects[0];
+        assert_eq!((e.name.as_str(), e.speed, e.shape), ("Mine", 2.0, Shape::Custom), "an existing effect keeps its name and settings");
+        assert_eq!(e.table.as_ref().unwrap().values, [0.0, 0.5]);
+        assert_eq!(e.script, code);
+        assert_eq!((l.effects[1].id, l.effects[1].name.as_str(), l.effects[1].speed), (5, "B", 3.0));
+    }
 
     #[test]
     fn tap_tempo() {

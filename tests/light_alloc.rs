@@ -36,12 +36,18 @@ static A: Counting = Counting;
 fn light_frame_does_not_allocate() {
     use openq::light::effects::{Effect, EffectRun, Shape};
     let mut rig = bench_rig(300, 3, 5);
-    // Effects running too: a chase in sequence 1, a circle in sequence 2.
+    // Effects running too: a chase in sequence 1, a circle in sequence 2, a table in sequence 3.
     rig.effects.push(Effect { id: 1, shape: Shape::Square, ..Default::default() });
     rig.effects.push(Effect { id: 2, shape: Shape::Circle, attribute: openq::light::Attribute::Pan, relative: true, size: 0.2, ..Default::default() });
     let all: Vec<u32> = rig.fixtures.iter().map(|f| f.id).collect();
     rig.sequences[0].cues[0].effects.push(EffectRun { effect: 1, fixtures: all.clone(), stop: false });
-    rig.sequences[1].cues[1].effects.push(EffectRun { effect: 2, fixtures: all, stop: false });
+    rig.sequences[1].cues[1].effects.push(EffectRun { effect: 2, fixtures: all.clone(), stop: false });
+    // A custom (table) effect on colour in sequence 3.
+    let attributes = vec![openq::light::Attribute::Red, openq::light::Attribute::Blue];
+    let values = (0..2 * 16 * 4).map(|i| (i % 7) as f32 / 7.0).collect();
+    let table = openq::light::effects::EffectTable { attributes, steps: 16, width: 4, smooth: true, values };
+    rig.effects.push(Effect { id: 3, shape: Shape::Custom, table: Some(Arc::new(table)), ..Default::default() });
+    rig.sequences[2].cues[0].effects.push(EffectRun { effect: 3, fixtures: all, stop: false });
     let show = Arc::new(LightShow::compile(&rig));
     let t0 = Instant::now();
     let mut p = Playback::new(show, t0);

@@ -50,7 +50,7 @@ Task ids (`A1`, `B2`…) are referenced from the phase plan at the end. Sizes: *
                                    External visualiser (separate program: patch + positions from
                                    OpenQ, DMX over Art-Net/sACN or the link; drops frames freely)
 
- Python worker (child process "openq --py-worker")
+ Python worker (child process: system Python 3 running the bundled openq_worker.py)
    design time: scripts → effect tables / generated cues / palettes (cached, compiled into LightShow)
    live (optional): per-frame values through shared memory; late frames → last value held
 ```
@@ -198,31 +198,45 @@ Tasks
 - **F3 (S)** Tap tempo, BPM masters, MIDI clock in.
 - **F4 (M)** Audio-reactive input (envelope/beat from mixer meters).
 
-## G. Python scripting
+## G. Python scripting (effects only, sandboxed)
 
-Ideas
-- **Design time** (default): a script reads the patch/selection and *generates* things: effect
-  curves (as tables of keys), cues, presets, fixture positions (arrays/circles in 3D), patching
-  helpers. The output is ordinary data stored in the show, so playback never runs Python.
-- **Live effects** (opt-in): a script exposes `def frame(t, fixtures) -> values`. It runs in the
-  worker process at the DMX rate, writing to shared memory; the light thread reads the latest
-  values and holds the last ones if the worker is late or dead (with a status warning).
-- **Bake**: a live script can be baked to a table for the show (no Python on show night).
-- API module `openq` (typed, documented): `patch`, `selection`, `fixture.attr`, `cue`, `preset`,
-  `effect`, `time`, math helpers; numpy optional for heavy maths.
-- Editor in the app (syntax highlight, run, console, errors pointing to lines); scripts stored in
-  the show file; a script library folder.
-- Sandbox: no imports beyond an allow-list by default (scripts in shared show files are untrusted),
-  time/memory limits, kill on timeout.
+Decision (2026-10-14): Python only **generates effects**, and only inside a sandbox. A first
+version ran system Python with full access to edit the whole design; it was replaced because a
+script in a shared show (or effect file) could have run anything on the computer.
+
+How it works
+- A script makes **custom effects**: curves sampled over one cycle, one per attribute, optionally a
+  different curve per pattern row (`EffectTable`; `Shape::Custom`). Playback treats them like any
+  effect (speed, size, base, relative/absolute, spread, groups, wings; fades in/out with cues).
+  The table is stored in the show; Python never runs during playback.
+- **Sandbox:** CPython 3.15 built for WebAssembly (WASI) runs inside wasmtime (`light::script`):
+  no files except the standard library mounted read-only at `/lib`, no network, no environment,
+  no other programs, memory capped at 256 MB, run time capped (20 s, epoch interruption), stdin and
+  stdout in memory. The reply is untrusted JSON: every effect goes through `fxfile::sanitize`.
+- **Interpreter:** installed by oqman as `python/` next to the app (`python.wasm` + ~2.6 MB of the
+  standard library: only computation modules), pinned by version and SHA-256. Development:
+  `python3 -I tools/fetch_python_wasi.py` → `target/python-wasi`. `OPENQ_PYTHON_WASI` overrides.
+  The compiled module is cached in `<config>/python-cache` (first load compiles, ~1 s here).
+- **Effect files** (`.oqfx`, `light::fxfile`): one effect as JSON (parameters, table, script,
+  author, description), imported/exported on the Effects page; plain data, so sharing is safe.
+  Importing never runs the script.
+- **Editor in OpenQ:** Effects page → "New script effect" (starts from an example) or any custom
+  effect: code editor, Run (Ctrl+Enter) / Stop, printed output and errors with the line. Run
+  replaces the effect's table (a new effect also takes the script's name and settings); extra
+  effects a script makes are added to the pool.
+- API (`assets/python/openq.py`, stub `openq.pyi`): `openq.effect(name, attributes, steps, width,
+  smooth)` → `Effect` with `fill(fn(t, row, width))`, `set/get`, playback defaults (`speed`,
+  `size`, `spread`…); helpers `hsv`, `lerp`, `clamp`, `smoothstep`, `sine`, `triangle`, `square`,
+  `saw`. Limits match the Rust side (16 attributes, 4096 steps, 512 rows, 1 M values).
 
 Tasks
-- **G1 (M)** Worker process: `openq --py-worker`, finds system Python 3 (or a bundled one via
-  oqman), JSON/msgpack over stdin/stdout, restart on crash, timeouts.
-- **G2 (M)** `openq` Python API + generated stub file (`.pyi`) for IDE completion.
-- **G3 (M)** Design-time scripts: generate effects/cues/presets.
-- **G4 (M)** Script editor window (code editor widget, console, run/stop).
-- **G5 (L)** Live script effects through shared memory + bake.
-- **G6 (S)** Sandbox / trust prompt when opening a show with scripts.
+- **G1 (M)** Sandbox host (wasmtime + WASI CPython, limits, cache). **Done.**
+- **G2 (M)** `openq` effect API + `.pyi` stub. **Done.**
+- **G3 (M)** Custom table effects in playback + `.oqfx` files. **Done.**
+- **G4 (M)** Script editor on the Effects page. **Done.**
+- **G6 (S)** ~~Trust prompt~~: not needed, scripts can't reach the system.
+- (G5 live script effects: dropped; Python never runs during playback.)
+- Later: script parameters (sliders a script declares), an effect library folder.
 
 ## H. Visualiser link (the visualiser itself is a separate program)
 
@@ -242,7 +256,8 @@ What OpenQ provides for it
 
 Tasks
 - **H4 (M)** Fixture placement in OpenQ: position/rotation columns in the patch sheet, array tools
-  (line, arc, grid), a 2D top view for placing fixtures.
+  (line, arc, grid), a 2D top view for placing fixtures. **Done** (`light::place`, patch page
+  Sheet/Plan, Arrange bar).
 - **H6 (S)** 2D plot view + export (SVG/PDF).
 - **H8 (M)** Visualiser link: lighting design + selection to a connected visualiser; MVR export.
 - (H1–H3, H5, H7 now belong to the separate visualiser program.)
@@ -327,7 +342,7 @@ A3 · B2 · D2 D4(presets) D5 D6 · E5 E6 · F1 F2 F3 · I3 I5
 → Command line, presets, effects. (H1–H3, a 3D visualiser, were built and later removed: see §H.)
 
 **Phase 3 — "power tools"**
-G1–G6 (Python) · H4 H6 H8 · B3 B4 B5 · C6 · F4 · J2 · L2 L3
+G1–G4 (Python effects, sandboxed) · H4 H6 H8 · B3 B4 B5 · C6 · F4 · J2 · L2 L3
 
 **Phase 4 — "the console"**
 K1–K4.
@@ -337,7 +352,8 @@ K1–K4.
    lighting cues with tracking) is its own document inside the show file (`Workspace.lighting`),
    edited only in Edit mode. OpenQ **Light cues** in the main cue list *target* a designed
    lighting cue (sequence + cue) and GO it; they hold no values of their own.
-2. Python: system Python 3 in a child process first (decide on bundling with oqman later).
+2. Python: only for generating effects, in a WebAssembly sandbox (CPython WASI in wasmtime),
+   interpreter installed by oqman (2026-10-14; replaces "system Python in a child process").
 3. The 3D visualiser is a separate program connecting to OpenQ, not part of the app (2026-10-14).
 
 ## Phase 1 order (one commit per step) — done
@@ -412,28 +428,36 @@ lighting, manual chapter.
 | D Programmer | D1–D6 | done |
 | E Light cues and playback | E1–E6 | done (Fade cues on lighting still open) |
 | F Effects | F1 F2 F3 | done · F4 audio-reactive open |
-| G Python | G1–G6 | open (Phase 3) |
-| H Visualiser link | — | in-app 3D view removed (separate program) · H4 placement, H6 plot, H8 link open |
+| G Python | G1–G4 | done: sandboxed effect scripts, `.oqfx` files (G5 dropped, G6 not needed) |
+| H Visualiser link | H4 | in-app 3D view removed (separate program) · H4 placement done · H6 plot, H8 link open |
 | I Lighting UI | I1–I5 | done (pools are rows on the Programmer page, no docking) |
 | J Performance | J1 J3 J2 (light panic stress test) | done |
 | K Hardware console | K1–K4 | open (Phase 4) |
 | L Persistence, remote, docs | L1 | done · L2 remote mirroring, L3 USITT ASCII, L4 manual chapter open |
 
 ## Phase 3 order (one commit per step)
-1. G1 G2 — Python worker process (`openq --py-worker`, system Python 3, JSON lines over
-   stdin/stdout, timeouts, restart) and the `openq` API module with a `.pyi` stub.
-2. G3 G4 G6 — design-time scripts (generate cues, presets, effects, positions), script editor
-   window with console, trust prompt for shows that contain scripts.
-3. G5 — live script effects through shared memory, with bake to a table.
-4. H4 — fixture placement: position/rotation in the patch sheet, array tools, 2D top view.
-5. B3 — GDTF import.
-6. C6 — Art-Net/sACN input: merge or record from another desk.
-7. L2 — remote: mirror executor levels/masters to replicas, lighting design edits in the Edit role.
-8. H8 — visualiser link (design + selection to a connected visualiser; MVR export).
-9. L4 — manual chapter (en/es/gl) with screenshots (`OPENQ_SCREENSHOT_LIGHTING=…`).
+1. G1–G4 — sandboxed Python effect scripts: custom table effects, `.oqfx` effect files, script
+   editor on the Effects page, oqman installs the interpreter. **Done.**
+2. H4 — fixture placement: position/rotation in the patch sheet, array tools, 2D top view. **Done.**
+3. B3 — GDTF import.
+4. C6 — Art-Net/sACN input: merge or record from another desk.
+5. L2 — remote: mirror executor levels/masters to replicas, lighting design edits in the Edit role.
+6. H8 — visualiser link (design + selection to a connected visualiser; MVR export).
+7. L4 — manual chapter (en/es/gl) with screenshots (`OPENQ_SCREENSHOT_LIGHTING=…`).
+
+## Phase 3 status
+- Step 1 done (see §G): `light::script` (sandbox host), `light::fxfile` (`.oqfx`),
+  `effects::EffectTable` + `Shape::Custom` (playback, preview with colour bars), Effects page script
+  editor + import/export, oqman `src/python.rs`. Tests: sandbox escapes (files, writes, sockets,
+  processes, env), time/memory limits, cancel, forged replies, hostile effect files; no allocation
+  per frame with a table effect (`tests/light_alloc.rs`); bench `light.frame_table_*`.
+- Step 2 done: patch sheet has rotation and pan/tilt invert columns; Sheet/Plan switch; Plan =
+  top view (x right, z to the audience at the bottom; 1 m grid; heading tick from rotation y):
+  click/Ctrl-click selects, drag moves the selection (5 cm snap), drag empty space pans, scroll
+  zooms, double-click recentres. Arrange bar (selection, in number order): line, arc, grid
+  (`light::place::positions`). Screenshot hook `OPENQ_SCREENSHOT_LIGHTING=plan`.
 
 Known issues to look at:
-- Fixture position/rotation can't be edited in the UI yet (only in the file).
 - Sequences page and executor levels are local to each device; replicas show their own masters.
 - `Show::sync_lighting` compares the whole design on every edit under the show lock (fine at
   normal sizes; a change counter would be cheaper for very large designs).

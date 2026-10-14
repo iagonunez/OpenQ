@@ -36,6 +36,9 @@ serialport = "4.10.1"
 symphonia = { version = "0.6.1", features = ["all"] }
 uuid = { version = "1.28.0", features = ["v4", "serde"] }
 cosmic-text = "0.19.0"
+# Lighting effect scripts: CPython built for WASI runs inside this sandbox (no files, network or processes).
+wasmtime = { version = "47.0.4", default-features = false, features = ["anyhow", "cranelift", "runtime", "std", "parallel-compilation"], optional = true }
+wasmtime-wasi = { version = "47.0.4", default-features = false, features = ["p1"], optional = true }
 resvg = { version = "0.48.1", default-features = false, features = ["text", "system-fonts", "memmap-fonts", "svgz", "raster-images"] }
 
 # macOS: native menu bar and the window-button position.
@@ -50,11 +53,13 @@ objc2-foundation = "0.2"
 winresource = "0.1"
 
 [features]
-default = ["video", "pipewire"]
+default = ["video", "pipewire", "scripting"]
 video = ["dep:ffmpeg-next"]
 # Linux: talk to PipeWire directly (every sink/source listed by name, no ALSA device busy errors).
 # Needs the libpipewire-0.3 headers; without it (or without a running PipeWire) ALSA is used.
 pipewire = ["cpal/pipewire"]
+# Python effect scripts in a WebAssembly sandbox (wasmtime); the interpreter itself is installed by oqman.
+scripting = ["dep:wasmtime", "dep:wasmtime-wasi"]
 # Lets the stress tests make chosen code paths panic on purpose (see `recovery::Fault`).
 fault-injection = []
 

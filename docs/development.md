@@ -39,6 +39,13 @@ Video uses the FFmpeg libraries (the system's on Linux; on Windows and macOS oqm
 LGPL-only build inside the app), plus clang at build time, so anything FFmpeg can play works, with no codec plugins to
 install. Build without video with `--no-default-features`.
 
+**Lighting effect scripts** run in CPython built for WebAssembly inside wasmtime (cargo feature
+`scripting`, on by default): no files besides a read-only standard library, no network or
+processes, capped memory and time. Users get the interpreter from oqman (`python/` next to the
+app); for development run `python3 -I tools/fetch_python_wasi.py`, which puts it in
+`target/python-wasi` (debug builds look there; `OPENQ_PYTHON_WASI=<dir>` points anywhere). Tests
+that need it pass with a note when it's missing.
+
 **Versions** are `vX.Y.Z` tags; there are no binary releases. oqman
 (<https://github.com/iagonunez/oqman>, its own repository) builds the newest tag on the user's
 computer: BtbN's LGPL-only FFmpeg on Windows, FFmpeg compiled from source without GPL parts on macOS,

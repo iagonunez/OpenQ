@@ -61,6 +61,10 @@ enum Deferred {
     Recover(crate::recovery::Orphan),
     /// Import a fixture type (Open Fixture Library JSON) into the lighting design.
     ImportFixture,
+    /// Import effect files (`.oqfx`) into the effects pool.
+    ImportEffects,
+    /// Save an effect as an effect file.
+    ExportEffect(crate::light::effects::EffectId),
 }
 
 /// Edit mode allows changing the show; show mode locks it down for running a performance.
@@ -2047,6 +2051,8 @@ impl App {
             }
             match d {
                 Deferred::ImportFixture => self.import_fixture(),
+                Deferred::ImportEffects => self.import_effects(),
+                Deferred::ExportEffect(id) => self.export_effect(id),
                 Deferred::New => {
                     if self.confirm_discard() {
                         self.show
@@ -2142,7 +2148,7 @@ impl App {
     /// `OPENQ_SCREENSHOT_CUE` / `OPENQ_SCREENSHOT_TAB` pick the cue and inspector tab shown
     /// (`OPENQ_SCREENSHOT_ANIM_TIME` sets the Animation tab playhead);
     /// `OPENQ_SCREENSHOT_LIGHTING=<page>` opens the Lighting workspace on a page (`colour`: the
-    /// programmer's Colour encoders);
+    /// programmer's Colour encoders; `plan`: the patch's top view with four fixtures selected);
     /// `OPENQ_SCREENSHOT_MODE=show` starts in show mode; `OPENQ_SCREENSHOT_INLINE=1` opens an
     /// in-place pre-wait editor on the selected cue.
     /// `OPENQ_SCREENSHOT_STAGE=1` embeds stage windows in the main window for the capture
@@ -2199,6 +2205,10 @@ impl App {
                 self.light.keypad = page == "keypad";
                 if page == "effects" {
                     self.light.effect = show.ws.lighting.effects.first().map(|e| e.id);
+                }
+                if page == "plan" {
+                    self.light.patch_plan = true;
+                    self.light.patch_sel = show.ws.lighting.fixtures.iter().take(4).map(|f| f.id).collect();
                 }
                 // A selection and some programmer values to look at.
                 if let Some(g) = show.ws.lighting.groups.first() {

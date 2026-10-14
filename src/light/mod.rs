@@ -5,8 +5,11 @@
 //! * [`library`] — built-in generic fixture types; [`ofl`] imports Open Fixture Library files.
 //! * [`command`] — the desk-style command line parser.
 //! * [`effects`] — effect waveforms run across fixtures (pool, runs in cues, evaluation).
+//! * [`place`] — fixture placement layouts (line, arc, grid) for the patch's Arrange tool.
 //! * [`playback`] — the compiled show and the playback state machine (fades, HTP/LTP, masters).
 //! * [`engine`] — the light thread ([`engine::LightEngine`]): playback at 44 Hz into the outputs.
+//! * [`script`] — Python effect scripts in a WebAssembly sandbox (the `openq` module).
+//! * [`fxfile`] — effect files (`.oqfx`) for sharing effects.
 //! * [`dmx`] — DMX frames and output threads; protocols in [`artnet`], [`sacn`], [`enttec`].
 //!
 //! OpenQ Light cues in the main cue list target a designed lighting cue and GO it; the design
@@ -21,7 +24,10 @@ pub mod enttec;
 pub mod library;
 pub mod model;
 pub mod ofl;
+pub mod place;
 pub mod playback;
 pub mod sacn;
+pub mod fxfile;
+pub mod script;
 
 pub use model::{Attribute, Feature, Fixture, FixtureType, Lighting, Look, LightCue, Sequence};

@@ -222,6 +222,9 @@ impl LightShow {
 
     /// An effect on fixtures (in phase order), as slots. None if no fixture has the attribute.
     pub fn compile_effect(&self, e: &Effect, fixtures: &[FixtureId]) -> Option<CompiledEffect> {
+        if e.shape == Shape::Custom {
+            return self.compile_custom(e, fixtures);
+        }
         let with: Vec<FixtureId> = fixtures.iter().copied().filter(|f| self.slot(*f, e.attribute).is_some()).collect();
         let members: Vec<Member> = with
             .iter()
@@ -231,8 +234,26 @@ impl LightShow {
                 slot2: (e.shape == Shape::Circle).then(|| self.slot(*f, Attribute::Tilt)).flatten(),
                 phase: e.phase(i, with.len()),
                 seed: *f,
+                ..Default::default()
             })
             .collect();
+        (!members.is_empty()).then(|| CompiledEffect { id: e.id, effect: e.clone(), members })
+    }
+
+    /// A custom effect: one member per fixture attribute the table moves (invalid tables don't play).
+    fn compile_custom(&self, e: &Effect, fixtures: &[FixtureId]) -> Option<CompiledEffect> {
+        let t = e.table.as_ref().filter(|t| t.validate().is_ok())?;
+        let with: Vec<FixtureId> = fixtures.iter().copied().filter(|f| t.attributes.iter().any(|a| self.slot(*f, *a).is_some())).collect();
+        let mut members = Vec::new();
+        for (i, f) in with.iter().enumerate() {
+            let phase = e.phase(i, with.len());
+            let row = (e.position(i) % t.width as usize) as u32;
+            for (col, a) in t.attributes.iter().enumerate() {
+                if let Some(slot) = self.slot(*f, *a) {
+                    members.push(Member { slot, phase, seed: *f, row, col: col as u32, ..Default::default() });
+                }
+            }
+        }
         (!members.is_empty()).then(|| CompiledEffect { id: e.id, effect: e.clone(), members })
     }
 

@@ -105,3 +105,5 @@ pub const INSTANT_MIX: &str = "\u{e026}";
 pub const SURROUND_SOUND: &str = "\u{e049}";
 pub const ARROW_UPWARD: &str = "\u{e5d8}";
 pub const LANGUAGE: &str = "\u{ea07}";
+pub const CODE: &str = "\u{e86f}";
+pub const DOWNLOAD: &str = "\u{f090}";
