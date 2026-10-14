@@ -2193,6 +2193,7 @@ impl App {
                 if page == "colour" {
                     self.light.feature = Some(crate::light::Feature::Colour);
                 }
+                self.light.keypad = page == "keypad";
                 if page == "effects" {
                     self.light.effect = show.ws.lighting.effects.first().map(|e| e.id);
                 }

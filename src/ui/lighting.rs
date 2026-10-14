@@ -48,7 +48,7 @@ impl LightTab {
     /// A page by name (`OPENQ_SCREENSHOT_LIGHTING`).
     pub(crate) fn from_name(name: &str) -> Self {
         match name {
-            "programmer" | "colour" => LightTab::Programmer,
+            "programmer" | "colour" | "keypad" => LightTab::Programmer,
             "effects" => LightTab::Effects,
             "sequences" => LightTab::Sequences,
             "outputs" => LightTab::Outputs,
@@ -97,6 +97,13 @@ pub(crate) struct LightUi {
     pub(crate) effect: Option<EffectId>,
     /// Tap tempo: recent taps.
     taps: Vec<std::time::Instant>,
+    /// Command line text, history and the result of the last command.
+    cmd_line: String,
+    cmd_history: Vec<String>,
+    cmd_back: Option<usize>,
+    cmd_result: Option<Result<String, String>>,
+    /// Keypad window open.
+    pub(crate) keypad: bool,
     /// The programmer as last sent to the light thread.
     sent: Option<(Look, bool, Option<Vec<FixtureId>>)>,
     /// Blind: the programmer isn't output (still recordable).
@@ -179,6 +186,8 @@ impl App {
             .frame(egui::Frame::new().fill(theme::BG_PANEL).inner_margin(egui::Margin::symmetric(8, 6)))
             .resizable(false)
             .show(ui, |ui| self.executor_bar(ui, show));
+        egui::Panel::top("command_line").frame(egui::Frame::new().inner_margin(egui::Margin::symmetric(0, 4))).show(ui, |ui| self.command_bar(ui, show));
+        self.keypad_window(ui.ctx(), show);
         if !self.can_design() {
             ui.add_space(4.0);
             ui.horizontal(|ui| {
@@ -439,6 +448,11 @@ fn highlight_value(mode: &crate::light::model::FixtureMode, a: Attribute) -> Opt
         Shutter | Iris => Some(1.0),
         _ => None,
     }
+}
+
+/// A cue number as typed ("5", "2.5").
+fn format_number(n: f64) -> String {
+    if n.fract() == 0.0 { format!("{}", n as i64) } else { format!("{n}") }
 }
 
 /// Tap tempo: add a tap and return the tempo of the recent taps (a pause over 2 s starts again).
@@ -862,6 +876,266 @@ impl App {
         });
     }
 
+    /// The command line: Enter runs it, Up/Down walk the history, Esc clears.
+    fn command_bar(&mut self, ui: &mut Ui, show: &mut Show) {
+        let id = egui::Id::new("light_command_line");
+        ui.horizontal(|ui| {
+            ui.label(RichText::new(icons::KEYBOARD).font(theme::icon_font(18.0)).color(theme::TEXT_DIM));
+            let w = ui.available_width() - 330.0;
+            let r = ui.add(
+                egui::TextEdit::singleline(&mut self.light.cmd_line)
+                    .id(id)
+                    .font(theme::mono(14.0))
+                    .hint_text(t("1 thru 10 at 50 · group 2 at full · record cue 5 · go 1"))
+                    .desired_width(w.max(200.0)),
+            );
+            if r.has_focus() {
+                let (up, down, esc) = ui.input(|i| (i.key_pressed(egui::Key::ArrowUp), i.key_pressed(egui::Key::ArrowDown), i.key_pressed(egui::Key::Escape)));
+                let h = &self.light.cmd_history;
+                if up && !h.is_empty() {
+                    let i = self.light.cmd_back.map_or(h.len() - 1, |i| i.saturating_sub(1));
+                    self.light.cmd_back = Some(i);
+                    self.light.cmd_line = h[i].clone();
+                }
+                if down && let Some(i) = self.light.cmd_back {
+                    if i + 1 < h.len() {
+                        self.light.cmd_back = Some(i + 1);
+                        self.light.cmd_line = h[i + 1].clone();
+                    } else {
+                        self.light.cmd_back = None;
+                        self.light.cmd_line.clear();
+                    }
+                }
+                if esc {
+                    self.light.cmd_line.clear();
+                    self.light.cmd_back = None;
+                }
+            }
+            let enter = r.lost_focus() && ui.input(|i| i.key_pressed(egui::Key::Enter));
+            if ui.button(theme::with_icon(icons::ARROW_RIGHT, t("Run"))).clicked() || enter {
+                self.run_command_line(show);
+                ui.memory_mut(|m| m.request_focus(id));
+            }
+            let (fill, fg) = if self.light.keypad { (theme::ACCENT, Color32::WHITE) } else { (theme::BG_RAISED, theme::TEXT) };
+            if ui.add(egui::Button::new(RichText::new(theme::with_icon(icons::GRID_VIEW, t("Keypad"))).color(fg)).fill(fill)).clicked() {
+                self.light.keypad = !self.light.keypad;
+            }
+            match &self.light.cmd_result {
+                Some(Ok(m)) => {
+                    ui.label(RichText::new(m).color(theme::GREEN).small());
+                }
+                Some(Err(e)) => {
+                    ui.label(RichText::new(e).color(theme::RED).small());
+                }
+                None => {}
+            }
+        });
+    }
+
+    /// Desk keypad: buttons type into the command line.
+    fn keypad_window(&mut self, ctx: &egui::Context, show: &mut Show) {
+        if !self.light.keypad {
+            return;
+        }
+        let mut open = true;
+        let mut run = false;
+        let pos = ctx.content_rect().right_top() + egui::vec2(-640.0, 190.0);
+        egui::Window::new(t("Keypad")).open(&mut open).resizable(false).collapsible(false).default_pos(pos).show(ctx, |ui| {
+            let rows: [[&str; 4]; 6] = [
+                ["group", "preset", "effect", "clear"],
+                ["7", "8", "9", "thru"],
+                ["4", "5", "6", "+"],
+                ["1", "2", "3", "-"],
+                ["0", ".", "at", "full"],
+                ["record", "cue", "/", "⏎"],
+            ];
+            egui::Grid::new("keypad").spacing([4.0, 4.0]).show(ui, |ui| {
+                for row in rows {
+                    for k in row {
+                        let label = match k {
+                            "⏎" => t("Enter").to_string(),
+                            k if k.chars().all(|c| c.is_ascii_digit() || c == '.' || c == '+' || c == '-' || c == '/') => k.to_string(),
+                            k => {
+                                let mut c = k.chars();
+                                c.next().map(|f| f.to_uppercase().collect::<String>() + c.as_str()).unwrap_or_default()
+                            }
+                        };
+                        let fill = if k == "⏎" { theme::GO } else { theme::BG_RAISED };
+                        if ui.add(egui::Button::new(RichText::new(label).font(theme::semibold(15.0))).fill(fill).min_size(egui::vec2(66.0, 44.0))).clicked() {
+                            if k == "⏎" {
+                                run = true;
+                            } else {
+                                let line = &mut self.light.cmd_line;
+                                let joins = k.chars().all(|c| c.is_ascii_digit() || c == '.') && line.chars().last().is_some_and(|c| c.is_ascii_digit() || c == '.');
+                                if !line.is_empty() && !joins && !line.ends_with(' ') {
+                                    line.push(' ');
+                                }
+                                line.push_str(k);
+                            }
+                        }
+                    }
+                    ui.end_row();
+                }
+            });
+        });
+        self.light.keypad = open;
+        if run {
+            self.run_command_line(show);
+        }
+    }
+
+    /// Parse and run the command line; its result shows next to it.
+    fn run_command_line(&mut self, show: &mut Show) {
+        let line = self.light.cmd_line.trim().to_string();
+        if line.is_empty() {
+            return;
+        }
+        let r = crate::light::command::parse(&line).and_then(|cmds| self.run_commands(show, &cmds));
+        if r.is_ok() {
+            if self.light.cmd_history.last() != Some(&line) {
+                self.light.cmd_history.push(line);
+                if self.light.cmd_history.len() > 100 {
+                    self.light.cmd_history.remove(0);
+                }
+            }
+            self.light.cmd_line.clear();
+        }
+        self.light.cmd_back = None;
+        self.light.cmd_result = Some(r);
+    }
+
+    fn run_commands(&mut self, show: &mut Show, cmds: &[crate::light::command::Cmd]) -> Result<String, String> {
+        use crate::control::{Command, LightControl};
+        use crate::light::command::{Cmd, SelOp, SelSet, Target};
+        let design = self.can_design();
+        let before = show.ws.lighting.clone();
+        let mut done = String::new();
+        for c in cmds {
+            let playback = matches!(c, Cmd::Go(..) | Cmd::Release(_));
+            if !design && !playback {
+                return Err(t("Only GO and release work in Show mode").into());
+            }
+            let l = &mut show.ws.lighting;
+            match *c {
+                Cmd::Select(op, set) => {
+                    let ids: Vec<FixtureId> = match set {
+                        SelSet::Fixture(f) => l.fixture(f).map(|x| vec![x.id]).ok_or_else(|| tr!("no fixture {f}", f = f.to_string()))?,
+                        SelSet::Range(a, b) => {
+                            let mut v: Vec<FixtureId> = l.fixtures.iter().map(|f| f.id).filter(|id| (a..=b).contains(id)).collect();
+                            v.sort();
+                            v
+                        }
+                        SelSet::Group(g) => l.groups.iter().find(|x| x.id == g).map(|x| x.fixtures.clone()).ok_or_else(|| tr!("no group {g}", g = g.to_string()))?,
+                        SelSet::All => l.fixtures.iter().map(|f| f.id).collect(),
+                    };
+                    let sel = &mut self.light.selection;
+                    match op {
+                        SelOp::Replace => *sel = ids,
+                        SelOp::Add => sel.extend(ids.into_iter().filter(|f| !sel.contains(f)).collect::<Vec<_>>()),
+                        SelOp::Remove => sel.retain(|f| !ids.contains(f)),
+                    }
+                    done = tr!("{n} selected", n = self.light.selection.len().to_string());
+                }
+                Cmd::At(v) => {
+                    if self.light.selection.is_empty() {
+                        return Err(t("Nothing selected").into());
+                    }
+                    let snapshot = l.clone();
+                    self.set_selection(&snapshot, Attribute::Dimmer, v);
+                    done = format!("@ {:.0} %", v * 100.0);
+                }
+                Cmd::Preset(p) => {
+                    if l.preset(p).is_none() {
+                        return Err(tr!("no preset {p}", p = p.to_string()));
+                    }
+                    let snapshot = l.clone();
+                    self.apply_preset(&snapshot, p);
+                    done = tr!("preset {p}", p = p.to_string());
+                }
+                Cmd::Effect(e) => {
+                    if l.effect(e).is_none() {
+                        return Err(tr!("no effect {e}", e = e.to_string()));
+                    }
+                    self.light.programmer_effects.retain(|r| r.effect != e);
+                    self.light.programmer_effects.push(EffectRun { effect: e, fixtures: self.light.selection.clone(), stop: false });
+                    done = tr!("effect {e}", e = e.to_string());
+                }
+                Cmd::Clear => {
+                    self.light.programmer.clear();
+                    self.light.programmer_effects.clear();
+                    done = t("cleared").into();
+                }
+                Cmd::Blind => self.light.blind = !self.light.blind,
+                Cmd::Highlight => self.light.highlight = !self.light.highlight,
+                Cmd::Update => {
+                    if !self.update_cue(l) {
+                        return Err(t("Select a cue on the Sequences page").into());
+                    }
+                    done = t("updated").into();
+                }
+                Cmd::Record(Target::Cue(n, seq)) => {
+                    let seq = seq.or(self.light.sequence).or(l.sequences.first().map(|s| s.id));
+                    self.record_cue(l, seq, format_number(n));
+                    done = tr!("recorded cue {n}", n = format_number(n));
+                }
+                Cmd::Record(Target::Group(g)) => {
+                    let fixtures = self.light.selection.clone();
+                    match l.groups.iter_mut().find(|x| x.id == g) {
+                        Some(x) => x.fixtures = fixtures,
+                        None => l.groups.push(Group { id: g, name: String::new(), fixtures }),
+                    }
+                    done = tr!("recorded group {g}", g = g.to_string());
+                }
+                Cmd::Record(Target::Preset(p)) => {
+                    let feature = l.preset(p).map_or(self.light.preset_feature, |x| x.feature);
+                    let values = self.programmer_values(l, feature);
+                    match l.presets.iter_mut().find(|x| x.id == p) {
+                        Some(x) => x.values = values,
+                        None => l.presets.push(Preset { id: p, name: String::new(), feature, values }),
+                    }
+                    done = tr!("recorded preset {p}", p = p.to_string());
+                }
+                Cmd::Delete(Target::Cue(n, seq)) => {
+                    let seq = seq.or(self.light.sequence).or(l.sequences.first().map(|s| s.id));
+                    let s = l.sequences.iter_mut().find(|s| Some(s.id) == seq).ok_or(t("No such sequence"))?;
+                    let before = s.cues.len();
+                    s.cues.retain(|c| c.number != format_number(n));
+                    if s.cues.len() == before {
+                        return Err(tr!("no cue {n}", n = format_number(n)));
+                    }
+                    done = tr!("deleted cue {n}", n = format_number(n));
+                }
+                Cmd::Delete(Target::Group(g)) => {
+                    l.groups.retain(|x| x.id != g);
+                    done = tr!("deleted group {g}", g = g.to_string());
+                }
+                Cmd::Delete(Target::Preset(p)) => {
+                    crate::light::model::unlink_preset(l, p, &mut self.light.programmer);
+                    l.delete_preset(p);
+                    done = tr!("deleted preset {p}", p = p.to_string());
+                }
+                Cmd::Go(seq, cue) => {
+                    let seq = seq.or(self.light.sequence).or(l.sequences.first().map(|s| s.id)).ok_or(t("No such sequence"))?;
+                    let s = l.sequence(seq).ok_or(t("No such sequence"))?;
+                    let cue = match cue {
+                        Some(n) => Some(s.cues.iter().find(|c| c.number == format_number(n)).map(|c| c.id).ok_or_else(|| tr!("no cue {n}", n = format_number(n)))?),
+                        None => None,
+                    };
+                    self.control(show, Command::Light(LightControl::Go(seq, cue)));
+                    done = "GO".into();
+                }
+                Cmd::Release(seq) => {
+                    self.control(show, Command::Light(LightControl::Release(seq, 1.0)));
+                    done = t("released").into();
+                }
+            }
+        }
+        if show.ws.lighting != before {
+            show.edited();
+        }
+        Ok(done)
+    }
+
     /// Record / update controls (programmer → a sequence).
     fn record_controls(&mut self, ui: &mut Ui, l: &mut Lighting) {
         let seq_id = self.light.sequence.filter(|s| l.sequence(*s).is_some()).or(l.sequences.first().map(|s| s.id));
@@ -877,28 +1151,7 @@ impl App {
         let can = !self.light.programmer.is_empty() || !self.light.programmer_effects.is_empty();
         if ui.add_enabled(can, egui::Button::new(theme::with_icon(icons::FIBER_MANUAL_RECORD, t("Record cue")))).clicked() {
             let number = Some(self.light.record_number.trim().to_string()).filter(|n| !n.is_empty()).unwrap_or(hint);
-            let seq = match seq_id {
-                Some(id) => id,
-                None => {
-                    l.sequences.push(Sequence { id: 1, name: t("Main").into(), ..Default::default() });
-                    1
-                }
-            };
-            let s = l.sequences.iter_mut().find(|s| s.id == seq).expect("sequence");
-            let values = self.light.programmer.clone();
-            let effects = self.light.programmer_effects.clone();
-            if let Some(c) = s.cues.iter_mut().find(|c| c.number == number) {
-                // Re-record over an existing number.
-                c.values = values;
-                c.effects = effects;
-                self.light.cue = Some(c.id);
-            } else {
-                let c = LightCue { number, values, effects, ..Default::default() };
-                self.light.cue = Some(c.id);
-                let at = s.cues.iter().position(|x| number_key(&x.number) > number_key(&c.number)).unwrap_or(s.cues.len());
-                s.cues.insert(at, c);
-            }
-            self.light.sequence = Some(seq);
+            self.record_cue(l, seq_id, number);
             self.light.record_number.clear();
         }
         let target = self.light.cue.and_then(|c| l.cue_label(c));
@@ -906,16 +1159,51 @@ impl App {
             .add_enabled(can && target.is_some(), egui::Button::new(theme::with_icon(icons::SAVE, t("Update cue"))))
             .on_hover_text(target.map_or_else(|| t("Select a cue on the Sequences page").to_string(), |c| tr!("Merge the programmer into cue {cue}", cue = c)))
             .clicked()
-            && let Some(c) = self.light.cue.and_then(|id| l.sequences.iter_mut().flat_map(|s| s.cues.iter_mut()).find(|c| c.id == id))
         {
-            for (f, vals) in &self.light.programmer {
-                c.values.entry(*f).or_default().extend(vals.iter().map(|(a, v)| (*a, *v)));
-            }
-            for r in &self.light.programmer_effects {
-                c.effects.retain(|x| x.effect != r.effect);
-                c.effects.push(r.clone());
-            }
+            self.update_cue(l);
         }
+    }
+
+    /// Record the programmer (values and effects) as cue `number` of a sequence (None: the
+    /// first; a new sequence 1 when there is none). An existing number is recorded over.
+    fn record_cue(&mut self, l: &mut Lighting, seq: Option<SequenceId>, number: String) {
+        let seq = match seq.filter(|s| l.sequence(*s).is_some()) {
+            Some(id) => id,
+            None => {
+                let id = seq.unwrap_or(1);
+                l.sequences.push(Sequence { id, name: t("Main").into(), ..Default::default() });
+                id
+            }
+        };
+        let s = l.sequences.iter_mut().find(|s| s.id == seq).expect("sequence");
+        let values = self.light.programmer.clone();
+        let effects = self.light.programmer_effects.clone();
+        if let Some(c) = s.cues.iter_mut().find(|c| c.number == number) {
+            c.values = values;
+            c.effects = effects;
+            self.light.cue = Some(c.id);
+        } else {
+            let c = LightCue { number, values, effects, ..Default::default() };
+            self.light.cue = Some(c.id);
+            let at = s.cues.iter().position(|x| number_key(&x.number) > number_key(&c.number)).unwrap_or(s.cues.len());
+            s.cues.insert(at, c);
+        }
+        self.light.sequence = Some(seq);
+    }
+
+    /// Merge the programmer into the selected cue. False when no cue is selected.
+    fn update_cue(&mut self, l: &mut Lighting) -> bool {
+        let Some(c) = self.light.cue.and_then(|id| l.sequences.iter_mut().flat_map(|s| s.cues.iter_mut()).find(|c| c.id == id)) else {
+            return false;
+        };
+        for (f, vals) in &self.light.programmer {
+            c.values.entry(*f).or_default().extend(vals.iter().map(|(a, v)| (*a, *v)));
+        }
+        for r in &self.light.programmer_effects {
+            c.effects.retain(|x| x.effect != r.effect);
+            c.effects.push(r.clone());
+        }
+        true
     }
 
     /// Fixture tiles: click to select (Ctrl/Shift adds). Each shows its number, name, type, the
