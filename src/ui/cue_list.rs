@@ -739,10 +739,15 @@ impl App {
         if let Some([r, g, b]) = cue.color.rgb() {
             p.rect_filled(Rect::from_min_size(row.min, vec2(4.0, row.height())), 2.0, Color32::from_rgb(r, g, b));
         }
+        // The outline starts after the colour bar so the two don't overlap.
+        let mut outline = row;
+        if cue.color.rgb().is_some() {
+            outline.min.x += 5.0;
+        }
         if is_playhead {
-            p.rect_stroke(row, 5.0, Stroke::new(1.5, theme::GREEN), StrokeKind::Inside);
+            p.rect_stroke(outline, 5.0, Stroke::new(1.5, theme::GREEN), StrokeKind::Inside);
         } else if selected {
-            p.rect_stroke(row, 5.0, Stroke::new(1.0, theme::ACCENT.gamma_multiply(0.6)), StrokeKind::Inside);
+            p.rect_stroke(outline, 5.0, Stroke::new(1.0, theme::ACCENT.gamma_multiply(0.6)), StrokeKind::Inside);
         }
 
         let text_color = if cue.armed { theme::TEXT } else { theme::TEXT_FAINT };
