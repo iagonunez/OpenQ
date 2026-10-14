@@ -43,7 +43,7 @@ impl LightTab {
     /// A page by name (`OPENQ_SCREENSHOT_LIGHTING`).
     pub(crate) fn from_name(name: &str) -> Self {
         match name {
-            "programmer" => LightTab::Programmer,
+            "programmer" | "colour" => LightTab::Programmer,
             "sequences" => LightTab::Sequences,
             "outputs" => LightTab::Outputs,
             "monitor" => LightTab::Monitor,
@@ -84,7 +84,7 @@ pub(crate) struct LightUi {
     /// The programmer as last sent to the light thread.
     sent: Option<Look>,
     /// Encoder page.
-    feature: Option<Feature>,
+    pub(crate) feature: Option<Feature>,
     /// Sequence shown on the Sequences page / recorded into.
     sequence: Option<SequenceId>,
     /// Selected cue on the Sequences page.
@@ -422,7 +422,7 @@ impl App {
             });
         });
         ui.add_space(4.0);
-        ui.horizontal(|ui| {
+        ui.horizontal_wrapped(|ui| {
             let n = self.light.selection.len();
             ui.label(RichText::new(tr!("{n} selected", n = n.to_string())).color(theme::TEXT_DIM));
             if ui.button(theme::with_icon(icons::SELECT_ALL, t("Select all"))).clicked() {
@@ -446,17 +446,17 @@ impl App {
             self.record_controls(ui, l);
         });
         ui.separator();
-        // Fixture tiles on the left, encoders on the right.
-        let enc_w = 430.0;
-        ui.horizontal_top(|ui| {
-            let tiles_w = (ui.available_width() - enc_w - 12.0).max(200.0);
-            ui.allocate_ui(egui::vec2(tiles_w, ui.available_height()), |ui| self.fixture_tiles(ui, l));
-            ui.separator();
-            ui.vertical(|ui| {
-                ui.set_width(enc_w);
-                self.encoders(ui, l);
+        // Encoders in a side panel of their own (resizable, scrolls), tiles fill the rest.
+        egui::Panel::right("encoders")
+            .frame(egui::Frame::new().fill(theme::BG_PANEL).corner_radius(8.0).inner_margin(egui::Margin::same(10)))
+            .resizable(true)
+            .default_size(420.0)
+            .size_range(320.0..=640.0)
+            .show(ui, |ui| {
+                egui::ScrollArea::vertical().id_salt("encoders_scroll").auto_shrink(false).show(ui, |ui| self.encoders(ui, l));
             });
-        });
+        ui.add_space(2.0);
+        self.fixture_tiles(ui, l);
     }
 
     /// Record / update controls (programmer → a sequence).
@@ -508,12 +508,17 @@ impl App {
         }
     }
 
-    /// Fixture tiles: click to select (Ctrl/Shift adds), showing the programmer intensity.
+    /// Fixture tiles: click to select (Ctrl/Shift adds). Each shows its number, name, type, the
+    /// programmer intensity (bar) and colour (swatch), and the selection order.
     fn fixture_tiles(&mut self, ui: &mut Ui, l: &Lighting) {
-        let tile = egui::vec2(84.0, 52.0);
+        const GAP: f32 = 6.0;
+        // Tiles stretch so a row fills the width exactly.
+        let avail = ui.available_width() - 14.0;
+        let per_row = ((avail + GAP) / (132.0 + GAP)).floor().max(1.0);
+        let tile = egui::vec2(((avail + GAP) / per_row - GAP).floor(), 86.0);
         egui::ScrollArea::vertical().id_salt("tiles").auto_shrink(false).show(ui, |ui| {
             ui.horizontal_wrapped(|ui| {
-                ui.spacing_mut().item_spacing = egui::vec2(4.0, 4.0);
+                ui.spacing_mut().item_spacing = egui::vec2(GAP, GAP);
                 for f in &l.fixtures {
                     let (rect, r) = ui.allocate_exact_size(tile, egui::Sense::click());
                     if !ui.is_rect_visible(rect) {
@@ -521,24 +526,43 @@ impl App {
                     }
                     let order = self.light.selection.iter().position(|x| *x == f.id);
                     let prog = self.light.programmer.get(&f.id);
+                    let ty = l.fixture_type(&f.fixture_type);
                     let p = ui.painter();
                     let fill = if order.is_some() { theme::accent_bg() } else if r.hovered() { theme::BG_HOVER } else { theme::BG_RAISED };
-                    p.rect_filled(rect, 6.0, fill);
-                    if prog.is_some() {
-                        p.rect_stroke(rect, 6.0, egui::Stroke::new(1.5, theme::RED), egui::StrokeKind::Inside);
+                    p.rect_filled(rect, 8.0, fill);
+                    let border = if prog.is_some() {
+                        egui::Stroke::new(1.5, theme::RED)
+                    } else if order.is_some() {
+                        egui::Stroke::new(1.0, theme::BLUE)
+                    } else {
+                        egui::Stroke::new(1.0, theme::BORDER)
+                    };
+                    p.rect_stroke(rect, 8.0, border, egui::StrokeKind::Inside);
+                    let inner = rect.shrink2(egui::vec2(9.0, 7.0));
+                    p.text(inner.left_top(), egui::Align2::LEFT_TOP, f.id.to_string(), theme::semibold(17.0), theme::TEXT);
+                    if let Some(i) = order {
+                        p.text(inner.right_top(), egui::Align2::RIGHT_TOP, format!("#{}", i + 1), theme::mono(10.5), theme::BLUE);
                     }
-                    p.text(rect.left_top() + egui::vec2(6.0, 4.0), egui::Align2::LEFT_TOP, f.id.to_string(), theme::semibold(13.0), theme::TEXT);
-                    let name = if f.name.is_empty() { l.fixture_type(&f.fixture_type).map_or("", |t| t.name.as_str()) } else { f.name.as_str() };
-                    p.text(rect.left_bottom() + egui::vec2(6.0, -4.0), egui::Align2::LEFT_BOTTOM, name, egui::FontId::proportional(10.5), theme::TEXT_DIM);
-                    // Programmer intensity and colour.
+                    let name = if f.name.is_empty() { ty.map_or("", |t| t.name.as_str()) } else { f.name.as_str() };
+                    let clip = p.with_clip_rect(inner);
+                    clip.text(inner.left_top() + egui::vec2(0.0, 24.0), egui::Align2::LEFT_TOP, name, egui::FontId::proportional(12.5), theme::TEXT);
+                    if !f.name.is_empty() && let Some(ty) = ty {
+                        clip.text(inner.left_top() + egui::vec2(0.0, 41.0), egui::Align2::LEFT_TOP, &ty.name, egui::FontId::proportional(10.5), theme::TEXT_FAINT);
+                    }
+                    // Programmer intensity bar and colour swatch.
+                    let bar = egui::Rect::from_min_max(egui::pos2(inner.left(), inner.bottom() - 5.0), inner.right_bottom());
+                    p.rect_filled(bar, 2.0, theme::BG_INPUT);
                     if let Some(v) = prog {
                         if let Some(d) = v.get(&Attribute::Dimmer) {
-                            p.text(rect.right_top() + egui::vec2(-6.0, 4.0), egui::Align2::RIGHT_TOP, format!("{:.0}", d * 100.0), theme::mono(11.0), theme::RED);
+                            let lit = egui::Rect::from_min_size(bar.min, egui::vec2(bar.width() * d, bar.height()));
+                            p.rect_filled(lit, 2.0, theme::AMBER);
+                            p.text(egui::pos2(inner.right(), bar.top() - 3.0), egui::Align2::RIGHT_BOTTOM, format!("{:.0}%", d * 100.0), theme::mono(11.0), theme::AMBER);
                         }
                         let c = |a| v.get(&a).copied();
                         if let (Some(r), Some(g), Some(b)) = (c(Attribute::Red), c(Attribute::Green), c(Attribute::Blue)) {
-                            let sw = egui::Rect::from_min_size(rect.right_bottom() - egui::vec2(18.0, 16.0), egui::vec2(12.0, 10.0));
-                            p.rect_filled(sw, 2.0, Color32::from_rgb((r * 255.0) as u8, (g * 255.0) as u8, (b * 255.0) as u8));
+                            let at = egui::pos2(inner.right() - 7.0, inner.top() + if order.is_some() { 24.0 } else { 8.0 });
+                            p.circle_filled(at, 7.0, Color32::from_rgb((r * 255.0) as u8, (g * 255.0) as u8, (b * 255.0) as u8));
+                            p.circle_stroke(at, 7.0, egui::Stroke::new(1.0, theme::BORDER));
                         }
                     }
                     if r.clicked() {
@@ -598,8 +622,8 @@ impl App {
         match feature {
             Feature::Intensity => {
                 ui.horizontal(|ui| {
-                    for (label, v) in [(t("Full"), 1.0), ("50 %", 0.5), (t("Zero"), 0.0)] {
-                        if ui.button(label).clicked() {
+                    for (label, v) in [(t("Full"), 1.0), ("75 %", 0.75), ("50 %", 0.5), ("25 %", 0.25), (t("Zero"), 0.0)] {
+                        if ui.add(egui::Button::new(label).min_size(egui::vec2(56.0, 28.0))).clicked() {
                             self.set_selection(l, Attribute::Dimmer, v);
                         }
                     }
@@ -609,30 +633,33 @@ impl App {
             Feature::Position if page.contains(&Attribute::Pan) && page.contains(&Attribute::Tilt) => self.pan_tilt_pad(ui, l),
             _ => {}
         }
-        egui::Grid::new("encoders").num_columns(3).spacing([8.0, 6.0]).show(ui, |ui| {
-            for a in page {
-                ui.label(a.label());
-                let current = self.selection_value(a);
-                let mut v = current.unwrap_or(0.0) * 100.0;
-                let r = ui.add(egui::Slider::new(&mut v, 0.0..=100.0).suffix(" %").max_decimals(1));
-                if r.changed() {
-                    self.set_selection(l, a, v / 100.0);
+        ui.add_space(4.0);
+        let gap = ui.spacing().item_spacing.x;
+        // Room for the scroll bar on the right.
+        let bar_w = ui.available_width() - 92.0 - 26.0 - 2.0 * gap - 10.0;
+        for a in page {
+            let current = self.selection_value(a);
+            ui.horizontal(|ui| {
+                let (r, _) = ui.allocate_exact_size(egui::vec2(92.0, 26.0), egui::Sense::hover());
+                let fg = if current.is_some() { theme::TEXT } else { theme::TEXT_DIM };
+                ui.painter().with_clip_rect(r).text(r.left_center(), egui::Align2::LEFT_CENTER, a.label(), egui::FontId::proportional(13.0), fg);
+                let w = bar_w;
+                if let Some(v) = attr_bar(ui, current, w) {
+                    self.set_selection(l, a, v);
                 }
-                if current.is_some() {
-                    if ui.small_button(icons::CLOSE).on_hover_text(t("Remove from the programmer")).clicked() {
-                        for f in &self.light.selection {
-                            if let Some(vals) = self.light.programmer.get_mut(f) {
-                                vals.remove(&a);
-                            }
+                let clear = ui.add_enabled(current.is_some(), egui::Button::new(icons::CLOSE).min_size(egui::vec2(26.0, 26.0))).on_hover_text(t("Remove from the programmer"));
+                if clear.clicked() {
+                    for f in &self.light.selection {
+                        if let Some(vals) = self.light.programmer.get_mut(f) {
+                            vals.remove(&a);
                         }
-                        self.light.programmer.retain(|_, v| !v.is_empty());
                     }
-                } else {
-                    ui.label("");
+                    self.light.programmer.retain(|_, v| !v.is_empty());
                 }
-                ui.end_row();
-            }
-        });
+            });
+        }
+        ui.add_space(6.0);
+        ui.label(RichText::new(t("Drag a bar to set it, scroll over it for 1 % steps.")).weak().small());
     }
 
     /// RGB/CMY picker for the selection.
@@ -643,23 +670,21 @@ impl App {
             return;
         }
         let get = |a| self.selection_value(a).unwrap_or(0.0);
-        let mut c = if rgb {
+        let c = if rgb {
             [get(Attribute::Red), get(Attribute::Green), get(Attribute::Blue)]
         } else {
             [1.0 - get(Attribute::Cyan), 1.0 - get(Attribute::Magenta), 1.0 - get(Attribute::Yellow)]
         };
-        let mut hsva = egui::ecolor::Hsva::from_rgb(c);
-        if egui::color_picker::color_picker_hsva_2d(ui, &mut hsva, egui::color_picker::Alpha::Opaque) {
-            c = hsva.to_rgb();
+        if let Some(new) = colour_field(ui, c) {
             if rgb {
-                self.set_selection(l, Attribute::Red, c[0]);
-                self.set_selection(l, Attribute::Green, c[1]);
-                self.set_selection(l, Attribute::Blue, c[2]);
+                self.set_selection(l, Attribute::Red, new[0]);
+                self.set_selection(l, Attribute::Green, new[1]);
+                self.set_selection(l, Attribute::Blue, new[2]);
             }
             if cmy {
-                self.set_selection(l, Attribute::Cyan, 1.0 - c[0]);
-                self.set_selection(l, Attribute::Magenta, 1.0 - c[1]);
-                self.set_selection(l, Attribute::Yellow, 1.0 - c[2]);
+                self.set_selection(l, Attribute::Cyan, 1.0 - new[0]);
+                self.set_selection(l, Attribute::Magenta, 1.0 - new[1]);
+                self.set_selection(l, Attribute::Yellow, 1.0 - new[2]);
             }
         }
         ui.add_space(4.0);
@@ -667,7 +692,8 @@ impl App {
 
     /// Pan (x) / tilt (y) pad for the selection.
     fn pan_tilt_pad(&mut self, ui: &mut Ui, l: &Lighting) {
-        let size = egui::vec2(180.0, 180.0);
+        let side = ui.available_width().clamp(160.0, 300.0);
+        let size = egui::vec2(side, side * 0.75);
         let (rect, r) = ui.allocate_exact_size(size, egui::Sense::click_and_drag());
         let p = ui.painter();
         p.rect_filled(rect, 6.0, theme::BG_INPUT);
@@ -773,19 +799,34 @@ impl App {
                 const W: [f32; 6] = [24.0, 60.0, 220.0, 80.0, 80.0, 80.0];
                 ui.horizontal(|ui| {
                     for (h, w) in ["", t("No."), t("Name"), t("Fade"), t("Down"), t("Delay")].iter().zip(W) {
-                        ui.add_sized([w, 18.0], egui::Label::new(theme::caption(h)));
+                        ui.allocate_ui_with_layout(egui::vec2(w, 18.0), egui::Layout::left_to_right(egui::Align::Center), |ui| {
+                            ui.set_width(w);
+                            ui.label(theme::caption(h));
+                        });
                     }
                     ui.label(theme::caption(t("Fixtures")));
                 });
-                egui::ScrollArea::vertical().id_salt("light_cues").auto_shrink(false).show_rows(ui, 26.0, s.cues.len(), |ui, range| {
+                // Leave room under the list for the selected cue's name.
+                egui::ScrollArea::vertical().id_salt("light_cues").auto_shrink(false).max_height(ui.available_height() - 44.0).show_rows(ui, 28.0, s.cues.len(), |ui, range| {
                     for c in &mut s.cues[range] {
                         let selected = self.light.cue == Some(c.id);
                         ui.horizontal(|ui| {
                             let live = current == Some(c.id);
                             let mark = if live { RichText::new(icons::PLAY_ARROW).color(theme::GREEN) } else { RichText::new("") };
                             ui.add_sized([W[0], 20.0], egui::Label::new(mark.font(theme::icon_font(14.0))));
-                            ui.add_sized([W[1], 20.0], egui::TextEdit::singleline(&mut c.number));
-                            if ui.add_sized([W[2], 20.0], egui::Button::selectable(selected, if c.name.is_empty() { "—" } else { c.name.as_str() })).clicked() {
+                            ui.add(egui::TextEdit::singleline(&mut c.number).desired_width(W[1] - 8.0));
+                            let name = if c.name.is_empty() { "—" } else { c.name.as_str() };
+                            let (rect, r) = ui.allocate_exact_size(egui::vec2(W[2], 22.0), egui::Sense::click());
+                            let fill = if selected { theme::accent_bg() } else if r.hovered() { theme::BG_HOVER } else { Color32::TRANSPARENT };
+                            ui.painter().rect_filled(rect, 4.0, fill);
+                            ui.painter().with_clip_rect(rect).text(
+                                rect.left_center() + egui::vec2(6.0, 0.0),
+                                egui::Align2::LEFT_CENTER,
+                                name,
+                                egui::FontId::proportional(13.0),
+                                if selected { theme::BLUE } else { theme::TEXT },
+                            );
+                            if r.clicked() {
                                 self.light.cue = Some(c.id);
                             }
                             ui.add_sized([W[3], 20.0], DragValue::new(&mut c.fade).range(0.0..=600.0).speed(0.05).suffix(" s"));
@@ -1062,9 +1103,11 @@ impl App {
         let starts: std::collections::HashMap<u16, FixtureId> =
             show.ws.lighting.fixtures.iter().filter(|f| f.universe == u.id && f.address > 0).map(|f| (f.address, f.id)).collect();
         let cols = 32;
-        let cell = egui::vec2(((ui.available_width() - 4.0) / cols as f32).floor().max(24.0), 26.0);
+        let rows = 512 / cols;
+        // Use the room there is: 16 rows filling the height (scrolls below 30 px a row).
+        let cell = egui::vec2(((ui.available_width() - 4.0) / cols as f32).floor().max(24.0), ((ui.available_height() - 4.0) / rows as f32).floor().clamp(30.0, 64.0));
         egui::ScrollArea::vertical().id_salt("dmx_monitor").auto_shrink(false).show(ui, |ui| {
-            let (rect, _) = ui.allocate_exact_size(egui::vec2(cell.x * cols as f32, cell.y * (512 / cols) as f32), egui::Sense::hover());
+            let (rect, _) = ui.allocate_exact_size(egui::vec2(cell.x * cols as f32, cell.y * rows as f32), egui::Sense::hover());
             let p = ui.painter();
             for (i, v) in u.data.iter().enumerate() {
                 let r = egui::Rect::from_min_size(rect.min + egui::vec2((i % cols) as f32 * cell.x, (i / cols) as f32 * cell.y), cell).shrink(1.0);
@@ -1078,11 +1121,167 @@ impl App {
                 if starts.contains_key(&slot) {
                     p.line_segment([r.left_top(), r.left_bottom()], egui::Stroke::new(2.0, theme::AMBER));
                 }
-                p.text(r.left_top() + egui::vec2(3.0, 1.0), egui::Align2::LEFT_TOP, slot.to_string(), egui::FontId::proportional(8.0), theme::TEXT_FAINT);
-                p.text(r.right_bottom() - egui::vec2(3.0, 1.0), egui::Align2::RIGHT_BOTTOM, v.to_string(), theme::mono(10.0), if *v > 0 { Color32::WHITE } else { theme::TEXT_FAINT });
+                p.text(r.left_top() + egui::vec2(4.0, 2.0), egui::Align2::LEFT_TOP, slot.to_string(), egui::FontId::proportional(9.5), theme::TEXT_FAINT);
+                let size = (cell.y * 0.38).clamp(11.0, 16.0);
+                p.text(r.right_bottom() - egui::vec2(4.0, 3.0), egui::Align2::RIGHT_BOTTOM, v.to_string(), theme::mono(size), if *v > 0 { Color32::WHITE } else { theme::TEXT_FAINT });
             }
         });
     }
+}
+
+/// Colour presets (RGB) for the swatch row: white, warm white, then round the hue circle.
+const SWATCHES: [[f32; 3]; 12] = [
+    [1.0, 1.0, 1.0],
+    [1.0, 0.85, 0.6],
+    [1.0, 0.0, 0.0],
+    [1.0, 0.35, 0.0],
+    [1.0, 0.6, 0.0],
+    [1.0, 1.0, 0.0],
+    [0.0, 1.0, 0.0],
+    [0.0, 1.0, 1.0],
+    [0.0, 0.3, 1.0],
+    [0.0, 0.0, 1.0],
+    [0.6, 0.2, 1.0],
+    [1.0, 0.0, 1.0],
+];
+
+fn to_c32(c: [f32; 3]) -> Color32 {
+    Color32::from_rgb((c[0].clamp(0.0, 1.0) * 255.0) as u8, (c[1].clamp(0.0, 1.0) * 255.0) as u8, (c[2].clamp(0.0, 1.0) * 255.0) as u8)
+}
+
+/// Colour picker sized to the width it gets: preset swatches, a saturation (x) / brightness (y)
+/// field and a hue strip. Returns the new RGB when the user changed it.
+fn colour_field(ui: &mut Ui, rgb: [f32; 3]) -> Option<[f32; 3]> {
+    use egui::ecolor::Hsva;
+    let id = ui.id().with("colour_field_hue");
+    let mut hsv = Hsva::from_rgb(rgb);
+    // Keep the hue while saturation or brightness is 0 (it can't be read back from the colour).
+    let stored: Option<f32> = ui.data(|d| d.get_temp(id));
+    if (hsv.s < 0.01 || hsv.v < 0.01) && let Some(h) = stored {
+        hsv.h = h;
+    }
+    let mut out = None;
+    let w = ui.available_width();
+    // Swatches.
+    ui.horizontal(|ui| {
+        ui.spacing_mut().item_spacing.x = 4.0;
+        let n = SWATCHES.len() as f32;
+        let side = ((w - 4.0 * (n - 1.0)) / n).clamp(16.0, 30.0);
+        for sw in SWATCHES {
+            let (r, resp) = ui.allocate_exact_size(egui::vec2(side, side), egui::Sense::click());
+            ui.painter().rect_filled(r, 4.0, to_c32(sw));
+            let stroke = if resp.hovered() { egui::Stroke::new(2.0, Color32::WHITE) } else { egui::Stroke::new(1.0, theme::BORDER) };
+            ui.painter().rect_stroke(r, 4.0, stroke, egui::StrokeKind::Inside);
+            if resp.clicked() {
+                out = Some(sw);
+            }
+        }
+    });
+    ui.add_space(6.0);
+    // Saturation / brightness field for the current hue (bilinear in s and v, so a grid of
+    // vertex-coloured quads draws it exactly enough).
+    let (field, fr) = ui.allocate_exact_size(egui::vec2(w, (w * 0.45).clamp(110.0, 170.0)), egui::Sense::click_and_drag());
+    let mut mesh = egui::Mesh::default();
+    const N: usize = 8;
+    for yi in 0..=N {
+        for xi in 0..=N {
+            let (sx, vy) = (xi as f32 / N as f32, 1.0 - yi as f32 / N as f32);
+            let c = Hsva::new(hsv.h, sx, vy, 1.0).to_rgb();
+            let pos = egui::pos2(field.left() + sx * field.width(), field.top() + (1.0 - vy) * field.height());
+            mesh.colored_vertex(pos, to_c32(c));
+        }
+    }
+    for yi in 0..N {
+        for xi in 0..N {
+            let a = (yi * (N + 1) + xi) as u32;
+            let b = a + 1;
+            let c = a + (N + 1) as u32;
+            mesh.add_triangle(a, b, c);
+            mesh.add_triangle(b, c + 1, c);
+        }
+    }
+    let p = ui.painter();
+    p.add(mesh);
+    p.rect_stroke(field, 4.0, egui::Stroke::new(1.0, theme::BORDER), egui::StrokeKind::Inside);
+    let dot = egui::pos2(field.left() + hsv.s * field.width(), field.top() + (1.0 - hsv.v) * field.height());
+    p.circle_stroke(dot, 6.0, egui::Stroke::new(2.0, Color32::WHITE));
+    p.circle_stroke(dot, 7.5, egui::Stroke::new(1.0, Color32::BLACK));
+    if let Some(pos) = fr.interact_pointer_pos()
+        && (fr.dragged() || fr.clicked())
+    {
+        let s = ((pos.x - field.left()) / field.width()).clamp(0.0, 1.0);
+        let v = 1.0 - ((pos.y - field.top()) / field.height()).clamp(0.0, 1.0);
+        out = Some(Hsva::new(hsv.h, s, v, 1.0).to_rgb());
+    }
+    ui.add_space(4.0);
+    // Hue strip.
+    let (strip, sr) = ui.allocate_exact_size(egui::vec2(w, 18.0), egui::Sense::click_and_drag());
+    let mut mesh = egui::Mesh::default();
+    const H: usize = 24;
+    for i in 0..=H {
+        let h = i as f32 / H as f32;
+        let c = to_c32(Hsva::new(h, 1.0, 1.0, 1.0).to_rgb());
+        let x = strip.left() + h * strip.width();
+        mesh.colored_vertex(egui::pos2(x, strip.top()), c);
+        mesh.colored_vertex(egui::pos2(x, strip.bottom()), c);
+    }
+    for i in 0..H as u32 {
+        let a = i * 2;
+        mesh.add_triangle(a, a + 1, a + 2);
+        mesh.add_triangle(a + 1, a + 3, a + 2);
+    }
+    let p = ui.painter();
+    p.add(mesh);
+    let x = strip.left() + hsv.h * strip.width();
+    p.rect_stroke(egui::Rect::from_center_size(egui::pos2(x, strip.center().y), egui::vec2(6.0, 22.0)), 2.0, egui::Stroke::new(2.0, Color32::WHITE), egui::StrokeKind::Middle);
+    if let Some(pos) = sr.interact_pointer_pos()
+        && (sr.dragged() || sr.clicked())
+    {
+        let h = ((pos.x - strip.left()) / strip.width()).clamp(0.0, 0.999);
+        ui.data_mut(|d| d.insert_temp(id, h));
+        // A hue pick on a grey/black colour makes it fully saturated and bright enough to see.
+        let sat = if hsv.s < 0.01 { 1.0 } else { hsv.s };
+        let val = if hsv.v < 0.01 { 1.0 } else { hsv.v };
+        out = Some(Hsva::new(h, sat, val, 1.0).to_rgb());
+    }
+    if let Some(c) = out {
+        let h = Hsva::from_rgb(c);
+        if h.s > 0.01 && h.v > 0.01 {
+            ui.data_mut(|d| d.insert_temp(id, h.h));
+        }
+    }
+    out
+}
+
+/// An attribute value bar (0..=1; `None` = not in the programmer, drawn empty with "—").
+/// Click/drag sets the value, the mouse wheel steps it by 1 %. Returns the new value if changed.
+fn attr_bar(ui: &mut Ui, value: Option<f32>, width: f32) -> Option<f32> {
+    let (rect, r) = ui.allocate_exact_size(egui::vec2(width.max(60.0), 26.0), egui::Sense::click_and_drag());
+    let mut out = None;
+    if let Some(pos) = r.interact_pointer_pos()
+        && (r.dragged() || r.clicked())
+    {
+        out = Some(((pos.x - rect.left()) / rect.width()).clamp(0.0, 1.0));
+    }
+    if r.hovered() {
+        let scroll = ui.input(|i| i.smooth_scroll_delta.y + i.smooth_scroll_delta.x);
+        if scroll != 0.0 {
+            out = Some((value.unwrap_or(0.0) + scroll.signum() * 0.01).clamp(0.0, 1.0));
+        }
+    }
+    let shown = out.or(value);
+    let p = ui.painter();
+    p.rect_filled(rect, 5.0, theme::BG_INPUT);
+    if let Some(v) = shown {
+        let fill = egui::Rect::from_min_size(rect.min, egui::vec2(rect.width() * v, rect.height()));
+        p.rect_filled(fill, 5.0, theme::RED.gamma_multiply(0.55));
+    }
+    let stroke = if r.hovered() { theme::TEXT_FAINT } else { theme::BORDER };
+    p.rect_stroke(rect, 5.0, egui::Stroke::new(1.0, stroke), egui::StrokeKind::Inside);
+    let text = shown.map_or_else(|| "—".to_string(), |v| format!("{:.1} %", v * 100.0));
+    p.text(rect.center(), egui::Align2::CENTER_CENTER, text, theme::mono(12.0), if shown.is_some() { Color32::WHITE } else { theme::TEXT_FAINT });
+    r.on_hover_cursor(egui::CursorIcon::ResizeHorizontal);
+    out
 }
 
 /// A horizontal level (0..=1) set by clicking or dragging, with the percentage on it.

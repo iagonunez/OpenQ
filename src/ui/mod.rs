@@ -2138,7 +2138,8 @@ impl App {
     /// `OPENQ_SCREENSHOT_GOS` times (default 0), captures its window a couple of frames later and exits.
     /// `OPENQ_SCREENSHOT_CUE` / `OPENQ_SCREENSHOT_TAB` pick the cue and inspector tab shown
     /// (`OPENQ_SCREENSHOT_ANIM_TIME` sets the Animation tab playhead);
-    /// `OPENQ_SCREENSHOT_LIGHTING=<page>` opens the Lighting workspace on a page;
+    /// `OPENQ_SCREENSHOT_LIGHTING=<page>` opens the Lighting workspace on a page (`colour`: the
+    /// programmer's Colour encoders);
     /// `OPENQ_SCREENSHOT_MODE=show` starts in show mode; `OPENQ_SCREENSHOT_INLINE=1` opens an
     /// in-place pre-wait editor on the selected cue.
     /// `OPENQ_SCREENSHOT_STAGE=1` embeds stage windows in the main window for the capture
@@ -2189,6 +2190,9 @@ impl App {
             if let Ok(page) = std::env::var("OPENQ_SCREENSHOT_LIGHTING") {
                 self.view = lighting::View::Lighting;
                 self.light.tab = lighting::LightTab::from_name(&page);
+                if page == "colour" {
+                    self.light.feature = Some(crate::light::Feature::Colour);
+                }
                 // A selection and some programmer values to look at.
                 if let Some(g) = show.ws.lighting.groups.first() {
                     self.light.selection = g.fixtures.clone();
@@ -2542,6 +2546,8 @@ impl App {
                 )
                 .resizable(true)
                 .default_size(280.0)
+                // Narrow in the Lighting workspace, which needs the width for its own panels.
+                .max_size(if self.view == lighting::View::Lighting { 220.0 } else { f32::INFINITY })
                 .show(ui, |ui| self.active_panel(ui, show));
             egui::CentralPanel::default()
                 .frame(
