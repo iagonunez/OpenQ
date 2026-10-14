@@ -46,11 +46,52 @@ pub fn data_packet(cid: &[u8; 16], name: &str, priority: u8, sequence: u8, unive
 
 /// Parse a data packet: (universe, priority, data).
 pub fn parse_data(p: &[u8]) -> Option<(u16, u8, &[u8])> {
+    parse(p).map(|d| (d.universe, d.priority, d.data))
+}
+
+/// Options bit: preview data (for visualisers, not for output).
+pub const PREVIEW: u8 = 0x80;
+/// Options bit: the source stops sending this universe.
+pub const TERMINATED: u8 = 0x40;
+
+/// A received data packet.
+#[derive(Debug, PartialEq)]
+pub struct DataPacket<'a> {
+    /// Source id.
+    pub cid: [u8; 16],
+    /// Universe.
+    pub universe: u16,
+    /// Source priority.
+    pub priority: u8,
+    /// Options bits ([`PREVIEW`], [`TERMINATED`]).
+    pub options: u8,
+    /// Slot values (null start code only).
+    pub data: &'a [u8],
+}
+
+/// Parse a data packet with a null start code (other start codes and other vectors give None).
+pub fn parse(p: &[u8]) -> Option<DataPacket<'_>> {
     if p.len() < 126 || &p[4..16] != ACN_ID || p[117] != 0x02 || p[125] != 0 {
         return None;
     }
-    let count = u16::from_be_bytes([p[123], p[124]]) as usize;
-    Some((u16::from_be_bytes([p[113], p[114]]), p[108], p.get(126..125 + count)?))
+    if u32::from_be_bytes([p[18], p[19], p[20], p[21]]) != 4 || u32::from_be_bytes([p[40], p[41], p[42], p[43]]) != 2 {
+        return None;
+    }
+    let count = (u16::from_be_bytes([p[123], p[124]]) as usize).clamp(1, SLOTS + 1);
+    Some(DataPacket {
+        cid: p[22..38].try_into().ok()?,
+        universe: u16::from_be_bytes([p[113], p[114]]),
+        priority: p[108],
+        options: p[112],
+        data: p.get(126..125 + count)?,
+    })
+}
+
+/// The source id every sACN output of this process sends (one OpenQ = one source), so inputs
+/// can ignore OpenQ's own packets.
+pub fn own_cid() -> [u8; 16] {
+    static CID: std::sync::OnceLock<[u8; 16]> = std::sync::OnceLock::new();
+    *CID.get_or_init(|| uuid::Uuid::new_v4().into_bytes())
 }
 
 /// Sends sACN data packets.
@@ -71,7 +112,7 @@ impl SacnOutput {
             .transpose()?;
         let socket = UdpSocket::bind((Ipv4Addr::UNSPECIFIED, 0))?;
         socket.set_multicast_ttl_v4(8)?;
-        let cid = uuid::Uuid::new_v4().into_bytes();
+        let cid = own_cid();
         Ok(Self { socket, unicast, cid, priority, sequence: 0, buf: Box::new([0; PACKET_LEN]) })
     }
 }

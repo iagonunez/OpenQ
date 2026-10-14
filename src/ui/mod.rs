@@ -10,6 +10,7 @@ mod cue_list;
 mod devices;
 mod eq;
 mod effects;
+mod fixture_types;
 mod icons;
 mod inspector;
 mod language;
@@ -27,6 +28,7 @@ mod remote;
 mod room;
 #[cfg(feature = "video")]
 mod stage;
+mod surfaces;
 mod theme;
 mod waveform;
 mod widgets;
@@ -59,12 +61,16 @@ enum Deferred {
     AddMediaCues,
     /// Open a show autosaved before a crash (may ask to discard the current one first).
     Recover(crate::recovery::Orphan),
-    /// Import a fixture type (Open Fixture Library JSON) into the lighting design.
+    /// Import fixture types (OFL, GDTF, QLC+, OpenQ files) into the design and the library.
     ImportFixture,
+    /// Save a fixture type as an `.oqfixture` file.
+    ExportFixture(Box<crate::light::FixtureType>),
     /// Import effect files (`.oqfx`) into the effects pool.
     ImportEffects,
     /// Save an effect as an effect file.
     ExportEffect(crate::light::effects::EffectId),
+    /// Save the patch as an MVR file (false) or the plan as an SVG plot (true).
+    ExportPatch(bool),
 }
 
 /// Edit mode allows changing the show; show mode locks it down for running a performance.
@@ -80,14 +86,21 @@ struct UndoState {
     cues: crate::model::CueList,
     stages: Vec<Stage>,
     lighting: crate::light::Lighting,
-    /// Cues in `cues` (for the history's memory budget).
+    /// Cues in `cues` plus the lighting design's weight in cue-sized units (the history's memory
+    /// budget).
     size: usize,
 }
 
 impl UndoState {
     fn of(show: &Show) -> Self {
         let cues = show.ws.cue_list.clone();
-        Self { size: cues.iter_all().len(), cues, stages: show.ws.stages.clone(), lighting: show.ws.lighting.clone() }
+        let l = &show.ws.lighting;
+        // Every step copies the patch, types and cue headers; cue and preset values are shared
+        // between steps (`light::model::Shared`) until edited, so they aren't counted.
+        let channels: usize = l.fixture_types.iter().flat_map(|t| &t.modes).map(|m| m.all_channels().count()).sum();
+        let light_cues: usize = l.sequences.iter().map(|s| s.cues.len()).sum();
+        let lighting = l.fixtures.len() + channels / 4 + light_cues / 4 + l.effects.len();
+        Self { size: cues.iter_all().len() + lighting, cues, stages: show.ws.stages.clone(), lighting: l.clone() }
     }
 }
 
@@ -105,7 +118,8 @@ fn trim_undo(stack: &mut Vec<UndoState>) {
 /// Undo steps kept at most.
 const UNDO_STEPS: usize = 200;
 /// Cues kept across all undo steps. Every step is a full copy of the cue lists (~0.5 KB per
-/// cue), so 200 steps of a 5000-cue show would hold ~500 MB; big shows keep fewer steps.
+/// cue) and of the lighting patch, so 200 steps of a 5000-cue show would hold ~500 MB; big
+/// shows keep fewer steps.
 const UNDO_CUE_BUDGET: usize = 100_000;
 /// Steps kept whatever the budget says.
 const UNDO_MIN_STEPS: usize = 10;
@@ -115,6 +129,7 @@ enum SettingsTab {
     General,
     Audio,
     Stages,
+    Surfaces,
 }
 
 /// Default height of the inspector panel: room for the tallest tab (the waveform plus a row of
@@ -197,6 +212,13 @@ pub struct App {
     osc: Option<crate::osc::OscServer>,
     osc_error: Option<String>,
     osc_failed_for: Option<u16>,
+    /// What the OSC listener and the MIDI surface share (learn mode, button states).
+    surfaces: crate::surface::SurfaceHub,
+    /// This computer's MIDI input for control surfaces, and its connection.
+    midi_port: Option<String>,
+    midi_surface: Option<crate::surface::MidiSurface>,
+    /// Where a control being learned goes.
+    learn_into: Option<surfaces::LearnInto>,
     debug_t0: Option<Instant>,
     /// `OPENQ_DEBUG_SCRIPT` run and frame timings.
     debug_run: debug::DebugRun,
@@ -272,6 +294,10 @@ impl App {
             osc: None,
             osc_error: None,
             osc_failed_for: None,
+            surfaces: Default::default(),
+            midi_port: crate::surface::saved_midi_port(),
+            midi_surface: None,
+            learn_into: None,
             debug_t0: None,
             debug_run: Default::default(),
             debug_gos: 0,
@@ -591,13 +617,18 @@ impl App {
             if ctx.input_mut(|i| i.consume_shortcut(&sc(cmd, Key::G))) {
                 self.group_selected(show);
             }
-            if ctx.input_mut(|i| {
-                i.consume_key(Modifiers::NONE, Key::Delete)
-                    || i.consume_key(Modifiers::NONE, Key::Backspace)
-            }) {
+            // Delete and Enter act on the cue list only while it is showing (the Lighting view
+            // uses Delete for its own things).
+            let cues = self.view == lighting::View::Cues;
+            if cues
+                && ctx.input_mut(|i| {
+                    i.consume_key(Modifiers::NONE, Key::Delete)
+                        || i.consume_key(Modifiers::NONE, Key::Backspace)
+                })
+            {
                 self.delete_selected(show);
             }
-            if ctx.input_mut(|i| i.consume_key(Modifiers::NONE, Key::Enter)) {
+            if cues && ctx.input_mut(|i| i.consume_key(Modifiers::NONE, Key::Enter)) {
                 // Enter edits the selected cue's name in place.
                 if let Some(c) = self.primary().and_then(|p| show.ws.cue_list.find(p)) {
                     self.inline = Some(cue_list::InlineEdit::new(
@@ -746,7 +777,7 @@ impl App {
         self.osc_failed_for = None;
         if let Some(port) = want {
             let c = ctx.clone();
-            match crate::osc::OscServer::start(port, self.show.clone(), move || c.request_repaint())
+            match crate::osc::OscServer::start_with(port, self.show.clone(), self.surfaces.clone(), move || c.request_repaint())
             {
                 Ok(s) => self.osc = Some(s),
                 Err(e) => {
@@ -1713,12 +1744,14 @@ impl App {
                     theme::tab(ui, &mut self.settings_tab, SettingsTab::General, icons::SETTINGS, t("General"));
                     theme::tab(ui, &mut self.settings_tab, SettingsTab::Audio, icons::SPEAKER, t("Audio"));
                     theme::tab(ui, &mut self.settings_tab, SettingsTab::Stages, icons::DESKTOP_WINDOWS, t("Video stages"));
+                    theme::tab(ui, &mut self.settings_tab, SettingsTab::Surfaces, icons::PIANO, t("Control surfaces"));
                 });
                 ui.separator();
                 match self.settings_tab {
                     SettingsTab::General => self.settings_general(ui, show),
                     SettingsTab::Audio => self.settings_audio(ui, show),
                     SettingsTab::Stages => self.settings_stages(ui, show),
+                    SettingsTab::Surfaces => self.settings_surfaces(ui, show),
                 }
             });
         self.show_settings = open;
@@ -2036,7 +2069,7 @@ impl App {
         }
     }
 
-    fn run_deferred(&mut self) {
+    fn run_deferred(&mut self, ctx: &egui::Context) {
         for d in std::mem::take(&mut self.deferred) {
             if self.remote.is_replica() {
                 let why = match d {
@@ -2050,9 +2083,11 @@ impl App {
                 }
             }
             match d {
-                Deferred::ImportFixture => self.import_fixture(),
+                Deferred::ImportFixture => self.import_fixture(ctx),
+                Deferred::ExportFixture(ty) => self.export_fixture(*ty),
                 Deferred::ImportEffects => self.import_effects(),
                 Deferred::ExportEffect(id) => self.export_effect(id),
+                Deferred::ExportPatch(plot) => self.export_patch(plot),
                 Deferred::New => {
                     if self.confirm_discard() {
                         self.show
@@ -2148,7 +2183,9 @@ impl App {
     /// `OPENQ_SCREENSHOT_CUE` / `OPENQ_SCREENSHOT_TAB` pick the cue and inspector tab shown
     /// (`OPENQ_SCREENSHOT_ANIM_TIME` sets the Animation tab playhead);
     /// `OPENQ_SCREENSHOT_LIGHTING=<page>` opens the Lighting workspace on a page (`colour`: the
-    /// programmer's Colour encoders; `plan`: the patch's top view with four fixtures selected);
+    /// programmer's Colour encoders; `plan`: the patch's top view with four fixtures selected;
+    /// `types`: the fixture type editor on a type with ranges; `beam`: the Beam encoders with
+    /// range buttons for every unit with a gobo);
     /// `OPENQ_SCREENSHOT_MODE=show` starts in show mode; `OPENQ_SCREENSHOT_INLINE=1` opens an
     /// in-place pre-wait editor on the selected cue.
     /// `OPENQ_SCREENSHOT_STAGE=1` embeds stage windows in the main window for the capture
@@ -2207,11 +2244,33 @@ impl App {
                     self.light.effect = show.ws.lighting.effects.first().map(|e| e.id);
                 }
                 if page == "plan" {
-                    self.light.patch_plan = true;
+                    self.light.patch_view = lighting::PatchView::Plan;
                     self.light.patch_sel = show.ws.lighting.fixtures.iter().take(4).map(|f| f.id).collect();
+                    self.light.shape_sel = show.ws.lighting.shapes.first().map(|s| s.id);
+                }
+                if page == "types"
+                    && let Some(ty) = show.ws.lighting.fixture_types.iter().find(|t| t.modes.iter().any(|m| m.all_channels().any(|c| !c.ranges.is_empty())))
+                {
+                    self.light.patch_view = lighting::PatchView::Types;
+                    self.light.types.edit = Some(fixture_types::TypeEdit::open_ranges(ty.clone()));
                 }
                 // A selection and some programmer values to look at.
-                if let Some(g) = show.ws.lighting.groups.first() {
+                if page == "beam" {
+                    use crate::light::Attribute;
+                    let l = &show.ws.lighting;
+                    self.light.feature = Some(crate::light::Feature::Beam);
+                    self.light.selection = l.units().into_iter().filter(|u| l.unit_attributes(*u).contains(&Attribute::Gobo)).collect();
+                    for f in &self.light.selection {
+                        let v = self.light.programmer.entry(*f).or_default();
+                        v.insert(Attribute::Dimmer, 1.0.into());
+                        let chans = l.unit_channels(*f).unwrap_or_default();
+                        for a in [Attribute::Gobo, Attribute::Shutter] {
+                            if let Some(r) = chans.iter().find(|c| c.attribute == a).and_then(|c| c.ranges.get(1)) {
+                                v.insert(a, r.value().into());
+                            }
+                        }
+                    }
+                } else if let Some(g) = show.ws.lighting.groups.first() {
                     self.light.selection = g.fixtures.clone();
                     for f in g.fixtures.iter().take(4) {
                         let v = self.light.programmer.entry(*f).or_default();
@@ -2261,6 +2320,7 @@ impl App {
                 self.settings_tab = match t.as_str() {
                     "audio" => SettingsTab::Audio,
                     "general" => SettingsTab::General,
+                    "surfaces" => SettingsTab::Surfaces,
                     _ => SettingsTab::Stages,
                 };
             }
@@ -2610,7 +2670,9 @@ impl App {
             }
             self.track_undo(&ctx, show);
             self.sync_osc(&ctx, show);
+            self.sync_surfaces(&ctx, show);
             self.lighting_frame(show);
+            self.poll_fixture_imports(show);
 
             // Stage windows are drawn after the lock is released, from this snapshot.
             #[cfg(feature = "video")]
@@ -2685,7 +2747,7 @@ impl App {
                 show.edited();
             }
         }
-        self.run_deferred();
+        self.run_deferred(&ctx);
         self.debug_frame_done(frame_start, cpu);
     }
 }

@@ -23,8 +23,9 @@ __all__ = [
 
 ATTRIBUTES = [
     "Dimmer", "Red", "Green", "Blue", "White", "Amber", "Lime", "Uv", "Cyan", "Magenta", "Yellow", "Cto",
-    "ColorWheel", "Pan", "Tilt", "PanTiltSpeed", "Zoom", "Focus", "Iris", "Frost", "Gobo", "GoboRotation",
-    "Prism", "Shutter", "Control", "Effect", "EffectSpeed", "Fog", "Fan",
+    "ColorWheel", "ColorWheel2", "ColorMacro", "Pan", "Tilt", "PanTiltSpeed", "Zoom", "Focus", "Iris", "Frost", "Frost2",
+    "Gobo", "GoboRotation", "Gobo2", "Gobo2Rotation", "Prism", "PrismRotation", "Prism2", "Shutter", "Control", "Control2",
+    "Control3", "Effect", "EffectSpeed", "Effect2", "Effect2Speed", "Fog", "Fan",
 ]
 """Every attribute name, as OpenQ stores them."""
 

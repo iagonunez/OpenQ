@@ -33,7 +33,7 @@ pub const DEFAULT_PORT: u16 = 53200;
 /// UDP port for discovery queries.
 pub const DISCOVERY_PORT: u16 = 53201;
 /// Wire protocol version; both ends must match.
-pub const PROTOCOL: u32 = 2;
+pub const PROTOCOL: u32 = 3;
 
 /// What a paired device may do.
 #[derive(Serialize, Deserialize, Clone, Copy, PartialEq, Eq, Debug, Default)]
@@ -273,6 +273,21 @@ pub struct LiveState {
     pub meters: Vec<f32>,
     /// The main device has unsaved changes.
     pub dirty: bool,
+    /// Lighting masters and sequence states.
+    #[serde(default)]
+    pub lighting: LightLive,
+}
+
+/// Live lighting state mirrored to replicas (their executors show the main device's).
+#[derive(Serialize, Deserialize, Clone, Debug, PartialEq, Default)]
+#[serde(default)]
+pub struct LightLive {
+    /// Grand master, blackout, sequence levels, tempo.
+    pub masters: crate::light::engine::Masters,
+    /// What each sequence is doing.
+    pub sequences: Vec<crate::light::playback::SequenceStatus>,
+    /// Fixtures selected in the main device's programmer (a visualiser highlights them).
+    pub selection: Vec<crate::light::model::FixtureId>,
 }
 
 /// Main device → replica.
@@ -292,11 +307,22 @@ pub enum ServerMsg {
         ws: Box<Workspace>,
         /// File name for the title bar.
         title: String,
+        /// `ws.lighting` is left out: keep the lighting design of the last workspace (a
+        /// [`ServerMsg::Lighting`] follows if it changed). A big design isn't resent whenever a
+        /// cue is added.
+        #[serde(default)]
+        keep_lighting: bool,
     },
     /// Only these cues changed since the last workspace sent (their own fields; a group's
     /// children come as separate entries). Sent instead of [`ServerMsg::Workspace`] when the
     /// tree's shape and everything else stayed the same, e.g. while a slider is dragged.
     Cues(Vec<Cue>),
+    /// Only these lighting design changes since the last workspace sent (sent with or instead of
+    /// [`ServerMsg::Cues`]).
+    Lighting(Box<crate::light::patch::LightingPatch>),
+    /// DMX output universes that changed (number, 512 slots), about 20 times a second, to a
+    /// replica that asked with [`ClientMsg::Subscribe`].
+    Dmx(Vec<(u16, Vec<u8>)>),
     /// Live engine state (about 20 times a second while things change, else once a second).
     State(Box<LiveState>),
     /// Durations/details of media files (the files themselves stay on the main device).
@@ -316,8 +342,33 @@ pub enum ClientMsg {
     Command(Command),
     /// The whole workspace after a local edit (Edit role only).
     Edit(Box<Workspace>),
+    /// A local edit that changed the cue list's shape: the whole workspace except the lighting
+    /// design (`ws.lighting` is ignored), whose changes come as a patch (Edit role only).
+    Reshape {
+        /// The workspace (its lighting is ignored).
+        ws: Box<Workspace>,
+        /// Lighting design changes.
+        lighting: Option<Box<crate::light::patch::LightingPatch>>,
+    },
+    /// A local edit as changes to the last workspace received (Edit role only): see
+    /// [`workspace_patch`].
+    Patch {
+        /// Changed cues.
+        cues: Vec<Cue>,
+        /// Lighting design changes.
+        lighting: Option<Box<crate::light::patch::LightingPatch>>,
+    },
     /// Ask for a media file's waveform.
     Waveform(PathBuf),
+    /// Start or stop receiving the DMX output ([`ServerMsg::Dmx`]): a DMX monitor or a
+    /// visualiser.
+    Subscribe {
+        /// Wanted.
+        dmx: bool,
+    },
+    /// Select fixtures in the main device's programmer (a visualiser picking fixtures; Control
+    /// role or above).
+    Select(Vec<crate::light::model::FixtureId>),
     /// Send the whole workspace again (a [`ServerMsg::Cues`] didn't fit this replica's copy).
     Resync,
     /// Keep-alive.
@@ -359,6 +410,35 @@ pub fn cue_patch(old: &Workspace, new: &Workspace) -> Option<Vec<Cue>> {
         }
     }
     Some(out)
+}
+
+/// The changes from `old` to `new` as changed cues ([`cue_patch`]) plus a lighting design patch,
+/// or None if the whole workspace has to go.
+pub fn workspace_patch(old: &Workspace, new: &Workspace) -> Option<(Vec<Cue>, Option<crate::light::patch::LightingPatch>)> {
+    Some((cue_patch(old, new)?, crate::light::patch::diff(&old.lighting, &new.lighting)))
+}
+
+/// Apply a [`workspace_patch`] to a copy of the workspace it was made from. False (workspace
+/// untouched) if it doesn't fit.
+pub fn apply_workspace_patch(ws: &mut Workspace, cues: &[Cue], lighting: Option<&crate::light::patch::LightingPatch>) -> bool {
+    let mut lights = None;
+    if let Some(p) = lighting {
+        let mut l = ws.lighting.clone();
+        if !crate::light::patch::apply(&mut l, p) {
+            return false;
+        }
+        lights = Some(l);
+    }
+    // A patch that half fits must leave nothing applied.
+    let backup = ws.cue_list.clone();
+    if !apply_cue_patch(ws, cues) {
+        ws.cue_list = backup;
+        return false;
+    }
+    if let Some(l) = lights {
+        ws.lighting = l;
+    }
+    true
 }
 
 /// Apply a [`cue_patch`]. False if a cue isn't there (the copy has drifted; ask for a resync).

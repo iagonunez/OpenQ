@@ -2,10 +2,13 @@
 //!
 //! ```text
 //! 1 thru 10 at 50          select 1..10, intensity 50 %
+//! 101.1 thru 101.12 at 80  cells 1..12 of multi-cell fixture 101
 //! group 2 + 7 - 3 @ full   group 2 plus 7 minus 3, full
 //! 101 > 104 preset 3       ">" is thru; apply preset 3
 //! all at out               "out" = 0
 //! effect 2                 run effect 2 on the selection
+//! gobo star | wheel 3      pick a named range of a channel by name (prefix) or number;
+//! shutter "strobe fast"    words: gobo gobo2 wheel wheel2 macro prism prism2 shutter iris frost frost2 control control2 control3
 //! record cue 5 / 2         record the programmer into cue 5 of sequence 2 ("/ 2" optional)
 //! record group 4           store the selection as group 4 (also: record preset 6)
 //! update | clear | blind | highlight
@@ -16,7 +19,7 @@
 //! Keywords can be abbreviated to any unique prefix of at least two letters (`th`, `gr`,
 //! `rec`). Parsing is pure; the UI applies the commands.
 
-use super::model::{FixtureId, GroupId, PresetId, SequenceId};
+use super::model::{Attribute, FixtureId, GroupId, PresetId, SequenceId};
 
 /// How a selection term changes the selection.
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
@@ -32,9 +35,9 @@ pub enum SelOp {
 /// What a selection term names.
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub enum SelSet {
-    /// One fixture.
+    /// One fixture or cell.
     Fixture(FixtureId),
-    /// Fixtures numbered from..=to (patched ones only).
+    /// Fixtures (or cells) numbered from..=to (patched ones only).
     Range(FixtureId, FixtureId),
     /// A group.
     Group(GroupId),
@@ -54,7 +57,7 @@ pub enum Target {
 }
 
 /// One parsed command.
-#[derive(Clone, Copy, PartialEq, Debug)]
+#[derive(Clone, PartialEq, Debug)]
 pub enum Cmd {
     /// Change the selection.
     Select(SelOp, SelSet),
@@ -64,6 +67,8 @@ pub enum Cmd {
     Preset(PresetId),
     /// Run an effect on the selection.
     Effect(u32),
+    /// Set an attribute of the selection to one of its named ranges (name, prefix or number).
+    PickRange(Attribute, String),
     /// Empty the programmer.
     Clear,
     /// Record the programmer / selection.
@@ -85,7 +90,32 @@ pub enum Cmd {
 const KEYWORDS: [&str; 17] =
     ["thru", "at", "full", "out", "group", "all", "preset", "effect", "clear", "record", "update", "delete", "cue", "go", "release", "blind", "highlight"];
 
-/// Split into tokens: numbers, words, and the symbols `+ - > @ /`.
+/// Range words: the attribute each picks a named range of.
+const RANGE_WORDS: [(&str, Attribute); 17] = [
+    ("gobo", Attribute::Gobo),
+    ("gobo2", Attribute::Gobo2),
+    ("wheel2", Attribute::ColorWheel2),
+    ("prism2", Attribute::Prism2),
+    ("frost2", Attribute::Frost2),
+    ("control2", Attribute::Control2),
+    ("control3", Attribute::Control3),
+    ("wheel", Attribute::ColorWheel),
+    ("colour", Attribute::ColorWheel),
+    ("color", Attribute::ColorWheel),
+    ("macro", Attribute::ColorMacro),
+    ("prism", Attribute::Prism),
+    ("shutter", Attribute::Shutter),
+    ("strobe", Attribute::Shutter),
+    ("iris", Attribute::Iris),
+    ("frost", Attribute::Frost),
+    ("control", Attribute::Control),
+];
+
+/// Range words ending in a digit (kept whole: "gobo2 3" is gobo 2, slot 3).
+const NUMBERED_WORDS: [&str; 6] = ["gobo2", "wheel2", "prism2", "frost2", "control2", "control3"];
+
+/// Split into tokens: numbers, words, `"quoted text"` (kept with its quote mark), and the
+/// symbols `+ - > @ /`.
 fn tokens(s: &str) -> Vec<String> {
     let mut out = Vec::new();
     let mut cur = String::new();
@@ -94,16 +124,31 @@ fn tokens(s: &str) -> Vec<String> {
             out.push(std::mem::take(cur));
         }
     };
+    let mut quoted: Option<String> = None;
     for ch in s.chars() {
+        if let Some(q) = &mut quoted {
+            if ch == '"' {
+                out.push(quoted.take().expect("quoted"));
+            } else {
+                q.push(ch);
+            }
+            continue;
+        }
         match ch {
+            '"' => {
+                flush(&mut cur, &mut out);
+                quoted = Some("\"".into());
+            }
             '+' | '-' | '>' | '@' | '/' => {
                 flush(&mut cur, &mut out);
                 out.push(ch.to_string());
             }
             c if c.is_whitespace() => flush(&mut cur, &mut out),
             c => {
-                // A digit right after letters starts a new token ("g2" = "g 2"), and the reverse.
-                if cur.chars().last().is_some_and(|l| l.is_ascii_alphabetic() != c.is_ascii_alphabetic() && c != '.' && l != '.') {
+                // A digit right after letters starts a new token ("g2" = "g 2"), and the reverse
+                // ("gobo2" is a word of its own).
+                if cur.chars().last().is_some_and(|l| l.is_ascii_alphabetic() != c.is_ascii_alphabetic() && c != '.' && l != '.') && !NUMBERED_WORDS.contains(&format!("{cur}{c}").as_str())
+                {
                     flush(&mut cur, &mut out);
                 }
                 cur.push(c.to_ascii_lowercase());
@@ -111,6 +156,9 @@ fn tokens(s: &str) -> Vec<String> {
         }
     }
     flush(&mut cur, &mut out);
+    if let Some(q) = quoted {
+        out.push(q); // unclosed quote: up to the end
+    }
     out
 }
 
@@ -184,6 +232,14 @@ impl Parser {
         self.peek().is_some_and(|t| t.parse::<f64>().is_ok())
     }
 
+    /// A fixture or cell number: `101`, `101.3`.
+    fn fixture(&mut self) -> Result<FixtureId, String> {
+        match self.next() {
+            Some(t) => super::model::parse_fixture(&t).ok_or_else(|| format!("\"{t}\" is not a fixture number")),
+            None => Err("expected a fixture number".into()),
+        }
+    }
+
     /// `N`, `N thru M`, `group N`, `all`.
     fn set(&mut self) -> Result<SelSet, String> {
         if self.eat("group") {
@@ -192,9 +248,9 @@ impl Parser {
         if self.eat("all") {
             return Ok(SelSet::All);
         }
-        let a = self.int()?;
+        let a = self.fixture()?;
         if self.eat("thru") || self.eat(">") {
-            let b = self.int()?;
+            let b = self.fixture()?;
             return Ok(SelSet::Range(a.min(b), a.max(b)));
         }
         Ok(SelSet::Fixture(a))
@@ -235,6 +291,19 @@ pub fn parse(line: &str) -> Result<Vec<Cmd>, String> {
     let mut out = Vec::new();
     while let Some(tok) = p.peek().map(str::to_string) {
         let kw = p.kw();
+        if let Some((_, attr)) = RANGE_WORDS.iter().find(|(w, _)| *w == tok) {
+            p.pos += 1;
+            let name = match p.next() {
+                Some(n) if n.starts_with('"') => n[1..].to_string(),
+                Some(n) => n,
+                None => return Err(format!("{tok}: which range?")),
+            };
+            if name.trim().is_empty() {
+                return Err(format!("{tok}: which range?"));
+            }
+            out.push(Cmd::PickRange(*attr, name));
+            continue;
+        }
         match kw {
             _ if tok == "+" || tok == "-" => {
                 p.pos += 1;
@@ -329,6 +398,21 @@ mod tests {
         assert_eq!(parse("all at out").unwrap(), [Select(Replace, All), At(0.0)]);
         assert_eq!(parse("5 th 8 at preset 3").unwrap(), [Select(Replace, Range(5, 8)), Preset(3)]);
         assert_eq!(parse("AT 33.5").unwrap(), [At(0.335)]);
+        use crate::light::model::cell_id;
+        assert_eq!(parse("101.1 thru 101.12 at 80").unwrap(), [Select(Replace, Range(cell_id(101, 1), cell_id(101, 12))), At(0.8)]);
+    }
+
+    #[test]
+    fn ranges() {
+        let r = |a, n: &str| PickRange(a, n.to_string());
+        assert_eq!(parse("1 gobo star").unwrap(), [Select(Replace, Fixture(1)), r(Attribute::Gobo, "star")]);
+        assert_eq!(parse("gobo2 3").unwrap(), [r(Attribute::Gobo2, "3")]);
+        assert_eq!(parse("gobo 2").unwrap(), [r(Attribute::Gobo, "2")]);
+        assert_eq!(parse("gobo3").unwrap(), [r(Attribute::Gobo, "3")], "only \"gobo2\" is a word");
+        assert_eq!(parse("wheel2 4").unwrap(), [r(Attribute::ColorWheel2, "4")]);
+        assert_eq!(parse("control3 \"reset\"").unwrap(), [r(Attribute::Control3, "reset")]);
+        assert_eq!(parse("shutter \"Strobe fast\" at full").unwrap(), [r(Attribute::Shutter, "Strobe fast"), At(1.0)]);
+        assert_eq!(parse("wheel \"deep red").unwrap(), [r(Attribute::ColorWheel, "deep red")]);
     }
 
     #[test]
@@ -352,6 +436,7 @@ mod tests {
         assert!(parse("at 150").is_err());
         assert!(parse("banana").unwrap_err().contains("banana"));
         assert!(parse("r 5").is_err(), "r is ambiguous (record, release)");
-        assert!(parse("1.5 at 50").is_err(), "fixture numbers are whole");
+        assert!(parse("1.0 at 50").is_err(), "cells count from 1");
+        assert!(parse("gobo").is_err());
     }
 }

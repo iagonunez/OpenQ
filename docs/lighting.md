@@ -106,6 +106,47 @@ Tasks
 - **B4 (M)** Fixture type editor UI.
 - **B5 (S)** QLC+ `.qxf` importer.
 
+Status (2026-10-14, P1–P6): done. How fixture types work now:
+- **Model.** `FixtureType` → `FixtureMode` (master `channels`, cells in `heads`, declared `slots`) →
+  `ChannelDef` (attribute, offset, fine, default, highlight, named `ranges`). A `ChannelRange` is a
+  coarse-byte DMX span with a name, an optional slot colour and a gobo image name; picking it sets the
+  range's middle. New attributes: `ColorMacro`, `Gobo2`, `Gobo2Rotation`, `PrismRotation`.
+- **Cells (multi-instance).** A mode's `heads` are cells, controlled as units numbered `101.1`, `101.2`…
+  Cell ids are derived (`model::cell_id`: `CELL_BASE + fixture × 1024 + cell − 1`), so they aren't
+  stored in the patch and stay in order for `thru`; fixture numbers are capped at `MAX_FIXTURE_ID`.
+  `Lighting::unit`/`unit_channels`/`unit_attributes`/`units` replace `mode_of` wherever a unit is meant;
+  playback compiles one `FixtureOut` per unit at the fixture's address; presets share values per
+  (type, cell); renumbering/removing a fixture moves/drops its cells' values. A cell with colour but no
+  dimmer gets a virtual dimmer only when the master has no real one (a master dimmer already sets the
+  cells' intensity: `FixtureMode::unit_attributes`).
+- **Files.** Shows carry copies of the types they use (`Lighting.fixture_types`, pruned when unused).
+  `.oqfixture` (`light::fixlib`): `{"format": "openq-fixture", "version": 1, "fixture": …}`. Every type
+  read from outside goes through `fixlib::sanitize` (limits, offsets < 512, names).
+- **Library.** `<config>/fixtures/*.oqfixture`, offered when patching in every show; `fixlib::Library`
+  reads/writes it on a background thread (`openq-fixtures`).
+- **Import** (`light::import`, one entry point by extension): OFL JSON (`ofl`: capabilities → ranges,
+  wheels → slot names/colours, matrix/template channels → cells, switching-channel aliases, a repeated
+  light source → a cell named after the channel's first word), GDTF (`gdtf` + `zipread`: channel sets →
+  ranges, wheel slots with CIE→sRGB colours, geometry references → cells, first DMX break only),
+  QLC+ `.qxf` (`qxf`: presets/groups, capabilities, heads → cells). XML is parsed without DTDs (a plain
+  `<!DOCTYPE>` is stripped). Imports go into the show and the library. `examples/fixture_import.rs`
+  prints what a file gives (checked on real OFL, QLC+ and GDTF files).
+- **Editor** (`ui/fixture_types.rs`, Patch → Fixture types): show / library / built-in lists, header and
+  physical data, modes, cells (add, repeat cell 1 N times), channel table, range editor (colours,
+  equal slots). Save to library, add/update in the show (fixtures keep their mode by name), export.
+- **Programmer / command line.** Range buttons under each encoder (by name, so each type gets its own
+  value); `gobo star`, `gobo2 3`, `wheel "deep red"`, `shutter open`; `101.1 thru 101.12`. Highlight
+  opens wheels/shutter at their "Open" range.
+- Repeated channels (2026-10-15): extra attributes `ColorWheel2`, `Frost2`, `Prism2`, `Control2`,
+  `Control3`, `Effect2`, `Effect2Speed`; `import::alternates` gives each repeated attribute its list
+  (Control → Control2 → Control3…), GDTF `Color2`/`Frost2`/`Prism2`/`Effects2*` map to them, command
+  line words `wheel2 prism2 frost2 control2 control3`. A fourth Control channel is still left unused.
+- Show vs library (2026-10-15): a show type whose library copy differs is marked (amber) in Patch →
+  Fixture types, the tooltip lists what differs (`fixlib::differences`: name, physical, modes added/
+  missing, channels, cells/slots, order); "Update from library" in the row menu.
+- Still open: multi-break GDTF modes (needs a second address per fixture); gobo images aren't
+  loaded (only the file name is kept).
+
 ## C. DMX output and input
 
 Note: Art-Net and sACN are network protocols (to an Ethernet node). USB interfaces are separate
@@ -169,7 +210,7 @@ Ideas
 - **Resolve order**: playbacks by priority → HTP on intensity, LTP otherwise → programmer → grand
   master → DMX limits/inversion → output.
 - **OpenQ integration**: Light cues use pre/post wait, continue, timecode triggers, hotkeys and
-  groups like other cues. Stop/Pause/Fade cues act on them (Fade → executor level). Panic = fade to
+  groups like other cues. Stop cues act on them; Fade cues don't (decision 4). Panic = fade to
   "panic look" (configurable: blackout or house lights).
 
 Tasks
@@ -258,8 +299,10 @@ Tasks
 - **H4 (M)** Fixture placement in OpenQ: position/rotation columns in the patch sheet, array tools
   (line, arc, grid), a 2D top view for placing fixtures. **Done** (`light::place`, patch page
   Sheet/Plan, Arrange bar).
-- **H6 (S)** 2D plot view + export (SVG/PDF).
+- **H6 (S)** 2D plot view + export (SVG/PDF). **Done** (`light::plot`, Patch → Export plot: PDF on A3
+  at the largest standard scale that fits, or SVG).
 - **H8 (M)** Visualiser link: lighting design + selection to a connected visualiser; MVR export.
+  **Done**: remote protocol (see Phase 3 status, step 6) + `light::mvr`.
 - (H1–H3, H5, H7 now belong to the separate visualiser program.)
 
 ## I. Lighting UI (console-style workspace)
@@ -295,6 +338,19 @@ Ideas and budgets
   `tools/bench.sh` (frame time per fixture count).
 - Recovery: the light thread is guarded like `guarded_tick` (panic → hold last frame, notify).
 
+What keeps big rigs cheap (audit 2026-10-14; test `ui::perf_tests::big_lighting_rig_frames_stay_cheap`)
+- Cue and preset values (and the programmer) are `model::Shared` (copy-on-write `Arc`): the UI's
+  per-frame design snapshot, `Show::sync_lighting`, undo steps and compile jobs share them, and
+  comparing skips unchanged ones. 2000 fixtures × 3000 cues: clone + compare 1 s → 0.7 ms.
+- `Lighting::fixture` uses a verified id → index cache (the UI looks fixtures up per selected unit).
+- One compile thread; designs queued while it works are coalesced (a drag compiles the newest
+  only). A compile panic sends `Failed` so held GOs go on; held commands also time out per frame.
+- Compiled cues keep their full tracked state as 12-byte `Entry`s with a per-cue timing table.
+- Fixture tiles lay out visible rows only; command-line selection add/remove use sets.
+- Fixture import parses on a worker thread (panics become errors); dropped script runs are
+  cancelled and the Python host never blocks its owner's drop; light engine errors are capped.
+- Undo counts the lighting patch in its memory budget.
+
 Tasks
 - **J1 (S)** Bench + allocation test for the light thread.
 - **J2 (S)** Stress tests (fuzz, device loss, Python worker killed).
@@ -316,7 +372,7 @@ Ideas
 
 Tasks
 - **K1 (S)** `Surface` trait + action enum (shared with keyboard/command line).
-- **K2 (M)** MIDI/OSC surface mapping (with learn mode).
+- **K2 (M)** MIDI/OSC surface mapping (with learn mode). **Done** (2026-10-15, `crate::surface`).
 - **K3 (M)** OpenQ Console Protocol spec (`docs/console-protocol.md`) + a simulator.
 - **K4 (L)** Firmware/hardware side (separate repo).
 
@@ -355,6 +411,9 @@ K1–K4.
 2. Python: only for generating effects, in a WebAssembly sandbox (CPython WASI in wasmtime),
    interpreter installed by oqman (2026-10-14; replaces "system Python in a child process").
 3. The 3D visualiser is a separate program connecting to OpenQ, not part of the app (2026-10-14).
+4. **Lighting fades only with Light cues** (2026-10-15): a lighting cue fades with its own timing and
+   the next lighting cue or a release takes over. Fade cues never target Light cues (the inspector
+   says so); executor levels are faders/surfaces, not Fade cues.
 
 ## Phase 1 order (one commit per step) — done
 1. A1 A2 A4 B1 L1 — `light` module: fixture types + built-in generics, patch, groups,
@@ -423,27 +482,39 @@ lighting, manual chapter.
 | Area | Tasks | State |
 |---|---|---|
 | A Data model and patch | A1 A2 A3 A4 | done |
-| B Fixture library | B1 generics, B2 OFL import | done · B3 GDTF, B4 type editor, B5 QLC+ open |
-| C DMX output and input | C1–C5 C7 | done · C6 Art-Net/sACN input open |
+| B Fixture library | B1–B5 | done: generics, OFL/GDTF/QLC+ import, type editor, library folder, `.oqfixture`, ranges, cells |
+| C DMX output and input | C1–C7 | done (C6 input: merge HTP / replace / capture) |
 | D Programmer | D1–D6 | done |
-| E Light cues and playback | E1–E6 | done (Fade cues on lighting still open) |
+| E Light cues and playback | E1–E6 | done (Fade cues on lighting dropped: decision 4) |
 | F Effects | F1 F2 F3 | done · F4 audio-reactive open |
 | G Python | G1–G4 | done: sandboxed effect scripts, `.oqfx` files (G5 dropped, G6 not needed) |
-| H Visualiser link | H4 | in-app 3D view removed (separate program) · H4 placement done · H6 plot, H8 link open |
+| H Visualiser link | H4 H6 H8 | in-app 3D view removed (separate program) · placement, SVG plot, link + MVR export done |
 | I Lighting UI | I1–I5 | done (pools are rows on the Programmer page, no docking) |
 | J Performance | J1 J3 J2 (light panic stress test) | done |
-| K Hardware console | K1–K4 | open (Phase 4) |
-| L Persistence, remote, docs | L1 | done · L2 remote mirroring, L3 USITT ASCII, L4 manual chapter open |
+| K Hardware console | K1–K4 | K2 done (MIDI/OSC surfaces) · K1 K3 K4 open (Phase 4) |
+| L Persistence, remote, docs | L1 L2 L4 | done · L3 USITT ASCII open |
 
 ## Phase 3 order (one commit per step)
 1. G1–G4 — sandboxed Python effect scripts: custom table effects, `.oqfx` effect files, script
    editor on the Effects page, oqman installs the interpreter. **Done.**
 2. H4 — fixture placement: position/rotation in the patch sheet, array tools, 2D top view. **Done.**
-3. B3 — GDTF import.
-4. C6 — Art-Net/sACN input: merge or record from another desk.
-5. L2 — remote: mirror executor levels/masters to replicas, lighting design edits in the Edit role.
-6. H8 — visualiser link (design + selection to a connected visualiser; MVR export).
-7. L4 — manual chapter (en/es/gl) with screenshots (`OPENQ_SCREENSHOT_LIGHTING=…`).
+3. B3 — GDTF import (with P1–P6: ranges/wheel slots, library + `.oqfixture`, type editor, cells, QLC+). **Done.**
+4. C6 — Art-Net/sACN input: merge or record from another desk. **Done.**
+5. L2 — remote: mirror executor levels/masters to replicas, lighting design edits in the Edit role. **Done.**
+   Today `remote::cue_patch` ignores `lighting`, so replicas keep a stale design (and an Edit replica
+   sending its workspace back can overwrite the main device's lighting). Format isn't the problem
+   (JSON vs a binary encoding is only 3–5×); sending the whole design is:
+   - **L2a Lighting deltas.** A `ServerMsg` lighting patch with only the changed cues, presets,
+     fixtures, types, groups, effects and outputs, like `cue_patch` for cues. `model::Shared` makes
+     the diff cheap (an unchanged cue is the same allocation: `Arc::ptr_eq`, no value compare).
+     A drag sends a few hundred bytes instead of the design; replica edits go back the same way.
+   - **L2b Full snapshots that fit.** Only on connect/resync. A big rig is ~300 MB of JSON, over
+     `secure::MAX_FRAME` (64 MB), so it can't reach a replica today: compress it (zstd; repeated
+     JSON keys shrink 10–20×) and send it in chunks, or raise the limit for that one message.
+   - A binary encoding (postcard/bincode over the serde types, not protobuf) only if measurements
+     still call for it after L2a/L2b.
+6. H8 — visualiser link (design + selection to a connected visualiser; MVR export). **Done** (+ H6 SVG plot).
+7. L4 — manual chapter (en/es/gl) with screenshots (`OPENQ_SCREENSHOT_LIGHTING=…`). **Done.**
 
 ## Phase 3 status
 - Step 1 done (see §G): `light::script` (sandbox host), `light::fxfile` (`.oqfx`),
@@ -457,11 +528,110 @@ lighting, manual chapter.
   zooms, double-click recentres. Arrange bar (selection, in number order): line, arc, grid
   (`light::place::positions`). Screenshot hook `OPENQ_SCREENSHOT_LIGHTING=plan`.
 
+- Step 3 done (fixture profiles, see §B status).
+- Step 4 done: `light::dmxin` — `Lighting.inputs` (`InputConfig`: Art-Net or sACN, wire → logical
+  universe routes, `MergeMode` Htp / Input (replaces) / Capture (not output), sACN multicast
+  interface). One receiver thread each (SO_REUSEADDR, so a desk on the same machine can listen
+  too); sources kept apart (sACN CID, Art-Net sender), highest sACN priority wins, equal ones HTP,
+  2.5 s source timeout, sACN stream-terminated and preview data honoured. OpenQ's own packets are
+  ignored (`artnet::is_own_port` + local address, `sacn::own_cid`: one CID per process), so a
+  broadcast output can't loop back and latch. The light thread merges inputs after playback (no
+  allocation per frame); the DMX monitor shows the merged output. Programmer → "Capture input"
+  reads the inputs back into programmer values (`dmxin::capture`, inverse of `ChannelDef::write`
+  incl. 16-bit and pan/tilt invert; selection, or every unit off its defaults). Outputs page has
+  an Inputs section with live status (sources, packets). Replicas open no inputs.
+  Art-Net inputs answer ArtPoll since 2026-10-15. Not done: sACN universe discovery, per-slot merge
+  ownership in the monitor.
+
+- Step 5 done: remote protocol v3.
+  - `light::patch`: `diff`/`apply` of two designs → `LightingPatch` (fixture types, fixtures,
+    groups, presets, effects as `ListPatch` by id: changed items, or new order + new/changed
+    items, or whole on duplicate ids; sequences down to their cues; outputs/inputs whole;
+    scalars). Applying to a drifted copy fails and leaves it untouched. A test fails if a new
+    `Lighting` field isn't carried.
+  - Main → replica: `ServerMsg::Lighting(patch)` next to `ServerMsg::Cues`; a whole
+    `ServerMsg::Workspace` after a cue list reshape has `keep_lighting` (design left out, patch
+    follows), so the design only goes whole on connect/resync. Replica → main:
+    `ClientMsg::Patch { cues, lighting }` for edits that keep the cue tree's shape,
+    `ClientMsg::Reshape { ws, lighting }` otherwise (main keeps its design, applies the patch).
+    A patch that doesn't fit → resync. This fixes the stale design on replicas and an Edit
+    replica overwriting the main device's design.
+  - `LiveState.lighting` (`LightLive`: masters + sequence states) → `LightEngine::mirror` on the
+    replica, so its executors/Sequences page show the main device's (cleared when it stops being
+    a replica).
+  - Secure channel: messages ≥ 64 KB are deflated (flate2, fast) and sent in ≤ 16 MB sealed
+    parts (frame kind byte: plain / part / last); caps 512 MB packed, 1 GB inflated. Measured on
+    `bench_rig`: 2000 fixtures × 10 sequences × 300 cues = 548 MB JSON → 144 MB (3.8×; the
+    rig's values are random floats, real shows compress better), 1 s to serialise + 1 s to
+    deflate. No binary encoding needed so far.
+  - Not mirrored: the DMX monitor on a replica (it would need 512 bytes per universe ~20 times a
+    second to every replica); it shows the replica's own (empty) frame.
+
+- Step 6 done: the visualiser link is the remote protocol. A visualiser connects as a replica
+  (it gets the design and its patches, L2) and additionally:
+  - `ClientMsg::Subscribe { dmx }` → `ServerMsg::Dmx(changed universes)` at the state rate
+    (~20 Hz, only universes that changed). A replica's own DMX monitor uses it too while the
+    monitor is showing (`LightEngine::mirror_frame`).
+  - `LightLive.selection`: the main device's programmer selection (`Show::light_selection`, kept
+    in step with the UI each frame); `ClientMsg::Select(fixtures)` (Control role or above) sets
+    it (`light_selection_gen` tells the UI to take it).
+  - MVR export (`light::mvr`, Patch → Export MVR…): zip (`zipread::write`) with
+    `GeneralSceneDescription.xml` (MVR 1.6): one layer, a Fixture per patched fixture with a stable
+    name-based UUID (show name + fixture number), Matrix (OpenQ metres x right/y up/z audience →
+    MVR mm x right/y upstage/z up; rotation = heading y · tilt x · roll z), `GDTFSpec`
+    `Manufacturer@Name.gdtf` (no GDTF files are kept, so none are embedded), mode, FixtureID,
+    absolute address. Checked with `unzip -t` and `xmllint`; not yet opened in a real visualiser.
+  - H6: SVG light plot (`light::plot`, Patch → Export plot…): top view, 1 m grid, centre line,
+    symbols turned by heading (circle = moving head), number above, `universe.address` below,
+    legend per type.
+  - Not done: MVR import, embedding GDTF files. (PDF plot added 2026-10-15.)
+
+- Step 7 done: manual chapter 11 "Lighting" (en/es/gl; later chapters renumbered), Light cue in
+  the cue types list, 10 screenshots (`docs/manual/img/light-cue.webp`, `lighting-*.webp`,
+  `fixture-types.webp`, in `manual::FILES`) taken from a demo show with sequences, presets,
+  effects, outputs and an input (English UI: `OPENQ_LANG=en`).
+
+- Plot shapes (after Phase 3): `Lighting.shapes` (`model::PlotShape`: `Bar` a→b at a trim height,
+  `Rect` corners a/b with a height; x/z metres like fixture positions; carried by `LightingPatch`).
+  Plan view: Draw → Bar / Rectangle (drag to draw, one-shot tool, slips under 10 cm dropped),
+  select a bar or a rectangle's outline (the inside still pans), drag to move, white handles for
+  ends/corners (5 cm snap), Delete key, settings row (name, from/to, height, length), "Hang n
+  fixtures" (`PlotShape::hang`: evenly along the bar, half a gap in from the ends, at its
+  height). SVG plot draws rectangles and bars under the fixtures. Not in the MVR export yet
+  (would need truss/scene-object geometry). Also fixed: Delete/Backspace and Enter in the
+  Lighting view acted on the selected cues of the hidden cue list.
+
+Phase 3 is complete. Left for later: L3 USITT ASCII import/export, F4 audio-reactive effects,
+MVR import, Phase 4 (hardware console: K1 `Surface` trait, K3 console protocol, K4).
+
+## After Phase 3 (2026-10-15)
+- **Fade cues and lighting:** dropped (decision 4). The Fade inspector explains it for Light targets.
+- **Control surfaces (K2):** `crate::surface`. `Mapping { input: SurfaceInput (MidiCc/MidiNote/Osc),
+  action: SurfaceAction }` in `Settings.surfaces` (show file); actions: executor level/GO/release/
+  flash (executor n = n-th sequence), grand master, blackout, release all, tap tempo, main GO/Stop.
+  Values 0..1; buttons fire on the rising edge through 0.5 (notes, CC 127/0, OSC 1/0; OSC without
+  arguments = press). `SurfaceHub` (shared by the OSC listener and `MidiSurface`): learn mode, last
+  input, button state, and a queue a replica's UI routes to the main device (`App::sync_surfaces`).
+  The MIDI port is per computer (`<config>/midi-surface`), its thread reconnects like MTC. OSC also
+  knows `/light/executor/{n}/level|go|release|flash`, `/light/grandmaster|blackout|release|tap`
+  without mappings. UI: Settings → Control surfaces (learn, executor bank CC 1–8 / notes 36–43).
+  Not done: feedback to the controller (LEDs, motor faders), soft takeover/pickup for faders,
+  pages/banks, MIDI clock in.
+- **Art-Net:** optional ArtSync after each batch (`OutputProtocol::ArtNet.sync`); inputs answer
+  ArtPoll with ArtPollReply (`artnet::poll_replies`: 4 ports per bind index, grouped by net/sub-net,
+  sent to the poller's 6454 and its own port); discovery merges multi-bind replies per IP and skips
+  OpenQ's own; Shift-click a node takes its universes; warning when a unicast output sends a
+  universe the chosen node doesn't output. Still untested on real nodes.
+- **PDF plot:** `plot::pdf` (one A3 landscape page, scale 1:20…1:1000, base-14 Helvetica, WinAnsi
+  text, deflated stream) from the same drawing routine as the SVG (`Canvas` trait).
+- **Fixture profiles:** repeated-channel attributes and the show/library difference marker (§B).
+
 Known issues to look at:
-- Sequences page and executor levels are local to each device; replicas show their own masters.
 - `Show::sync_lighting` compares the whole design on every edit under the show lock (fine at
   normal sizes; a change counter would be cheaper for very large designs).
-- Duplicate attributes in one fixture mode (two Control channels) share one value; OFL import
-  leaves the repeats unused.
-- Untested on real hardware: Art-Net nodes, sACN receivers, Enttec USB Pro; OFL import only on a
-  hand-written sample.
+- Duplicate attributes in one unit (two Control channels) can't both be used; importers take a
+  second wheel/gobo as `Gobo2`/`ColorMacro`/`PrismRotation`, a second light source as a cell, and leave
+  the rest unused with a note.
+- Untested on real hardware: Art-Net nodes, sACN receivers, Enttec USB Pro. Importers were checked
+  on a few real files only (OFL: MAC Aura, Robin 600E, COLORband PiX; QLC+: Sharpy, ColorBand Pix IP;
+  GDTF: four BlenderDMX profiles).

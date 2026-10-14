@@ -29,9 +29,13 @@ parking_lot = "0.12.5"
 rfd = "0.17.2"
 rosc = "0.11.4"
 rtrb = "0.4.0"
+# Fixture import: GDTF (zip + XML) and QLC+ (XML).
+roxmltree = "0.21.1"
+flate2 = "1.1.10"
 rubato = "5.0.1"
 serde = { version = "1.0.229", features = ["derive", "rc"] }
 serde_json = { version = "1.0.152", features = ["float_roundtrip"] }
+socket2 = "0.6"
 serialport = "4.10.1"
 symphonia = { version = "0.6.1", features = ["all"] }
 uuid = { version = "1.28.0", features = ["v4", "serde"] }

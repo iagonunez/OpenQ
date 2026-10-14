@@ -357,14 +357,13 @@ fn serve(shared: &Arc<Shared>, stream: TcpStream, addr: SocketAddr) -> anyhow::R
 
     let closed = Arc::new(AtomicBool::new(false));
     let (notice_tx, notice_rx) = std::sync::mpsc::channel::<ServerMsg>();
-    // Set by the replica's Resync: the next workspace goes whole.
-    let resync = Arc::new(AtomicBool::new(false));
+    let flags = Arc::new(Flags::default());
     let writer = {
-        let (sh, closed, resync) = (shared.clone(), closed.clone(), resync.clone());
+        let (sh, closed, flags) = (shared.clone(), closed.clone(), flags.clone());
         std::thread::Builder::new()
             .name("openq-remote-send".into())
             .spawn(move || {
-                if let Err(e) = send_loop(&sh, &mut tx, hello.client_id, role, &closed, &resync, notice_rx) {
+                if let Err(e) = send_loop(&sh, &mut tx, hello.client_id, role, &closed, &flags, notice_rx) {
                     log::debug!("remote send: {e:#}");
                 }
                 closed.store(true, Ordering::Relaxed);
@@ -373,12 +372,21 @@ fn serve(shared: &Arc<Shared>, stream: TcpStream, addr: SocketAddr) -> anyhow::R
     };
 
     rx.set_timeout(Some(IDLE_TIMEOUT));
-    let result = receive_loop(shared, &mut rx, hello.client_id, &closed, &resync, &notice_tx);
+    let result = receive_loop(shared, &mut rx, hello.client_id, &closed, &flags, &notice_tx);
     closed.store(true, Ordering::Relaxed);
     let _ = writer.join();
     shared.clients.lock().retain(|c| c.conn != conn);
     shared.event(format!("{device_name} disconnected"));
     result
+}
+
+/// Requests a replica makes of its connection's sender.
+#[derive(Default)]
+struct Flags {
+    /// Set by the replica's Resync: the next workspace goes whole.
+    resync: AtomicBool,
+    /// The replica wants the DMX output ([`ServerMsg::Dmx`]).
+    dmx: AtomicBool,
 }
 
 fn role_of(shared: &Shared, device: Uuid) -> Option<Role> {
@@ -390,7 +398,7 @@ fn receive_loop(
     rx: &mut secure::Receiver,
     device: Uuid,
     closed: &AtomicBool,
-    resync: &AtomicBool,
+    flags: &Flags,
     notices: &std::sync::mpsc::Sender<ServerMsg>,
 ) -> anyhow::Result<()> {
     while !closed.load(Ordering::Relaxed) && !shared.stop.load(Ordering::Relaxed) {
@@ -399,7 +407,19 @@ fn receive_loop(
         let Some(role) = role_of(shared, device) else { return Ok(()) };
         match msg {
             ClientMsg::Ping => {}
-            ClientMsg::Resync => resync.store(true, Ordering::Release),
+            ClientMsg::Resync => flags.resync.store(true, Ordering::Release),
+            ClientMsg::Subscribe { dmx } => flags.dmx.store(dmx, Ordering::Release),
+            ClientMsg::Select(fixtures) => {
+                if role.can_control() {
+                    let mut show = shared.show.lock();
+                    show.light_selection = fixtures.into_iter().take(crate::light::model::MAX_FIXTURE_ID as usize).collect();
+                    show.light_selection_gen += 1;
+                    drop(show);
+                    (shared.repaint)();
+                } else {
+                    let _ = notices.send(ServerMsg::Refused("This device is view-only".into()));
+                }
+            }
             ClientMsg::Command(cmd) => {
                 if role.can_control() {
                     let r = crate::control::apply(&mut shared.show.lock(), cmd, Instant::now());
@@ -409,6 +429,34 @@ fn receive_loop(
                 } else {
                     let _ = notices.send(ServerMsg::Refused("This device is view-only".into()));
                 }
+            }
+            ClientMsg::Patch { cues, lighting } => {
+                if !role.can_edit() {
+                    let _ = notices.send(ServerMsg::Refused("This device can't edit the show".into()));
+                } else if shared.show.lock().apply_remote_patch(&cues, lighting.as_deref()) {
+                    (shared.repaint)();
+                } else {
+                    // The replica's copy has drifted: its edit is lost, it gets the whole show.
+                    flags.resync.store(true, Ordering::Release);
+                    let _ = notices.send(ServerMsg::Refused("An edit didn't fit the show on the main device; resyncing".into()));
+                }
+            }
+            ClientMsg::Reshape { mut ws, lighting } => {
+                if !role.can_edit() {
+                    let _ = notices.send(ServerMsg::Refused("This device can't edit the show".into()));
+                    continue;
+                }
+                let mut show = shared.show.lock();
+                ws.lighting = show.ws.lighting.clone();
+                if lighting.as_ref().is_some_and(|p| !crate::light::patch::apply(&mut ws.lighting, p)) {
+                    drop(show);
+                    flags.resync.store(true, Ordering::Release);
+                    let _ = notices.send(ServerMsg::Refused("An edit didn't fit the show on the main device; resyncing".into()));
+                    continue;
+                }
+                show.apply_remote_edit(*ws);
+                drop(show);
+                (shared.repaint)();
             }
             ClientMsg::Edit(ws) => {
                 if role.can_edit() {
@@ -442,7 +490,7 @@ fn send_loop(
     device: Uuid,
     mut role: Role,
     closed: &AtomicBool,
-    resync: &AtomicBool,
+    flags: &Flags,
     notices: std::sync::mpsc::Receiver<ServerMsg>,
 ) -> anyhow::Result<()> {
     let mut last_ws: Option<Workspace> = None;
@@ -454,6 +502,8 @@ fn send_loop(
     let mut last_state: Option<LiveState> = None;
     let mut last_sent = Instant::now();
     let mut media_sent: HashSet<PathBuf> = HashSet::new();
+    // DMX output as last sent to a replica that asked for it (None: send everything next).
+    let mut dmx_sent: Option<crate::light::dmx::DmxFrame> = None;
     while !closed.load(Ordering::Relaxed) && !shared.stop.load(Ordering::Relaxed) {
         match role_of(shared, device) {
             None => {
@@ -470,12 +520,16 @@ fn send_loop(
             tx.send(&n)?;
         }
 
-        if resync.swap(false, Ordering::AcqRel) {
+        if flags.resync.swap(false, Ordering::AcqRel) {
             last_ws = None;
             last_gen = None;
         }
         let meters = shared.meters();
-        let (ws, title, state, prober) = {
+        let want_dmx = flags.dmx.load(Ordering::Acquire);
+        if !want_dmx {
+            dmx_sent = None;
+        }
+        let (ws, title, state, prober, dmx) = {
             let show = shared.show.lock();
             let now = Instant::now();
             let compare = last_gen != Some(show.edit_gen) || now.duration_since(last_compare) >= HEARTBEAT;
@@ -493,14 +547,51 @@ fn send_loop(
                 log: show.engine.log.clone(),
                 meters,
                 dirty: show.dirty,
+                lighting: super::LightLive {
+                    masters: show.media.light.masters().clone(),
+                    sequences: show.media.light.status(),
+                    selection: show.light_selection.clone(),
+                },
             };
-            (ws, title_of(&show.path), state, show.media.prober.clone())
+            let dmx = want_dmx.then(|| show.media.light.frame());
+            (ws, title_of(&show.path), state, show.media.prober.clone(), dmx)
         };
+        if let Some(frame) = dmx {
+            let changed: Vec<(u16, Vec<u8>)> = frame
+                .universes
+                .iter()
+                .filter(|u| dmx_sent.as_ref().and_then(|f| f.get(u.id)) != Some(u))
+                .map(|u| (u.id, u.data.to_vec()))
+                .collect();
+            if !changed.is_empty() {
+                tx.send(&ServerMsg::Dmx(changed))?;
+            }
+            dmx_sent = Some(frame);
+        }
         if let Some(ws) = ws {
-            // Small edits (a slider being dragged) go as the changed cues, not the whole show.
-            match last_ws.as_ref().and_then(|old| super::cue_patch(old, &ws)) {
-                Some(patch) => tx.send(&ServerMsg::Cues(patch))?,
-                None => tx.send(&ServerMsg::Workspace { ws: Box::new(ws.clone()), title })?,
+            // Small edits (a slider being dragged) go as the changed cues and lighting design
+            // changes, not the whole show.
+            match last_ws.as_ref().and_then(|old| super::workspace_patch(old, &ws)) {
+                Some((cues, lighting)) => {
+                    if !cues.is_empty() || lighting.is_none() {
+                        tx.send(&ServerMsg::Cues(cues))?;
+                    }
+                    if let Some(l) = lighting {
+                        tx.send(&ServerMsg::Lighting(Box::new(l)))?;
+                    }
+                }
+                None => match &last_ws {
+                    // The replica has a design: keep it, send only its changes.
+                    Some(old) => {
+                        let mut light = ws.clone();
+                        light.lighting = Default::default();
+                        tx.send(&ServerMsg::Workspace { ws: Box::new(light), title, keep_lighting: true })?;
+                        if let Some(l) = crate::light::patch::diff(&old.lighting, &ws.lighting) {
+                            tx.send(&ServerMsg::Lighting(Box::new(l)))?;
+                        }
+                    }
+                    None => tx.send(&ServerMsg::Workspace { ws: Box::new(ws.clone()), title, keep_lighting: false })?,
+                },
             }
             last_ws = Some(ws);
         }

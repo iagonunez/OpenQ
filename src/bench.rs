@@ -162,6 +162,63 @@ fn light(m: &mut Vec<Metric>, quick: bool) {
     push(m, &format!("light.frame_{fixtures}.p99"), quantile(&mut v, 0.99).as_secs_f64() * 1e6, "us", &note);
     light_effects(m, design.clone(), reps, &note);
     light_table(m, design, reps, &note);
+    light_cells(m, quick, reps);
+}
+
+/// A pixel rig: LED bars of 32 RGB cells (plus a master dimmer each), every cell lit by a cue
+/// and a chase running across all cells.
+#[inline(never)]
+fn light_cells(m: &mut Vec<Metric>, quick: bool, reps: usize) {
+    use crate::light::effects::{Effect, EffectRun, Shape};
+    use crate::light::model::{cell_id, Attribute, ChannelDef, Fixture, FixtureMode, FixtureType, Head, LightCue, Sequence};
+    use crate::light::playback::{LightShow, Playback};
+    let bars: u32 = if quick { 50 } else { 200 };
+    let rgb = [Attribute::Red, Attribute::Green, Attribute::Blue];
+    let heads = (0..32u16)
+        .map(|i| Head { name: (i + 1).to_string(), channels: rgb.iter().enumerate().map(|(k, a)| ChannelDef { attribute: *a, offset: 1 + 3 * i + k as u16, ..Default::default() }).collect() })
+        .collect();
+    let mut mode = FixtureMode::sequential("97 channel", &[(Attribute::Dimmer, false)]);
+    mode.heads = heads;
+    let ty = FixtureType { id: "bench/bar32".into(), name: "Bar 32".into(), modes: vec![mode], ..Default::default() };
+    let mut l = crate::light::Lighting::default();
+    l.add_type(&ty);
+    for i in 0..bars {
+        // Five 97-slot bars per universe.
+        l.fixtures.push(Fixture { id: i + 1, fixture_type: ty.id.clone(), mode: "97 channel".into(), universe: 1 + (i / 5) as u16, address: 1 + 97 * (i % 5) as u16, ..Default::default() });
+    }
+    let cells: Vec<u32> = (1..=bars).flat_map(|f| (1..=32).map(move |c| cell_id(f, c))).collect();
+    let mut cue = LightCue { fade: 10.0, ..Default::default() };
+    for (k, c) in cells.iter().enumerate() {
+        let v = cue.values.entry(*c).or_default();
+        for (j, a) in rgb.iter().enumerate() {
+            v.insert(*a, (((k + 7 * j) % 100) as f32 / 100.0).into());
+        }
+    }
+    for f in 1..=bars {
+        cue.values.entry(f).or_default().insert(Attribute::Dimmer, 1.0.into());
+    }
+    l.effects.push(Effect { id: 1, shape: Shape::Square, ..Default::default() });
+    cue.effects.push(EffectRun { effect: 1, fixtures: cells.clone(), stop: false });
+    l.sequences.push(Sequence { id: 1, cues: vec![cue], ..Default::default() });
+    let t = Instant::now();
+    let show = Arc::new(LightShow::compile(&l));
+    let n = cells.len();
+    push(m, &format!("light.compile_cells_{n}"), t.elapsed().as_secs_f64() * 1e3, "ms", &format!("{bars} bars × 32 RGB cells"));
+    let t0 = Instant::now();
+    let mut p = Playback::new(show, t0);
+    p.go(1, None, t0).expect("go");
+    let mut v: Vec<Duration> = (0..reps)
+        .map(|i| {
+            let now = t0 + Duration::from_secs_f64(i as f64 * 0.0227 % 10.0);
+            let t = Instant::now();
+            std::hint::black_box(p.tick(now));
+            t.elapsed()
+        })
+        .collect();
+    let universes = p.frame().universes.len();
+    let note = format!("{bars} bars × 32 RGB cells, {universes} universes, fading + a chase on every cell");
+    push(m, &format!("light.frame_cells_{n}"), quantile(&mut v, 0.5).as_secs_f64() * 1e6, "us", &note);
+    push(m, &format!("light.frame_cells_{n}.p99"), quantile(&mut v, 0.99).as_secs_f64() * 1e6, "us", &note);
 }
 
 /// The frame with a generated colour table (what effect scripts make: red/green/blue, 64 steps,

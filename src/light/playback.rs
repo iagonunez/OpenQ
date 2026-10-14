@@ -12,7 +12,9 @@
 
 use super::dmx::DmxFrame;
 use super::effects::{CompiledEffect, Effect, EffectId, Member, Shape};
-use super::model::{Attribute, ChannelDef, FixtureId, LightCueId, Lighting, SequenceId, MAX_UNIVERSE, UNIVERSE_SIZE};
+use super::model::{
+    Attribute, ChannelDef, FixtureId, LightCueId, Lighting, SequenceId, cell_id, MAX_CELLS, MAX_FIXTURE_ID, MAX_UNIVERSE, UNIVERSE_SIZE,
+};
 use std::collections::{BTreeMap, HashMap, HashSet};
 use std::sync::Arc;
 use std::time::Instant;
@@ -43,13 +45,21 @@ struct FixtureOut {
     invert_tilt: bool,
 }
 
-/// One slot of a compiled cue: its value and when/how fast it gets there.
+/// One slot of a compiled cue: its value and when/how fast it gets there. Kept small: a cue
+/// holds its whole tracked state, so a big rig has slots × cues of these.
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct Entry {
     /// Slot.
     pub slot: u32,
     /// Target value.
     pub value: f32,
+    /// Index into the cue's [`CompiledCue::timings`].
+    pub timing: u16,
+}
+
+/// When and how fast an entry reaches its value (a cue has a handful: one per feature timing).
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct Timing {
     /// Delay, seconds.
     pub delay: f64,
     /// Fade, seconds (intensity going up, and every other attribute).
@@ -71,6 +81,8 @@ pub struct CompiledCue {
     pub delay: f64,
     /// Tracked state, sorted by slot.
     pub state: Vec<Entry>,
+    /// The timings its entries use.
+    pub timings: Vec<Timing>,
     /// Effects running in this cue (started here or tracked from earlier cues).
     pub effects: Vec<CompiledEffect>,
 }
@@ -78,7 +90,25 @@ pub struct CompiledCue {
 impl CompiledCue {
     /// Seconds from GO until every fade of this cue is complete.
     pub fn duration(&self) -> f64 {
-        self.state.iter().map(|e| e.delay + e.fade.max(e.down)).fold(self.delay + self.fade.max(self.down_fade), f64::max)
+        self.state.iter().map(|e| self.timing(e)).map(|t| t.delay + t.fade.max(t.down)).fold(self.delay + self.fade.max(self.down_fade), f64::max)
+    }
+
+    /// The timing of one of its entries.
+    pub fn timing(&self, e: &Entry) -> Timing {
+        self.timings[e.timing as usize]
+    }
+}
+
+/// Index of `t` in `table`, added if new.
+fn timing_index(table: &mut Vec<Timing>, t: Timing) -> u16 {
+    match table.iter().position(|x| *x == t) {
+        Some(i) => i as u16,
+        // A cue has one timing per feature plus moves in black: never near the limit.
+        None if table.len() < u16::MAX as usize => {
+            table.push(t);
+            (table.len() - 1) as u16
+        }
+        None => 0,
     }
 }
 
@@ -112,29 +142,38 @@ impl LightShow {
         let mut seen = HashSet::new();
         for f in &l.fixtures {
             let Some(mode) = l.mode_of(f) else { continue };
-            if !seen.insert(f.id) {
+            if f.id > MAX_FIXTURE_ID || !seen.insert(f.id) {
                 continue;
-            }
-            for attr in mode.attributes() {
-                let home = mode.channel(attr).map_or(attr.home(), |c| c.default_value());
-                show.index.insert((f.id, attr), show.slots.len() as u32);
-                show.slots.push(SlotInfo { fixture: f.id, attr, home });
             }
             let footprint = mode.footprint();
             let valid = f.address > 0
                 && (1..=MAX_UNIVERSE).contains(&f.universe)
                 && f.address as u32 + footprint as u32 - 1 <= UNIVERSE_SIZE as u32;
+            // The fixture (master channels), then each cell as a unit of its own.
+            let cells = mode.heads.len().min(MAX_CELLS as usize) as u32;
+            for cell in std::iter::once(None).chain((1..=cells).map(Some)) {
+                let id = cell.map_or(f.id, |c| cell_id(f.id, c));
+                let chans = mode.unit_channels(cell).unwrap_or_default();
+                for attr in mode.unit_attributes(cell) {
+                    let home = chans.iter().find(|c| c.attribute == attr).map_or(attr.home(), |c| c.default_value());
+                    show.index.insert((id, attr), show.slots.len() as u32);
+                    show.slots.push(SlotInfo { fixture: id, attr, home });
+                }
+                if valid && !chans.is_empty() {
+                    let channels = chans.iter().map(|c| (c.clone(), show.index[&(id, c.attribute)])).collect();
+                    let has_dimmer = chans.iter().any(|c| c.attribute == Attribute::Dimmer);
+                    let dimmer = if has_dimmer { None } else { show.index.get(&(id, Attribute::Dimmer)).copied() };
+                    show.fixtures.push(FixtureOut {
+                        universe: f.universe,
+                        start: f.address as usize - 1,
+                        channels,
+                        dimmer,
+                        invert_pan: f.invert_pan,
+                        invert_tilt: f.invert_tilt,
+                    });
+                }
+            }
             if valid {
-                let channels = mode.channels.iter().map(|c| (c.clone(), show.index[&(f.id, c.attribute)])).collect();
-                let dimmer = if mode.has_dimmer() { None } else { show.index.get(&(f.id, Attribute::Dimmer)).copied() };
-                show.fixtures.push(FixtureOut {
-                    universe: f.universe,
-                    start: f.address as usize - 1,
-                    channels,
-                    dimmer,
-                    invert_pan: f.invert_pan,
-                    invert_tilt: f.invert_tilt,
-                });
                 show.universes.push(f.universe);
             }
         }
@@ -161,11 +200,12 @@ impl LightShow {
                         }
                     }
                 }
+                let mut timings = Vec::new();
                 let state = running
                     .iter()
                     .map(|(slot, (value, _))| {
                         let (delay, fade, down) = c.timing(show.slots[*slot as usize].attr);
-                        Entry { slot: *slot, value: *value, delay, fade, down }
+                        Entry { slot: *slot, value: *value, timing: timing_index(&mut timings, Timing { delay, fade, down }) }
                     })
                     .collect();
                 cues.push(CompiledCue {
@@ -174,6 +214,7 @@ impl LightShow {
                     down_fade: c.down_fade.unwrap_or(c.fade).max(0.0),
                     delay: c.delay.max(0.0),
                     state,
+                    timings,
                     effects: fx.iter().filter_map(|(id, f)| show.compile_effect(l.effect(*id)?, f)).collect(),
                 });
                 if let Some((r, f)) = before {
@@ -208,7 +249,7 @@ impl LightShow {
                 let dark_now = value(&cur.state, dim).unwrap_or(0.0) <= 0.0;
                 let lit_next = value(&next.state, dim).unwrap_or(0.0) > 0.0;
                 if dark_now && lit_next {
-                    moved.push(Entry { delay: at, fade, down: fade, ..*e });
+                    moved.push(Entry { timing: timing_index(&mut cur.timings, Timing { delay: at, fade, down: fade }), ..*e });
                 }
             }
             for m in moved {
@@ -331,7 +372,7 @@ impl Default for SeqState {
 }
 
 /// What a sequence is doing, for the UI.
-#[derive(Clone, Debug, PartialEq)]
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize)]
 pub struct SequenceStatus {
     /// Sequence.
     pub id: SequenceId,
@@ -498,7 +539,10 @@ impl Playback {
             } else {
                 o.map_or(0, |o| o.stamp)
             };
-            let (delay, fade, down) = n.map_or((compiled.delay, compiled.fade, compiled.down_fade), |e| (e.delay, e.fade, e.down));
+            let (delay, fade, down) = n.map_or((compiled.delay, compiled.fade, compiled.down_fade), |e| {
+                let t = compiled.timing(&e);
+                (t.delay, t.fade, t.down)
+            });
             let dur = if htp && to < from { down } else { fade };
             st.tracks.push(Track { slot, from, to, start: t + delay, dur, stamp, release });
         }
@@ -715,6 +759,57 @@ mod tests {
         assert!(p.go(1, None, at(t0, 4.0)).is_err(), "end of sequence");
     }
 
+    /// A 3-cell bar (master dimmer + RGB per cell) at 1.20 plays its cells as units.
+    #[test]
+    fn multi_cell_fixture() {
+        use crate::light::model::{cell_id, ChannelDef, Head};
+        let mut l = design();
+        let mut bar = library::generic("generic/dimmer").unwrap();
+        bar.id = "test/bar".into();
+        let m = &mut bar.modes[0];
+        m.heads = (0..3u16)
+            .map(|i| Head {
+                name: (i + 1).to_string(),
+                channels: [Attribute::Red, Attribute::Green, Attribute::Blue]
+                    .iter()
+                    .enumerate()
+                    .map(|(k, a)| ChannelDef { attribute: *a, offset: 1 + 3 * i + k as u16, ..Default::default() })
+                    .collect(),
+            })
+            .collect();
+        l.add_type(&bar);
+        l.fixtures.push(Fixture { id: 20, fixture_type: bar.id.clone(), mode: bar.modes[0].name.clone(), address: 20, ..Default::default() });
+        assert_eq!(l.units().iter().filter(|u| crate::light::model::split_id(**u).0 == 20).count(), 4);
+        assert_eq!(l.unit_attributes(cell_id(20, 2)), [Attribute::Red, Attribute::Green, Attribute::Blue], "no virtual dimmer under a master dimmer");
+        assert!(l.unit(cell_id(20, 4)).is_none(), "no cell 4");
+        let show = LightShow::compile(&l);
+        assert!(show.slot(cell_id(20, 3), Attribute::Blue).is_some());
+        let t0 = Instant::now();
+        let mut p = Playback::new(Arc::new(show), t0);
+        p.set_programmer(&[(20, Attribute::Dimmer, 1.0), (cell_id(20, 2), Attribute::Green, 1.0), (cell_id(20, 3), Attribute::Red, 1.0)]);
+        let f = p.tick(t0).get(1).unwrap().data;
+        assert_eq!(&f[19..29], &[255, 0, 0, 0, 0, 255, 0, 255, 0, 0], "master at 20, cell 2 green at 25, cell 3 red at 27");
+        // Without a master dimmer each cell gets a virtual one.
+        let mut pixels = bar.clone();
+        pixels.id = "test/pixels".into();
+        pixels.modes[0].channels.clear();
+        l.add_type(&pixels);
+        l.fixtures.push(Fixture { id: 21, fixture_type: pixels.id.clone(), mode: pixels.modes[0].name.clone(), address: 40, ..Default::default() });
+        assert_eq!(l.unit_attributes(cell_id(21, 2)), [Attribute::Dimmer, Attribute::Red, Attribute::Green, Attribute::Blue], "virtual dimmer per cell");
+        let mut p = Playback::new(Arc::new(LightShow::compile(&l)), t0);
+        p.set_programmer(&[(cell_id(21, 1), Attribute::Dimmer, 1.0), (cell_id(21, 1), Attribute::Red, 1.0), (cell_id(21, 2), Attribute::Red, 1.0)]);
+        let f = p.tick(t0).get(1).unwrap().data;
+        assert_eq!(&f[40..46], &[255, 0, 0, 0, 0, 0], "cell 1 red; cell 2 dark (its dimmer is 0)");
+        // Renumbering the bar moves its cells' values; removing it drops them.
+        let mut c = LightCue::default();
+        c.values.entry(cell_id(20, 2)).or_default().insert(Attribute::Red, 1.0.into());
+        l.sequences[0].cues.push(c);
+        assert!(l.renumber_fixture(20, 30));
+        assert!(l.sequences[0].cues.last().unwrap().values.contains_key(&cell_id(30, 2)));
+        l.remove_fixtures(&[30].into_iter().collect());
+        assert!(l.sequences[0].cues.last().unwrap().values.is_empty());
+    }
+
     #[test]
     fn htp_intensity_ltp_position() {
         let t0 = Instant::now();
@@ -785,8 +880,9 @@ mod tests {
         l.sequences[0].mib_delay = 1.0;
         let show = LightShow::compile(&l);
         let pan = show.slot(3, Attribute::Pan).unwrap();
-        let e = show.sequences[0].cues[0].state.iter().find(|e| e.slot == pan).expect("moved in cue 1");
-        assert_eq!((e.value, e.delay), (1.0, 1.0));
+        let cue = &show.sequences[0].cues[0];
+        let e = cue.state.iter().find(|e| e.slot == pan).expect("moved in cue 1");
+        assert_eq!((e.value, cue.timing(e).delay), (1.0, 1.0));
         let mut p = Playback::new(Arc::new(show), t0);
         p.go(1, None, t0).unwrap();
         assert_eq!(p.tick(at(t0, 3.5)).get(1).unwrap().data[9], 255, "pan moved while dark (1 s delay + 2 s move)");
@@ -825,7 +921,7 @@ mod tests {
         use crate::light::model::{Preset, Value};
         let t0 = Instant::now();
         let mut l = design();
-        l.presets.push(Preset { id: 1, values: [(2, [(Attribute::Red, 0.2)].into_iter().collect())].into_iter().collect(), ..Default::default() });
+        l.presets.push(Preset { id: 1, values: [(2, [(Attribute::Red, 0.2)].into_iter().collect())].into_iter().collect::<BTreeMap<_, _>>().into(), ..Default::default() });
         l.sequences[0].cues[0].values.get_mut(&2).unwrap().insert(Attribute::Red, Value::Preset { preset: 1 });
         let mut p = Playback::new(Arc::new(LightShow::compile(&l)), t0);
         p.go(1, None, t0).unwrap();

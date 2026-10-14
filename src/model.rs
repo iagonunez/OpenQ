@@ -2101,6 +2101,9 @@ pub struct Settings {
     /// device's output count, see [`crate::spatial::default_room`]).
     #[serde(skip_serializing_if = "Vec::is_empty")]
     pub speakers: Vec<Speaker>,
+    /// MIDI/OSC control surfaces mapped onto executors, masters and GO.
+    #[serde(skip_serializing_if = "crate::surface::SurfaceSettings::is_empty")]
+    pub surfaces: crate::surface::SurfaceSettings,
 }
 
 impl Default for Settings {
@@ -2109,6 +2112,7 @@ impl Default for Settings {
             osc_enabled: false,
             osc_port: 53000,
             speakers: Vec::new(),
+            surfaces: Default::default(),
         }
     }
 }

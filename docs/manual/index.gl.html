@@ -201,7 +201,8 @@ footer { margin-top: 56px; padding-top: 18px; border-top: 1px solid var(--border
     <li><a href="#fades">Fundidos</a></li>
     <li><a href="#timecode">Código de tempo</a></li>
     <li><a href="#stages">Escenarios e proxección</a></li>
-    <li><a href="#remote">Dispositivos remotos</a></li>
+    <li><a href="#lighting">Iluminación</a></li>
+<li><a href="#remote">Dispositivos remotos</a></li>
     <li><a href="#osc">OSC e cues de rede</a></li>
     <li><a href="#settings">Axustes</a></li>
     <li><a href="#safety">Seguridade ante fallos</a></li>
@@ -354,6 +355,7 @@ cargo run --release -- show.openq    # abrir un espectáculo gardado</code></pre
     <div class="type"><b><span class="ms" aria-hidden="true">&#xeb2f;</span>Rede</b><span class="d">Envía unha mensaxe OSC a outros equipos, como unha mesa de luces.</span></div>
     <div class="type"><b><span class="ms" aria-hidden="true">&#xe31d;</span>Micro</b><span class="d">Reproduce unha entrada de audio en directo, como un micrófono, polo mesturador.</span></div>
     <div class="type"><b><span class="ms" aria-hidden="true">&#xe412;</span>Cámara</b><span class="d">Amosa unha cámara ou unha capturadora en directo nun escenario.</span></div>
+    <div class="type"><b><span class="ms" aria-hidden="true">&#xe90f;</span>Luz</b><span class="d">Reproduce unha cue do deseño de iluminación, ou libera as súas secuencias (ver <a href="#lighting">Iluminación</a>).</span></div>
   </div>
   <p>Cada cue ten un <strong>número</strong> (texto libre, como <code>4.2</code>), un <strong>nome</strong>, <strong>notas</strong>,
   unha <strong>cor</strong> e un interruptor <strong>Armada</strong>, todo na lapela Básico. GO salta unha cue desarmada.
@@ -659,6 +661,7 @@ cargo run --release -- show.openq    # abrir un espectáculo gardado</code></pre
     <li><strong>Obxectos</strong>, para destinos en modo <a href="#audio">audio por obxectos</a>: as posicións e a dispersión ás
     que mover os obxectos, editadas na mesma vista de sala.</li>
   </ul>
+  <p>Unha cue Fade non pode ter como destino unha cue de luz: a iluminación funde coas súas propias cues de luz (ver <a href="#lighting">Iluminación</a>).</p>
   <p>Marca <strong>Parar o destino</strong> para un fundido de saída: o destino párase ao rematar o fundido. Pausar un fundido
   conxélao, e retomalo continúa co tempo que quedaba.</p>
 </section>
@@ -705,8 +708,200 @@ cargo run --release -- show.openq    # abrir un espectáculo gardado</code></pre
   frechas: un píxel cada vez, ou dez con <kbd>Maiús</kbd>. <em>Restablecer mapeado</em> devolve as esquinas ao seu sitio.</p>
 </section>
 
+<section id="lighting">
+  <h2><span class="n">11</span>Iluminación</h2>
+  <p>OpenQ controla a iluminación por DMX. O <strong>deseño de iluminación</strong> (patch, grupos, presets, efectos e
+  secuencias de cues de iluminación) gárdase á parte da lista de cues, no espazo de <strong>Iluminación</strong>: cambia
+  entre <span class="menu"><span class="ms" aria-hidden="true">&#xe90f;</span> Iluminación</span> e <em>Cues</em> enriba da
+  lista de cues. O deseño só se pode cambiar en modo edición. En modo función, o espazo de Iluminación amosa os executores e o
+  monitor DMX.</p>
+  <h3>Cues de luz</h3>
+  <p>Unha cue de <strong>Luz</strong> <span class="ms" aria-hidden="true">&#xe90f;</span> da lista de cues reproduce o deseño
+  de iluminación; non garda niveis propios. Na súa lapela Axustes escolle a <em>Acción</em>: <em>GO de cue de iluminación</em>
+  lanza unha cue de iluminación dunha secuencia (amósase como <code>secuencia/cue</code>) cos seus propios fundidos, e
+  <em>Liberación</em> apaga unha secuencia, ou todas, no tempo indicado. As cues de luz lánzanse xunto co son e o vídeo, así que
+  un cambio de luz pode ir no mesmo GO ca un efecto ou un vídeo.</p>
+  <figure>
+    <img src="img/light-cue.webp" width="1100" height="444" alt="Lista de cues con cues de luz que apuntan ás cues de iluminación 1/1 a 1/4, e a lapela Axustes da cue de luz seleccionada.">
+    <figcaption>Cues de luz na lista de cues. A columna Destino amosa a cue de iluminación que lanza cada unha.</figcaption>
+  </figure>
+  <div class="note tip"><span class="label">Parar</span><p>Unha cue de parar dirixida a unha cue de luz libera a secuencia desa
+  cue. Con <em>Parar todo tamén apaga a iluminación</em> (páxina Secuencias), Parar todo (tamén a parada inmediata) e as cues
+  de parar sen destino liberan tamén todas as secuencias, co <em>Fundido ao liberar</em>.</p></div>
+  <p>A iluminación só funde mediante cues de luz: unha cue de iluminación funde cos seus propios tempos, e a seguinte cue de
+  iluminación ou unha liberación seguen desde aí. As cues Fade non actúan sobre cues de luz.</p>
+
+  <h3><span class="ms" aria-hidden="true">&#xefe6;</span> Patch</h3>
+  <p>A páxina Patch lista os aparatos. Para engadir, escolle un tipo de aparato e un modo en <em>Engadir aparatos</em>, indica
+  cantos, o primeiro número de aparato, o universo e o enderezo inicial (<em>auto</em> colle o seguinte libre), e preme
+  <em>Sumar</em>. Todas as celas da táboa pódense editar: nome, tipo, modo, universo, enderezo, posición e rotación, e a
+  inversión de panorama ou tilt. Os enderezos que se solapan e os números repetidos avísanse enriba da táboa.</p>
+  <figure>
+    <img src="img/lighting-patch.webp" width="1100" height="574" alt="Táboa de patch con oito washes RGB, dous spots e unha barra de píxeles, con columnas de enderezo, posición e rotación.">
+    <figcaption>A táboa de patch. As posicións van en metros: x cara á dereita, y cara arriba, z cara ao público.</figcaption>
+  </figure>
+  <p>Os aparatos de varias celas, como as barras LED, contrólanse tamén cela a cela: a cela 3 do aparato 101 é
+  <code>101.3</code>. <em>Planta</em> amosa a montaxe desde arriba. Fai clic para seleccionar (<kbd>Ctrl</kbd> engade), arrastra
+  para mover a selección, arrastra nun oco para desprazar a vista e usa a roda para achegar. Con aparatos seleccionados,
+  <em>Colocar</em> repárteos en liña, en arco ou en cuadrícula.</p>
+  <figure>
+    <img src="img/lighting-plan.webp" width="1100" height="275" alt="Vista desde arriba da montaxe: o bordo do escenario cunha tarima, dúas varas LX1 e LX2 e os aparatos; LX1 está seleccionada cos seus tiradores.">
+    <figcaption>A vista Planta co escenario, unha tarima e dúas varas. A marca de cada aparato indica cara a onde mira.</figcaption>
+  </figure>
+  <p>Para que a planta se pareza ao teatro real, debuxa nela: escolle <em>Vara</em> ou <em>Rectángulo</em> xunto a
+  <em>Debuxar</em> e arrastra na planta. As varas son tubos, truss ou rúas, coa súa altura; os rectángulos son o escenario,
+  tarimas ou escenografía. Fai clic nunha vara, ou no bordo dun rectángulo, para seleccionalo: arrástrao para movelo, arrastra
+  os seus tiradores brancos para cambiar os seus extremos ou esquinas, e axusta o seu nome, coordenadas exactas e altura na fila
+  de enriba. <kbd>Supr</kbd> sobre a planta bórrao. Con aparatos e unha vara seleccionados, <em>Colgar</em> reparte os aparatos
+  ao longo da vara, á súa altura.</p>
+  <h3>Tipos de aparato</h3>
+  <p>OpenQ trae tipos xenéricos (dimmer, RGB, RGBW, CMY, cabezas móbiles, estrobo, fume). <em>Importar aparato…</em> le
+  ficheiros de Open Fixture Library (<code>.json</code>), GDTF (<code>.gdtf</code>), QLC+ (<code>.qxf</code>) e OpenQ
+  (<code>.oqfixture</code>). Os tipos importados cópianse no espectáculo e gárdanse na túa biblioteca de aparatos, así que
+  estarán no seguinte espectáculo. <em>Tipos de aparato</em> abre o editor: canles e os seus atributos, canles finas de 16
+  bits, valores por defecto, o valor que usa Resaltar e os <strong>rangos</strong>: as partes con nome dunha canle, como as
+  posicións dunha roda de cor ou de gobos.</p>
+  <figure>
+    <img src="img/fixture-types.webp" width="1100" height="778" alt="Editor de tipos de aparato dun spot móbil, coas canles, o seu atributo, canle fina, valor por defecto e rangos.">
+    <figcaption>O editor de tipos de aparato.</figcaption>
+  </figure>
+  <p><em>Exportar MVR…</em> garda o patch coas posicións nun ficheiro MVR, que poden importar visualizadores e outras mesas.
+  <em>Exportar plano…</em> garda a vista Planta como PDF (unha folla A3, á maior escala normalizada que caiba, como 1:50) ou como debuxo SVG —o tipo escóllese no diálogo de gardar— coas varas e rectángulos, números de aparato,
+  enderezos e lenda.</p>
+
+  <h3><span class="ms" aria-hidden="true">&#xe429;</span> Programador</h3>
+  <p>Selecciona aparatos facendo clic nas súas fichas (<kbd>Ctrl</kbd> ou <kbd>Maiús</kbd> engaden), cun grupo ou desde a liña
+  de ordes. O panel da dereita axusta os seus valores, cunha páxina por familia: <em>Intensidade</em>, <em>Cor</em> (con
+  selector de cor), <em>Posición</em> (arrastra no recadro para apuntar), <em>Feixe</em> e <em>Control</em>. Arrastra unha barra
+  para fixar un valor, ou usa a roda enriba para pasos do 1&nbsp;%. As canles con rangos teñen un botón por rango, por exemplo
+  un por gobo.</p>
+  <figure>
+    <img src="img/lighting-programmer.webp" width="1100" height="778" alt="Páxina Programador: grupos, presets e efectos, fichas de aparatos con catro washes seleccionados, e a páxina de cor co seu selector.">
+    <figcaption>O programador. Os aparatos con valores no programador levan un punto laranxa.</figcaption>
+  </figure>
+  <p>Os valores do programador mandan sobre a reprodución mentres están postos, e son o que garda <em>Gravar cue</em>.
+  <em>Baleirar programador</em> devolve o control á reprodución.</p>
+  <ul>
+    <li><strong>Grupos</strong>: <em>Grupo coa selección</em> garda a selección; con clic dereito nun grupo sobrescríbese ou bórrase.</li>
+    <li><strong>Presets</strong>: <em>Preset desde o programador</em> garda os valores dos aparatos seleccionados (todos os
+    atributos ou unha familia). Ao facer clic nun preset aplícase. As cues gardan unha ligazón ao preset, así que ao cambialo
+    cambian todas as cues que o usan.</li>
+    <li><strong>Abanico</strong> reparte un valor pola selección, por exemplo de 0 a 100&nbsp;%, tamén desde o centro cara a fóra.</li>
+    <li><strong>Cego</strong> permite programar sen cambiar a saída. <strong>Resaltar</strong> pon os aparatos seleccionados en
+    branco aberto e a tope (non se grava); a frecha percórreos un a un.</li>
+    <li><strong>Capturar entrada</strong> leva ao programador o que reciben as <a href="#lighting-io">entradas DMX</a>, para
+    gravar aquí un estado feito noutra mesa.</li>
+  </ul>
+  <h3>Liña de ordes e teclado</h3>
+  <p>A liña de ordes, enriba das páxinas, acepta ordes ao estilo dunha mesa (en inglés); <em>Teclado</em> abre teclas en
+  pantalla para unha pantalla táctil. As palabras pódense abreviar a dúas letras (<code>th</code>, <code>gr</code>, <code>rec</code>).</p>
+  <div class="table-wrap"><table>
+    <thead><tr><th>Orde</th><th>Fai</th></tr></thead>
+    <tbody>
+      <tr><td><code>1 thru 10 at 50</code></td><td>Selecciona os aparatos 1 a 10 ao 50&nbsp;% de intensidade. <code>&gt;</code> tamén significa thru, <code>@</code> significa at.</td></tr>
+      <tr><td><code>101.1 thru 101.12 at 80</code></td><td>As celas 1 a 12 do aparato 101.</td></tr>
+      <tr><td><code>group 2 + 7 - 3 at full</code></td><td>O grupo 2, máis o aparato 7, menos o 3, a tope. <code>out</code> é 0.</td></tr>
+      <tr><td><code>1 thru 4 preset 3</code></td><td>Aplica o preset 3.</td></tr>
+      <tr><td><code>effect 2</code></td><td>Lanza o efecto 2 na selección.</td></tr>
+      <tr><td><code>gobo star</code>, <code>wheel 3</code></td><td>Escolle un rango polo nome (abonda o principio) ou polo número.</td></tr>
+      <tr><td><code>record cue 5 / 2</code></td><td>Grava o programador como cue 5 da secuencia 2. Tamén <code>record group 4</code>, <code>record preset 6</code>.</td></tr>
+      <tr><td><code>update</code>, <code>clear</code>, <code>blind</code>, <code>highlight</code></td><td>O mesmo ca os botóns.</td></tr>
+      <tr><td><code>go 2</code>, <code>go cue 5 / 2</code>, <code>release 2</code></td><td>Reproduce secuencias.</td></tr>
+      <tr><td><code>delete cue 5 / 2</code></td><td>Borra unha cue, un grupo ou un preset.</td></tr>
+    </tbody>
+  </table></div>
+
+  <h3><span class="ms" aria-hidden="true">&#xe663;</span> Efectos</h3>
+  <p>Un efecto move un atributo dun conxunto de aparatos cunha forma de onda: seno, triángulo, cadrada, ramplas, aleatoria, ou
+  un círculo para panorama e tilt. A <em>Velocidade</em> vai en Hz, ou por pulso con <em>Seguir o tempo</em>. <em>Tamaño</em> e
+  <em>Base</em> fixan a oscilación; vai arredor do valor da cue ou, con <em>Absoluto</em>, arredor da base. O <em>Desfase</em>
+  escalona os aparatos, <em>Grupos</em> move varios aparatos xuntos e <em>Ás</em> reflicte o debuxo. A vista previa amosa o
+  resultado nos aparatos.</p>
+  <figure>
+    <img src="img/lighting-effects.webp" width="1100" height="778" alt="Páxina Efectos cun efecto de arco da vella personalizado: axustes, vista previa de vermello, verde e azul en oito aparatos, e o seu script de Python.">
+    <figcaption>Un efecto de script: o script crea a táboa de cores e a vista previa amósaa en oito aparatos.</figcaption>
+  </figure>
+  <p>Lanza un efecto desde o programador (os efectos ou <code>effect 2</code>) e grávao nunha cue. Segue funcionando nas cues
+  seguintes ata que unha cue o pare.</p>
+  <p>Os <strong>efectos de script</strong> escríbense en Python co módulo <code>openq</code>, para debuxos que as formas de
+  onda non poden facer. Os scripts só crean efectos: execútanse illados, sen acceso a ficheiros, á rede nin a outros programas,
+  e nunca durante a función; o que se reproduce é o efecto que crearon. O Python que precisan instálao oqman. Os efectos
+  compártense como ficheiros <code>.oqfx</code> (<em>Exportar ficheiro de efecto…</em> e o botón de importar da lista).</p>
+
+  <h3><span class="ms" aria-hidden="true">&#xe1c4;</span> Secuencias</h3>
+  <p>Unha secuencia é unha pila de cues. As cues de iluminación son <strong>de seguimento</strong> (tracking): unha cue só garda
+  o que cambia, e o demais segue como o deixaron as cues anteriores. Cada cue ten un fade, un fade de baixada á parte para a
+  intensidade que baixa, e un delay.</p>
+  <figure>
+    <img src="img/lighting-sequences.webp" width="1100" height="307" alt="Páxina Secuencias coa secuencia Main e as súas catro cues, cos seus tempos de fade, baixada e delay.">
+    <figcaption>Unha secuencia. A frecha marca a súa cue actual.</figcaption>
+  </figure>
+  <ul>
+    <li><strong>Tempos por familia</strong> dá á cor, á posición ou ao feixe o seu propio fade e delay.</li>
+    <li><strong>Só esta cue</strong>: os seus cambios non se arrastran; a cue seguinte volve ao que había antes.</li>
+    <li><strong>Bloquear</strong> garda na cue todos os valores que arrastra, así que editar cues anteriores xa non a cambia.</li>
+    <li><strong>Mover en negro</strong> (por secuencia): os aparatos apagados collen a posición, a cor e o feixe da súa seguinte
+    cue antes de acenderse, tras o delay indicado.</li>
+    <li><em>Cargar no programador</em> recupera unha cue para editala; <em>Actualizar cue</em>, na páxina Programador, garda os cambios.</li>
+  </ul>
+  <h3>Executores</h3>
+  <p>A barra de executores, abaixo no espazo de Iluminación, está nos dous modos. Ten o <strong>gran máster</strong>, o
+  <strong>blackout</strong>, o <strong>tempo</strong> dos efectos (escríbese ou márcase con Tap) e un executor por secuencia: a
+  súa cue actual e a seguinte, un fader de nivel, <em>GO</em> e <em>Liberación</em>.</p>
+  <figure class="narrow">
+    <img src="img/lighting-executors.webp" width="927" height="197" alt="Barra de executores: gran máster ao 100 por cen, blackout, tempo 120 BPM e dous executores de secuencia.">
+    <figcaption>Executores. En modo función só funcionan GO e a liberación.</figcaption>
+  </figure>
+
+  <h3 id="surfaces"><span class="ms" aria-hidden="true">&#xe521;</span> Superficies de control</h3>
+  <p>Un controlador MIDI ou unha aplicación OSC (TouchOSC, por exemplo) poden manexar os executores. En
+  <span class="menu">Axustes → Superficies de control</span> escolle a <strong>entrada MIDI</strong> deste ordenador e engade
+  <strong>asignacións</strong>: preme <em>Aprender novo</em> (ou o control dunha asignación), move un fader ou preme un botón e
+  escolle que fai. <em>Banco de executores</em> engade dunha vez faders en CC 1–8 e botóns nas notas 36–43. Os executores
+  numéranse polo seu lugar na lista de secuencias.</p>
+  <ul>
+    <li><strong>Faders</strong>: nivel de executor, gran máster.</li>
+    <li><strong>Botóns</strong>: GO, liberar e flash de executor (a tope mentres se mantén), blackout, liberar todo, tap tempo, e
+    o GO e Parar todo da lista de cues. Un botón actúa unha vez por pulsación, mande notas, CC 127/0 ou OSC 1/0.</li>
+  </ul>
+  <p>As asignacións gárdanse co espectáculo; a entrada MIDI é do ordenador, así que un dispositivo remoto pode usar o seu propio
+  controlador (os seus movementos van ao dispositivo principal). As asignacións OSC chegan polo
+  <a href="#osc">receptor OSC</a>, que ademais entende os enderezos <code>/light/…</code> sen asignación.</p>
+
+  <h3 id="lighting-io"><span class="ms" aria-hidden="true">&#xe328;</span> Saídas e entradas</h3>
+  <p>Na páxina Saídas engade a onde vai o DMX: <strong>Art-Net</strong> (o enderezo dun nodo, ou difusión; <em>Buscar
+  dispositivos</em> lista os nodos da rede), <strong>sACN</strong> (multicast ou un enderezo unicast, con prioridade) ou unha
+  interface <strong>Enttec DMX USB Pro</strong> (ou compatible). Cada saída envía unha lista de universos: o universo do patch á
+  esquerda e o número no cable á dereita (Art-Net conta desde 0). Cada saída funciona pola súa conta, así que un dispositivo
+  lento ou desconectado non frea os demais, e un perdido vólvese abrir só.</p>
+  <figure>
+    <img src="img/lighting-outputs.webp" width="1100" height="448" alt="Páxina Saídas cunha saída Art-Net enviando, unha saída sACN desactivada e unha entrada sACN que mestura.">
+    <figcaption>Saídas e entradas, cada unha co seu estado en directo.</figcaption>
+  </figure>
+  <p>As <strong>entradas</strong> reciben Art-Net ou sACN doutra mesa. Cada unha <em>mestura</em> coa saída de OpenQ (gaña o
+  valor máis alto), a <em>substitúe</em> nos universos que recibe, ou queda <em>só para capturar</em>. Se varias mesas envían o
+  mesmo universo sACN, gaña a de máis prioridade. OpenQ ignora os seus propios paquetes, así que unha saída en difusión non
+  volve entrar por unha entrada.</p>
+    <p>Unha saída Art-Net pode mandar <strong>ArtSync</strong> tras cada fotograma, para que os nodos que o admiten cambien
+  todos os seus universos á vez. Maiús+clic nun nodo da lista <em>Nodos</em> envíalle os universos que emite; un aviso indica
+  cando a saída manda un universo que o nodo escollido non ten. Unha entrada Art-Net responde ás mesas que buscan nodos
+  (ArtPoll), así que as mesas que só envían aos nodos que atopan tamén envían a OpenQ.</p>
+  <h3><span class="ms" aria-hidden="true">&#xe9b0;</span> Monitor DMX</h3>
+  <p>O monitor DMX amosa cada canle dun universo tal como sae, entradas incluídas. Unha liña amarela marca onde empeza cada
+  aparato.</p>
+  <figure>
+    <img src="img/lighting-monitor.webp" width="1100" height="353" alt="Cuadrícula do monitor DMX do universo 1 con valores nas primeiras canles.">
+    <figcaption>O monitor DMX.</figcaption>
+  </figure>
+  <h3>Dispositivos remotos e visualizadores</h3>
+  <p>Un <a href="#remote">dispositivo remoto</a> recibe o deseño de iluminación e os seus cambios, e amosa os executores e a
+  saída DMX do dispositivo principal; o seu GO e os seus faders actúan no dispositivo principal. Un dispositivo co rol de
+  edición tamén pode cambiar o deseño. Un visualizador pode seguir a OpenQ do mesmo xeito, ou ler o DMX por Art-Net ou sACN e a
+  montaxe dun MVR exportado.</p>
+</section>
+
 <section id="remote">
-  <h2><span class="n">11</span>Dispositivos remotos</h2>
+  <h2><span class="n">12</span>Dispositivos remotos</h2>
   <p>Un segundo ordenador con OpenQ na mesma rede pode seguir o espectáculo e levalo. Pode ser o portátil do regedor
   ou unha tableta na mesa técnica. O ordenador que leva o espectáculo é o <strong>dispositivo principal</strong>, e fai toda a
   reprodución. O outro dispositivo amosa a súa lista de cues, cabezal, cues en marcha e medidores, e envíalle GO e outras ordes.</p>
@@ -745,7 +940,7 @@ cargo run --release -- show.openq    # abrir un espectáculo gardado</code></pre
 </section>
 
 <section id="osc">
-  <h2><span class="n">12</span>OSC e cues de rede</h2>
+  <h2><span class="n">13</span>OSC e cues de rede</h2>
   <p>Activa <strong>Control remoto OSC</strong> en <span class="menu">Axustes → Xeral</span>. Escoita no porto UDP 53000
   por defecto. As cues identifícanse polo seu número.</p>
   <div class="table-wrap"><table>
@@ -757,6 +952,7 @@ cargo run --release -- show.openq    # abrir un espectáculo gardado</code></pre
       <tr><td><code>/playhead/next</code> · <code>/playhead/previous</code></td><td>Mover o cabezal</td></tr>
       <tr><td><code>/playhead/4.2</code></td><td>Poñer o cabezal na cue 4.2</td></tr>
       <tr><td><code>/cue/4.2/start</code></td><td>Tamén <code>stop</code>, <code>pause</code>, <code>resume</code>, <code>devamp</code></td></tr>
+      <tr><td><code>/light/executor/2/level 0.5</code></td><td>Nivel do executor 2; tamén <code>go</code>, <code>release</code>, <code>flash</code> (1 = premer, 0 = soltar). <code>/light/grandmaster 0.8</code>, <code>/light/blackout</code>, <code>/light/release</code>, <code>/light/tap</code></td></tr>
     </tbody>
   </table></div>
   <p>Unha <strong>cue Rede</strong> envía unha mensaxe OSC a outros equipos. Axusta o host, o porto, o enderezo
@@ -765,9 +961,9 @@ cargo run --release -- show.openq    # abrir un espectáculo gardado</code></pre
 </section>
 
 <section id="settings">
-  <h2><span class="n">13</span>Axustes</h2>
+  <h2><span class="n">14</span>Axustes</h2>
   <p><span class="menu">Edición → Axustes…</span>, ou o botón <span class="ms" aria-hidden="true">&#xe8b8;</span> á
-  dereita da barra de estado. Gárdanse co espectáculo, agás a lingua, que é de cada ordenador.</p>
+  dereita da barra de estado. Gárdanse co espectáculo, agás a lingua e a entrada MIDI das superficies de control, que son de cada ordenador.</p>
   <div class="table-wrap"><table>
     <thead><tr><th>Lapela</th><th>Axustes</th></tr></thead>
     <tbody>
@@ -775,6 +971,7 @@ cargo run --release -- show.openq    # abrir un espectáculo gardado</code></pre
       <tr><td>Audio</td><td>Dispositivo de saída. Cambialo para toda a reprodución. As matrices de enrutado apuntan ás saídas deste dispositivo.
       A <strong>sala para audio por obxectos</strong>: os altofalantes, onde están e a que saída vai cada un.</td></tr>
       <tr><td>Escenarios de vídeo</td><td>Engadir e nomear escenarios, tamaño do lenzo, pantalla de saída, pantalla completa, mapping.</td></tr>
+      <tr><td>Superficies de control</td><td>A entrada MIDI deste ordenador e as <a href="#surfaces">asignacións de superficies de control</a> do espectáculo, con aprendizaxe.</td></tr>
     </tbody>
   </table></div>
   <figure class="narrow">
@@ -789,7 +986,7 @@ cargo run --release -- show.openq    # abrir un espectáculo gardado</code></pre
 </section>
 
 <section id="safety">
-  <h2><span class="n">14</span>Seguridade ante fallos</h2>
+  <h2><span class="n">15</span>Seguridade ante fallos</h2>
   <p>Un espectáculo ten que seguir cando algo sae mal. OpenQ mantén os problemas o máis pequenos posible e
   recupera o teu traballo se chega a caer.</p>
   <h3>Autogardado e recuperación</h3>
@@ -834,7 +1031,7 @@ cargo run --release -- show.openq    # abrir un espectáculo gardado</code></pre
 </section>
 
 <section id="keys">
-  <h2><span class="n">15</span>Atallos de teclado</h2>
+  <h2><span class="n">16</span>Atallos de teclado</h2>
   <div class="table-wrap"><table>
     <thead><tr><th>Teclas</th><th>Acción</th></tr></thead>
     <tbody>
@@ -858,7 +1055,7 @@ cargo run --release -- show.openq    # abrir un espectáculo gardado</code></pre
 </section>
 
 <section id="trouble">
-  <h2><span class="n">16</span>Solución de problemas</h2>
+  <h2><span class="n">17</span>Solución de problemas</h2>
   <div class="table-wrap"><table>
     <thead><tr><th>Problema</th><th>Proba</th></tr></thead>
     <tbody>
@@ -892,7 +1089,7 @@ cargo run --release -- show.openq    # abrir un espectáculo gardado</code></pre
 </section>
 
 <section id="license">
-  <h2><span class="n">17</span>Licenza e créditos</h2>
+  <h2><span class="n">18</span>Licenza e créditos</h2>
   <p>OpenQ distribúese baixo a <a href="https://www.apache.org/licenses/LICENSE-2.0">Apache License 2.0</a>. Este resumo é orientativo; o texto en inglés é o que vale.</p>
   <div class="table-wrap"><table>
     <thead><tr><th>Podes</th><th>Debes</th></tr></thead>

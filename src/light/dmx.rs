@@ -86,6 +86,9 @@ pub enum OutputProtocol {
     ArtNet {
         /// Node IP (unicast) or a broadcast address; empty = 255.255.255.255.
         target: String,
+        /// Follow each batch of universes with an ArtSync, so nodes change every universe at once.
+        #[serde(default)]
+        sync: bool,
     },
     /// sACN (ANSI E1.31) over UDP.
     Sacn {
@@ -131,7 +134,7 @@ impl Default for OutputConfig {
         Self {
             name: "Art-Net".into(),
             enabled: true,
-            protocol: OutputProtocol::ArtNet { target: String::new() },
+            protocol: OutputProtocol::ArtNet { target: String::new(), sync: false },
             routes: vec![UniverseRoute { universe: 1, wire: 0 }],
         }
     }
@@ -150,7 +153,7 @@ pub trait DmxOutput: Send {
 /// Opens the device behind a config.
 pub fn open(protocol: &OutputProtocol) -> anyhow::Result<Box<dyn DmxOutput>> {
     Ok(match protocol {
-        OutputProtocol::ArtNet { target } => Box::new(super::artnet::ArtNetOutput::open(target)?),
+        OutputProtocol::ArtNet { target, sync } => Box::new(super::artnet::ArtNetOutput::open(target, *sync)?),
         OutputProtocol::Sacn { target, priority } => Box::new(super::sacn::SacnOutput::open(target, *priority)?),
         OutputProtocol::EnttecPro { port } => Box::new(super::enttec::EnttecPro::open(port)?),
     })

@@ -37,6 +37,7 @@
 //! * [`spatial`] — object audio: speakers in a room, objects placed by distance-based panning.
 //! * [`light`] — the lighting design (patch, groups, lighting cue sequences with tracking), kept
 //!   apart from the live show; Light cues target its cues.
+//! * [`surface`] — MIDI/OSC control surfaces mapped onto executors, masters and GO (learn mode).
 //! * [`osc`] — OSC input. [`remote`] — paired remote devices (encrypted, authenticated).
 //! * [`displays`] — system monitors for stage outputs. [`ui`] — the egui application, including
 //!   the stage windows (spanned surfaces, edge blending, layer [`model::BlendMode`]s).
@@ -101,5 +102,6 @@ pub mod recovery;
 pub mod remote;
 pub mod show;
 pub mod spatial;
+pub mod surface;
 pub mod timecode;
 pub mod ui;

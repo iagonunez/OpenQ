@@ -40,6 +40,11 @@ pub struct Show {
     pub recovered: Option<String>,
     /// Lighting design (and replica flag) last handed to the light thread.
     light_loaded: Option<(crate::light::Lighting, bool)>,
+    /// The programmer's fixture selection, shared with remote devices (a visualiser shows it and
+    /// may set it). The UI keeps its own copy in step.
+    pub light_selection: Vec<crate::light::model::FixtureId>,
+    /// Bumped when a remote device sets [`Show::light_selection`] (the UI then takes it).
+    pub light_selection_gen: u64,
 }
 
 /// How well the engine thread is keeping time.
@@ -81,6 +86,8 @@ impl Show {
             stats: TickStats::default(),
             recovered: None,
             light_loaded: None,
+            light_selection: Vec::new(),
+            light_selection_gen: 0,
         }
     }
 
@@ -191,8 +198,10 @@ impl Show {
         if self.replica {
             let mut l = self.ws.lighting.clone();
             l.outputs.clear();
+            l.inputs.clear();
             self.media.light.load(&l);
         } else {
+            self.media.light.clear_mirror();
             self.media.light.load(&self.ws.lighting);
         }
         self.light_loaded = Some((self.ws.lighting.clone(), self.replica));
@@ -215,6 +224,19 @@ impl Show {
             self.engine.set_playhead(None);
         }
         self.edited();
+    }
+
+    /// Take an edit made on a remote device as changes to this workspace
+    /// ([`crate::remote::workspace_patch`]). False (nothing changed) if they don't fit.
+    pub fn apply_remote_patch(&mut self, cues: &[crate::model::Cue], lighting: Option<&crate::light::patch::LightingPatch>) -> bool {
+        if !crate::remote::apply_workspace_patch(&mut self.ws, cues, lighting) {
+            return false;
+        }
+        if self.engine.playhead.is_some_and(|p| self.ws.cue_list.find(p).is_none()) {
+            self.engine.set_playhead(None);
+        }
+        self.edited();
+        true
     }
 
     /// Swap in another workspace: stops everything, reopens audio with its settings.

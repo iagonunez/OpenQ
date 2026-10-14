@@ -15,6 +15,10 @@
 //!    side knows the other has the secret before anything else is sent.
 //! 6. Everything after that is ChaCha20-Poly1305: one key per direction, and a 64-bit message
 //!    counter as the nonce, so a replayed, reordered or altered frame fails to decrypt.
+//!
+//! A message is JSON. Big ones (a whole show with a large lighting design) are deflated and
+//! sent in parts of at most 16 MB, each its own sealed frame; the first plaintext byte
+//! of every frame says which (whole message, part, last part).
 
 use super::PROTOCOL;
 use anyhow::{Context, anyhow, bail};
@@ -30,8 +34,22 @@ use std::io::{Read, Write};
 use std::net::TcpStream;
 use uuid::Uuid;
 
-/// Largest frame accepted (a big workspace is a few MB of JSON).
-const MAX_FRAME: usize = 64 << 20;
+/// Largest frame accepted.
+const MAX_FRAME: usize = PART + 4096;
+/// Deflated messages go in parts of this size.
+const PART: usize = 16 << 20;
+/// Messages from this size on are deflated (small ones, e.g. live state, go as they are).
+const COMPRESS_FROM: usize = 64 << 10;
+/// Largest deflated message accepted (all parts together).
+const MAX_PACKED: usize = 512 << 20;
+/// Largest message accepted once inflated (a big rig's lighting design is a few hundred MB).
+const MAX_MESSAGE: u64 = 1 << 30;
+/// Frame kind: the rest is a whole JSON message.
+const KIND_PLAIN: u8 = 0;
+/// Frame kind: part of a deflated message, more follow.
+const KIND_PART: u8 = 1;
+/// Frame kind: last (or only) part of a deflated message.
+const KIND_LAST: u8 = 2;
 /// Largest frame accepted before the peer is authenticated.
 const MAX_HANDSHAKE_FRAME: usize = 4096;
 
@@ -70,8 +88,28 @@ pub struct Sender {
 impl Sender {
     /// Encrypt and send one message.
     pub fn send<T: Serialize>(&mut self, msg: &T) -> anyhow::Result<()> {
-        let plain = serde_json::to_vec(msg)?;
-        let sealed = self.cipher.encrypt(&nonce(self.counter), plain.as_slice()).map_err(|_| anyhow!("encryption failed"))?;
+        let mut plain = vec![KIND_PLAIN];
+        serde_json::to_writer(&mut plain, msg)?;
+        if plain.len() < COMPRESS_FROM {
+            return self.seal(&plain);
+        }
+        let mut z = flate2::write::DeflateEncoder::new(Vec::with_capacity(plain.len() / 8), flate2::Compression::fast());
+        z.write_all(&plain[1..])?;
+        drop(plain);
+        let packed = z.finish()?;
+        let count = packed.len().div_ceil(PART);
+        let mut frame = Vec::with_capacity(PART.min(packed.len()) + 1);
+        for (i, part) in packed.chunks(PART).enumerate() {
+            frame.clear();
+            frame.push(if i + 1 == count { KIND_LAST } else { KIND_PART });
+            frame.extend_from_slice(part);
+            self.seal(&frame)?;
+        }
+        Ok(())
+    }
+
+    fn seal(&mut self, plain: &[u8]) -> anyhow::Result<()> {
+        let sealed = self.cipher.encrypt(&nonce(self.counter), plain).map_err(|_| anyhow!("encryption failed"))?;
         self.counter += 1;
         write_frame(&mut self.stream, &sealed)?;
         Ok(())
@@ -93,13 +131,36 @@ pub struct Receiver {
 impl Receiver {
     /// Receive and decrypt one message; fails on any tampering, replay or reordering.
     pub fn recv<T: DeserializeOwned>(&mut self) -> anyhow::Result<T> {
-        let sealed = read_frame(&mut self.stream, MAX_FRAME)?;
-        let plain = self
-            .cipher
-            .decrypt(&nonce(self.counter), sealed.as_slice())
-            .map_err(|_| anyhow!("message failed authentication"))?;
-        self.counter += 1;
-        Ok(serde_json::from_slice(&plain)?)
+        let mut packed: Vec<u8> = Vec::new();
+        loop {
+            let sealed = read_frame(&mut self.stream, MAX_FRAME)?;
+            let plain = self
+                .cipher
+                .decrypt(&nonce(self.counter), sealed.as_slice())
+                .map_err(|_| anyhow!("message failed authentication"))?;
+            self.counter += 1;
+            let Some((&kind, body)) = plain.split_first() else { bail!("empty message") };
+            match kind {
+                KIND_PLAIN if packed.is_empty() => return Ok(serde_json::from_slice(body)?),
+                KIND_PART | KIND_LAST => {
+                    if packed.len() + body.len() > MAX_PACKED {
+                        bail!("message too large");
+                    }
+                    packed.extend_from_slice(body);
+                    if kind == KIND_LAST {
+                        // Inflate with a cap, so a hostile peer can't exhaust memory.
+                        let mut json = Vec::new();
+                        flate2::read::DeflateDecoder::new(packed.as_slice()).take(MAX_MESSAGE + 1).read_to_end(&mut json)?;
+                        if json.len() as u64 > MAX_MESSAGE {
+                            bail!("message too large");
+                        }
+                        drop(packed);
+                        return Ok(serde_json::from_slice(&json)?);
+                    }
+                }
+                _ => bail!("unexpected frame kind {kind}"),
+            }
+        }
     }
 
     /// Read timeout for `recv`.
@@ -346,6 +407,34 @@ mod tests {
             Err(e) => Err(e.to_string()),
         };
         (server.join().unwrap(), client)
+    }
+
+    /// Messages bigger than one frame go deflated in several parts and come back whole; small
+    /// ones still go plain.
+    #[test]
+    fn big_messages_go_in_parts() {
+        let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+        let addr = listener.local_addr().unwrap();
+        // Hex digits deflate to about half: ~40 MB of them need more than one part.
+        let mut rng = fastrand::Rng::with_seed(3);
+        let big: String = (0..40 << 20).map(|_| char::from_digit(rng.u32(0..16), 16).unwrap()).collect();
+        let expect = big.clone();
+        let server = std::thread::spawn(move || {
+            let (s, _) = listener.accept().unwrap();
+            let info = ServerInfo { id: Uuid::new_v4(), name: "main".into() };
+            let (mut tx, mut rx, _) = server_handshake(s, &info, |_| Ok(b"K".to_vec())).unwrap();
+            tx.send(&big).unwrap();
+            tx.send(&"small".to_string()).unwrap();
+            let back: Vec<u32> = rx.recv().unwrap();
+            back.len()
+        });
+        let hello = Hello { protocol: PROTOCOL, client_id: Uuid::new_v4(), client_name: "tablet".into(), pairing: true };
+        let (mut tx, mut rx, _) = client_handshake(TcpStream::connect(addr).unwrap(), &hello, |_| Ok(b"K".to_vec())).unwrap();
+        assert!(rx.recv::<String>().unwrap() == expect);
+        assert_eq!(rx.recv::<String>().unwrap(), "small");
+        // Compressible: one part.
+        tx.send(&vec![7u32; 1 << 20]).unwrap();
+        assert_eq!(server.join().unwrap(), 1 << 20);
     }
 
     #[test]

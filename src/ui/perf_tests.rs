@@ -243,3 +243,38 @@ fn engine_waits_for_one_panel_not_a_frame() {
     eprintln!("3000 cues: frame {frame_time:?}, engine waited at most {worst_wait:?}");
     assert!(worst_wait < frame_time.mul_f32(0.75), "engine waited {worst_wait:?}; a frame takes {frame_time:?}");
 }
+
+/// The Lighting workspace with a big rig (2000 fixtures, 400 tracked cues, everything selected)
+/// costs about what a small one does per frame: the design is snapshotted every frame to detect
+/// edits (cue and preset values are shared, not copied), fixture lookups are indexed and the
+/// fixture tiles only lay out visible rows. It once took 100+ ms a frame, under the show lock.
+#[test]
+fn big_lighting_rig_frames_stay_cheap() {
+    use super::lighting::{LightTab, View};
+    let measure = |l: crate::light::Lighting| {
+        let prober = Prober::new();
+        let mut show = Show::new(prober.clone());
+        show.ws.lighting = l;
+        show.edited();
+        let shared: SharedShow = Arc::new(parking_lot::Mutex::new(show));
+        let mut app = App::new(shared.clone(), prober);
+        app.view = View::Lighting;
+        app.light.selection = shared.lock().ws.lighting.units();
+        let ctx = context();
+        let mut out = Vec::new();
+        for tab in [LightTab::Patch, LightTab::Programmer, LightTab::Sequences] {
+            app.light.tab = tab;
+            for i in 0..8 {
+                let d = frame(&ctx, &mut app, &shared);
+                if i >= 3 {
+                    out.push(d);
+                }
+            }
+        }
+        median(out)
+    };
+    let small = measure(crate::light::library::bench_rig(40, 1, 10));
+    let big = measure(crate::light::library::bench_rig(2000, 4, 100));
+    eprintln!("lighting view frame: small rig {small:?}, big rig {big:?}");
+    assert!(big < small * 6 + Duration::from_millis(30), "big rig {big:?} vs small rig {small:?}");
+}

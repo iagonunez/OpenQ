@@ -48,6 +48,8 @@ struct Replica {
     pending_playhead: Option<(Option<CueId>, Instant)>,
     /// The local show, put back on disconnect.
     stash: Option<(Workspace, Option<PathBuf>, bool)>,
+    /// The DMX output was asked for (the DMX monitor is showing).
+    dmx: bool,
 }
 
 pub(super) struct RemoteUi {
@@ -231,6 +233,7 @@ impl App {
             mirrored_playhead: None,
             pending_playhead: None,
             stash: Some(stash),
+            dmx: false,
         });
     }
 
@@ -267,9 +270,18 @@ impl App {
 
     /// Apply what the main device sent and send back local playhead moves and edits.
     fn replica_sync(&mut self, show: &mut Show) {
+        // The DMX monitor (its page, or the locked lighting view) shows the main device's output.
+        let monitor = self.view == super::lighting::View::Lighting && (self.light.tab == super::lighting::LightTab::Monitor || !self.can_design());
         let Some(link) = &self.remote.link else { return };
         let Some(r) = &mut self.remote.replica else { return };
         let now = Instant::now();
+        if monitor != r.dmx {
+            r.dmx = monitor;
+            link.send(ClientMsg::Subscribe { dmx: monitor });
+            if !monitor {
+                show.media.light.mirror_frame(&[]);
+            }
+        }
         let mut notices = Vec::new();
 
         // Local playhead change since the last mirror (clicking a row, arrow keys...).
@@ -285,8 +297,17 @@ impl App {
         for msg in link.drain() {
             match msg {
                 ServerMsg::Welcome { .. } => {}
-                ServerMsg::Workspace { ws, title } => {
+                ServerMsg::Workspace { mut ws, title, keep_lighting } => {
                     r.title = title;
+                    if keep_lighting {
+                        match &r.synced {
+                            Some(synced) => ws.lighting = synced.lighting.clone(),
+                            None => {
+                                link.send(ClientMsg::Resync);
+                                continue;
+                            }
+                        }
+                    }
                     if r.synced.as_ref() != Some(&*ws) {
                         show.ws = (*ws).clone();
                         r.synced = Some(*ws);
@@ -306,7 +327,23 @@ impl App {
                         link.send(ClientMsg::Resync);
                     }
                 }
+                ServerMsg::Lighting(patch) => {
+                    let applied = r.synced.as_mut().is_some_and(|synced| crate::light::patch::apply(&mut synced.lighting, &patch));
+                    if applied {
+                        // Local edits not yet echoed are overwritten, as with a whole workspace.
+                        if !crate::light::patch::apply(&mut show.ws.lighting, &patch)
+                            && let Some(synced) = &r.synced
+                        {
+                            show.ws.lighting = synced.lighting.clone();
+                        }
+                        show.sync_lighting();
+                    } else {
+                        link.send(ClientMsg::Resync);
+                    }
+                }
+                ServerMsg::Dmx(universes) => show.media.light.mirror_frame(&universes),
                 ServerMsg::State(s) => {
+                    show.media.light.mirror(s.lighting.masters.clone(), s.lighting.sequences.clone());
                     let mut playhead = s.playhead;
                     match r.pending_playhead {
                         Some((want, at)) if want != s.playhead && at.elapsed() < Duration::from_secs(1) => playhead = want,
@@ -337,7 +374,15 @@ impl App {
         {
             if r.role.can_edit() {
                 if r.last_edit.elapsed() >= EDIT_INTERVAL {
-                    link.send(ClientMsg::Edit(Box::new(show.ws.clone())));
+                    match crate::remote::workspace_patch(synced, &show.ws) {
+                        Some((cues, lighting)) => link.send(ClientMsg::Patch { cues, lighting: lighting.map(Box::new) }),
+                        None => {
+                            let mut ws = show.ws.clone();
+                            ws.lighting = Default::default();
+                            let lighting = crate::light::patch::diff(&synced.lighting, &show.ws.lighting).map(Box::new);
+                            link.send(ClientMsg::Reshape { ws: Box::new(ws), lighting });
+                        }
+                    }
                     r.synced = Some(show.ws.clone());
                     r.last_edit = now;
                 }

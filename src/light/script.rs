@@ -157,7 +157,8 @@ impl Finished {
     }
 }
 
-/// A script in flight. Dropping it doesn't stop the script; [`ScriptRun::cancel`] does.
+/// A script in flight. Dropping it stops the script (or skips it if it hasn't started), so
+/// runs nobody waits for don't hold up the queue; [`ScriptRun::cancel`] stops it too.
 pub struct ScriptRun {
     rx: Receiver<Finished>,
     cancel: Arc<AtomicBool>,
@@ -184,6 +185,12 @@ impl ScriptRun {
     }
 }
 
+impl Drop for ScriptRun {
+    fn drop(&mut self) {
+        self.cancel();
+    }
+}
+
 enum Job {
     Run { req: Request, reply: Sender<Finished>, cancel: Arc<AtomicBool> },
     Prepare,
@@ -205,7 +212,6 @@ pub enum Status {
 /// The script host: one thread, one script at a time (runs queue up).
 pub struct Python {
     jobs: Option<Sender<Job>>,
-    thread: Option<std::thread::JoinHandle<()>>,
     status: Arc<std::sync::atomic::AtomicU8>,
 }
 
@@ -228,7 +234,7 @@ impl Python {
         let (tx, rx) = mpsc::channel::<Job>();
         let status = Arc::new(std::sync::atomic::AtomicU8::new(Status::Unknown as u8));
         let shared = status.clone();
-        let thread = std::thread::Builder::new()
+        std::thread::Builder::new()
             .name("openq-python".into())
             .spawn(move || {
                 let mut host = Host { runtime, search, sandbox: None, status: shared };
@@ -239,6 +245,10 @@ impl Python {
                                 log::warn!("effect scripts: {e}");
                             }
                         }
+                        // Cancelled (or dropped) before it started: skip it.
+                        Job::Run { reply, cancel, .. } if cancel.load(Ordering::Relaxed) => {
+                            let _ = reply.send(Finished::failed(ScriptError::Cancelled));
+                        }
                         Job::Run { req, reply, cancel } => {
                             let r = crate::recovery::catch(|| Ok(host.run(&req, &cancel)));
                             let _ = reply.send(r.unwrap_or_else(|e| Finished::failed(ScriptError::Runtime(e.to_string()))));
@@ -247,7 +257,7 @@ impl Python {
                 }
             })
             .expect("spawn openq-python");
-        Self { jobs: Some(tx), thread: Some(thread), status }
+        Self { jobs: Some(tx), status }
     }
 
     /// Whether scripts can run (known once the host has tried to load the interpreter).
@@ -275,11 +285,12 @@ impl Python {
 }
 
 impl Drop for Python {
+    /// Closes the queue without waiting: a script may run for up to its timeout and the first
+    /// load compiles for seconds, which must not hold up whoever drops the host (quitting the
+    /// app). The thread ends after its current job; runs still queued were cancelled when their
+    /// [`ScriptRun`]s were dropped.
     fn drop(&mut self) {
         self.jobs = None;
-        if let Some(t) = self.thread.take() {
-            let _ = t.join();
-        }
     }
 }
 
@@ -666,6 +677,13 @@ print(found)
         let f = py.run(Request::new("mem.py", "x = bytearray(1 << 30)")).wait();
         assert!(matches!(&f.result, Err(ScriptError::Script { message, .. }) if message.contains("MemoryError")), "{:?}", f.result);
         assert!(py.run(Request::new("ok.py", "pass")).wait().result.is_ok(), "runs again after");
+        // Runs nobody waits for any more stop: three abandoned endless scripts don't hold up the next.
+        for _ in 0..3 {
+            drop(py.run(Request::new("loop.py", "while True: pass")));
+        }
+        let t = std::time::Instant::now();
+        assert!(py.run(Request::new("ok.py", "pass")).wait().result.is_ok());
+        assert!(t.elapsed() < Duration::from_secs(10), "waited {:?} behind abandoned runs", t.elapsed());
     }
 
     #[test]

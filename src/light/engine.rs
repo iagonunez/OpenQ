@@ -6,6 +6,7 @@
 //! A panic inside a frame is caught: the last good frame keeps going out and it's reported once.
 
 use super::dmx::{DmxFrame, OutputConfig, OutputHandle, OutputSender};
+use super::dmxin::{InputConfig, InputHandle, InputReceiver, MergeMode};
 use super::model::{Attribute, FixtureId, LightCueId, Lighting, SequenceId};
 use super::playback::{LightShow, Playback, SequenceStatus};
 use parking_lot::Mutex;
@@ -27,6 +28,8 @@ pub enum LightCommand {
     Compiling(u64),
     /// Swap in a recompiled show.
     Show(u64, Arc<LightShow>),
+    /// A compile failed (panicked): keep the current show, stop holding commands for it.
+    Failed(u64),
     /// GO a lighting cue wherever it is in the design.
     GoCue {
         /// Cue.
@@ -73,10 +76,13 @@ pub enum LightCommand {
     Tempo(f32),
     /// Replace the outputs.
     Outputs(Vec<OutputSender>),
+    /// Replace the inputs merged into the output.
+    Inputs(Vec<InputHandle>),
 }
 
 /// Grand master, blackout and sequence levels as set through a [`LightEngine`].
-#[derive(Clone, Debug, PartialEq)]
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize)]
+#[serde(default)]
 pub struct Masters {
     /// Grand master, 0..=1.
     pub grand_master: f32,
@@ -113,12 +119,21 @@ struct Shared {
 /// Owns the light thread. Dropping it stops the thread (outputs close).
 pub struct LightEngine {
     tx: mpsc::Sender<LightCommand>,
+    /// Designs to compile, for the compile thread (started on the first load).
+    compile_tx: Option<mpsc::Sender<(u64, Lighting)>>,
     shared: Arc<Shared>,
     thread: Option<JoinHandle<()>>,
     compiles: u64,
     outputs: Vec<OutputConfig>,
     masters: Masters,
     handles: Vec<OutputHandle>,
+    inputs: Vec<InputConfig>,
+    /// Running receivers (they stop when dropped).
+    receivers: Vec<InputReceiver>,
+    /// On a replica: the main device's sequence states (see [`LightEngine::mirror`]).
+    mirrored: Option<Vec<SequenceStatus>>,
+    /// On a replica: the main device's DMX output (see [`LightEngine::mirror_frame`]).
+    mirrored_frame: Option<DmxFrame>,
 }
 
 impl LightEngine {
@@ -128,32 +143,82 @@ impl LightEngine {
         let shared = Arc::new(Shared::default());
         let s = shared.clone();
         let thread = std::thread::Builder::new().name(THREAD.into()).spawn(move || run(rx, s)).ok();
-        Self { tx, shared, thread, compiles: 0, outputs: Vec::new(), handles: Vec::new(), masters: Masters::default() }
+        Self {
+            tx,
+            compile_tx: None,
+            shared,
+            thread,
+            compiles: 0,
+            outputs: Vec::new(),
+            handles: Vec::new(),
+            masters: Masters::default(),
+            inputs: Vec::new(),
+            receivers: Vec::new(),
+            mirrored: None,
+            mirrored_frame: None,
+        }
     }
 
     fn send(&self, cmd: LightCommand) {
         let _ = self.tx.send(cmd);
     }
 
-    /// Compile a design (on a worker thread, so a big design never holds up the caller) and
+    /// Compile a design (on the compile thread, so a big design never holds up the caller) and
     /// hand it to the light thread; restart the outputs if they changed. Commands sent after
-    /// this wait for the new show.
+    /// this wait for the new show. Designs that arrive while one compiles are coalesced: only
+    /// the newest is compiled next, so a stream of edits (a drag) never piles up compiles.
     pub fn load(&mut self, lighting: &Lighting) {
         self.compiles += 1;
         let generation = self.compiles;
         self.send(LightCommand::Compiling(generation));
-        let design = lighting.clone();
-        let tx = self.tx.clone();
-        let compile = move || {
-            let show = Arc::new(LightShow::compile(&design));
-            let _ = tx.send(LightCommand::Show(generation, show));
-        };
-        if std::thread::Builder::new().name("openq-light-compile".into()).spawn(compile).is_err() {
-            log::error!("lighting: can't start the compile thread");
+        if self.compile_tx.is_none() {
+            self.compile_tx = start_compiler(self.tx.clone());
+        }
+        // Cheap: the big parts of a design are shared (`model::Shared`).
+        let sent = self.compile_tx.as_ref().is_some_and(|c| c.send((generation, lighting.clone())).is_ok());
+        if !sent {
+            log::error!("lighting: the compile thread isn't running");
+            self.compile_tx = None;
+            self.send(LightCommand::Failed(generation));
         }
         if lighting.outputs != self.outputs {
             self.set_outputs(lighting.outputs.clone());
         }
+        if lighting.inputs != self.inputs {
+            self.set_inputs(lighting.inputs.clone());
+        }
+    }
+
+    /// Replace the inputs (disabled ones don't listen).
+    pub fn set_inputs(&mut self, inputs: Vec<InputConfig>) {
+        let receivers: Vec<InputReceiver> = inputs.iter().filter(|i| i.enabled).cloned().map(InputReceiver::start).collect();
+        self.set_receivers(receivers);
+        self.inputs = inputs;
+    }
+
+    /// Replace the inputs with ready receivers (tests).
+    pub fn set_receivers(&mut self, receivers: Vec<InputReceiver>) {
+        self.send(LightCommand::Inputs(receivers.iter().map(|r| r.handle()).collect()));
+        // Dropping a receiver waits for its thread to notice (a fraction of a second): not here.
+        let old = std::mem::replace(&mut self.receivers, receivers);
+        if !old.is_empty() {
+            let _ = std::thread::Builder::new().name("openq-dmx-close".into()).spawn(move || drop(old));
+        }
+    }
+
+    /// Inputs and their status.
+    pub fn inputs(&self) -> Vec<InputHandle> {
+        self.receivers.iter().map(|r| r.handle()).collect()
+    }
+
+    /// Everything the inputs receive, merged highest-wins (whatever their merge mode): what
+    /// "Capture input" reads.
+    pub fn input_frame(&self) -> DmxFrame {
+        let mut f = DmxFrame::default();
+        for r in &self.receivers {
+            super::dmxin::merge(&mut f, &r.handle().frame(), MergeMode::Htp);
+        }
+        f
     }
 
     /// Replace the outputs (disabled ones aren't opened).
@@ -230,14 +295,55 @@ impl LightEngine {
         self.send(LightCommand::Programmer(values));
     }
 
-    /// Copy of the latest frame (DMX monitor, visualiser).
+    /// Copy of the latest frame (DMX monitor, visualiser); the main device's on a replica that
+    /// receives it.
     pub fn frame(&self) -> DmxFrame {
-        self.shared.frame.lock().clone()
+        match &self.mirrored_frame {
+            Some(f) => f.clone(),
+            None => self.shared.frame.lock().clone(),
+        }
     }
 
-    /// Sequence states.
+    /// Take universes of another device's output (a replica's DMX monitor). An empty list
+    /// stops mirroring. Slices shorter than a universe are zero-filled.
+    pub fn mirror_frame(&mut self, universes: &[(u16, Vec<u8>)]) {
+        if universes.is_empty() {
+            self.mirrored_frame = None;
+            return;
+        }
+        let f = self.mirrored_frame.get_or_insert_with(DmxFrame::default);
+        for (id, data) in universes {
+            let u = f.get_mut(*id);
+            let n = data.len().min(u.data.len());
+            u.data[..n].copy_from_slice(&data[..n]);
+            u.data[n..].fill(0);
+        }
+    }
+
+    /// Sequence states (the main device's on a replica).
     pub fn status(&self) -> Vec<SequenceStatus> {
-        self.shared.status.lock().clone()
+        match &self.mirrored {
+            Some(m) => m.clone(),
+            None => self.shared.status.lock().clone(),
+        }
+    }
+
+    /// Show another device's masters and sequence states instead of this engine's (a replica:
+    /// its executors are the main device's). Nothing is played here.
+    pub fn mirror(&mut self, masters: Masters, sequences: Vec<SequenceStatus>) {
+        self.masters = masters;
+        self.mirrored = Some(sequences);
+    }
+
+    /// Stop mirroring (back to this engine's own state).
+    pub fn clear_mirror(&mut self) {
+        self.mirrored_frame = None;
+        if self.mirrored.take().is_some() {
+            self.masters = Masters::default();
+            self.send(LightCommand::GrandMaster(1.0));
+            self.send(LightCommand::Blackout(false));
+            self.send(LightCommand::Tempo(self.masters.bpm));
+        }
     }
 
     /// Outputs and their status.
@@ -256,9 +362,42 @@ impl LightEngine {
     }
 }
 
+/// The compile thread: compiles the newest queued design, reports a panic as `Failed`. It ends
+/// when the engine drops its sender (not joined: a long compile must not hold up the drop).
+fn start_compiler(tx: mpsc::Sender<LightCommand>) -> Option<mpsc::Sender<(u64, Lighting)>> {
+    let (ctx, crx) = mpsc::channel::<(u64, Lighting)>();
+    let spawned = std::thread::Builder::new().name("openq-light-compile".into()).spawn(move || {
+        while let Ok(mut job) = crx.recv() {
+            while let Ok(newer) = crx.try_recv() {
+                job = newer;
+            }
+            let (generation, design) = job;
+            let cmd = match crate::recovery::catch(|| Ok(Arc::new(LightShow::compile(&design)))) {
+                Ok(show) => LightCommand::Show(generation, show),
+                Err(e) => {
+                    log::error!("lighting: compiling the design failed: {e:#}");
+                    LightCommand::Failed(generation)
+                }
+            };
+            drop(design);
+            if tx.send(cmd).is_err() {
+                return;
+            }
+        }
+    });
+    match spawned {
+        Ok(_) => Some(ctx),
+        Err(e) => {
+            log::error!("lighting: can't start the compile thread: {e}");
+            None
+        }
+    }
+}
+
 impl Drop for LightEngine {
     fn drop(&mut self) {
-        // Closing the channel ends the thread.
+        // Closing the channels ends the threads.
+        self.compile_tx = None;
         let (tx, _) = mpsc::channel();
         drop(std::mem::replace(&mut self.tx, tx));
         if let Some(t) = self.thread.take() {
@@ -273,6 +412,9 @@ fn run(rx: mpsc::Receiver<LightCommand>, shared: Arc<Shared>) {
     let mut playback = Playback::new(Arc::new(LightShow::default()), Instant::now());
     let mut outputs: Vec<OutputSender> = Vec::new();
     let mut last_good = DmxFrame::default();
+    // Inputs, the copy of each one's universes and the output with them merged.
+    let mut inputs: Vec<(InputHandle, DmxFrame)> = Vec::new();
+    let mut merged = DmxFrame::default();
     let mut next = Instant::now();
     let mut n: u64 = 0;
     // Latest compile announced, newest show applied, commands held until they match.
@@ -300,6 +442,7 @@ fn run(rx: mpsc::Receiver<LightCommand>, shared: Arc<Shared>) {
                         let _ = std::thread::Builder::new().name("openq-dmx-close".into()).spawn(move || drop(old));
                     }
                 }
+                Ok(LightCommand::Inputs(i)) => inputs = i.into_iter().filter(|h| h.merge != MergeMode::Capture).map(|h| (h, DmxFrame::default())).collect(),
                 Ok(LightCommand::Compiling(g)) => expected = expected.max(g),
                 Ok(LightCommand::Show(g, show)) => {
                     // Compiles can finish out of order: never go back to an older one.
@@ -308,23 +451,26 @@ fn run(rx: mpsc::Receiver<LightCommand>, shared: Arc<Shared>) {
                         run_command(&mut playback, LightCommand::Show(g, show), &shared);
                     }
                     if applied >= expected {
-                        held_since = None;
-                        for cmd in held.drain(..) {
-                            run_command(&mut playback, cmd, &shared);
-                        }
+                        release_held(&mut playback, &mut held, &mut held_since, &shared);
                     }
                 }
-                Ok(cmd) if applied < expected && held_since.is_some_and(|t: Instant| t.elapsed() > HOLD_LIMIT) => {
-                    // The compile never came back (thread couldn't start): don't hold GOs forever.
-                    expected = applied;
-                    for c in held.drain(..) {
-                        run_command(&mut playback, c, &shared);
+                Ok(LightCommand::Failed(g)) => {
+                    push_error(&shared, "lighting: the design could not be compiled (see the error log)".into());
+                    applied = applied.max(g);
+                    if applied >= expected {
+                        release_held(&mut playback, &mut held, &mut held_since, &shared);
                     }
-                    run_command(&mut playback, cmd, &shared);
                 }
                 Ok(cmd) if applied < expected => {
                     held_since.get_or_insert_with(Instant::now);
-                    held.push_back(cmd);
+                    // Only the newest programmer matters: don't queue one per UI frame.
+                    let replaces = |a: &LightCommand, b: &LightCommand| {
+                        matches!((a, b), (LightCommand::Programmer(_), LightCommand::Programmer(_)) | (LightCommand::ProgrammerEffects(_), LightCommand::ProgrammerEffects(_)))
+                    };
+                    match held.iter_mut().rev().find(|h| replaces(h, &cmd)) {
+                        Some(h) => *h = cmd,
+                        None => held.push_back(cmd),
+                    }
                 }
                 Ok(cmd) => run_command(&mut playback, cmd, &shared),
                 Err(mpsc::TryRecvError::Empty) => break,
@@ -337,6 +483,11 @@ fn run(rx: mpsc::Receiver<LightCommand>, shared: Arc<Shared>) {
         if quit {
             break;
         }
+        if held_since.is_some_and(|t| t.elapsed() > HOLD_LIMIT) {
+            // The compile is taking far too long: don't hold GOs any more.
+            expected = applied;
+            release_held(&mut playback, &mut held, &mut held_since, &shared);
+        }
         let now = Instant::now();
         let built = crate::recovery::catch(|| {
             crate::recovery::fault_point(crate::recovery::Fault::LightTick);
@@ -347,14 +498,24 @@ fn run(rx: mpsc::Receiver<LightCommand>, shared: Arc<Shared>) {
             // Keep sending the last good frame; report the first fault of a run only.
             if shared.faults.fetch_add(1, Ordering::Relaxed) == 0 {
                 log::error!("lighting frame failed, holding the last frame: {e:#}");
-                shared.errors.lock().push(format!("lighting: {e:#}"));
+                push_error(&shared, format!("lighting: {e:#}"));
             }
         }
+        let out = if inputs.is_empty() {
+            &last_good
+        } else {
+            merged.universes.clone_from(&last_good.universes);
+            for (h, copy) in &mut inputs {
+                h.read_into(copy);
+                super::dmxin::merge(&mut merged, copy, h.merge);
+            }
+            &merged
+        };
         for o in &outputs {
-            o.publish(&last_good);
+            o.publish(out);
         }
         if let Some(mut f) = shared.frame.try_lock() {
-            f.clone_from(&last_good);
+            f.clone_from(out);
         }
         n += 1;
         shared.frames.store(n, Ordering::Relaxed);
@@ -372,10 +533,27 @@ fn run(rx: mpsc::Receiver<LightCommand>, shared: Arc<Shared>) {
     }
 }
 
+fn release_held(p: &mut Playback, held: &mut std::collections::VecDeque<LightCommand>, since: &mut Option<Instant>, shared: &Shared) {
+    *since = None;
+    for cmd in held.drain(..) {
+        run_command(p, cmd, shared);
+    }
+}
+
+/// Errors kept until drained (a replica never drains them: its engine doesn't tick).
+const MAX_ERRORS: usize = 100;
+
 fn run_command(p: &mut Playback, cmd: LightCommand, shared: &Shared) {
     let r = crate::recovery::catch(|| apply(p, cmd).map_err(anyhow::Error::msg));
     if let Err(e) = r {
-        shared.errors.lock().push(format!("lighting: {e:#}"));
+        push_error(shared, format!("lighting: {e:#}"));
+    }
+}
+
+fn push_error(shared: &Shared, e: String) {
+    let mut errors = shared.errors.lock();
+    if errors.len() < MAX_ERRORS {
+        errors.push(e);
     }
 }
 
@@ -402,7 +580,7 @@ fn apply(p: &mut Playback, cmd: LightCommand) -> Result<(), String> {
         LightCommand::Programmer(v) => p.set_programmer(&v),
         LightCommand::ProgrammerEffects(v) => p.set_programmer_effects(&v),
         LightCommand::Tempo(bpm) => p.bpm = bpm.clamp(1.0, 999.0),
-        LightCommand::Outputs(_) | LightCommand::Compiling(_) => {}
+        LightCommand::Outputs(_) | LightCommand::Inputs(_) | LightCommand::Compiling(_) | LightCommand::Failed(_) => {}
     }
     Ok(())
 }
@@ -433,6 +611,55 @@ mod tests {
         false
     }
 
+    /// A replica shows the main device's masters, sequence states and output until it stops.
+    #[test]
+    fn mirror_and_clear() {
+        let mut e = LightEngine::start();
+        let st = SequenceStatus { id: 4, cue: None, active: true, level: 0.5 };
+        e.mirror(Masters { grand_master: 0.3, ..Default::default() }, vec![st.clone()]);
+        e.mirror_frame(&[(2, vec![9; 3])]);
+        assert_eq!(e.status(), [st]);
+        assert_eq!(e.masters().grand_master, 0.3);
+        let f = e.frame();
+        assert_eq!(f.get(2).unwrap().data[..4], [9, 9, 9, 0]);
+        e.clear_mirror();
+        assert!(e.status().is_empty() && e.frame().universes.is_empty());
+        assert_eq!(e.masters().grand_master, 1.0);
+    }
+
+    /// An Art-Net input merged HTP reaches the output; in Capture mode it doesn't.
+    #[test]
+    fn input_merges_into_the_output() {
+        use crate::light::dmxin::{InputConfig, InputReceiver, MergeMode};
+        let mut e = LightEngine::start();
+        let seen = Arc::new(Mutex::new(0u8));
+        let s2 = seen.clone();
+        let cfg = OutputConfig { routes: vec![UniverseRoute { universe: 2, wire: 0 }], ..Default::default() };
+        e.set_senders(vec![OutputSender::with_opener(cfg, Box::new(move || Ok(Box::new(Probe(s2.clone())) as Box<dyn DmxOutput>)))]);
+        let port = std::net::UdpSocket::bind("127.0.0.1:0").unwrap().local_addr().unwrap().port();
+        let tx = std::net::UdpSocket::bind("127.0.0.1:0").unwrap();
+        let send = |v: u8| {
+            let mut u = Universe::new(4);
+            u.data[0] = v;
+            let mut p = Vec::new();
+            crate::light::artnet::dmx_packet(1, &u, &mut p);
+            tx.send_to(&p, ("127.0.0.1", port)).unwrap();
+        };
+        for (merge, expect) in [(MergeMode::Capture, 0), (MergeMode::Htp, 77)] {
+            let input = InputConfig { routes: vec![UniverseRoute { universe: 2, wire: 4 }], merge, ..Default::default() };
+            let r = InputReceiver::start_on(input, port);
+            let h = r.handle();
+            assert!(wait(|| h.status().open));
+            e.set_receivers(vec![r]);
+            assert!(wait(|| {
+                send(77);
+                e.input_frame().get(2).is_some_and(|u| u.data[0] == 77)
+            }));
+            std::thread::sleep(Duration::from_millis(100));
+            assert!(wait(|| *seen.lock() == expect), "{merge:?}");
+        }
+    }
+
     #[test]
     fn go_reaches_the_output() {
         let mut l = Lighting::default();
@@ -461,5 +688,31 @@ mod tests {
         e.go(9, None, Instant::now());
         assert!(wait(|| !e.drain_errors().is_empty()), "unknown sequence reported");
         assert!(e.frames() > 0);
+    }
+
+    /// A burst of edits (a drag) is coalesced into few compiles, and a GO sent after it still
+    /// plays the newest design.
+    #[test]
+    fn edit_bursts_coalesce() {
+        let t = library::generic("generic/dimmer").unwrap();
+        let mut l = Lighting::default();
+        l.add_type(&t);
+        l.fixtures.push(Fixture { id: 1, fixture_type: t.id.clone(), mode: t.modes[0].name.clone(), address: 1, ..Default::default() });
+        let mut c = LightCue { fade: 0.0, ..Default::default() };
+        let id = c.id;
+        c.values.entry(1).or_default().insert(Attribute::Dimmer, 0.0.into());
+        l.sequences.push(Sequence { id: 1, cues: vec![c], ..Default::default() });
+        let mut e = LightEngine::start();
+        let seen = Arc::new(Mutex::new(0u8));
+        let s2 = seen.clone();
+        let cfg = OutputConfig { routes: vec![UniverseRoute { universe: 1, wire: 0 }], ..Default::default() };
+        e.set_senders(vec![OutputSender::with_opener(cfg, Box::new(move || Ok(Box::new(Probe(s2.clone())) as Box<dyn DmxOutput>)))]);
+        for i in 1..=200u32 {
+            l.sequences[0].cues[0].values.entry(1).or_default().insert(Attribute::Dimmer, (i as f32 / 200.0).into());
+            e.load(&l);
+        }
+        e.go_cue(id, Instant::now());
+        assert!(wait(|| *seen.lock() == 255), "the GO played the last design");
+        assert!(e.drain_errors().is_empty());
     }
 }

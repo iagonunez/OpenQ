@@ -42,6 +42,7 @@ pub enum Attribute {
     Yellow,
     Cto,
     ColorWheel,
+    ColorMacro,
     Pan,
     Tilt,
     PanTiltSpeed,
@@ -51,13 +52,23 @@ pub enum Attribute {
     Frost,
     Gobo,
     GoboRotation,
+    Gobo2,
+    Gobo2Rotation,
     Prism,
+    PrismRotation,
     Shutter,
     Control,
     Effect,
     EffectSpeed,
     Fog,
     Fan,
+    ColorWheel2,
+    Frost2,
+    Prism2,
+    Control2,
+    Control3,
+    Effect2,
+    Effect2Speed,
 }
 
 /// Attribute families, as on a desk's encoder bar.
@@ -89,7 +100,7 @@ impl Feature {
 
 impl Attribute {
     /// Every attribute, grouped by feature.
-    pub const ALL: [Attribute; 29] = [
+    pub const ALL: [Attribute; 40] = [
         Attribute::Dimmer,
         Attribute::Red,
         Attribute::Green,
@@ -103,6 +114,8 @@ impl Attribute {
         Attribute::Yellow,
         Attribute::Cto,
         Attribute::ColorWheel,
+        Attribute::ColorWheel2,
+        Attribute::ColorMacro,
         Attribute::Pan,
         Attribute::Tilt,
         Attribute::PanTiltSpeed,
@@ -110,13 +123,22 @@ impl Attribute {
         Attribute::Focus,
         Attribute::Iris,
         Attribute::Frost,
+        Attribute::Frost2,
         Attribute::Gobo,
         Attribute::GoboRotation,
+        Attribute::Gobo2,
+        Attribute::Gobo2Rotation,
         Attribute::Prism,
+        Attribute::PrismRotation,
+        Attribute::Prism2,
         Attribute::Shutter,
         Attribute::Control,
+        Attribute::Control2,
+        Attribute::Control3,
         Attribute::Effect,
         Attribute::EffectSpeed,
+        Attribute::Effect2,
+        Attribute::Effect2Speed,
         Attribute::Fog,
         Attribute::Fan,
     ];
@@ -126,10 +148,10 @@ impl Attribute {
         use Attribute::*;
         match self {
             Dimmer => Feature::Intensity,
-            Red | Green | Blue | White | Amber | Lime | Uv | Cyan | Magenta | Yellow | Cto | ColorWheel => Feature::Colour,
+            Red | Green | Blue | White | Amber | Lime | Uv | Cyan | Magenta | Yellow | Cto | ColorWheel | ColorWheel2 | ColorMacro => Feature::Colour,
             Pan | Tilt | PanTiltSpeed => Feature::Position,
-            Zoom | Focus | Iris | Frost | Gobo | GoboRotation | Prism | Shutter => Feature::Beam,
-            Control | Effect | EffectSpeed | Fog | Fan => Feature::Control,
+            Zoom | Focus | Iris | Frost | Frost2 | Gobo | GoboRotation | Gobo2 | Gobo2Rotation | Prism | PrismRotation | Prism2 | Shutter => Feature::Beam,
+            Control | Control2 | Control3 | Effect | EffectSpeed | Effect2 | Effect2Speed | Fog | Fan => Feature::Control,
         }
     }
 
@@ -171,6 +193,7 @@ impl Attribute {
             Attribute::Yellow => t("Yellow"),
             Attribute::Cto => t("CTO"),
             Attribute::ColorWheel => t("Colour wheel"),
+            Attribute::ColorMacro => t("Colour macro"),
             // "Pan" is translated for audio panning; desks keep the English word.
             Attribute::Pan => "Pan",
             Attribute::Tilt => t("Tilt"),
@@ -181,13 +204,23 @@ impl Attribute {
             Attribute::Frost => t("Frost"),
             Attribute::Gobo => t("Gobo"),
             Attribute::GoboRotation => t("Gobo rotation"),
+            Attribute::Gobo2 => t("Gobo 2"),
+            Attribute::Gobo2Rotation => t("Gobo 2 rotation"),
             Attribute::Prism => t("Prism"),
+            Attribute::PrismRotation => t("Prism rotation"),
             Attribute::Shutter => t("Shutter"),
             Attribute::Control => t("Control"),
             Attribute::Effect => t("Effect"),
             Attribute::EffectSpeed => t("Effect speed"),
             Attribute::Fog => t("Fog"),
             Attribute::Fan => t("Fan"),
+            Attribute::ColorWheel2 => t("Colour wheel 2"),
+            Attribute::Frost2 => t("Frost 2"),
+            Attribute::Prism2 => t("Prism 2"),
+            Attribute::Control2 => t("Control 2"),
+            Attribute::Control3 => t("Control 3"),
+            Attribute::Effect2 => t("Effect 2"),
+            Attribute::Effect2Speed => t("Effect 2 speed"),
         }
     }
 }
@@ -206,15 +239,79 @@ pub struct ChannelDef {
     pub default: Option<f32>,
     /// Value while the fixture is highlighted (`None` = full for intensity/open for beam).
     pub highlight: Option<f32>,
+    /// Named DMX ranges (wheel slots, "open", "strobe slow → fast"), in DMX order.
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub ranges: Vec<ChannelRange>,
 }
 
 impl Default for ChannelDef {
     fn default() -> Self {
-        Self { attribute: Attribute::Dimmer, offset: 0, fine: None, default: None, highlight: None }
+        Self { attribute: Attribute::Dimmer, offset: 0, fine: None, default: None, highlight: None, ranges: Vec::new() }
     }
 }
 
+/// A named part of a channel's DMX range: a wheel slot, a shutter state, a macro.
+#[derive(Serialize, Deserialize, Clone, PartialEq, Debug, Default)]
+#[serde(default)]
+pub struct ChannelRange {
+    /// First DMX value (coarse byte), inclusive.
+    pub from: u8,
+    /// Last DMX value (coarse byte), inclusive.
+    pub to: u8,
+    /// Name shown in the programmer and accepted by the command line.
+    pub name: String,
+    /// Colour of a colour wheel slot or macro (sRGB).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub color: Option<[u8; 3]>,
+    /// Image file name of a gobo slot (inside a GDTF/library folder; informational).
+    #[serde(skip_serializing_if = "String::is_empty")]
+    pub image: String,
+}
+
+impl ChannelRange {
+    /// The value that picks this range: its middle (a wheel slot centred, the middle speed).
+    pub fn value(&self) -> f32 {
+        let (a, b) = (self.from.min(self.to) as f32, self.from.max(self.to) as f32);
+        (a + b) / 2.0 / 255.0
+    }
+
+    /// True if the coarse DMX byte `dmx` falls in this range.
+    pub fn contains(&self, dmx: u8) -> bool {
+        (self.from.min(self.to)..=self.from.max(self.to)).contains(&dmx)
+    }
+
+    /// Covers more than one DMX value (a speed or position, not a single slot).
+    pub fn is_continuous(&self) -> bool {
+        self.from.abs_diff(self.to) > 3
+    }
+}
+
+/// DMX byte of a normalised value on an 8-bit channel (as [`ChannelDef::write`] outputs it).
+pub fn coarse(value: f32) -> u8 {
+    (value.clamp(0.0, 1.0) * 255.0).round() as u8
+}
+
 impl ChannelDef {
+    /// The named range a value falls in (judged on the coarse byte [`ChannelDef::write`] outputs).
+    pub fn range_at(&self, value: f32) -> Option<&ChannelRange> {
+        // A 16-bit channel's coarse byte is the high byte of the 16-bit value, not a rounding.
+        let dmx = if self.fine.is_some() { ((value.clamp(0.0, 1.0) * 65535.0).round() as u16 >> 8) as u8 } else { coarse(value) };
+        self.ranges.iter().find(|r| r.contains(dmx))
+    }
+
+    /// A range by name (case-insensitive; a prefix is enough) or by 1-based index.
+    pub fn find_range(&self, name: &str) -> Option<&ChannelRange> {
+        let key = name.trim().to_lowercase();
+        if let Some(r) = self.ranges.iter().find(|r| r.name.to_lowercase() == key) {
+            return Some(r);
+        }
+        if let Ok(i) = key.parse::<usize>() {
+            return i.checked_sub(1).and_then(|i| self.ranges.get(i));
+        }
+        // A prefix: the shortest name it starts ("deep" → "Deep Red", not "Deep Red / Blue").
+        self.ranges.iter().filter(|r| !key.is_empty() && r.name.to_lowercase().starts_with(&key)).min_by_key(|r| r.name.len())
+    }
+
     /// Value with nothing controlling the channel.
     pub fn default_value(&self) -> f32 {
         self.default.unwrap_or_else(|| self.attribute.home())
@@ -236,6 +333,16 @@ impl ChannelDef {
             *b = (v * 255.0).round() as u8;
         }
     }
+
+    /// The normalised value a universe holds for this channel, read from the fixture's address
+    /// (0-based): the inverse of [`ChannelDef::write`]. None past the end of the universe.
+    pub fn read(&self, start: usize, universe: &[u8]) -> Option<f32> {
+        let hi = *universe.get(start + self.offset as usize)?;
+        Some(match self.fine.and_then(|f| universe.get(start + f as usize)) {
+            Some(lo) => u16::from_be_bytes([hi, *lo]) as f32 / 65535.0,
+            None => hi as f32 / 255.0,
+        })
+    }
 }
 
 /// A DMX personality of a fixture type.
@@ -244,8 +351,89 @@ impl ChannelDef {
 pub struct FixtureMode {
     /// Mode name ("8 channel").
     pub name: String,
-    /// Channels in this mode.
+    /// Channels in this mode (for a multi-cell fixture, the master channels).
     pub channels: Vec<ChannelDef>,
+    /// Cells of a multi-cell fixture (LED bar pixels, heads), each controlled as its own unit
+    /// numbered `fixture.cell` (`101.1`, `101.2`…).
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub heads: Vec<Head>,
+    /// DMX slots the mode takes, counting channels OpenQ doesn't use (0 = up to the last
+    /// channel). Imports set it so an unused last channel still gets its address.
+    #[serde(skip_serializing_if = "is_zero")]
+    pub slots: u16,
+}
+
+fn is_zero(v: &u16) -> bool {
+    *v == 0
+}
+
+/// One cell of a multi-cell fixture mode.
+#[derive(Serialize, Deserialize, Clone, PartialEq, Debug, Default)]
+#[serde(default)]
+pub struct Head {
+    /// Name ("1", "Top", "Ring 2").
+    pub name: String,
+    /// Its channels; offsets count from the fixture's start address like the master channels.
+    pub channels: Vec<ChannelDef>,
+}
+
+/// Attributes of a channel list: its channels plus a virtual dimmer when it has colour
+/// emitters but no dimmer channel.
+pub fn attributes_of(channels: &[ChannelDef]) -> Vec<Attribute> {
+    let mut v: Vec<Attribute> = channels.iter().map(|c| c.attribute).collect();
+    if !v.contains(&Attribute::Dimmer) && v.iter().any(|a| a.is_emitter()) {
+        v.insert(0, Attribute::Dimmer);
+    }
+    v.sort();
+    v.dedup();
+    v
+}
+
+/// First fixture id used for cells of multi-cell fixtures; a cell's id is derived from its
+/// fixture's number and its index, so cells need no numbers of their own.
+pub const CELL_BASE: FixtureId = 1 << 31;
+/// Most cells a fixture can have.
+pub const MAX_CELLS: u32 = 1024;
+/// Highest fixture number (cell ids must fit above [`CELL_BASE`]).
+pub const MAX_FIXTURE_ID: FixtureId = (CELL_BASE / MAX_CELLS) - 1;
+
+/// Id of cell `cell` (1-based) of fixture `fixture`.
+pub fn cell_id(fixture: FixtureId, cell: u32) -> FixtureId {
+    CELL_BASE + fixture.min(MAX_FIXTURE_ID) * MAX_CELLS + (cell.clamp(1, MAX_CELLS) - 1)
+}
+
+/// (fixture number, cell) of an id; cell is None for a fixture itself.
+pub fn split_id(id: FixtureId) -> (FixtureId, Option<u32>) {
+    if id >= CELL_BASE {
+        let k = id - CELL_BASE;
+        (k / MAX_CELLS, Some(k % MAX_CELLS + 1))
+    } else {
+        (id, None)
+    }
+}
+
+/// How a fixture or cell is shown and typed: `101`, `101.3`.
+pub fn fixture_label(id: FixtureId) -> String {
+    match split_id(id) {
+        (f, Some(c)) => format!("{f}.{c}"),
+        (f, None) => f.to_string(),
+    }
+}
+
+/// Parse `101` or `101.3` into a fixture or cell id.
+pub fn parse_fixture(s: &str) -> Option<FixtureId> {
+    let (a, b) = match s.split_once('.') {
+        Some((a, b)) => (a, Some(b)),
+        None => (s, None),
+    };
+    let f: FixtureId = a.parse().ok().filter(|f| *f <= MAX_FIXTURE_ID)?;
+    match b {
+        None => Some(f),
+        Some(b) => {
+            let c: u32 = b.parse().ok().filter(|c| (1..=MAX_CELLS).contains(c))?;
+            Some(cell_id(f, c))
+        }
+    }
 }
 
 impl FixtureMode {
@@ -260,12 +448,12 @@ impl FixtureMode {
                 c
             })
             .collect();
-        Self { name: name.into(), channels }
+        Self { name: name.into(), channels, heads: Vec::new(), slots: 0 }
     }
 
     /// DMX slots used.
     pub fn footprint(&self) -> u16 {
-        self.channels.iter().map(|c| c.offset.max(c.fine.unwrap_or(0)) + 1).max().unwrap_or(0)
+        self.all_channels().map(|c| c.offset.max(c.fine.unwrap_or(0)) + 1).max().unwrap_or(0).max(self.slots.min(UNIVERSE_SIZE))
     }
 
     /// The channel driving an attribute.
@@ -281,13 +469,32 @@ impl FixtureMode {
 
     /// Attributes a fixture in this mode can take (the real channels plus a virtual dimmer).
     pub fn attributes(&self) -> Vec<Attribute> {
-        let mut v: Vec<Attribute> = self.channels.iter().map(|c| c.attribute).collect();
-        if !self.has_dimmer() && v.iter().any(|a| a.is_emitter()) {
-            v.insert(0, Attribute::Dimmer);
+        attributes_of(&self.channels)
+    }
+
+    /// Attributes of the master (cell None) or of a cell: its channels plus a virtual dimmer when
+    /// it has colour emitters but no dimmer. A cell gets none when the master has a real dimmer:
+    /// that dimmer already sets the cell's intensity.
+    pub fn unit_attributes(&self, cell: Option<u32>) -> Vec<Attribute> {
+        let Some(chans) = self.unit_channels(cell) else { return Vec::new() };
+        let mut v = attributes_of(chans);
+        if cell.is_some() && self.has_dimmer() && !chans.iter().any(|c| c.attribute == Attribute::Dimmer) {
+            v.retain(|a| *a != Attribute::Dimmer);
         }
-        v.sort();
-        v.dedup();
         v
+    }
+
+    /// Channels of the master (cell None) or of a cell (1-based).
+    pub fn unit_channels(&self, cell: Option<u32>) -> Option<&[ChannelDef]> {
+        match cell {
+            None => Some(&self.channels),
+            Some(c) => self.heads.get((c as usize).checked_sub(1)?).map(|h| h.channels.as_slice()),
+        }
+    }
+
+    /// Every channel: master and cells.
+    pub fn all_channels(&self) -> impl Iterator<Item = &ChannelDef> {
+        self.channels.iter().chain(self.heads.iter().flat_map(|h| h.channels.iter()))
     }
 }
 
@@ -354,7 +561,7 @@ pub struct Fixture {
     pub address: u16,
     /// Position in metres (x right, y up, z towards the audience).
     pub position: [f32; 3],
-    /// Rotation in degrees (x, y, z).
+    /// Rotation in degrees about x, y and z, applied as heading (y) · tilt (x) · roll (z).
     pub rotation: [f32; 3],
     /// Reverse pan.
     pub invert_pan: bool,
@@ -417,6 +624,84 @@ impl From<f32> for Value {
 /// Attribute values per fixture.
 pub type Look = BTreeMap<FixtureId, BTreeMap<Attribute, Value>>;
 
+/// Copy-on-write holder for the big parts of a design (cue and preset values). Cloning a design
+/// shares them and comparing two designs skips values that are still the same allocation, so
+/// the UI can snapshot a large design every frame and keep undo steps without copying every
+/// cue. Writing through `DerefMut` copies the value only while it is shared.
+#[derive(Default)]
+pub struct Shared<T>(std::sync::Arc<T>);
+
+impl<T> Clone for Shared<T> {
+    fn clone(&self) -> Self {
+        Self(self.0.clone())
+    }
+}
+
+impl<T> std::ops::Deref for Shared<T> {
+    type Target = T;
+    fn deref(&self) -> &T {
+        &self.0
+    }
+}
+
+impl<T: Clone> std::ops::DerefMut for Shared<T> {
+    fn deref_mut(&mut self) -> &mut T {
+        std::sync::Arc::make_mut(&mut self.0)
+    }
+}
+
+impl<T: PartialEq> PartialEq for Shared<T> {
+    fn eq(&self, other: &Self) -> bool {
+        std::sync::Arc::ptr_eq(&self.0, &other.0) || *self.0 == *other.0
+    }
+}
+
+impl<T: std::fmt::Debug> std::fmt::Debug for Shared<T> {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        self.0.fmt(f)
+    }
+}
+
+impl<'a, T> IntoIterator for &'a Shared<T>
+where
+    &'a T: IntoIterator,
+{
+    type Item = <&'a T as IntoIterator>::Item;
+    type IntoIter = <&'a T as IntoIterator>::IntoIter;
+    fn into_iter(self) -> Self::IntoIter {
+        (&*self.0).into_iter()
+    }
+}
+
+impl<'a, T: Clone> IntoIterator for &'a mut Shared<T>
+where
+    &'a mut T: IntoIterator,
+{
+    type Item = <&'a mut T as IntoIterator>::Item;
+    type IntoIter = <&'a mut T as IntoIterator>::IntoIter;
+    fn into_iter(self) -> Self::IntoIter {
+        std::sync::Arc::make_mut(&mut self.0).into_iter()
+    }
+}
+
+impl<T> From<T> for Shared<T> {
+    fn from(v: T) -> Self {
+        Self(std::sync::Arc::new(v))
+    }
+}
+
+impl<T: Serialize> Serialize for Shared<T> {
+    fn serialize<S: serde::Serializer>(&self, s: S) -> Result<S::Ok, S::Error> {
+        self.0.serialize(s)
+    }
+}
+
+impl<'de, T: Deserialize<'de>> Deserialize<'de> for Shared<T> {
+    fn deserialize<D: serde::Deserializer<'de>>(d: D) -> Result<Self, D::Error> {
+        T::deserialize(d).map(Self::from)
+    }
+}
+
 /// Stored values for one feature (or all), per fixture. Cues and the programmer refer to them.
 #[derive(Serialize, Deserialize, Clone, PartialEq, Debug, Default)]
 #[serde(default)]
@@ -429,7 +714,7 @@ pub struct Preset {
     pub feature: Option<Feature>,
     /// Values per fixture. A fixture without its own values takes those of the first fixture
     /// of the same type in the preset, so one fixture's values work for the whole type.
-    pub values: BTreeMap<FixtureId, BTreeMap<Attribute, f32>>,
+    pub values: Shared<BTreeMap<FixtureId, BTreeMap<Attribute, f32>>>,
 }
 
 /// A lighting cue: the values it changes (tracking) and its timing.
@@ -449,7 +734,7 @@ pub struct LightCue {
     /// Delay before the fade starts, seconds.
     pub delay: f64,
     /// Values this cue sets; everything else tracks from earlier cues.
-    pub values: Look,
+    pub values: Shared<Look>,
     /// Own fade/delay for some attribute families (the others use the cue's).
     pub feature_times: BTreeMap<Feature, FeatureTime>,
     /// The values this cue sets don't track on: the next cue goes back to what was there before.
@@ -493,7 +778,7 @@ impl Default for LightCue {
             fade: 2.0,
             down_fade: None,
             delay: 0.0,
-            values: Look::new(),
+            values: Default::default(),
             feature_times: BTreeMap::new(),
             cue_only: false,
             effects: Vec::new(),
@@ -532,7 +817,7 @@ impl Sequence {
     pub fn block(&mut self, index: usize) {
         if index < self.cues.len() {
             let t = self.tracked(index);
-            self.cues[index].values = t;
+            self.cues[index].values = t.into();
         }
     }
 
@@ -577,6 +862,15 @@ pub fn unlink_preset(l: &Lighting, id: PresetId, look: &mut Look) {
     }
 }
 
+/// Move the entries whose key `map` changes.
+fn rekey<V>(m: &mut BTreeMap<FixtureId, V>, map: impl Fn(FixtureId) -> Option<FixtureId>) {
+    let moved: Vec<FixtureId> = m.keys().copied().filter(|k| map(*k).is_some()).collect();
+    for k in moved {
+        let v = m.remove(&k).expect("key");
+        m.insert(map(k).expect("mapped"), v);
+    }
+}
+
 /// A patch problem shown in the patch window.
 #[derive(Clone, PartialEq, Debug)]
 pub enum PatchIssue {
@@ -588,6 +882,49 @@ pub enum PatchIssue {
     OutOfRange(FixtureId),
     /// Two fixtures share DMX slots.
     Overlap(FixtureId, FixtureId),
+}
+
+/// What a [`PlotShape`] is.
+#[derive(Serialize, Deserialize, Clone, Copy, PartialEq, Eq, Debug, Default)]
+pub enum ShapeKind {
+    /// A lighting bar: a pipe, a truss or a boom, from `a` to `b`.
+    #[default]
+    Bar,
+    /// A rectangle with corners `a` and `b`: the stage, a riser, a set piece.
+    Rect,
+}
+
+/// A drawn element of the light plot (not a fixture): bars to hang fixtures on, rectangles for
+/// the stage and the set. Only for placement and plots; playback ignores them.
+#[derive(Serialize, Deserialize, Clone, PartialEq, Debug, Default)]
+#[serde(default)]
+pub struct PlotShape {
+    /// Shape number.
+    pub id: u32,
+    /// Bar or rectangle.
+    pub kind: ShapeKind,
+    /// Label ("LX1", "Stage").
+    pub name: String,
+    /// A bar's first end, a rectangle's corner: (x, z) in metres, as fixture positions.
+    pub a: [f32; 2],
+    /// A bar's other end, a rectangle's opposite corner.
+    pub b: [f32; 2],
+    /// Height (y) in metres: a bar's trim, the top of a riser.
+    pub height: f32,
+}
+
+impl PlotShape {
+    /// Positions spreading `n` fixtures evenly along a bar at its height, half a gap in from each
+    /// end (one fixture hangs in the middle).
+    pub fn hang(&self, n: usize) -> Vec<[f32; 3]> {
+        let at = |k: f32| [self.a[0] + (self.b[0] - self.a[0]) * k, self.height, self.a[1] + (self.b[1] - self.a[1]) * k];
+        (0..n).map(|i| at((i as f32 + 0.5) / n as f32)).collect()
+    }
+
+    /// Length of a bar (diagonal of a rectangle), metres.
+    pub fn length(&self) -> f32 {
+        (self.b[0] - self.a[0]).hypot(self.b[1] - self.a[1])
+    }
 }
 
 /// The lighting design of a show.
@@ -604,6 +941,12 @@ pub struct Lighting {
     pub sequences: Vec<Sequence>,
     /// DMX outputs.
     pub outputs: Vec<super::dmx::OutputConfig>,
+    /// DMX inputs (Art-Net/sACN from another desk: merged into the output or captured).
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub inputs: Vec<super::dmxin::InputConfig>,
+    /// Bars and rectangles drawn on the plot.
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub shapes: Vec<PlotShape>,
     /// Presets (palettes).
     pub presets: Vec<Preset>,
     /// Effects pool.
@@ -612,6 +955,33 @@ pub struct Lighting {
     pub stop_all_releases: bool,
     /// Fade used when a Stop cue releases a sequence, seconds.
     pub release_fade: f64,
+    /// Fixture number → position in `fixtures` (not saved).
+    #[serde(skip)]
+    index: FixtureIndex,
+}
+
+/// Private lookup cache for [`Lighting::fixture`]: the UI looks fixtures up per selected unit
+/// many times a frame. Every hit is checked against `fixtures` (which is edited through public
+/// fields), and the map is rebuilt when it is stale, so it can never return a wrong fixture.
+#[derive(Default)]
+struct FixtureIndex(parking_lot::Mutex<std::collections::HashMap<FixtureId, usize>>);
+
+impl Clone for FixtureIndex {
+    fn clone(&self) -> Self {
+        Self::default()
+    }
+}
+
+impl PartialEq for FixtureIndex {
+    fn eq(&self, _: &Self) -> bool {
+        true
+    }
+}
+
+impl std::fmt::Debug for FixtureIndex {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str("FixtureIndex")
+    }
 }
 
 impl Default for Lighting {
@@ -622,10 +992,13 @@ impl Default for Lighting {
             groups: Vec::new(),
             sequences: Vec::new(),
             outputs: Vec::new(),
+            inputs: Vec::new(),
+            shapes: Vec::new(),
             presets: Vec::new(),
             effects: Vec::new(),
             stop_all_releases: false,
             release_fade: 1.0,
+            index: FixtureIndex::default(),
         }
     }
 }
@@ -635,13 +1008,29 @@ impl Lighting {
     pub fn is_empty(&self) -> bool {
         self.fixtures.is_empty() && self.fixture_types.is_empty() && self.groups.is_empty() && self.sequences.is_empty()
             && self.outputs.is_empty()
+            && self.inputs.is_empty()
+            && self.shapes.is_empty()
             && self.presets.is_empty()
             && self.effects.is_empty()
     }
 
     /// A fixture by number.
     pub fn fixture(&self, id: FixtureId) -> Option<&Fixture> {
-        self.fixtures.iter().find(|f| f.id == id)
+        let mut index = self.index.0.lock();
+        if let Some(&i) = index.get(&id)
+            && self.fixtures.get(i).is_some_and(|f| f.id == id)
+        {
+            return self.fixtures.get(i);
+        }
+        // Missing or stale: find it the slow way; rebuild the map if it exists (an unknown
+        // number then costs one scan, as without the map).
+        let i = self.fixtures.iter().position(|f| f.id == id)?;
+        index.clear();
+        for (k, f) in self.fixtures.iter().enumerate().rev() {
+            index.insert(f.id, k); // the first fixture wins over a duplicate number, as before
+        }
+        drop(index);
+        self.fixtures.get(i)
     }
 
     /// A fixture type by id.
@@ -652,6 +1041,49 @@ impl Lighting {
     /// The mode a fixture is patched in.
     pub fn mode_of(&self, f: &Fixture) -> Option<&FixtureMode> {
         self.fixture_type(&f.fixture_type)?.mode(&f.mode)
+    }
+
+    /// A fixture or cell: its fixture and cell number (None for the fixture itself). None if
+    /// the fixture doesn't exist or its mode has no such cell.
+    pub fn unit(&self, id: FixtureId) -> Option<(&Fixture, Option<u32>)> {
+        let (num, cell) = split_id(id);
+        let f = self.fixture(num)?;
+        if let Some(c) = cell {
+            self.mode_of(f)?.unit_channels(Some(c))?;
+        }
+        Some((f, cell))
+    }
+
+    /// Channels of a fixture (its master channels) or a cell.
+    pub fn unit_channels(&self, id: FixtureId) -> Option<&[ChannelDef]> {
+        let (f, cell) = self.unit(id)?;
+        self.mode_of(f)?.unit_channels(cell)
+    }
+
+    /// Attributes of a fixture or cell (plus a virtual dimmer, see [`FixtureMode::unit_attributes`]).
+    pub fn unit_attributes(&self, id: FixtureId) -> Vec<Attribute> {
+        self.unit(id).and_then(|(f, cell)| Some(self.mode_of(f)?.unit_attributes(cell))).unwrap_or_default()
+    }
+
+    /// Number of cells of a fixture (0 for an ordinary one).
+    pub fn cell_count(&self, f: &Fixture) -> u32 {
+        self.mode_of(f).map_or(0, |m| m.heads.len().min(MAX_CELLS as usize) as u32)
+    }
+
+    /// Every fixture and cell id in patch order (a fixture, then its cells).
+    pub fn units(&self) -> Vec<FixtureId> {
+        let mut v = Vec::with_capacity(self.fixtures.len());
+        for f in &self.fixtures {
+            v.push(f.id);
+            v.extend((1..=self.cell_count(f)).map(|c| cell_id(f.id, c)));
+        }
+        v
+    }
+
+    /// (fixture type, cell) of a unit: presets share values between units of the same kind.
+    fn unit_kind(&self, id: FixtureId) -> Option<(&str, Option<u32>)> {
+        let (num, cell) = split_id(id);
+        Some((self.fixture(num)?.fixture_type.as_str(), cell))
     }
 
     /// Add a fixture type unless one with the same id is there.
@@ -691,10 +1123,10 @@ impl Lighting {
                 if let Some(v) = p.values.get(&fixture).and_then(|v| v.get(&attr)) {
                     return Some(*v);
                 }
-                let ty = &self.fixture(fixture)?.fixture_type;
+                let kind = self.unit_kind(fixture)?;
                 p.values
                     .iter()
-                    .find(|(f, _)| self.fixture(**f).is_some_and(|x| &x.fixture_type == ty))
+                    .find(|(f, _)| self.unit_kind(**f) == Some(kind))
                     .and_then(|(_, v)| v.get(&attr).copied())
             }
         }
@@ -719,10 +1151,10 @@ impl Lighting {
         if let Some(v) = p.values.get(&fixture) {
             return v.keys().copied().collect();
         }
-        let Some(ty) = self.fixture(fixture).map(|f| &f.fixture_type) else { return Vec::new() };
+        let Some(kind) = self.unit_kind(fixture) else { return Vec::new() };
         p.values
             .iter()
-            .find(|(f, _)| self.fixture(**f).is_some_and(|x| &x.fixture_type == ty))
+            .find(|(f, _)| self.unit_kind(**f) == Some(kind))
             .map(|(_, v)| v.keys().copied().collect())
             .unwrap_or_default()
     }
@@ -741,18 +1173,29 @@ impl Lighting {
 
     /// Give a fixture a new number, updating groups and cue values. False if `new` is taken.
     pub fn renumber_fixture(&mut self, old: FixtureId, new: FixtureId) -> bool {
-        if old == new || self.fixture(new).is_some() || new == 0 {
+        // Above MAX_FIXTURE_ID, cell ids would clamp onto another fixture's.
+        if old == new || self.fixture(new).is_some() || new == 0 || new > MAX_FIXTURE_ID {
             return false;
         }
         let Some(f) = self.fixtures.iter_mut().find(|f| f.id == old) else { return false };
         f.id = new;
+        // The fixture and its cells.
+        let map = |id: FixtureId| match split_id(id) {
+            (f, None) if f == old => Some(new),
+            (f, Some(c)) if f == old => Some(cell_id(new, c)),
+            _ => None,
+        };
         for g in &mut self.groups {
-            g.fixtures.iter_mut().filter(|x| **x == old).for_each(|x| *x = new);
+            g.fixtures.iter_mut().for_each(|x| *x = map(*x).unwrap_or(*x));
         }
         for c in self.sequences.iter_mut().flat_map(|s| s.cues.iter_mut()) {
-            if let Some(v) = c.values.remove(&old) {
-                c.values.insert(new, v);
+            rekey(&mut c.values, map);
+            for r in &mut c.effects {
+                r.fixtures.iter_mut().for_each(|x| *x = map(*x).unwrap_or(*x));
             }
+        }
+        for p in &mut self.presets {
+            rekey(&mut p.values, map);
         }
         true
     }
@@ -760,11 +1203,19 @@ impl Lighting {
     /// Unpatch fixtures and drop them from groups and cues.
     pub fn remove_fixtures(&mut self, ids: &std::collections::HashSet<FixtureId>) {
         self.fixtures.retain(|f| !ids.contains(&f.id));
+        // Cells go with their fixture.
+        let gone = |f: &FixtureId| ids.contains(&split_id(*f).0);
         for g in &mut self.groups {
-            g.fixtures.retain(|f| !ids.contains(f));
+            g.fixtures.retain(|f| !gone(f));
         }
         for c in self.sequences.iter_mut().flat_map(|s| s.cues.iter_mut()) {
-            c.values.retain(|f, _| !ids.contains(f));
+            c.values.retain(|f, _| !gone(f));
+            for r in &mut c.effects {
+                r.fixtures.retain(|f| !gone(f));
+            }
+        }
+        for p in &mut self.presets {
+            p.values.retain(|f, _| !gone(f));
         }
         let used: std::collections::HashSet<&str> = self.fixtures.iter().map(|f| f.fixture_type.as_str()).collect();
         self.fixture_types.retain(|t| used.contains(t.id.as_str()));
@@ -815,6 +1266,10 @@ impl Lighting {
                 issues.push(PatchIssue::UnknownType(f.id));
                 continue;
             };
+            if f.id > MAX_FIXTURE_ID {
+                issues.push(PatchIssue::OutOfRange(f.id));
+                continue;
+            }
             if f.address == 0 {
                 continue;
             }
@@ -890,6 +1345,38 @@ mod tests {
     }
 
     #[test]
+    fn cell_ids_and_labels() {
+        assert_eq!(split_id(cell_id(101, 3)), (101, Some(3)));
+        assert_eq!(fixture_label(cell_id(101, 12)), "101.12");
+        assert_eq!(fixture_label(7), "7");
+        assert_eq!(parse_fixture("101.3"), Some(cell_id(101, 3)));
+        assert_eq!(parse_fixture("101"), Some(101));
+        assert_eq!(parse_fixture("101.0"), None);
+        assert_eq!(parse_fixture("x"), None);
+        assert!(cell_id(101, 1) < cell_id(101, 2) && cell_id(101, 1024) < cell_id(102, 1), "ranges stay in order");
+        assert_eq!(split_id(cell_id(MAX_FIXTURE_ID, MAX_CELLS)), (MAX_FIXTURE_ID, Some(MAX_CELLS)));
+    }
+
+    #[test]
+    fn presets_share_values_per_cell() {
+        let mut l = Lighting::default();
+        let mut t = library::generic("generic/dimmer").unwrap();
+        t.modes[0].heads = vec![Head { name: "1".into(), channels: vec![ChannelDef { attribute: Attribute::Red, offset: 1, ..Default::default() }] }];
+        l.add_type(&t);
+        for id in [1, 2] {
+            l.fixtures.push(Fixture { id, fixture_type: t.id.clone(), mode: t.modes[0].name.clone(), ..Default::default() });
+        }
+        let mut p = Preset { id: 1, ..Default::default() };
+        p.values.entry(cell_id(1, 1)).or_default().insert(Attribute::Red, 0.7);
+        p.values.entry(1).or_default().insert(Attribute::Dimmer, 0.3);
+        l.presets.push(p);
+        let v = Value::Preset { preset: 1 };
+        assert_eq!(l.resolve(cell_id(2, 1), Attribute::Red, v), Some(0.7), "cell 1 of the same type");
+        assert_eq!(l.resolve(2, Attribute::Dimmer, v), Some(0.3));
+        assert_eq!(l.resolve(2, Attribute::Red, v), None, "the fixture's master has no red");
+    }
+
+    #[test]
     fn tracking_folds_earlier_cues() {
         let mut s = Sequence::default();
         for (fix, attr, v) in [(1, Attribute::Dimmer, 1.0), (2, Attribute::Red, 0.5), (1, Attribute::Dimmer, 0.2)] {
@@ -924,6 +1411,14 @@ mod tests {
     }
 
     #[test]
+    fn hang_on_a_bar() {
+        let bar = PlotShape { a: [-3.0, -2.0], b: [3.0, -2.0], height: 6.5, ..Default::default() };
+        assert_eq!(bar.hang(1), [[0.0, 6.5, -2.0]]);
+        assert_eq!(bar.hang(3), [[-2.0, 6.5, -2.0], [0.0, 6.5, -2.0], [2.0, 6.5, -2.0]]);
+        assert_eq!(bar.length(), 6.0);
+    }
+
+    #[test]
     fn dmx_write_coarse_fine() {
         let mut u = [0u8; 512];
         let c = ChannelDef { attribute: Attribute::Pan, offset: 0, fine: Some(1), ..Default::default() };
@@ -933,6 +1428,38 @@ mod tests {
         d.write(1.0, 510, &mut u); // past the end: dropped, no panic
         d.write(1.0, 0, &mut u);
         assert_eq!(u[2], 255);
+    }
+
+    /// Cloning shares values; writing copies only the written one; comparing still compares values.
+    #[test]
+    fn shared_values_copy_on_write() {
+        let mut a: Shared<Look> = Look::new().into();
+        a.entry(1).or_default().insert(Attribute::Dimmer, 0.5.into());
+        let mut b = a.clone();
+        assert!(std::sync::Arc::ptr_eq(&a.0, &b.0) && a == b);
+        b.entry(1).or_default().insert(Attribute::Dimmer, 1.0.into());
+        assert!(!std::sync::Arc::ptr_eq(&a.0, &b.0) && a != b);
+        assert_eq!(a[&1][&Attribute::Dimmer], 0.5.into(), "the original is untouched");
+        let c: Shared<Look> = (*b).clone().into();
+        assert_eq!(b, c, "different allocations with the same values are equal");
+        assert_eq!(serde_json::to_string(&c).unwrap(), serde_json::to_string(&*c).unwrap(), "saved like the plain map");
+    }
+
+    /// The fixture lookup cache follows edits made through the public fields.
+    #[test]
+    fn fixture_lookup_follows_edits() {
+        let mut l = rig();
+        let first = l.fixtures[0].id;
+        assert_eq!(l.fixture(first).map(|f| f.id), Some(first));
+        l.fixtures.reverse();
+        assert_eq!(l.fixture(first).map(|f| f.id), Some(first), "moved");
+        l.fixtures.retain(|f| f.id != first);
+        assert!(l.fixture(first).is_none(), "removed");
+        let mut f = l.fixtures[0].clone();
+        f.id = 4242;
+        l.fixtures.push(f);
+        assert_eq!(l.fixture(4242).map(|f| f.id), Some(4242), "added");
+        assert!(l.clone().fixture(4242).is_some(), "a clone starts with an empty cache");
     }
 
     #[test]
@@ -951,7 +1478,7 @@ mod tests {
         let mut l = rig();
         let mut values = BTreeMap::new();
         values.insert(101, [(Attribute::Red, 0.7)].into_iter().collect());
-        l.presets.push(Preset { id: 1, name: "Red".into(), feature: Some(Feature::Colour), values });
+        l.presets.push(Preset { id: 1, name: "Red".into(), feature: Some(Feature::Colour), values: values.into() });
         let p = Value::Preset { preset: 1 };
         assert_eq!(l.resolve(101, Attribute::Red, p), Some(0.7));
         assert_eq!(l.resolve(103, Attribute::Red, p), Some(0.7), "same type");
@@ -970,7 +1497,7 @@ mod tests {
         c.values.entry(101).or_default().insert(Attribute::Dimmer, 0.5.into());
         let json = serde_json::to_string(&c.values).unwrap();
         assert_eq!(json, r#"{"101":{"Dimmer":0.5,"Red":{"preset":1}}}"#);
-        assert_eq!(serde_json::from_str::<Look>(&json).unwrap(), c.values);
+        assert_eq!(serde_json::from_str::<Look>(&json).unwrap(), *c.values);
     }
 
     #[test]

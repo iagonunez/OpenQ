@@ -1255,7 +1255,14 @@ fn settings_tab(ui: &mut Ui, cue: &mut Cue, ctx: &Ctx, refresh: &mut bool) {
             cards(ui, "fade", &specs, |ui, i| match i {
                 0 => {
                     if !caps.level && !caps.picture {
-                        ui.label(RichText::new(t("The target has nothing to fade: pick a sound, video, text, camera or group cue.")).weak());
+                        // Lighting fades only through Light cues (the lighting cue's own timing).
+                        let light = f.target.and_then(|t| ctx.list.find(t)).is_some_and(|c| matches!(c.kind, CueKind::Light(_)));
+                        let why = if light {
+                            t("Lighting fades with Light cues: set the fade time on the lighting cue, or GO another lighting cue.")
+                        } else {
+                            t("The target has nothing to fade: pick a sound, video, text, camera or group cue.")
+                        };
+                        ui.label(RichText::new(why).weak());
                         return;
                     }
                     egui::Grid::new("fade-changes").num_columns(2).spacing([10.0, 6.0]).show(ui, |ui| {

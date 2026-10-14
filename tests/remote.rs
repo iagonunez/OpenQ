@@ -114,6 +114,72 @@ fn pair_sync_control_and_revoke() {
         })
     });
 
+    // Lighting: design edits on the main device go as a lighting patch (not the whole show),
+    // replica edits come back as one, a cue list reshape keeps the design out of the message,
+    // and masters are mirrored in the live state.
+    {
+        use openq::light::model::Fixture;
+        let mut s = show.lock();
+        let dimmer = openq::light::library::generic("generic/dimmer").unwrap();
+        s.ws.lighting.add_type(&dimmer);
+        let mode = dimmer.modes[0].name.clone();
+        s.ws.lighting.fixtures.push(Fixture { id: 7, name: "Spot".into(), fixture_type: dimmer.id, mode, address: 1, ..Default::default() });
+        s.edited();
+    }
+    let lp = wait_for("lighting patch", || {
+        link.drain().into_iter().find_map(|m| match m {
+            ServerMsg::Lighting(p) => Some(p),
+            ServerMsg::Workspace { .. } => panic!("the whole workspace was sent for a lighting edit"),
+            _ => None,
+        })
+    });
+    let mut replica = show.lock().ws.clone();
+    replica.lighting = Default::default();
+    assert!(openq::light::patch::apply(&mut replica.lighting, &lp));
+    assert_eq!(replica.lighting.fixtures[0].name, "Spot");
+    let mut mine = replica.lighting.clone();
+    mine.groups.push(openq::light::model::Group { id: 1, name: "From the tablet".into(), fixtures: vec![7] });
+    let lighting = openq::light::patch::diff(&replica.lighting, &mine).map(Box::new);
+    link.send(ClientMsg::Patch { cues: Vec::new(), lighting });
+    wait_for("lighting edit applied", || (show.lock().ws.lighting.groups.len() == 1).then_some(()));
+    let mut reshaped = show.lock().ws.clone();
+    reshaped.cue_list.cues.push(Cue::new(CueKind::Wait { duration: 1.0 }));
+    reshaped.lighting = Default::default();
+    link.send(ClientMsg::Reshape { ws: Box::new(reshaped), lighting: None });
+    wait_for("reshape applied", || (show.lock().ws.cue_list.cues.len() == 3).then_some(()));
+    let kept = wait_for("reshaped workspace", || {
+        link.drain().into_iter().find_map(|m| match m {
+            ServerMsg::Workspace { ws, keep_lighting, .. } => Some((ws, keep_lighting)),
+            _ => None,
+        })
+    });
+    assert!(kept.1 && kept.0.lighting.is_empty() && kept.0.cue_list.cues.len() == 3);
+    assert_eq!(show.lock().ws.lighting.groups[0].name, "From the tablet", "the design survived the reshape");
+    link.send(ClientMsg::Command(Command::Light(openq::control::LightControl::GrandMaster(0.25))));
+    wait_for("mirrored grand master", || {
+        link.drain().into_iter().find_map(|m| match m {
+            ServerMsg::State(s) if s.lighting.masters.grand_master == 0.25 => Some(()),
+            _ => None,
+        })
+    });
+    // A visualiser: asks for the DMX output and picks fixtures.
+    link.send(ClientMsg::Subscribe { dmx: true });
+    wait_for("DMX output", || {
+        link.drain().into_iter().find_map(|m| match m {
+            ServerMsg::Dmx(u) if u.iter().any(|(id, data)| *id == 1 && data.len() == 512) => Some(()),
+            _ => None,
+        })
+    });
+    link.send(ClientMsg::Select(vec![7]));
+    wait_for("selection set", || (show.lock().light_selection == [7]).then_some(()));
+    wait_for("selection mirrored", || {
+        link.drain().into_iter().find_map(|m| match m {
+            ServerMsg::State(s) if s.lighting.selection == [7] => Some(()),
+            _ => None,
+        })
+    });
+    link.send(ClientMsg::Subscribe { dmx: false });
+
     // An edit on the main device that keeps the cue tree's shape reaches replicas as the changed
     // cue only; a replica that asks for a resync gets the whole workspace again.
     {
