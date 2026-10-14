@@ -114,9 +114,7 @@ impl App {
 
     /// Replace the current show with an autosaved one. Runs without the show lock held.
     pub(super) fn recover(&mut self, o: Orphan) {
-        if !self.confirm_discard() {
-            // Offer it again.
-            self.recovery.orphans.insert(0, o);
+        if !self.may_discard(super::Discarding::Recover(o.clone())) {
             return;
         }
         match o.load() {

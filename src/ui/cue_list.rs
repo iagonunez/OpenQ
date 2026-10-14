@@ -21,8 +21,12 @@ const W_TARGET: f32 = 170.0;
 const W_TIME: f32 = 92.0;
 const W_CONT: f32 = 26.0;
 const INDENT: f32 = 18.0;
-/// Left inset of a row's background per group level, so cues inside groups stand apart from the rest.
-const GROUP_INSET: f32 = 14.0;
+/// Left inset of a row's background per group level, so cues inside groups stand apart from the rest. The columns
+/// start after a gutter as wide as the list's deepest level (open or not, so opening a group doesn't move them), so
+/// every row keeps its icons inside its background.
+const GROUP_INSET: f32 = 16.0;
+/// Width of the bar drawn down the gutter beside an open group's cues.
+const GROUP_BAR: f32 = 3.0;
 
 /// A cue-row cell being edited in place.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -67,6 +71,11 @@ struct Columns {
     post: f32,
     cont: f32,
     end: f32,
+}
+
+/// How many group levels `cues` nest (0 = no cue inside a group), counting collapsed groups too.
+fn group_levels(cues: &[Cue]) -> usize {
+    cues.iter().filter(|c| !c.children().is_empty()).map(|c| 1 + group_levels(c.children())).max().unwrap_or(0)
 }
 
 impl Columns {
@@ -368,10 +377,12 @@ impl App {
         let now = Instant::now();
         let collapsed = self.collapsed.clone();
         let rows = show.ws.cue_list.visible_rows(&|id| collapsed.contains(&id));
+        let levels = group_levels(&show.ws.cue_list.cues);
+        let gutter = levels as f32 * GROUP_INSET;
 
         // Header.
         let (hdr, _) = ui.allocate_exact_size(vec2(ui.available_width(), 24.0), Sense::hover());
-        let cols = Columns::new(hdr.left(), hdr.width());
+        let cols = Columns::new(hdr.left() + gutter, hdr.width() - gutter);
         let hp = ui.painter();
         let hf = theme::semibold(10.5);
         for (x, t, right) in [
@@ -416,7 +427,7 @@ impl App {
                 }
                 let sense = if editing { Sense::click_and_drag() } else { Sense::click() };
                 let (rect, resp) = ui.allocate_exact_size(rect.size(), sense);
-                let cols = Columns::new(rect.left(), rect.width());
+                let cols = Columns::new(rect.left() + gutter, rect.width() - gutter);
                 self.paint_row(ui, show, cue, *depth, rect, &cols, now);
 
                 // Collapse triangle for groups.
@@ -514,6 +525,35 @@ impl App {
                         context_action = Some((*id, a));
                     }
                 });
+            }
+            // Group bars: one per open group, down the gutter beside its cues (a run of rows deeper than the group),
+            // under the group's colour tag and in its colour.
+            let p = ui.painter();
+            for level in 0..levels {
+                let mut i = 0;
+                while i < rows.len() {
+                    if rows[i].0 <= level {
+                        i += 1;
+                        continue;
+                    }
+                    let start = i;
+                    while i < rows.len() && rows[i].0 > level {
+                        i += 1;
+                    }
+                    let left = row_rects[start].0.left() + level as f32 * GROUP_INSET + (4.0 - GROUP_BAR) / 2.0;
+                    let bar = Rect::from_min_max(
+                        pos2(left, row_rects[start].0.top() + 3.0),
+                        pos2(left + GROUP_BAR, row_rects[i - 1].0.bottom() - 3.0),
+                    );
+                    if !ui.is_rect_visible(bar) {
+                        continue;
+                    }
+                    let color = match start.checked_sub(1).and_then(|g| cues[g].1.color.rgb()) {
+                        Some([r, g, b]) => Color32::from_rgb(r, g, b).gamma_multiply(0.7),
+                        None => theme::TEXT_FAINT.gamma_multiply(0.6),
+                    };
+                    p.rect_filled(bar, GROUP_BAR / 2.0, color);
+                }
             }
             // Empty space below the rows: click clears selection, drop appends.
             let rest = ui.available_rect_before_wrap();
@@ -680,14 +720,10 @@ impl App {
         let big = self.mode == Mode::Show;
         let cy = rect.center().y;
 
-        // Background: zebra, colour tag, running tint, selection, playhead. Rows inside groups are inset, with a
-        // guide line per level in the gap.
+        // Background: zebra, colour tag, running tint, selection, playhead. Rows inside groups are inset into the
+        // gutter before the columns (the group bars are drawn there by `cue_list`).
         let mut row = rect.shrink2(vec2(0.0, 1.0));
         row.min.x += depth as f32 * GROUP_INSET;
-        for level in 0..depth {
-            let gx = rect.left() + level as f32 * GROUP_INSET + GROUP_INSET / 2.0;
-            p.line_segment([pos2(gx, rect.top()), pos2(gx, rect.bottom())], Stroke::new(1.0, theme::TEXT_FAINT.gamma_multiply(0.5)));
-        }
         let zebra = (rect.top() / rect.height()) as i64 % 2 == 0;
         let mut bg = if zebra { Color32::from_rgb(0x18, 0x19, 0x1d) } else { theme::BG_APP };
         if let Some([r, g, b]) = cue.color.rgb() {
