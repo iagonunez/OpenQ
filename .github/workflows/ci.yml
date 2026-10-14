@@ -4,19 +4,33 @@
 # version oqman offers, so tags run this; it can also be run by hand.
 # The tests run without a sound card (virtual audio output) and without FFmpeg (no `video`
 # feature). oqman's own "End to end" workflow builds the full app on Linux, macOS and Windows.
+#
+# Triggers: a new `v*` tag starts it through `create` (one event per tag created) and through
+# `push` (tags). GitHub sometimes sends only one of the two (a tag pushed in the same `git push`
+# as a branch, force-pushed tags, and no events at all when more than three tags are pushed at
+# once: push tags one by one), so both are listed and the concurrency group below keeps it to one
+# run per tag.
 name: CI
 
 on:
   push:
     tags: ["v*"]
+  create:
   workflow_dispatch:
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
 
 env:
   CARGO_TERM_COLOR: always
 
 jobs:
   stress:
+    # `create` also fires for new branches and other tags: only version tags run.
+    if: github.event_name != 'create' || (github.ref_type == 'tag' && startsWith(github.ref_name, 'v'))
     runs-on: ubuntu-latest
+    timeout-minutes: 60
     steps:
       - uses: actions/checkout@v4
       - name: Rust
