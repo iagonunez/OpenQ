@@ -22,6 +22,17 @@ one, whether it's music, a sound effect, a movie on a projector, a title on a sc
 message to the lighting desk. It is an open-source application written in Rust with
 [egui](https://github.com/emilk/egui), and it's free to use, including for commercial productions.
 
+### 📖 The story behind OpenQ
+I first started working on live shows as a teenager and always admired the work of the people at Figure 53 with QLab as the industry standard for any live production. Later I studied Electrical Engineering and began working as a Software Engineer. I have always had this project on the back of my mind as the perfect hobby project, so I finally decided to start working on it.
+
+My goal is to democratize live production control software, so people can afford it without having to buy expensive Apple hardware or a costly license if they don't have the means.
+
+This is currently an alpha version of what I hope can be a very reliable piece of software, but as it's just a hobby project, using it comes with its own risks since it isn't battle-tested in live scenarios like QLab is. For that reason, I would recommend any professional who can afford it and wants proper customer service and support to use QLab.
+
+That said, I welcome any advice on missing features and bug reports. The software automatically generates a log file when it fails, which is really useful if you want to report a bug.
+
+For now, I'm keeping contributions closed since I don't have the time to review and manage pull requests, but you're more than welcome to fork the repo and build your own features on top of it if you'd like.
+
 <p align="center">
   <img src="docs/img/screenshot.webp" alt="OpenQ running a show: the GO button, the standby cue, a cue list with audio, video, text, group, fade and network cues, and the cues that are playing" width="900">
 </p>

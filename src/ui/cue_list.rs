@@ -21,6 +21,8 @@ const W_TARGET: f32 = 170.0;
 const W_TIME: f32 = 92.0;
 const W_CONT: f32 = 26.0;
 const INDENT: f32 = 18.0;
+/// Left inset of a row's background per group level, so cues inside groups stand apart from the rest.
+const GROUP_INSET: f32 = 14.0;
 
 /// A cue-row cell being edited in place.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -678,8 +680,14 @@ impl App {
         let big = self.mode == Mode::Show;
         let cy = rect.center().y;
 
-        // Background: zebra, colour tag, running tint, selection, playhead.
-        let row = rect.shrink2(vec2(0.0, 1.0));
+        // Background: zebra, colour tag, running tint, selection, playhead. Rows inside groups are inset, with a
+        // guide line per level in the gap.
+        let mut row = rect.shrink2(vec2(0.0, 1.0));
+        row.min.x += depth as f32 * GROUP_INSET;
+        for level in 0..depth {
+            let gx = rect.left() + level as f32 * GROUP_INSET + GROUP_INSET / 2.0;
+            p.line_segment([pos2(gx, rect.top()), pos2(gx, rect.bottom())], Stroke::new(1.0, theme::TEXT_FAINT.gamma_multiply(0.5)));
+        }
         let zebra = (rect.top() / rect.height()) as i64 % 2 == 0;
         let mut bg = if zebra { Color32::from_rgb(0x18, 0x19, 0x1d) } else { theme::BG_APP };
         if let Some([r, g, b]) = cue.color.rgb() {

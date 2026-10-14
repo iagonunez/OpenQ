@@ -156,7 +156,8 @@ def page(lang):
 <meta property="og:image" content="https://iagonunez.github.io/OpenQ/img/screenshot.webp">
 <meta name="theme-color" content="#141518">
 {alternates}
-<link rel="icon" href="{up}site/logo.svg" type="image/svg+xml">
+<link rel="icon" href="{up}site/icon.svg" type="image/svg+xml">
+<link rel="alternate icon" href="{up}favicon.ico" sizes="16x16 24x24 32x32 48x48">
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Barlow+Condensed:wght@600&family=Inter:wght@400;600&family=JetBrains+Mono:wght@400&display=swap">
