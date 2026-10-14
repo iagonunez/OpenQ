@@ -84,7 +84,15 @@ pub(crate) struct LightUi {
     /// Programmer values (override playback while set; recorded into cues).
     pub(crate) programmer: Look,
     /// The programmer as last sent to the light thread.
-    sent: Option<Look>,
+    sent: Option<(Look, bool, Option<Vec<FixtureId>>)>,
+    /// Blind: the programmer isn't output (still recordable).
+    blind: bool,
+    /// Highlight: selected fixtures at open white full on the output (not recorded).
+    highlight: bool,
+    /// Highlight steps through the selection one fixture at a time (index into it).
+    step: Option<usize>,
+    /// Spread tool settings.
+    fan: FanTool,
     /// Encoder page.
     pub(crate) feature: Option<Feature>,
     /// Sequence shown on the Sequences page / recorded into.
@@ -99,6 +107,16 @@ pub(crate) struct LightUi {
     monitor_universe: u16,
     /// Art-Net nodes / serial ports found in the background.
     found: std::sync::Arc<parking_lot::Mutex<Found>>,
+}
+
+/// Spread tool: attribute, from, to, centre-out.
+#[derive(Clone, Copy)]
+struct FanTool(Option<Attribute>, f32, f32, bool);
+
+impl Default for FanTool {
+    fn default() -> Self {
+        Self(None, 0.0, 1.0, false)
+    }
 }
 
 /// Results of background searches for output devices.
@@ -187,15 +205,35 @@ impl App {
         if !designing && !l.programmer.is_empty() {
             l.programmer.clear();
         }
-        if l.sent.as_ref() != Some(&l.programmer) {
+        if !designing {
+            l.highlight = false;
+        }
+        let lit: Option<Vec<FixtureId>> = l.highlight.then(|| match l.step {
+            Some(i) => l.selection.get(i % l.selection.len().max(1)).copied().into_iter().collect(),
+            None => l.selection.clone(),
+        });
+        let key = (l.programmer.clone(), l.blind, lit);
+        if l.sent.as_ref() != Some(&key) {
             let design = &show.ws.lighting;
-            let flat = l
-                .programmer
-                .iter()
-                .flat_map(|(f, v)| v.iter().filter_map(move |(a, x)| design.resolve(*f, *a, *x).map(|x| (*f, *a, x))))
-                .collect();
+            let mut flat: Vec<(FixtureId, Attribute, f32)> = if l.blind {
+                Vec::new()
+            } else {
+                l.programmer
+                    .iter()
+                    .flat_map(|(f, v)| v.iter().filter_map(move |(a, x)| design.resolve(*f, *a, *x).map(|x| (*f, *a, x))))
+                    .collect()
+            };
+            for f in key.2.iter().flatten() {
+                let Some(mode) = design.fixture(*f).and_then(|x| design.mode_of(x)) else { continue };
+                for a in mode.attributes() {
+                    if let Some(v) = highlight_value(mode, a) {
+                        flat.retain(|x| !(x.0 == *f && x.1 == a));
+                        flat.push((*f, a, v));
+                    }
+                }
+            }
             show.media.light.set_programmer(flat);
-            l.sent = Some(l.programmer.clone());
+            l.sent = Some(key);
         }
     }
 
@@ -359,6 +397,46 @@ impl App {
 }
 
 
+/// What highlight puts on an attribute: open white at full (a channel's own highlight value
+/// wins); None leaves the attribute alone.
+fn highlight_value(mode: &crate::light::model::FixtureMode, a: Attribute) -> Option<f32> {
+    if let Some(h) = mode.channel(a).and_then(|c| c.highlight) {
+        return Some(h);
+    }
+    use Attribute::*;
+    match a {
+        Dimmer | Red | Green | Blue | White => Some(1.0),
+        Amber | Lime | Uv | Cyan | Magenta | Yellow | Cto | ColorWheel | Gobo | Prism | Frost => Some(0.0),
+        Shutter | Iris => Some(1.0),
+        _ => None,
+    }
+}
+
+/// A DragValue editing a 0..=1 level as a percentage.
+fn percent_drag(v: &mut f32) -> DragValue<'_> {
+    DragValue::from_get_set(move |n| {
+        if let Some(n) = n {
+            *v = (n as f32 / 100.0).clamp(0.0, 1.0);
+        }
+        (*v * 100.0) as f64
+    })
+    .range(0.0..=100.0)
+    .suffix(" %")
+    .speed(0.5)
+}
+
+/// Values for a fan across `n` fixtures: from `a` to `b` in selection order, or centre-out
+/// (the middle at `a`, both ends at `b`).
+fn fan_values(n: usize, a: f32, b: f32, centre: bool) -> Vec<f32> {
+    (0..n)
+        .map(|i| {
+            let k = if n < 2 { 0.0 } else { i as f32 / (n - 1) as f32 };
+            let k = if centre { (2.0 * k - 1.0).abs() } else { k };
+            a + (b - a) * k
+        })
+        .collect()
+}
+
 /// Attributes of a fixture (its mode's, plus a virtual dimmer).
 fn attributes_of(l: &Lighting, id: FixtureId) -> Vec<Attribute> {
     l.fixture(id).and_then(|f| l.mode_of(f)).map(|m| m.attributes()).unwrap_or_default()
@@ -452,6 +530,29 @@ impl App {
             if busy {
                 let n: usize = self.light.programmer.values().map(|v| v.len()).sum();
                 ui.label(RichText::new(tr!("{n} values in the programmer", n = n.to_string())).color(theme::RED));
+            }
+            ui.separator();
+            let toggle = |ui: &mut Ui, on: &mut bool, glyph: &str, label: &str, tip: &str, color: Color32| {
+                let (fill, fg) = if *on { (color, Color32::WHITE) } else { (theme::BG_RAISED, theme::TEXT) };
+                if ui.add(egui::Button::new(RichText::new(theme::with_icon(glyph, label)).color(fg)).fill(fill)).on_hover_text(tip).clicked() {
+                    *on = !*on;
+                }
+            };
+            toggle(ui, &mut self.light.blind, icons::VISIBILITY, t("Blind"), t("Program without changing the output"), theme::ACCENT);
+            toggle(ui, &mut self.light.highlight, icons::HIGHLIGHT, t("Highlight"), t("Selected fixtures at open white, full (not recorded)"), theme::AMBER);
+            if self.light.highlight && self.light.selection.len() > 1 {
+                let n = self.light.selection.len();
+                if ui.button(icons::ARROW_RIGHT).on_hover_text(t("Next fixture of the selection")).clicked() {
+                    self.light.step = Some(self.light.step.map_or(0, |i| (i + 1) % n));
+                }
+                if ui.button(icons::SELECT_ALL).on_hover_text(t("Whole selection")).clicked() {
+                    self.light.step = None;
+                }
+                if let Some(i) = self.light.step
+                    && let Some(f) = self.light.selection.get(i % n)
+                {
+                    ui.label(RichText::new(tr!("fixture {f}", f = f.to_string())).color(theme::AMBER));
+                }
             }
             ui.separator();
             self.record_controls(ui, l);
@@ -774,6 +875,42 @@ impl App {
         }
         ui.add_space(6.0);
         ui.label(RichText::new(t("Drag a bar to set it, scroll over it for 1 % steps.")).weak().small());
+        // Fan: spread one attribute across the selection in selection order.
+        if self.light.selection.len() > 1 {
+            ui.add_space(8.0);
+            ui.separator();
+            let attrs: Vec<Attribute> = {
+                let mut v: Vec<Attribute> = self.light.selection.iter().flat_map(|f| attributes_of(l, *f)).collect();
+                v.sort();
+                v.dedup();
+                v
+            };
+            let FanTool(attr, mut a, mut b, mut centre) = self.light.fan;
+            let attr = attr.filter(|x| attrs.contains(x)).or(attrs.first().copied());
+            let mut pick = attr;
+            ui.horizontal_wrapped(|ui| {
+                ui.label(theme::caption(t("Spread")));
+                egui::ComboBox::from_id_salt("fan_attr").selected_text(pick.map_or("", |x| x.label())).width(110.0).show_ui(ui, |ui| {
+                    for x in &attrs {
+                        ui.selectable_value(&mut pick, Some(*x), x.label());
+                    }
+                });
+                ui.label(t("from"));
+                ui.add(percent_drag(&mut a));
+                ui.label(t("to"));
+                ui.add(percent_drag(&mut b));
+                ui.checkbox(&mut centre, t("centre out"));
+            });
+            self.light.fan = FanTool(pick, a, b, centre);
+            if ui.button(theme::with_icon(icons::TUNE, t("Spread across the selection"))).clicked()
+                && let Some(attr) = pick
+            {
+                let who: Vec<FixtureId> = self.light.selection.iter().copied().filter(|f| attributes_of(l, *f).contains(&attr)).collect();
+                for (f, v) in who.iter().zip(fan_values(who.len(), a, b, centre)) {
+                    self.light.programmer.entry(*f).or_default().insert(attr, Value::Level(v));
+                }
+            }
+        }
     }
 
     /// RGB/CMY picker for the selection.
@@ -1460,6 +1597,13 @@ fn add_fixtures(l: &mut Lighting, ty: &FixtureType, form: &mut AddForm) -> u32 {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn fan() {
+        assert_eq!(fan_values(3, 0.0, 1.0, false), [0.0, 0.5, 1.0]);
+        assert_eq!(fan_values(5, 0.2, 1.0, true), [1.0, 0.6, 0.2, 0.6, 1.0]);
+        assert_eq!(fan_values(1, 0.3, 1.0, false), [0.3]);
+    }
 
     #[test]
     fn cue_numbers() {
