@@ -404,3 +404,43 @@ Left for Phase 3+: Python, GDTF/QLC+ import, glTF stage models and placement too
 rotation is only in the file/visual maths so far), gobos/prisms in the visualiser, Art-Net/sACN
 input, audio-reactive effects, MIDI/OSC surfaces, remote mirroring of executor levels, Fade cues on
 lighting, manual chapter.
+
+## Progress overview (end of session, 2026-10-14)
+| Area | Tasks | State |
+|---|---|---|
+| A Data model and patch | A1 A2 A3 A4 | done |
+| B Fixture library | B1 generics, B2 OFL import | done · B3 GDTF, B4 type editor, B5 QLC+ open |
+| C DMX output and input | C1–C5 C7 | done · C6 Art-Net/sACN input open |
+| D Programmer | D1–D6 | done |
+| E Light cues and playback | E1–E6 | done (Fade cues on lighting still open) |
+| F Effects | F1 F2 F3 | done · F4 audio-reactive open |
+| G Python | G1–G6 | open (Phase 3) |
+| H 3D visualiser | H1 H2 H3 | done · H4 glTF/placement, H5 gobos/prisms, H6 plot, H7 detached window open |
+| I Lighting UI | I1–I5 | done (pools are rows on the Programmer page, no docking) |
+| J Performance | J1 J3 J2 (light panic stress test) | done |
+| K Hardware console | K1–K4 | open (Phase 4) |
+| L Persistence, remote, docs | L1 | done · L2 remote mirroring, L3 USITT ASCII, L4 manual chapter open |
+
+## Next session
+Phase 3 proposal, in order (one commit per step, as before):
+1. H4 — fixture placement: rotation in the patch sheet and the 3D page, array tools (line, arc,
+   grid), snapping; simple stage objects (deck, truss, flats) before glTF import.
+2. G1 G2 — Python worker process (`openq --py-worker`, system Python 3, JSON over stdin/stdout,
+   timeouts, restart) and the `openq` API module with a `.pyi` stub.
+3. G3 G4 G6 — design-time scripts (generate cues, presets, effects, positions), script editor
+   window with console, trust prompt for shows that contain scripts.
+4. G5 — live script effects through shared memory, with bake to a table.
+5. B3 — GDTF import (also gives real 3D models for H5); H5 gobos/prisms/strobe in the visualiser.
+6. C6 — Art-Net/sACN input: merge or record from another desk.
+7. L2 — remote: mirror executor levels/masters to replicas, lighting design edits in the Edit role.
+8. L4 — manual chapter (en/es/gl) with screenshots (`OPENQ_SCREENSHOT_LIGHTING=…`).
+
+Known issues to look at:
+- The fixture rotation can't be edited in the UI yet (only in the file).
+- Sequences page and executor levels are local to each device; replicas show their own masters.
+- `Show::sync_lighting` compares the whole design on every edit under the show lock (fine at
+  normal sizes; a change counter would be cheaper for very large designs).
+- Duplicate attributes in one fixture mode (two Control channels) share one value; OFL import
+  leaves the repeats unused.
+- Untested on real hardware: Art-Net nodes, sACN receivers, Enttec USB Pro; OFL import only on a
+  hand-written sample; the visualiser only on this Linux machine.
