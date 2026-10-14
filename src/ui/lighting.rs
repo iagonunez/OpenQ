@@ -1698,6 +1698,15 @@ impl App {
                 ui.label(t("Move"));
                 ui.add(DragValue::new(&mut s.mib_fade).range(0.0..=600.0).speed(0.05).suffix(" s"));
             });
+        });        ui.add_space(8.0);
+        ui.separator();
+        ui.label(theme::caption(t("With the cue list")));
+        ui.checkbox(&mut l.stop_all_releases, t("Stop all also fades the lighting out"))
+            .on_hover_text(t("Stop all, Panic and Stop cues without a target release every sequence"));
+        ui.horizontal(|ui| {
+            ui.label(t("Release fade"));
+            ui.add(DragValue::new(&mut l.release_fade).range(0.0..=600.0).speed(0.05).suffix(" s"))
+                .on_hover_text(t("Used when a Stop cue aimed at a Light cue releases its sequence"));
         });
     }
 }

@@ -826,10 +826,17 @@ impl Engine {
             }
             CueKind::Stop { target } => {
                 match target {
-                    Some(t) => self.stop_cue(ws, be, *t),
+                    Some(t) => {
+                        self.release_light_cues(ws, be, *t, at);
+                        self.stop_cue(ws, be, *t)
+                    }
                     None => {
                         let keep = self.ancestors(ws, cue.id);
                         self.stop_all_except(be, &keep);
+                        if ws.lighting.stop_all_releases {
+                            let all = LightingCue { action: crate::model::LightAction::Release, fade: ws.lighting.release_fade, ..Default::default() };
+                            let _ = be.light(&all, &ws.lighting, at);
+                        }
                     }
                 }
                 Some(0.0)
@@ -899,6 +906,33 @@ impl Engine {
                     }
                 }
                 None
+            }
+        }
+    }
+
+    /// A Stop cue aimed at a Light cue (or a group holding some) releases the sequences those
+    /// cues play, over the design's release fade.
+    fn release_light_cues(&mut self, ws: &Workspace, be: &mut dyn Backend, target: CueId, at: Instant) {
+        fn walk(c: &Cue, out: &mut Vec<crate::light::model::SequenceId>, ws: &Workspace) {
+            match &c.kind {
+                CueKind::Light(l) if l.action == crate::model::LightAction::Go => {
+                    if let Some((s, _)) = l.cue.and_then(|id| ws.lighting.find_cue(id)) {
+                        out.push(s.id);
+                    }
+                }
+                CueKind::Group { children, .. } => children.iter().for_each(|ch| walk(ch, out, ws)),
+                _ => {}
+            }
+        }
+        let Some(c) = ws.cue_list.find(target) else { return };
+        let mut seqs = Vec::new();
+        walk(c, &mut seqs, ws);
+        seqs.sort();
+        seqs.dedup();
+        for s in seqs {
+            let rel = LightingCue { action: crate::model::LightAction::Release, sequence: Some(s), fade: ws.lighting.release_fade, ..Default::default() };
+            if let Err(e) = be.light(&rel, &ws.lighting, at) {
+                self.log(format!("Stop cue: {e}"));
             }
         }
     }
@@ -998,6 +1032,10 @@ mod tests {
         fn send_network(&mut self, n: &NetworkCue) -> Result<(), String> {
             self.events.push(format!("net {}", n.address));
             Ok(())
+        }
+        fn light(&mut self, c: &LightingCue, _design: &crate::light::Lighting, _at: Instant) -> Result<f64, String> {
+            self.events.push(format!("light {:?} {:?} {:?}", c.action, c.sequence, c.cue.is_some()));
+            Ok(0.0)
         }
         fn set_preloaded(&mut self, cues: &[&Cue]) {
             self.preloaded = cues.iter().map(|c| c.id).collect();
@@ -1370,6 +1408,38 @@ mod tests {
         assert!(m.events.contains(&format!("devamp {ai}")));
         assert!(m.events.contains(&"net /lights/go".to_string()));
         assert!(e.log.is_empty(), "{:?}", e.log);
+    }
+
+    /// Stop cues release the lighting their target Light cues play; a Stop without a target
+    /// releases everything only when the design asks for it.
+    #[test]
+    fn stop_cues_release_lighting() {
+        use crate::light::model::{LightCue, Sequence};
+        use crate::model::{LightAction, LightingCue};
+        let lc = LightCue::default();
+        let mut l = cue("1", KindTag::Light);
+        l.kind = CueKind::Light(LightingCue { action: LightAction::Go, cue: Some(lc.id), ..Default::default() });
+        let li = l.id;
+        let mut stop = cue("2", KindTag::Stop);
+        stop.kind = CueKind::Stop { target: Some(li) };
+        let stop_all = cue("3", KindTag::Stop);
+        let mut w = ws(vec![l, stop, stop_all]);
+        w.lighting.sequences.push(Sequence { id: 7, cues: vec![lc], ..Default::default() });
+        let mut e = Engine::new();
+        let mut m = Mock::default();
+        let t0 = Instant::now();
+        e.set_playhead(Some(li));
+        e.go(&w, &mut m, t0);
+        e.go(&w, &mut m, t0 + ms(10));
+        assert!(m.events.contains(&"light Go None true".to_string()), "{:?}", m.events);
+        assert!(m.events.contains(&"light Release Some(7) false".to_string()), "{:?}", m.events);
+        e.go(&w, &mut m, t0 + ms(20));
+        assert_eq!(m.events.iter().filter(|x| x.starts_with("light Release None")).count(), 0, "off by default");
+        w.lighting.stop_all_releases = true;
+        let first = w.cue_list.cues[2].id;
+        e.set_playhead(Some(first));
+        e.go(&w, &mut m, t0 + ms(30));
+        assert!(m.events.contains(&"light Release None false".to_string()));
     }
 
     #[test]

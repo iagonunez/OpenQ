@@ -72,8 +72,18 @@ pub fn apply(show: &mut Show, cmd: Command, now: Instant) -> Result<(), String> 
     let Show { ws, engine, media, .. } = show;
     match cmd {
         Command::Go => engine.go(ws, media, now),
-        Command::Stop => engine.stop_all(media, now, ws.settings.panic_fade),
-        Command::Panic => engine.stop_all(media, now, 0.0),
+        Command::Stop => {
+            if ws.lighting.stop_all_releases {
+                media.light.release_all(ws.settings.panic_fade, now);
+            }
+            engine.stop_all(media, now, ws.settings.panic_fade)
+        }
+        Command::Panic => {
+            if ws.lighting.stop_all_releases {
+                media.light.release_all(0.0, now);
+            }
+            engine.stop_all(media, now, 0.0)
+        }
         Command::PauseAll => engine.pause_all(media, now),
         Command::ResumeAll => engine.resume_all(media, now),
         Command::PlayheadNext | Command::PlayheadPrevious => {

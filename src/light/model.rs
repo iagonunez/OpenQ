@@ -591,7 +591,7 @@ pub enum PatchIssue {
 }
 
 /// The lighting design of a show.
-#[derive(Serialize, Deserialize, Clone, PartialEq, Debug, Default)]
+#[derive(Serialize, Deserialize, Clone, PartialEq, Debug)]
 #[serde(default)]
 pub struct Lighting {
     /// Fixture types used by the patch (copied from the library when patched).
@@ -608,6 +608,26 @@ pub struct Lighting {
     pub presets: Vec<Preset>,
     /// Effects pool.
     pub effects: Vec<super::effects::Effect>,
+    /// OpenQ's Stop all (and Stop cues without a target) also fade the lighting out.
+    pub stop_all_releases: bool,
+    /// Fade used when a Stop cue releases a sequence, seconds.
+    pub release_fade: f64,
+}
+
+impl Default for Lighting {
+    fn default() -> Self {
+        Self {
+            fixture_types: Vec::new(),
+            fixtures: Vec::new(),
+            groups: Vec::new(),
+            sequences: Vec::new(),
+            outputs: Vec::new(),
+            presets: Vec::new(),
+            effects: Vec::new(),
+            stop_all_releases: false,
+            release_fade: 1.0,
+        }
+    }
 }
 
 impl Lighting {
