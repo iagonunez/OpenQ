@@ -2189,6 +2189,17 @@ impl App {
             if let Ok(page) = std::env::var("OPENQ_SCREENSHOT_LIGHTING") {
                 self.view = lighting::View::Lighting;
                 self.light.tab = lighting::LightTab::from_name(&page);
+                // A selection and some programmer values to look at.
+                if let Some(g) = show.ws.lighting.groups.first() {
+                    self.light.selection = g.fixtures.clone();
+                    for f in g.fixtures.iter().take(4) {
+                        let v = self.light.programmer.entry(*f).or_default();
+                        v.insert(crate::light::Attribute::Dimmer, 0.75);
+                        v.insert(crate::light::Attribute::Red, 1.0);
+                        v.insert(crate::light::Attribute::Green, 0.45);
+                        v.insert(crate::light::Attribute::Blue, 0.1);
+                    }
+                }
             }
             if std::env::var_os("OPENQ_SCREENSHOT_INLINE").is_some()
                 && let Some(id) = self.primary()
@@ -2576,6 +2587,7 @@ impl App {
             }
             self.track_undo(&ctx, show);
             self.sync_osc(&ctx, show);
+            self.lighting_frame(show);
 
             // Stage windows are drawn after the lock is released, from this snapshot.
             #[cfg(feature = "video")]
