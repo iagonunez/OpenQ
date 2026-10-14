@@ -371,7 +371,7 @@ Done on branch `Lighting`: every step above.
 Not yet (Phase 2+): command line, presets/palettes, effects, 3D visualiser, fixture importers,
 per-attribute timing, move in black, Art-Net/sACN input, Python, MIDI/OSC surfaces, manual chapter.
 
-## Phase 2 order (one commit per step)
+## Phase 2 order (one commit per step) — done
 1. D4 I3 — presets (Intensity/Colour/Position/Beam/All) referenced by cues and the programmer, so a
    preset edit updates every cue using it; preset pool on the Programmer page.
 2. D5 D6 — programmer tools: fan/spread across the selection, blind, highlight.
@@ -383,3 +383,24 @@ per-attribute timing, move in black, Art-Net/sACN input, Python, MIDI/OSC surfac
 8. H1 — 3D visualiser: wgpu renderer, orbit camera, stage floor, fixtures, picking.
 9. H2 H3 — beams (cones, colour, zoom, haze), moving heads from pan/tilt, click to focus.
 10. B2 — Open Fixture Library import.
+
+## Phase 2 status
+Done on branch `Lighting`:
+- Presets (`Value::Preset` references; per-type fallback; deleting unlinks into levels), preset pool.
+- Programmer: blind, highlight (step through the selection), spread tool.
+- Cues: timing per feature, cue only, block, move in black (per sequence); a running fade carries on
+  when the next cue keeps its target.
+- Effects (`light::effects`): sine/triangle/square/ramps/random/circle, phase spread, groups, wings,
+  relative/absolute, tempo sync + tap tempo; they track through cues and fade with them; effects page
+  with live preview; effects from the programmer.
+- Command line (`light::command`) with abbreviations and history, desk keypad window.
+- Stop cues aimed at Light cues release their sequences; optional release on Stop all / Panic.
+- 3D visualiser (`light::visual` + `ui/visualiser.rs`): offscreen HDR wgpu render, floor pools of
+  light, fixtures and moving heads, additive beams with haze, orbit camera, picking, click to aim.
+- Open Fixture Library import (`light::ofl`).
+- Measured: frame with 2000 fixtures ≈ 95 µs, with two effects on every fixture ≈ 110 µs.
+
+Left for Phase 3+: Python, GDTF/QLC+ import, glTF stage models and placement tools (fixture
+rotation is only in the file/visual maths so far), gobos/prisms in the visualiser, Art-Net/sACN
+input, audio-reactive effects, MIDI/OSC surfaces, remote mirroring of executor levels, Fade cues on
+lighting, manual chapter.
