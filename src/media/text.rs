@@ -612,8 +612,11 @@ mod tests {
         // The outline is black, the fill white: both colours appear.
         assert!(outlined.rgba.chunks_exact(4).any(|p| p[3] == 255 && p[0] < 10));
         assert!(outlined.rgba.chunks_exact(4).any(|p| p[3] == 255 && p[0] > 245));
-        let shadowed = render_at(&TextCue { shadow_color: [0, 0, 0, 200], shadow_blur: 0.0, ..base }, 1.0);
-        assert!(shadowed.rgba.chunks_exact(4).filter(|p| p[3] > 100).count() > plain * 3 / 2);
+        // An offset well past the stroke width, so the shadow barely overlaps the glyphs (the default 4 px left the
+        // count right at the threshold, and font rasterisation differences on CI tipped it under).
+        let shadowed = render_at(&TextCue { shadow_color: [0, 0, 0, 200], shadow_blur: 0.0, shadow_offset: [12.0, 12.0], ..base }, 1.0);
+        let n = shadowed.rgba.chunks_exact(4).filter(|p| p[3] > 100).count();
+        assert!(n > plain * 3 / 2, "{n} vs {plain}");
     }
 
     #[test]
