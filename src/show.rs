@@ -38,6 +38,8 @@ pub struct Show {
     /// Set when the engine recovered from an internal error (the UI tells the user, the
     /// autosave writes a fresh copy); cleared by whoever handles it.
     pub recovered: Option<String>,
+    /// Lighting design (and replica flag) last handed to the light thread.
+    light_loaded: Option<(crate::light::Lighting, bool)>,
 }
 
 /// How well the engine thread is keeping time.
@@ -78,6 +80,7 @@ impl Show {
             tc_last: Default::default(),
             stats: TickStats::default(),
             recovered: None,
+            light_loaded: None,
         }
     }
 
@@ -176,6 +179,23 @@ impl Show {
         self.edit_gen += 1;
         self.engine.workspace_changed();
         self.media.set_room(&self.ws.settings.speakers);
+        self.sync_lighting();
+    }
+
+    /// Recompile the lighting design for the light thread if it (or the replica flag) changed.
+    /// A replica never opens DMX outputs: the main device drives the rig.
+    pub fn sync_lighting(&mut self) {
+        if self.light_loaded.as_ref().is_some_and(|(l, r)| *r == self.replica && *l == self.ws.lighting) {
+            return;
+        }
+        if self.replica {
+            let mut l = self.ws.lighting.clone();
+            l.outputs.clear();
+            self.media.light.load(&l);
+        } else {
+            self.media.light.load(&self.ws.lighting);
+        }
+        self.light_loaded = Some((self.ws.lighting.clone(), self.replica));
     }
 
     /// Take a workspace edited on a remote device. Machine-specific settings (audio device,
@@ -208,6 +228,8 @@ impl Show {
         self.engine.workspace_changed();
         let master = self.ws.settings.master_volume_db;
         self.media.set_room(&self.ws.settings.speakers);
+        self.media.light.release_all(0.0, now);
+        self.sync_lighting();
         self.media.reopen_audio(self.ws.settings.audio_device.as_deref(), master);
         if let Some(a) = &mut self.media.audio {
             a.set_master(master);
@@ -260,4 +282,40 @@ pub fn spawn_engine_thread(show: SharedShow, repaint: impl Fn() + Send + 'static
             }
         })
         .expect("spawn engine thread");
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::control::{Command, apply};
+    use crate::light::{library, model::*};
+    use crate::model::{Cue, CueKind, LightAction, LightingCue};
+
+    /// A Light cue in the cue list GOes its designed lighting cue on the light thread, and
+    /// waits for the lighting fade before continuing.
+    #[test]
+    fn light_cue_plays_the_design() {
+        let mut show = Show::new(crate::media::Prober::new());
+        let mut ws = Workspace::default();
+        let t = library::generic("generic/dimmer").unwrap();
+        ws.lighting.add_type(&t);
+        ws.lighting.fixtures.push(Fixture { id: 1, fixture_type: t.id.clone(), mode: t.modes[0].name.clone(), address: 1, ..Default::default() });
+        let mut lc = LightCue { fade: 0.0, delay: 0.5, ..Default::default() };
+        lc.values.entry(1).or_default().insert(Attribute::Dimmer, 1.0);
+        let target = lc.id;
+        ws.lighting.sequences.push(Sequence { id: 1, cues: vec![lc], ..Default::default() });
+        ws.cue_list.cues.push(Cue::new(CueKind::Light(LightingCue { action: LightAction::Go, cue: Some(target), ..Default::default() })));
+        show.replace_workspace(ws, None);
+        let t0 = Instant::now();
+        apply(&mut show, Command::Go, t0).unwrap();
+        show.tick(t0);
+        let id = show.ws.cue_list.cues[0].id;
+        assert_eq!(show.engine.instances.get(&id).and_then(|i| i.action_duration), Some(0.5));
+        let lit = || show.media.light.frame().get(1).is_some_and(|u| u.data[0] == 255);
+        let deadline = Instant::now() + Duration::from_secs(3);
+        while !lit() && Instant::now() < deadline {
+            std::thread::sleep(Duration::from_millis(10));
+        }
+        assert!(lit(), "fixture 1 at full after the delay");
+    }
 }

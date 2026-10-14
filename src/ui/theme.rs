@@ -285,6 +285,7 @@ pub fn kind_icon(tag: crate::model::KindTag) -> &'static str {
         Text => I::TEXT_FIELDS,
         Mic => I::MIC,
         Camera => I::PHOTO_CAMERA,
+        Light => I::LIGHTBULB,
     }
 }
 

@@ -13,7 +13,7 @@
 //! into are preloaded along with the next GO's. A cue that keeps restarting itself with no time
 //! in between (a Start cue aimed at itself) is held off and reported instead of spinning.
 
-use crate::model::{Cue, CueId, CueKind, FadeCurve, GroupMode, KindTag, MIN_DB, NetworkCue, Workspace};
+use crate::model::{Cue, CueId, CueKind, FadeCurve, GroupMode, KindTag, LightingCue, MIN_DB, NetworkCue, Workspace};
 use std::collections::{HashMap, HashSet};
 use std::time::{Duration, Instant};
 
@@ -83,6 +83,11 @@ pub trait Backend {
     /// Send a Network cue's message.
     fn send_network(&mut self, _net: &NetworkCue) -> Result<(), String> {
         Err("network output unavailable".into())
+    }
+    /// Run a Light cue (GO a lighting cue, release a sequence) at `at`. Returns how long its
+    /// fades take, in seconds.
+    fn light(&mut self, _cue: &LightingCue, _at: Instant) -> Result<f64, String> {
+        Err("lighting unavailable".into())
     }
 }
 
@@ -867,6 +872,13 @@ impl Engine {
                 }
                 Some(0.0)
             }
+            CueKind::Light(l) => match be.light(l, at) {
+                Ok(d) => Some(d),
+                Err(e) => {
+                    self.log(format!("Light cue {}: {e}", cue.number));
+                    Some(0.0)
+                }
+            },
             CueKind::Group { mode, children } => {
                 if children.is_empty() {
                     return Some(0.0);

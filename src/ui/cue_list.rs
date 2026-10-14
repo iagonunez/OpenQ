@@ -93,7 +93,7 @@ impl App {
             &[Audio, Mic, Video, Camera, Text],
             &[Group, Wait, Memo],
             &[Fade, Start, Stop, Pause, Goto, Devamp],
-            &[Network],
+            &[Network, Light],
         ];
         // Room kept for the edit buttons on the right; the palette scrolls if the window is narrow.
         const EDIT_BUTTONS_W: f32 = 200.0;
@@ -795,6 +795,16 @@ impl App {
             CueKind::Camera(c) => match &c.device {
                 None => t("first camera").into(),
                 Some(d) => self.inputs.lock().cameras.iter().find(|x| &x.0 == d).map_or(d.clone(), |x| x.1.clone()),
+            },
+            CueKind::Light(l) => match l.action {
+                crate::model::LightAction::Go => match l.cue {
+                    Some(c) => show.ws.lighting.cue_label(c).unwrap_or_else(|| t("missing target").into()),
+                    None => t("no target").into(),
+                },
+                crate::model::LightAction::Release => match l.sequence {
+                    Some(s) => tr!("release {seq}", seq = show.ws.lighting.sequence_label(s).unwrap_or_else(|| s.to_string())),
+                    None => t("release all sequences").into(),
+                },
             },
             k => match k.target() {
                 Some(t) => match show.ws.cue_list.find(t) {

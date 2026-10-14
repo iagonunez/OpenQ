@@ -527,6 +527,8 @@ pub struct Media {
     /// Object-audio speakers from the workspace (empty = the device's default layout); applied
     /// to every audio output this opens.
     room: Vec<crate::spatial::Speaker>,
+    /// The light thread (lighting playback and DMX outputs).
+    pub light: crate::light::engine::LightEngine,
 }
 
 /// A Mic cue's live input. Opening a device can take a while, so it opens on its own thread;
@@ -618,6 +620,7 @@ impl Media {
             preload_retry: None,
             pending_audio: HashMap::new(),
             room: Vec::new(),
+            light: crate::light::engine::LightEngine::start(),
         }
     }
 
@@ -1193,10 +1196,28 @@ impl Backend for Media {
         effective_duration(cue, file)
     }
 
+    fn light(&mut self, c: &crate::model::LightingCue, at: Instant) -> Result<f64, String> {
+        use crate::model::LightAction;
+        match c.action {
+            LightAction::Go => {
+                let id = c.cue.ok_or("no lighting cue chosen")?;
+                self.light.go_cue(id, at)?;
+                Ok(self.light.cue_duration(id).unwrap_or(0.0))
+            }
+            LightAction::Release => {
+                match c.sequence {
+                    Some(s) => self.light.release(s, c.fade, at),
+                    None => self.light.release_all(c.fade, at),
+                }
+                Ok(c.fade.max(0.0))
+            }
+        }
+    }
+
     fn drain_errors(&mut self) -> Vec<String> {
-        #[cfg_attr(not(feature = "video"), allow(unused_mut))]
         let mut out = std::mem::take(&mut self.notes);
         out.extend(self.audio.as_mut().map(|a| a.drain_errors()).unwrap_or_default());
+        out.extend(self.light.drain_errors());
         #[cfg(feature = "video")]
         if let Some(v) = &mut self.video {
             out.extend(v.drain_errors());

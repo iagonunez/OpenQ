@@ -527,6 +527,18 @@ impl Lighting {
         self.sequences.iter().find_map(|s| s.index_of(cue).map(|i| (s, i)))
     }
 
+    /// "1/5 Name": sequence number / cue number and name, for menus and the cue list.
+    pub fn cue_label(&self, cue: LightCueId) -> Option<String> {
+        let (s, i) = self.find_cue(cue)?;
+        let c = &s.cues[i];
+        Some(format!("{}/{} {}", s.id, c.number, c.name).trim_end().to_string())
+    }
+
+    /// "1 Name" for a sequence.
+    pub fn sequence_label(&self, id: SequenceId) -> Option<String> {
+        self.sequence(id).map(|s| format!("{} {}", s.id, s.name).trim_end().to_string())
+    }
+
     /// Lowest unused fixture number at or above `from`.
     pub fn next_fixture_id(&self, from: FixtureId) -> FixtureId {
         let mut id = from.max(1);

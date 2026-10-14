@@ -203,6 +203,7 @@ impl App {
         engine.stop_all(media, now, 0.0);
         let stash = (std::mem::take(&mut show.ws), show.path.take(), show.dirty);
         show.replica = true;
+        show.sync_lighting();
         show.dirty = false;
         self.prober.set_remote(true);
         if let Some(l) = &self.remote.link {
@@ -236,6 +237,7 @@ impl App {
     fn leave_replica(&mut self, show: &mut Show) {
         let Some(mut r) = self.remote.replica.take() else { return };
         show.replica = false;
+        show.sync_lighting();
         show.engine.mirror(None, false, &[], Vec::new(), Instant::now());
         self.prober.set_remote(false);
         self.waveforms.set_remote(None);
