@@ -2,7 +2,7 @@
 //! apart from the live show, and DMX playback of it.
 //!
 //! * [`model`] — the design data stored in the show file as `Workspace.lighting`.
-//! * [`library`] — built-in generic fixture types.
+//! * [`library`] — built-in generic fixture types; [`ofl`] imports Open Fixture Library files.
 //! * [`command`] — the desk-style command line parser.
 //! * [`effects`] — effect waveforms run across fixtures (pool, runs in cues, evaluation).
 //! * [`playback`] — the compiled show and the playback state machine (fades, HTP/LTP, masters).
@@ -21,6 +21,7 @@ pub mod engine;
 pub mod enttec;
 pub mod library;
 pub mod model;
+pub mod ofl;
 pub mod playback;
 pub mod sacn;
 pub mod visual;

@@ -60,6 +60,8 @@ enum Deferred {
     AddMediaCues,
     /// Open a show autosaved before a crash (may ask to discard the current one first).
     Recover(crate::recovery::Orphan),
+    /// Import a fixture type (Open Fixture Library JSON) into the lighting design.
+    ImportFixture,
 }
 
 /// Edit mode allows changing the show; show mode locks it down for running a performance.
@@ -2047,6 +2049,7 @@ impl App {
                 }
             }
             match d {
+                Deferred::ImportFixture => self.import_fixture(),
                 Deferred::New => {
                     if self.confirm_discard() {
                         self.show

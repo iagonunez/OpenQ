@@ -169,6 +169,43 @@ fn issue_text(i: &PatchIssue) -> String {
 }
 
 impl App {
+    /// Pick an Open Fixture Library file and add its type to the design (outside the show lock:
+    /// the dialog blocks). The Add form switches to it.
+    pub(super) fn import_fixture(&mut self) {
+        if !self.can_design() {
+            return;
+        }
+        let Some(path) = rfd::FileDialog::new().add_filter(t("Open Fixture Library fixture"), &["json"]).pick_file() else { return };
+        let manufacturer = path.parent().and_then(|p| p.file_name()).map(|n| n.to_string_lossy().to_string()).unwrap_or_default();
+        let result = std::fs::read_to_string(&path).map_err(anyhow::Error::from).and_then(|s| crate::light::ofl::import(&s, &manufacturer));
+        match result {
+            Ok(imp) => {
+                let id = imp.fixture.id.clone();
+                let name = format!("{} {}", imp.fixture.manufacturer, imp.fixture.name);
+                {
+                    let mut show = self.show.lock();
+                    let l = &mut show.ws.lighting;
+                    // Importing again replaces the type (patched fixtures keep their mode by name).
+                    l.fixture_types.retain(|t| t.id != id);
+                    l.fixture_types.push(imp.fixture);
+                    show.edited();
+                }
+                self.light.add.type_id = id;
+                self.light.add.mode.clear();
+                let msg = if imp.notes.is_empty() {
+                    tr!("Imported {name}", name = name)
+                } else {
+                    tr!("Imported {name} ({n} notes in the error log)", name = name, n = imp.notes.len().to_string())
+                };
+                for n in &imp.notes {
+                    log::warn!("fixture import: {n}");
+                }
+                self.notify(msg);
+            }
+            Err(e) => self.notify_error(tr!("Can't import the fixture: {e}", e = format!("{e:#}"))),
+        }
+    }
+
     /// Design edits are allowed (Edit mode, and this device may edit the show).
     pub(super) fn can_design(&self) -> bool {
         self.mode == Mode::Edit && self.can_edit_show()
@@ -340,6 +377,13 @@ impl App {
         }
         // Selection actions and problems.
         let issues = l.validate();
+        if ui
+            .button(theme::with_icon(icons::UPLOAD_FILE, t("Import fixture…")))
+            .on_hover_text(t("A fixture file from the Open Fixture Library (open-fixture-library.org), .json"))
+            .clicked()
+        {
+            self.deferred.push(super::Deferred::ImportFixture);
+        }
         ui.horizontal(|ui| {
             let n = self.light.patch_sel.len();
             ui.add_enabled_ui(n > 0, |ui| {
