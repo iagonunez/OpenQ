@@ -160,6 +160,36 @@ fn light(m: &mut Vec<Metric>, quick: bool) {
     let note = format!("{fixtures} fixtures, {universes} universes, 3 sequences fading");
     push(m, &format!("light.frame_{fixtures}"), quantile(&mut v, 0.5).as_secs_f64() * 1e6, "us", &note);
     push(m, &format!("light.frame_{fixtures}.p99"), quantile(&mut v, 0.99).as_secs_f64() * 1e6, "us", &note);
+    light_effects(m, design, reps, &note);
+}
+
+/// The same frame with two effects running on every fixture (a chase and a pan/tilt circle).
+/// Separate from [`light`]: code added there moved its timings (layout), not just these.
+#[inline(never)]
+fn light_effects(m: &mut Vec<Metric>, mut design: crate::light::Lighting, reps: usize, note: &str) {
+    use crate::light::effects::{Effect, EffectRun, Shape};
+    use crate::light::playback::{LightShow, Playback};
+    let fixtures = design.fixtures.len();
+    let t0 = Instant::now();
+    design.effects.push(Effect { id: 1, shape: Shape::Square, ..Default::default() });
+    design.effects.push(Effect { id: 2, shape: Shape::Circle, attribute: crate::light::Attribute::Pan, relative: true, size: 0.2, ..Default::default() });
+    let all: Vec<u32> = design.fixtures.iter().map(|f| f.id).collect();
+    design.sequences[0].cues[0].effects.push(EffectRun { effect: 1, fixtures: all.clone(), stop: false });
+    design.sequences[1].cues[0].effects.push(EffectRun { effect: 2, fixtures: all, stop: false });
+    let mut p = Playback::new(Arc::new(LightShow::compile(&design)), t0);
+    for s in 1..=3 {
+        p.go(s, None, t0).expect("go");
+    }
+    let mut v: Vec<Duration> = (0..reps)
+        .map(|i| {
+            let now = t0 + Duration::from_secs_f64(i as f64 * 0.0227 % 10.0);
+            let t = Instant::now();
+            std::hint::black_box(p.tick(now));
+            t.elapsed()
+        })
+        .collect();
+    let note = format!("{note}, 2 effects on every fixture");
+    push(m, &format!("light.frame_fx_{fixtures}"), quantile(&mut v, 0.5).as_secs_f64() * 1e6, "us", &note);
 }
 
 // ------------------------------------------------------------------ helpers

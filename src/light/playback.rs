@@ -558,7 +558,9 @@ impl Playback {
         self.values.get(slot as usize).copied()
     }
 
-    /// Advance to `now` and build the DMX frame.
+    /// Advance to `now` and build the DMX frame. Never inlined, so benchmarks measure the call
+    /// the light thread makes.
+    #[inline(never)]
     pub fn tick(&mut self, now: Instant) -> &DmxFrame {
         let t = self.time(now);
         let show = &*self.show;
