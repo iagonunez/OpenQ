@@ -33,6 +33,10 @@ pub(crate) enum LightTab {
     Programmer,
     /// Cue stacks.
     Sequences,
+    /// DMX outputs.
+    Outputs,
+    /// DMX monitor.
+    Monitor,
 }
 
 impl LightTab {
@@ -41,6 +45,8 @@ impl LightTab {
         match name {
             "programmer" => LightTab::Programmer,
             "sequences" => LightTab::Sequences,
+            "outputs" => LightTab::Outputs,
+            "monitor" => LightTab::Monitor,
             _ => LightTab::Patch,
         }
     }
@@ -85,6 +91,19 @@ pub(crate) struct LightUi {
     cue: Option<LightCueId>,
     /// Number for the next recorded cue (empty = after the last).
     record_number: String,
+    /// Universe shown in the DMX monitor.
+    monitor_universe: u16,
+    /// Art-Net nodes / serial ports found in the background.
+    found: std::sync::Arc<parking_lot::Mutex<Found>>,
+}
+
+/// Results of background searches for output devices.
+#[derive(Default)]
+struct Found {
+    searching: bool,
+    nodes: Vec<crate::light::artnet::Node>,
+    ports: Vec<String>,
+    error: Option<String>,
 }
 
 /// Fixture types offered when patching: the show's own first, then built-ins not in the show.
@@ -120,12 +139,18 @@ impl App {
 
     /// The Lighting workspace (central panel).
     pub(super) fn lighting_view(&mut self, ui: &mut Ui, show: &mut Show) {
+        egui::Panel::bottom("executors")
+            .frame(egui::Frame::new().fill(theme::BG_PANEL).inner_margin(egui::Margin::symmetric(8, 6)))
+            .resizable(false)
+            .show(ui, |ui| self.executor_bar(ui, show));
         if !self.can_design() {
-            ui.add_space(8.0);
+            ui.add_space(4.0);
             ui.horizontal(|ui| {
                 ui.label(RichText::new(icons::LOCK).font(theme::icon_font(16.0)).color(theme::TEXT_DIM));
                 ui.label(RichText::new(t("The lighting design is locked in Show mode.")).color(theme::TEXT_DIM));
             });
+            ui.separator();
+            self.monitor_page(ui, show);
             return;
         }
         ui.horizontal(|ui| {
@@ -133,6 +158,8 @@ impl App {
             theme::tab(ui, &mut self.light.tab, LightTab::Patch, icons::CABLE, t("Patch"));
             theme::tab(ui, &mut self.light.tab, LightTab::Programmer, icons::TUNE, t("Programmer"));
             theme::tab(ui, &mut self.light.tab, LightTab::Sequences, icons::PLAY_CIRCLE, t("Sequences"));
+            theme::tab(ui, &mut self.light.tab, LightTab::Outputs, icons::ROUTER, t("Outputs"));
+            theme::tab(ui, &mut self.light.tab, LightTab::Monitor, icons::GRID_VIEW, t("DMX monitor"));
         });
         ui.separator();
         let before = show.ws.lighting.clone();
@@ -140,6 +167,8 @@ impl App {
             LightTab::Patch => self.patch_page(ui, &mut show.ws.lighting),
             LightTab::Programmer => self.programmer_page(ui, &mut show.ws.lighting),
             LightTab::Sequences => self.sequences_page(ui, show),
+            LightTab::Outputs => self.outputs_page(ui, show),
+            LightTab::Monitor => self.monitor_page(ui, show),
         }
         if show.ws.lighting != before {
             show.edited();
@@ -779,6 +808,302 @@ impl App {
             });
         });
     }
+}
+
+
+impl App {
+    /// Executors (one per sequence: GO, release, level) plus grand master and blackout.
+    /// Works in both modes; actions go through [`App::control`] so a replica drives the main device.
+    fn executor_bar(&mut self, ui: &mut Ui, show: &mut Show) {
+        use crate::control::{Command, LightControl};
+        ui.ctx().request_repaint_after(std::time::Duration::from_millis(100));
+        let status = show.media.light.status();
+        let masters = show.media.light.masters().clone();
+        let l = &show.ws.lighting;
+        let mut cmds = Vec::new();
+        let card = |ui: &mut Ui, add: &mut dyn FnMut(&mut Ui)| {
+            egui::Frame::new()
+                .fill(theme::BG_RAISED)
+                .corner_radius(8.0)
+                .stroke(egui::Stroke::new(1.0, theme::BORDER))
+                .inner_margin(egui::Margin::same(6))
+                .show(ui, |ui| {
+                    ui.vertical(|ui| {
+                        ui.set_width(150.0);
+                        add(ui)
+                    })
+                });
+        };
+        egui::ScrollArea::horizontal().id_salt("executors").show(ui, |ui| {
+            ui.horizontal(|ui| {
+                // Masters.
+                card(ui, &mut |ui| {
+                    ui.label(theme::caption(t("Grand master")));
+                    let mut gm = masters.grand_master;
+                    if level_bar(ui, &mut gm, theme::AMBER).changed() {
+                        cmds.push(LightControl::GrandMaster(gm));
+                    }
+                    let (fill, fg) = if masters.blackout { (theme::RED, Color32::WHITE) } else { (theme::BG_INPUT, theme::TEXT) };
+                    if ui.add(egui::Button::new(RichText::new(t("Blackout")).color(fg)).fill(fill).min_size(egui::vec2(138.0, 24.0))).clicked() {
+                        cmds.push(LightControl::Blackout(!masters.blackout));
+                    }
+                });
+                for seq in &l.sequences {
+                    let st = status.iter().find(|x| x.id == seq.id);
+                    let cue = st.and_then(|x| x.cue).and_then(|c| seq.index_of(c)).map(|i| &seq.cues[i]);
+                    let next = match cue {
+                        Some(c) => seq.index_of(c.id).and_then(|i| seq.cues.get(i + 1)),
+                        None => seq.cues.first(),
+                    };
+                    card(ui, &mut |ui| {
+                        let active = st.is_some_and(|x| x.active);
+                        ui.horizontal(|ui| {
+                            let mark = if active { theme::GREEN } else { theme::TEXT_FAINT };
+                            ui.label(RichText::new(icons::FIBER_MANUAL_RECORD).font(theme::icon_font(10.0)).color(mark));
+                            ui.label(RichText::new(l.sequence_label(seq.id).unwrap_or_default()).font(theme::semibold(12.5)));
+                        });
+                        let now_text = cue.map_or_else(|| "—".to_string(), |c| format!("{} {}", c.number, c.name));
+                        ui.label(RichText::new(now_text).color(theme::TEXT).small());
+                        let next_text = next.map_or_else(|| t("end").to_string(), |c| tr!("next: {cue}", cue = format!("{} {}", c.number, c.name)));
+                        ui.label(RichText::new(next_text).color(theme::TEXT_DIM).small());
+                        let mut level = masters.level(seq.id);
+                        if level_bar(ui, &mut level, theme::ACCENT).changed() {
+                            cmds.push(LightControl::Level(seq.id, level));
+                        }
+                        ui.horizontal(|ui| {
+                            if ui.add_enabled(next.is_some(), egui::Button::new(RichText::new("GO").font(theme::semibold(13.0))).fill(theme::GO).min_size(egui::vec2(66.0, 24.0))).clicked() {
+                                cmds.push(LightControl::Go(seq.id, None));
+                            }
+                            if ui.add_enabled(active, egui::Button::new(t("Release")).min_size(egui::vec2(66.0, 24.0))).clicked() {
+                                cmds.push(LightControl::Release(Some(seq.id), 1.0));
+                            }
+                        });
+                    });
+                }
+                if l.sequences.is_empty() {
+                    ui.label(RichText::new(t("Sequences appear here as executors.")).color(theme::TEXT_DIM));
+                }
+            });
+        });
+        for c in cmds {
+            self.control(show, Command::Light(c));
+        }
+    }
+
+    /// DMX outputs: protocol, target, universes, live status; Art-Net discovery.
+    fn outputs_page(&mut self, ui: &mut Ui, show: &mut Show) {
+        use crate::light::dmx::{OutputConfig, OutputProtocol, UniverseRoute};
+        ui.ctx().request_repaint_after(std::time::Duration::from_millis(250));
+        let handles = show.media.light.outputs().to_vec();
+        let l = &mut show.ws.lighting;
+        ui.horizontal(|ui| {
+            for (label, p) in [
+                ("Art-Net", OutputProtocol::ArtNet { target: String::new() }),
+                ("sACN", OutputProtocol::Sacn { target: String::new(), priority: 100 }),
+                ("Enttec USB Pro", OutputProtocol::EnttecPro { port: String::new() }),
+            ] {
+                if ui.button(theme::with_icon(icons::ADD, label)).clicked() {
+                    let wire0 = matches!(p, OutputProtocol::ArtNet { .. });
+                    let universe = l.fixtures.iter().map(|f| f.universe).min().unwrap_or(1);
+                    l.outputs.push(OutputConfig {
+                        name: label.into(),
+                        enabled: true,
+                        protocol: p,
+                        routes: vec![UniverseRoute { universe, wire: if wire0 { universe - 1 } else { universe } }],
+                    });
+                }
+            }
+            ui.separator();
+            let found = self.light.found.clone();
+            let searching = found.lock().searching;
+            if ui.add_enabled(!searching, egui::Button::new(theme::with_icon(icons::REFRESH, t("Find devices")))).clicked() {
+                found.lock().searching = true;
+                let f = found.clone();
+                let _ = std::thread::Builder::new().name("openq-dmx-find".into()).spawn(move || {
+                    let nodes = crate::light::artnet::discover(std::time::Duration::from_millis(1500));
+                    let ports = crate::light::enttec::ports();
+                    let mut f = f.lock();
+                    f.searching = false;
+                    f.ports = ports;
+                    match nodes {
+                        Ok(n) => {
+                            f.nodes = n;
+                            f.error = None;
+                        }
+                        Err(e) => f.error = Some(format!("{e:#}")),
+                    }
+                });
+            }
+            let f = self.light.found.lock();
+            if f.searching {
+                ui.spinner();
+            } else if let Some(e) = &f.error {
+                ui.label(RichText::new(e).color(theme::RED));
+            } else if !f.nodes.is_empty() || !f.ports.is_empty() {
+                ui.label(RichText::new(tr!("{n} Art-Net nodes, {p} serial ports", n = f.nodes.len().to_string(), p = f.ports.len().to_string())).color(theme::TEXT_DIM));
+            }
+        });
+        ui.add_space(6.0);
+        let found = self.light.found.lock();
+        let mut remove = None;
+        for (i, o) in l.outputs.iter_mut().enumerate() {
+            egui::Frame::new()
+                .fill(theme::BG_RAISED)
+                .corner_radius(8.0)
+                .stroke(egui::Stroke::new(1.0, theme::BORDER))
+                .inner_margin(egui::Margin::same(8))
+                .show(ui, |ui| {
+                    ui.horizontal(|ui| {
+                        ui.checkbox(&mut o.enabled, "");
+                        ui.add(egui::TextEdit::singleline(&mut o.name).desired_width(140.0));
+                        ui.label(RichText::new(o.protocol.label()).color(theme::TEXT_DIM));
+                        match &mut o.protocol {
+                            OutputProtocol::ArtNet { target } => {
+                                ui.label(t("Destination"));
+                                ui.add(egui::TextEdit::singleline(target).hint_text(t("broadcast")).desired_width(140.0));
+                                if !found.nodes.is_empty() {
+                                    egui::ComboBox::from_id_salt(("nodes", i)).selected_text(t("Nodes")).show_ui(ui, |ui| {
+                                        for n in &found.nodes {
+                                            let outs = n.outputs.iter().map(|u| u.to_string()).collect::<Vec<_>>().join(", ");
+                                            if ui.selectable_label(false, format!("{} {} ({outs})", n.ip, n.short_name)).clicked() {
+                                                *target = n.ip.to_string();
+                                            }
+                                        }
+                                    });
+                                }
+                            }
+                            OutputProtocol::Sacn { target, priority } => {
+                                ui.label(t("Destination"));
+                                ui.add(egui::TextEdit::singleline(target).hint_text(t("multicast")).desired_width(140.0));
+                                ui.label(t("Priority"));
+                                ui.add(DragValue::new(priority).range(0..=200));
+                            }
+                            OutputProtocol::EnttecPro { port } => {
+                                ui.label(t("Port"));
+                                ui.add(egui::TextEdit::singleline(port).hint_text("/dev/ttyUSB0").desired_width(140.0));
+                                if !found.ports.is_empty() {
+                                    egui::ComboBox::from_id_salt(("ports", i)).selected_text(t("Ports")).show_ui(ui, |ui| {
+                                        for p in &found.ports {
+                                            if ui.selectable_label(false, p).clicked() {
+                                                *port = p.clone();
+                                            }
+                                        }
+                                    });
+                                }
+                            }
+                        }
+                        if ui.small_button(icons::DELETE).on_hover_text(t("Remove output")).clicked() {
+                            remove = Some(i);
+                        }
+                    });
+                    ui.horizontal_wrapped(|ui| {
+                        ui.label(t("Universes"));
+                        let mut drop = None;
+                        for (ri, r) in o.routes.iter_mut().enumerate() {
+                            ui.add(DragValue::new(&mut r.universe).range(1..=crate::light::model::MAX_UNIVERSE));
+                            ui.label("→");
+                            ui.add(DragValue::new(&mut r.wire).range(0..=32767)).on_hover_text(t("Universe number on the wire (Art-Net counts from 0)"));
+                            if ui.small_button(icons::CLOSE).clicked() {
+                                drop = Some(ri);
+                            }
+                            ui.add_space(8.0);
+                        }
+                        if let Some(ri) = drop {
+                            o.routes.remove(ri);
+                        }
+                        if ui.small_button(icons::ADD).on_hover_text(t("Add universe")).clicked() {
+                            let last = o.routes.last().copied().unwrap_or(UniverseRoute { universe: 0, wire: 0 });
+                            o.routes.push(UniverseRoute { universe: last.universe + 1, wire: last.wire + 1 });
+                        }
+                    });
+                    // Live status (outputs are matched by name: the light thread runs the enabled ones).
+                    if o.enabled
+                        && let Some(h) = handles.iter().find(|h| h.name == o.name)
+                    {
+                        let st = h.status();
+                        let (c, text) = match (&st.error, st.open) {
+                            (Some(e), _) => (theme::RED, e.clone()),
+                            (None, true) => (theme::GREEN, tr!("sending · {n} packets", n = st.packets.to_string())),
+                            (None, false) => (theme::AMBER, t("opening…").to_string()),
+                        };
+                        ui.label(RichText::new(text).color(c).small());
+                    }
+                });
+            ui.add_space(4.0);
+        }
+        drop(found);
+        if let Some(i) = remove {
+            l.outputs.remove(i);
+        }
+        if l.outputs.is_empty() {
+            ui.label(RichText::new(t("No outputs: add Art-Net, sACN or a USB interface to send DMX.")).color(theme::TEXT_DIM));
+        }
+    }
+
+    /// The latest DMX frame, one universe at a time.
+    fn monitor_page(&mut self, ui: &mut Ui, show: &mut Show) {
+        ui.ctx().request_repaint_after(std::time::Duration::from_millis(100));
+        let frame = show.media.light.frame();
+        if frame.universes.is_empty() {
+            ui.label(RichText::new(t("Nothing patched: no universes to show.")).color(theme::TEXT_DIM));
+            return;
+        }
+        if frame.get(self.light.monitor_universe).is_none() {
+            self.light.monitor_universe = frame.universes[0].id;
+        }
+        ui.horizontal(|ui| {
+            ui.label(theme::caption(t("Universe")));
+            for u in &frame.universes {
+                ui.selectable_value(&mut self.light.monitor_universe, u.id, u.id.to_string());
+            }
+        });
+        let Some(u) = frame.get(self.light.monitor_universe) else { return };
+        // Fixture starts, to mark them in the grid.
+        let starts: std::collections::HashMap<u16, FixtureId> =
+            show.ws.lighting.fixtures.iter().filter(|f| f.universe == u.id && f.address > 0).map(|f| (f.address, f.id)).collect();
+        let cols = 32;
+        let cell = egui::vec2(((ui.available_width() - 4.0) / cols as f32).floor().max(24.0), 26.0);
+        egui::ScrollArea::vertical().id_salt("dmx_monitor").auto_shrink(false).show(ui, |ui| {
+            let (rect, _) = ui.allocate_exact_size(egui::vec2(cell.x * cols as f32, cell.y * (512 / cols) as f32), egui::Sense::hover());
+            let p = ui.painter();
+            for (i, v) in u.data.iter().enumerate() {
+                let r = egui::Rect::from_min_size(rect.min + egui::vec2((i % cols) as f32 * cell.x, (i / cols) as f32 * cell.y), cell).shrink(1.0);
+                if !ui.is_rect_visible(r) {
+                    continue;
+                }
+                let k = *v as f32 / 255.0;
+                let fill = theme::BG_RAISED.lerp_to_gamma(theme::ACCENT, k * 0.8);
+                p.rect_filled(r, 2.0, fill);
+                let slot = i as u16 + 1;
+                if starts.contains_key(&slot) {
+                    p.line_segment([r.left_top(), r.left_bottom()], egui::Stroke::new(2.0, theme::AMBER));
+                }
+                p.text(r.left_top() + egui::vec2(3.0, 1.0), egui::Align2::LEFT_TOP, slot.to_string(), egui::FontId::proportional(8.0), theme::TEXT_FAINT);
+                p.text(r.right_bottom() - egui::vec2(3.0, 1.0), egui::Align2::RIGHT_BOTTOM, v.to_string(), theme::mono(10.0), if *v > 0 { Color32::WHITE } else { theme::TEXT_FAINT });
+            }
+        });
+    }
+}
+
+/// A horizontal level (0..=1) set by clicking or dragging, with the percentage on it.
+fn level_bar(ui: &mut Ui, value: &mut f32, color: Color32) -> egui::Response {
+    let (rect, mut r) = ui.allocate_exact_size(egui::vec2(ui.available_width(), 22.0), egui::Sense::click_and_drag());
+    if let Some(pos) = r.interact_pointer_pos()
+        && (r.dragged() || r.clicked())
+    {
+        let v = ((pos.x - rect.left()) / rect.width()).clamp(0.0, 1.0);
+        if v != *value {
+            *value = v;
+            r.mark_changed();
+        }
+    }
+    let p = ui.painter();
+    p.rect_filled(rect, 4.0, theme::BG_INPUT);
+    let fill = egui::Rect::from_min_size(rect.min, egui::vec2(rect.width() * *value, rect.height()));
+    p.rect_filled(fill, 4.0, color.gamma_multiply(0.7));
+    p.rect_stroke(rect, 4.0, egui::Stroke::new(1.0, theme::BORDER), egui::StrokeKind::Inside);
+    p.text(rect.center(), egui::Align2::CENTER_CENTER, format!("{:.0} %", *value * 100.0), theme::mono(11.5), Color32::WHITE);
+    r.on_hover_cursor(egui::CursorIcon::ResizeHorizontal)
 }
 
 /// Patch `form.count` fixtures of a type; returns how many fit.

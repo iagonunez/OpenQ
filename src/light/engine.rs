@@ -71,6 +71,30 @@ pub enum LightCommand {
     Outputs(Vec<OutputSender>),
 }
 
+/// Grand master, blackout and sequence levels as set through a [`LightEngine`].
+#[derive(Clone, Debug, PartialEq)]
+pub struct Masters {
+    /// Grand master, 0..=1.
+    pub grand_master: f32,
+    /// Blackout on.
+    pub blackout: bool,
+    /// Sequence levels (missing = full).
+    pub levels: std::collections::HashMap<SequenceId, f32>,
+}
+
+impl Default for Masters {
+    fn default() -> Self {
+        Self { grand_master: 1.0, blackout: false, levels: Default::default() }
+    }
+}
+
+impl Masters {
+    /// Level of a sequence.
+    pub fn level(&self, seq: SequenceId) -> f32 {
+        self.levels.get(&seq).copied().unwrap_or(1.0)
+    }
+}
+
 #[derive(Default)]
 struct Shared {
     frame: Mutex<DmxFrame>,
@@ -87,6 +111,7 @@ pub struct LightEngine {
     thread: Option<JoinHandle<()>>,
     compiles: u64,
     outputs: Vec<OutputConfig>,
+    masters: Masters,
     handles: Vec<OutputHandle>,
 }
 
@@ -97,7 +122,7 @@ impl LightEngine {
         let shared = Arc::new(Shared::default());
         let s = shared.clone();
         let thread = std::thread::Builder::new().name(THREAD.into()).spawn(move || run(rx, s)).ok();
-        Self { tx, shared, thread, compiles: 0, outputs: Vec::new(), handles: Vec::new() }
+        Self { tx, shared, thread, compiles: 0, outputs: Vec::new(), handles: Vec::new(), masters: Masters::default() }
     }
 
     fn send(&self, cmd: LightCommand) {
@@ -160,18 +185,27 @@ impl LightEngine {
     }
 
     /// Sequence master level.
-    pub fn set_level(&self, seq: SequenceId, level: f32) {
+    pub fn set_level(&mut self, seq: SequenceId, level: f32) {
+        let level = level.clamp(0.0, 1.0);
+        self.masters.levels.insert(seq, level);
         self.send(LightCommand::Level(seq, level));
     }
 
     /// Grand master.
-    pub fn set_grand_master(&self, level: f32) {
-        self.send(LightCommand::GrandMaster(level));
+    pub fn set_grand_master(&mut self, level: f32) {
+        self.masters.grand_master = level.clamp(0.0, 1.0);
+        self.send(LightCommand::GrandMaster(self.masters.grand_master));
     }
 
     /// Blackout.
-    pub fn set_blackout(&self, on: bool) {
+    pub fn set_blackout(&mut self, on: bool) {
+        self.masters.blackout = on;
         self.send(LightCommand::Blackout(on));
+    }
+
+    /// Master levels as last set.
+    pub fn masters(&self) -> &Masters {
+        &self.masters
     }
 
     /// Replace the programmer.

@@ -317,5 +317,21 @@ mod tests {
             std::thread::sleep(Duration::from_millis(10));
         }
         assert!(lit(), "fixture 1 at full after the delay");
+        // Executor and masters through commands (what replicas send).
+        use crate::control::LightControl;
+        apply(&mut show, Command::Light(LightControl::GrandMaster(0.5)), Instant::now()).unwrap();
+        let half = || show.media.light.frame().get(1).is_some_and(|u| u.data[0] == 128);
+        let deadline = Instant::now() + Duration::from_secs(2);
+        while !half() && Instant::now() < deadline {
+            std::thread::sleep(Duration::from_millis(10));
+        }
+        assert!(half(), "grand master at 50 %");
+        apply(&mut show, Command::Light(LightControl::Release(None, 0.0)), Instant::now()).unwrap();
+        let dark = || show.media.light.frame().get(1).is_some_and(|u| u.data[0] == 0);
+        let deadline = Instant::now() + Duration::from_secs(2);
+        while !dark() && Instant::now() < deadline {
+            std::thread::sleep(Duration::from_millis(10));
+        }
+        assert!(dark(), "released");
     }
 }
