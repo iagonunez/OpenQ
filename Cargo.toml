@@ -1,6 +1,6 @@
 [package]
 name = "openq"
-version = "0.2.3"
+version = "0.2.4"
 license = "Apache-2.0"
 repository = "https://github.com/iagonunez/OpenQ"
 description = "Show-control and cue playback system"

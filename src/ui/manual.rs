@@ -42,6 +42,46 @@ const FILES: &[(&str, &[u8])] = &[
     ("img/waveform.webp", include_bytes!("../../docs/manual/img/waveform.webp")),
     // Icons in the manual use the app's own Material Symbols subset.
     ("fonts/MaterialSymbolsRounded.ttf", include_bytes!("../../assets/fonts/MaterialSymbolsRounded.ttf")),
+    ("img/es/animation.webp", include_bytes!("../../docs/manual/img/es/animation.webp")),
+    ("img/es/animation-stage.webp", include_bytes!("../../docs/manual/img/es/animation-stage.webp")),
+    ("img/es/audio-fx.webp", include_bytes!("../../docs/manual/img/es/audio-fx.webp")),
+    ("img/es/edit-mode.webp", include_bytes!("../../docs/manual/img/es/edit-mode.webp")),
+    ("img/es/eq.webp", include_bytes!("../../docs/manual/img/es/eq.webp")),
+    ("img/es/geometry-preview.webp", include_bytes!("../../docs/manual/img/es/geometry-preview.webp")),
+    ("img/es/io.webp", include_bytes!("../../docs/manual/img/es/io.webp")),
+    ("img/es/levels.webp", include_bytes!("../../docs/manual/img/es/levels.webp")),
+    ("img/es/mapping.webp", include_bytes!("../../docs/manual/img/es/mapping.webp")),
+    ("img/es/mic.webp", include_bytes!("../../docs/manual/img/es/mic.webp")),
+    ("img/es/object-audio.webp", include_bytes!("../../docs/manual/img/es/object-audio.webp")),
+    ("img/es/recovery.webp", include_bytes!("../../docs/manual/img/es/recovery.webp")),
+    ("img/es/remote-share.webp", include_bytes!("../../docs/manual/img/es/remote-share.webp")),
+    ("img/es/room.webp", include_bytes!("../../docs/manual/img/es/room.webp")),
+    ("img/es/show-mode.webp", include_bytes!("../../docs/manual/img/es/show-mode.webp")),
+    ("img/es/text-cue.webp", include_bytes!("../../docs/manual/img/es/text-cue.webp")),
+    ("img/es/triggers.webp", include_bytes!("../../docs/manual/img/es/triggers.webp")),
+    ("img/es/video-fx.webp", include_bytes!("../../docs/manual/img/es/video-fx.webp")),
+    ("img/es/video-fx-stage.webp", include_bytes!("../../docs/manual/img/es/video-fx-stage.webp")),
+    ("img/es/waveform.webp", include_bytes!("../../docs/manual/img/es/waveform.webp")),
+    ("img/gl/animation.webp", include_bytes!("../../docs/manual/img/gl/animation.webp")),
+    ("img/gl/animation-stage.webp", include_bytes!("../../docs/manual/img/gl/animation-stage.webp")),
+    ("img/gl/audio-fx.webp", include_bytes!("../../docs/manual/img/gl/audio-fx.webp")),
+    ("img/gl/edit-mode.webp", include_bytes!("../../docs/manual/img/gl/edit-mode.webp")),
+    ("img/gl/eq.webp", include_bytes!("../../docs/manual/img/gl/eq.webp")),
+    ("img/gl/geometry-preview.webp", include_bytes!("../../docs/manual/img/gl/geometry-preview.webp")),
+    ("img/gl/io.webp", include_bytes!("../../docs/manual/img/gl/io.webp")),
+    ("img/gl/levels.webp", include_bytes!("../../docs/manual/img/gl/levels.webp")),
+    ("img/gl/mapping.webp", include_bytes!("../../docs/manual/img/gl/mapping.webp")),
+    ("img/gl/mic.webp", include_bytes!("../../docs/manual/img/gl/mic.webp")),
+    ("img/gl/object-audio.webp", include_bytes!("../../docs/manual/img/gl/object-audio.webp")),
+    ("img/gl/recovery.webp", include_bytes!("../../docs/manual/img/gl/recovery.webp")),
+    ("img/gl/remote-share.webp", include_bytes!("../../docs/manual/img/gl/remote-share.webp")),
+    ("img/gl/room.webp", include_bytes!("../../docs/manual/img/gl/room.webp")),
+    ("img/gl/show-mode.webp", include_bytes!("../../docs/manual/img/gl/show-mode.webp")),
+    ("img/gl/text-cue.webp", include_bytes!("../../docs/manual/img/gl/text-cue.webp")),
+    ("img/gl/triggers.webp", include_bytes!("../../docs/manual/img/gl/triggers.webp")),
+    ("img/gl/video-fx.webp", include_bytes!("../../docs/manual/img/gl/video-fx.webp")),
+    ("img/gl/video-fx-stage.webp", include_bytes!("../../docs/manual/img/gl/video-fx-stage.webp")),
+    ("img/gl/waveform.webp", include_bytes!("../../docs/manual/img/gl/waveform.webp")),
 ];
 
 /// Write the manual into `dir` (replacing what is there) and return the path of its index page.
@@ -93,19 +133,34 @@ mod tests {
     fn every_manual_file_is_bundled_and_referenced_files_exist() {
         let root = Path::new(env!("CARGO_MANIFEST_DIR")).join("docs/manual");
         let bundled: Vec<&str> = FILES.iter().map(|f| f.0).collect();
-        for entry in std::fs::read_dir(root.join("img")).unwrap() {
-            let name = format!("img/{}", entry.unwrap().file_name().to_string_lossy());
-            assert!(bundled.contains(&name.as_str()), "{name} is not in manual::FILES");
+        for dir in ["img", "img/es", "img/gl"] {
+            for entry in std::fs::read_dir(root.join(dir)).unwrap() {
+                let entry = entry.unwrap();
+                if entry.path().is_file() {
+                    let name = format!("{dir}/{}", entry.file_name().to_string_lossy());
+                    assert!(bundled.contains(&name.as_str()), "{name} is not in manual::FILES");
+                }
+            }
         }
         let html = std::str::from_utf8(FILES[0].1).unwrap();
-        for (rel, _) in &FILES[1..] {
+        for (rel, _) in FILES[1..].iter().filter(|f| !f.0.starts_with("img/es/") && !f.0.starts_with("img/gl/")) {
             assert!(html.contains(rel), "{rel} is bundled but not used by the manual");
         }
-        // The translations show the same pictures.
-        for (rel, bytes) in &FILES[1..3] {
-            let page = std::str::from_utf8(bytes).unwrap();
-            for (img, _) in FILES.iter().filter(|f| f.0.starts_with("img/")) {
-                assert!(page.contains(img), "{rel} doesn't show {img}");
+        for (rel, lang) in [("img/es/", "index.es.html"), ("img/gl/", "index.gl.html")] {
+            let page = std::str::from_utf8(FILES.iter().find(|f| f.0 == lang).unwrap().1).unwrap();
+            for (img, _) in FILES.iter().filter(|f| f.0.starts_with(rel)) {
+                assert!(page.contains(img), "{lang} doesn't show {img}");
+            }
+        }
+        // Each translation shows its own language's pictures: img/X.webp (English) in index.html,
+        // img/es/X.webp in index.es.html and img/gl/X.webp in index.gl.html. A picture without a
+        // translation stays English and is referenced as img/X.webp in every page.
+        for (rel, lang) in [("index.es.html", "es"), ("index.gl.html", "gl")] {
+            let page = std::str::from_utf8(FILES.iter().find(|f| f.0 == rel).unwrap().1).unwrap();
+            for (img, _) in FILES.iter().filter(|f| f.0.starts_with("img/") && !f.0.starts_with("img/es/") && !f.0.starts_with("img/gl/")) {
+                let translated = img.replacen("img/", &format!("img/{lang}/"), 1);
+                let shown = if FILES.iter().any(|f| f.0 == translated) { translated } else { img.to_string() };
+                assert!(page.contains(&shown), "{rel} doesn't show {shown}");
             }
         }
         assert_eq!((page_for("es_ES.UTF-8"), page_for("gl_ES"), page_for("en_GB"), page_for("")), ("index.es.html", "index.gl.html", "index.html", "index.html"));

@@ -12,6 +12,7 @@ PS = 'powershell -ExecutionPolicy Bypass -c "irm https://github.com/iagonunez/oq
 
 TEXT = {
     "en": {
+        "shot": "screenshot.webp",
         "dir": "", "readme": "README.md", "manual": "manual/index.html",
         "title": "OpenQ — live show control for sound, video and the stage",
         "desc": "OpenQ runs a show from a list of cues: music, sound effects, video, text, fades and OSC, fired with one GO button. Free for any production.",
@@ -19,6 +20,7 @@ TEXT = {
         "lede": "Build a list of cues — music, effects, movies, titles, fades, messages to the lighting desk — and run the whole show with one GO button. Free for any production, commercial ones included.",
         "get": "Install", "source": "Source code", "manual_l": "User manual", "license": "License",
         "install": "Install OpenQ",
+        "guide_title": "Step by step",
         "where_unix": "In a terminal:", "where_win": "In PowerShell:",
         "after_linux": "Installs the build tools from your distribution's packages (it asks first), builds OpenQ and adds it to your applications menu.",
         "after_macos": "macOS 11 or later. On a Mac without Apple's Command Line Tools, macOS asks to install them first; run the command again afterwards. OpenQ ends up in Applications in your home folder.",
@@ -42,6 +44,7 @@ TEXT = {
         "foot": "Apache 2.0: free to use, change, share and sell, including for commercial productions.",
     },
     "es": {
+        "shot": "screenshot.es.webp",
         "dir": "es/", "readme": "README.es.md", "manual": "manual/index.es.html",
         "title": "OpenQ — control de espectáculos en directo para sonido, vídeo y escena",
         "desc": "OpenQ lleva un espectáculo desde una lista de cues: música, efectos, vídeo, texto, fundidos y OSC, con un solo botón GO. Gratis para cualquier producción.",
@@ -49,6 +52,7 @@ TEXT = {
         "lede": "Monta una lista de cues — música, efectos, películas, rótulos, fundidos, mensajes a la mesa de luces — y lleva todo el espectáculo con un solo botón GO. Gratis para cualquier producción, también comercial.",
         "get": "Instalar", "source": "Código fuente", "manual_l": "Manual de usuario", "license": "Licencia",
         "install": "Instala OpenQ",
+        "guide_title": "Paso a paso",
         "where_unix": "En un terminal:", "where_win": "En PowerShell:",
         "after_linux": "Instala las herramientas de compilación con los paquetes de tu distribución (pregunta antes), compila OpenQ y lo añade al menú de aplicaciones.",
         "after_macos": "macOS 11 o posterior. En un Mac sin las Command Line Tools de Apple, macOS pide instalarlas primero; después vuelve a ejecutar la orden. OpenQ queda en Aplicaciones dentro de tu carpeta personal.",
@@ -72,6 +76,7 @@ TEXT = {
         "foot": "Apache 2.0: uso gratuito, también en producciones comerciales; puedes modificarlo, compartirlo y venderlo.",
     },
     "gl": {
+        "shot": "screenshot.gl.webp",
         "dir": "gl/", "readme": "README.gl.md", "manual": "manual/index.gl.html",
         "title": "OpenQ — control de espectáculos en directo para son, vídeo e escena",
         "desc": "OpenQ leva un espectáculo desde unha lista de cues: música, efectos, vídeo, texto, fundidos e OSC, cun só botón GO. De balde para calquera produción.",
@@ -79,6 +84,7 @@ TEXT = {
         "lede": "Monta unha lista de cues — música, efectos, películas, rótulos, fundidos, mensaxes á mesa de luces — e leva todo o espectáculo cun só botón GO. De balde para calquera produción, tamén comercial.",
         "get": "Instalar", "source": "Código fonte", "manual_l": "Manual de usuario", "license": "Licenza",
         "install": "Instala OpenQ",
+        "guide_title": "Paso a paso",
         "where_unix": "Nun terminal:", "where_win": "En PowerShell:",
         "after_linux": "Instala as ferramentas de compilación cos paquetes da túa distribución (pregunta antes), compila OpenQ e engádeo ao menú de aplicacións.",
         "after_macos": "macOS 11 ou posterior. Nun Mac sen as Command Line Tools de Apple, macOS pide instalalas primeiro; despois volve executar a orde. OpenQ queda en Aplicacións dentro do teu cartafol persoal.",
@@ -108,6 +114,19 @@ LANG_NAMES = [("en", "EN", "English"), ("es", "ES", "Español"), ("gl", "GL", "G
 
 def esc(s):
     return s.replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;").replace('"', "&quot;")
+
+
+def guide(lang):
+    """The step-by-step install walkthrough, taken from the manual's Installing section so the page
+    and the manual always say the same thing. The video is served from the site root."""
+    t = TEXT[lang]
+    src = (DOCS / t["manual"]).read_text(encoding="utf-8")
+    start = src.index("  <h3>", src.index('<section id="start">'))
+    end = src.rfind("  <p>", start, src.index("<pre><code>cargo run", start))
+    body = src[start:end]
+    body = body[body.index("\n") + 1:]  # drop the manual's own <h3>; the page has its own heading
+    return (f'<section class="guide" id="guide">\n  <h2>{t["guide_title"]}</h2>\n'
+            f'{body}</section>')
 
 
 def page(lang):
@@ -194,8 +213,9 @@ def page(lang):
   </div>
   <p class="more">{t["more"]}</p>
 </section>
+{guide(lang)}
 
-<div class="shot"><img src="{up}img/screenshot.webp" width="1600" height="1466" alt="{esc(t["shot_alt"])}" loading="lazy"></div>
+<div class="shot"><img src="{up}img/{t["shot"]}" width="1600" height="1466" alt="{esc(t["shot_alt"])}" loading="lazy"></div>
 
 <section class="section">
   <h2>{t["what"]}</h2>
