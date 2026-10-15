@@ -627,11 +627,82 @@ MVR import, Phase 4 (hardware console: K1 `Surface` trait, K3 console protocol, 
 - **Fixture profiles:** repeated-channel attributes and the show/library difference marker (§B).
 
 Known issues to look at:
-- `Show::sync_lighting` compares the whole design on every edit under the show lock (fine at
-  normal sizes; a change counter would be cheaper for very large designs).
+- `Show::sync_lighting` compares the whole design on every edit under the show lock (0.6 ms on the
+  2000-fixture rig; a change counter would be cheaper for very large designs).
 - Duplicate attributes in one unit (two Control channels) can't both be used; importers take a
   second wheel/gobo as `Gobo2`/`ColorMacro`/`PrismRotation`, a second light source as a cell, and leave
   the rest unused with a note.
 - Untested on real hardware: Art-Net nodes, sACN receivers, Enttec USB Pro. Importers were checked
   on a few real files only (OFL: MAC Aura, Robin 600E, COLORband PiX; QLC+: Sharpy, ColorBand Pix IP;
   GDTF: four BlenderDMX profiles).
+
+## Review (2026-10-15, after merging master 0.2.3)
+Measured with `library::bench_rig` (release build): 500 fixtures × 5 sequences × 100 cues compiles in
+47 ms (1.6 M entries, 18 MB); 2000 × 10 × 300 in 1.7 s (38 M entries, 455 MB, twice that at the
+swap). The per-frame design clone + compare in `lighting_view` costs 0.1 / 0.6 ms: fine.
+
+Done the same day: R1–R7, P1–P3 (P4 left). Results on the 2000 × 10 × 300 rig: a cue edit
+recompiles in 170 ms (one sequence) instead of 1.7 s; the compiled show takes 303 MB instead of
+455 MB (that rig changes every value in every cue, so only the per-entry timing goes; a tracking
+show that changes a few fixtures per cue keeps little more than one snapshot per 32 cues); the
+full compile is unchanged. How each was fixed:
+- R1: Grand master, blackout, tempo and levels skip the queue (levels are re-applied when a new
+  show arrives); held commands carry the compile generation announced before them.
+- R2: `LightShow::same_input` in `Show::sync_lighting`; otherwise `LightEngine::load_io` only.
+- R3: released LTP tracks resolve after the others and fade from their start to that value.
+- R4: the programmer is resent after every edit (`edit_gen`), like programmer effects.
+- R5: up to four earlier cues' effect lists fade out at once (`OLD_EFFECTS`); an effect a later
+  list also has is left to that one.
+- R6: `Playback.base` (sequence values before effects/programmer) is where new fades start.
+- R7: `Shared.quit` ends the light thread on drop without waiting for the compile thread.
+- P1: `LightShow::compile_from` (the compile thread keeps the last design + show); sequences are
+  `Arc<CompiledSequence>`, kept when the patch, presets, effects and the sequence are unchanged.
+- P2: `CompiledSequence` keeps a full snapshot every `SNAPSHOT` (32) cues, cues keep `changes`
+  (NaN = released) and per-feature `timings`; moves in black are `CompiledCue.moves`. GO rebuilds
+  the state into reused buffers (`state_into`).
+- P3: a replica loads an empty design once and never compiles.
+
+Bugs:
+- **R1 GOs and masters wait for compiles that never settle.** Every design edit sends
+  `LightCommand::Compiling(g)`, and the light thread holds *every* later command (GO, release,
+  grand master, blackout, levels, tempo) until a show with generation ≥ the newest announced one
+  arrives. A continuous edit (dragging fixtures in the Plan view, a slider in the patch sheet) bumps
+  the generation every UI frame; once a compile takes longer than a frame (≥ ~500 fixtures with
+  cues), the newest show is always behind, so commands sit in the queue until `HOLD_LIMIT` (5 s),
+  then again for the next edit. Blackout and the grand master should never wait. Fix: masters/
+  tempo/levels go straight through; a held GO records the generation announced when it arrived and
+  is released once that one (not the newest) is applied, so it waits one compile at most.
+- **R2 Recompiles for edits playback doesn't use.** Moving fixtures in the plan, plot shapes,
+  names, groups, notes all recompile the whole design (1.7 s on the big rig) and trigger R1. Fix: a
+  "playback key" compare (types, fixture id/type/mode/address/universe/invert, sequences, presets,
+  effects) in `Show::sync_lighting`; other edits skip `load`.
+- **R3 LTP release snaps.** Releasing a sequence that owns an LTP slot (pan, colour) fades it to its
+  *home* value, then drops the track, and the slot jumps to whatever an older sequence holds there.
+  Should fade to the value underneath (the next-highest stamp) or home if none.
+- **R4 Programmer follows presets only when the programmer changes.** `lighting_frame` resolves
+  preset references when the programmer key changes; editing a preset that the programmer uses
+  leaves the stage on the old value until the next programmer edit. Fix: include the edit
+  generation in the key (or resolve on every recompile, like effects).
+- **R5 Quick GOs cut effect fades.** `Playback::go`/`release` overwrite `old_effects`: a second GO
+  while the previous cue's effects are still fading out stops them instantly.
+- **R6 Fades start from the programmer.** A GO starts an LTP fade from the slot's last resolved
+  value, which includes programmer overrides and effect offsets, so after clearing the programmer
+  a long fade still begins at the programmer's value. Minor (only while designing).
+- **R7 Shutdown can wait for a compile.** The compile thread holds a sender to the light thread,
+  so `LightEngine::drop`'s join waits until a running compile ends (1.7 s on the big rig; bounded
+  by `EXIT_GRACE`).
+
+Performance:
+- **P1 Incremental compile.** Keep `Arc<CompiledSequence>` per sequence and recompile only
+  sequences whose cues/presets/effects or the patch changed (cue values are already `Shared`, so
+  the check is pointer compares). A cue edit on the big rig would go from 1.7 s to ~170 ms, and the
+  swap no longer doubles memory.
+- **P2 Smaller tracked state.** Each compiled cue stores every slot ever set in its sequence
+  (slots × cues). Storing only the changes per cue plus a full snapshot every N cues (GO to a cue
+  = nearest snapshot + replay) would cut the 455 MB by ~10× for typical tracking shows.
+- **P3 Replicas don't need to compile.** A replica mirrors the main device's states and frame but
+  still compiles the whole design (455 MB, 1.7 s per edit on the big rig) for a light thread that
+  has no outputs. Compile lazily, only when the replica stops mirroring.
+- **P4 Status without allocation.** The light thread builds a new `Vec<SequenceStatus>` 11 times a
+  second (`*s = playback.status()`); fill the shared one in place (`status_into`) so the thread is
+  allocation-free after loading, like `tick`.

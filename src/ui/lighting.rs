@@ -416,8 +416,10 @@ impl App {
         } else {
             l.programmer_effects.iter().filter_map(|r| Some((design.effect(r.effect)?.clone(), r.fixtures.clone()))).collect()
         };
-        // Sent again after a recompile too (the light thread drops them when slots move).
-        if l.sent_effects.as_ref() != Some(&effects) || show.edit_gen != l.sent_gen {
+        // Sent again after an edit too (the light thread drops effects when slots move, and
+        // programmer values may refer to presets that changed).
+        let edited = show.edit_gen != l.sent_gen;
+        if l.sent_effects.as_ref() != Some(&effects) || edited {
             show.media.light.set_programmer_effects(effects.clone());
             l.sent_effects = Some(effects);
             l.sent_gen = show.edit_gen;
@@ -430,7 +432,7 @@ impl App {
             None => l.selection.clone(),
         });
         let key = (l.programmer.clone(), l.blind, lit);
-        if l.sent.as_ref() != Some(&key) {
+        if l.sent.as_ref() != Some(&key) || edited {
             let design = &show.ws.lighting;
             let mut flat: Vec<(FixtureId, Attribute, f32)> = if l.blind {
                 Vec::new()

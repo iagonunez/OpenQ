@@ -762,7 +762,12 @@ impl LightCue {
 
     /// (delay, fade up, fade down) for an attribute.
     pub fn timing(&self, attr: Attribute) -> (f64, f64, f64) {
-        match self.feature_times.get(&attr.feature()) {
+        self.feature_timing(attr.feature())
+    }
+
+    /// (delay, fade up, fade down) for a feature's attributes.
+    pub fn feature_timing(&self, feature: Feature) -> (f64, f64, f64) {
+        match self.feature_times.get(&feature) {
             Some(t) => (t.delay.max(0.0), t.fade.max(0.0), t.fade.max(0.0)),
             None => (self.delay.max(0.0), self.fade.max(0.0), self.down_fade.unwrap_or(self.fade).max(0.0)),
         }

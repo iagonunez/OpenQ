@@ -114,6 +114,9 @@ struct Shared {
     errors: Mutex<Vec<String>>,
     frames: AtomicU64,
     faults: AtomicU64,
+    /// Set when the engine drops: the compile thread may still hold a sender, so the channel
+    /// alone wouldn't end the light thread until a long compile finishes.
+    quit: std::sync::atomic::AtomicBool,
 }
 
 /// Owns the light thread. Dropping it stops the thread (outputs close).
@@ -181,6 +184,11 @@ impl LightEngine {
             self.compile_tx = None;
             self.send(LightCommand::Failed(generation));
         }
+        self.load_io(lighting);
+    }
+
+    /// Restart the outputs and inputs if they changed (no recompile: see [`LightShow::same_input`]).
+    pub fn load_io(&mut self, lighting: &Lighting) {
         if lighting.outputs != self.outputs {
             self.set_outputs(lighting.outputs.clone());
         }
@@ -367,19 +375,25 @@ impl LightEngine {
 fn start_compiler(tx: mpsc::Sender<LightCommand>) -> Option<mpsc::Sender<(u64, Lighting)>> {
     let (ctx, crx) = mpsc::channel::<(u64, Lighting)>();
     let spawned = std::thread::Builder::new().name("openq-light-compile".into()).spawn(move || {
+        // The last design compiled and its show: unchanged sequences are kept from it.
+        let mut prev: Option<(Lighting, Arc<LightShow>)> = None;
         while let Ok(mut job) = crx.recv() {
             while let Ok(newer) = crx.try_recv() {
                 job = newer;
             }
             let (generation, design) = job;
-            let cmd = match crate::recovery::catch(|| Ok(Arc::new(LightShow::compile(&design)))) {
-                Ok(show) => LightCommand::Show(generation, show),
+            let from = prev.as_ref().map(|(l, s)| (l, &**s));
+            let cmd = match crate::recovery::catch(|| Ok(Arc::new(LightShow::compile_from(&design, from)))) {
+                Ok(show) => {
+                    prev = Some((design, show.clone()));
+                    LightCommand::Show(generation, show)
+                }
                 Err(e) => {
                     log::error!("lighting: compiling the design failed: {e:#}");
+                    prev = None;
                     LightCommand::Failed(generation)
                 }
             };
-            drop(design);
             if tx.send(cmd).is_err() {
                 return;
             }
@@ -397,6 +411,7 @@ fn start_compiler(tx: mpsc::Sender<LightCommand>) -> Option<mpsc::Sender<(u64, L
 impl Drop for LightEngine {
     fn drop(&mut self) {
         // Closing the channels ends the threads.
+        self.shared.quit.store(true, Ordering::Relaxed);
         self.compile_tx = None;
         let (tx, _) = mpsc::channel();
         drop(std::mem::replace(&mut self.tx, tx));
@@ -417,10 +432,15 @@ fn run(rx: mpsc::Receiver<LightCommand>, shared: Arc<Shared>) {
     let mut merged = DmxFrame::default();
     let mut next = Instant::now();
     let mut n: u64 = 0;
-    // Latest compile announced, newest show applied, commands held until they match.
+    // Latest compile announced, newest show applied. A command that needs the design (GO,
+    // release, programmer) waits for the compile announced before it, not for later ones, so a
+    // stream of edits delays it by one compile at most; masters never wait.
     let (mut expected, mut applied) = (0u64, 0u64);
-    let mut held: std::collections::VecDeque<LightCommand> = std::collections::VecDeque::new();
+    let mut held: std::collections::VecDeque<(u64, LightCommand)> = std::collections::VecDeque::new();
     let mut held_since: Option<Instant> = None;
+    // Sequence levels as last set: a level for a sequence the current show doesn't have yet
+    // (it's being compiled) applies when the show arrives.
+    let mut levels: std::collections::HashMap<SequenceId, f32> = std::collections::HashMap::new();
     loop {
         // Commands, until the frame is due.
         let mut quit = false;
@@ -449,27 +469,33 @@ fn run(rx: mpsc::Receiver<LightCommand>, shared: Arc<Shared>) {
                     if g > applied {
                         applied = g;
                         run_command(&mut playback, LightCommand::Show(g, show), &shared);
+                        for (seq, l) in &levels {
+                            playback.set_level(*seq, *l);
+                        }
                     }
-                    if applied >= expected {
-                        release_held(&mut playback, &mut held, &mut held_since, &shared);
-                    }
+                    release_held(&mut playback, &mut held, &mut held_since, applied, &shared);
                 }
                 Ok(LightCommand::Failed(g)) => {
                     push_error(&shared, "lighting: the design could not be compiled (see the error log)".into());
                     applied = applied.max(g);
-                    if applied >= expected {
-                        release_held(&mut playback, &mut held, &mut held_since, &shared);
-                    }
+                    release_held(&mut playback, &mut held, &mut held_since, applied, &shared);
                 }
-                Ok(cmd) if applied < expected => {
+                Ok(LightCommand::Level(seq, l)) => {
+                    levels.insert(seq, l);
+                    playback.set_level(seq, l);
+                }
+                Ok(cmd @ (LightCommand::GrandMaster(_) | LightCommand::Blackout(_) | LightCommand::Tempo(_))) => run_command(&mut playback, cmd, &shared),
+                Ok(cmd) if applied < expected || !held.is_empty() => {
                     held_since.get_or_insert_with(Instant::now);
-                    // Only the newest programmer matters: don't queue one per UI frame.
+                    // Only the newest programmer matters: don't queue one per UI frame. The
+                    // replaced entry waits for the newer compile (entries behind it wait too,
+                    // so the order is kept).
                     let replaces = |a: &LightCommand, b: &LightCommand| {
                         matches!((a, b), (LightCommand::Programmer(_), LightCommand::Programmer(_)) | (LightCommand::ProgrammerEffects(_), LightCommand::ProgrammerEffects(_)))
                     };
-                    match held.iter_mut().rev().find(|h| replaces(h, &cmd)) {
-                        Some(h) => *h = cmd,
-                        None => held.push_back(cmd),
+                    match held.iter_mut().rev().find(|h| replaces(&h.1, &cmd)) {
+                        Some(h) => *h = (expected, cmd),
+                        None => held.push_back((expected, cmd)),
                     }
                 }
                 Ok(cmd) => run_command(&mut playback, cmd, &shared),
@@ -480,13 +506,13 @@ fn run(rx: mpsc::Receiver<LightCommand>, shared: Arc<Shared>) {
                 }
             }
         }
-        if quit {
+        if quit || shared.quit.load(Ordering::Relaxed) {
             break;
         }
         if held_since.is_some_and(|t| t.elapsed() > HOLD_LIMIT) {
             // The compile is taking far too long: don't hold GOs any more.
             expected = applied;
-            release_held(&mut playback, &mut held, &mut held_since, &shared);
+            release_held(&mut playback, &mut held, &mut held_since, u64::MAX, &shared);
         }
         let now = Instant::now();
         let built = crate::recovery::catch(|| {
@@ -533,10 +559,18 @@ fn run(rx: mpsc::Receiver<LightCommand>, shared: Arc<Shared>) {
     }
 }
 
-fn release_held(p: &mut Playback, held: &mut std::collections::VecDeque<LightCommand>, since: &mut Option<Instant>, shared: &Shared) {
-    *since = None;
-    for cmd in held.drain(..) {
+/// Run the held commands whose compile has been applied (in order: one still waiting holds up
+/// those behind it).
+fn release_held(p: &mut Playback, held: &mut std::collections::VecDeque<(u64, LightCommand)>, since: &mut Option<Instant>, applied: u64, shared: &Shared) {
+    let before = held.len();
+    while held.front().is_some_and(|h| h.0 <= applied) {
+        let (_, cmd) = held.pop_front().expect("checked");
         run_command(p, cmd, shared);
+    }
+    if held.is_empty() {
+        *since = None;
+    } else if held.len() < before {
+        *since = Some(Instant::now());
     }
 }
 
@@ -688,6 +722,40 @@ mod tests {
         e.go(9, None, Instant::now());
         assert!(wait(|| !e.drain_errors().is_empty()), "unknown sequence reported");
         assert!(e.frames() > 0);
+    }
+
+    /// Blackout never waits for a compile, and a GO waits only for the compile announced before
+    /// it, not for edits that keep coming after it.
+    #[test]
+    fn masters_never_wait_and_gos_wait_one_compile() {
+        let t = library::generic("generic/dimmer").unwrap();
+        let mut l = Lighting::default();
+        l.add_type(&t);
+        l.fixtures.push(Fixture { id: 1, fixture_type: t.id.clone(), mode: t.modes[0].name.clone(), address: 1, ..Default::default() });
+        let mut c = LightCue { fade: 0.0, ..Default::default() };
+        let id = c.id;
+        c.values.entry(1).or_default().insert(Attribute::Dimmer, 1.0.into());
+        l.sequences.push(Sequence { id: 1, cues: vec![c], ..Default::default() });
+        let e = LightEngine::start();
+        let seen = Arc::new(Mutex::new(0u8));
+        let s2 = seen.clone();
+        let cfg = OutputConfig { routes: vec![UniverseRoute { universe: 1, wire: 0 }], ..Default::default() };
+        let mut e = e;
+        e.set_senders(vec![OutputSender::with_opener(cfg, Box::new(move || Ok(Box::new(Probe(s2.clone())) as Box<dyn DmxOutput>)))]);
+        // Compile 100 is announced but never arrives in time; the GO waits for it.
+        e.send(LightCommand::Compiling(100));
+        e.go_cue(id, Instant::now());
+        std::thread::sleep(Duration::from_millis(100));
+        assert_eq!(*seen.lock(), 0, "held");
+        // More edits after the GO, then compile 100 lands: the GO plays without waiting for 101.
+        e.send(LightCommand::Compiling(101));
+        e.send(LightCommand::Show(100, Arc::new(LightShow::compile(&l))));
+        assert!(wait(|| *seen.lock() == 255), "GO played after its compile");
+        // Blackout goes through while compile 101 is still pending.
+        e.set_blackout(true);
+        let t0 = Instant::now();
+        assert!(wait(|| *seen.lock() == 0));
+        assert!(t0.elapsed() < Duration::from_secs(1));
     }
 
     /// A burst of edits (a drag) is coalesced into few compiles, and a GO sent after it still

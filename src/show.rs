@@ -190,19 +190,23 @@ impl Show {
     }
 
     /// Recompile the lighting design for the light thread if it (or the replica flag) changed.
-    /// A replica never opens DMX outputs: the main device drives the rig.
+    /// A replica plays nothing (it mirrors the main device's states and output), so it loads
+    /// an empty design once: no compile, no DMX outputs or inputs.
     pub fn sync_lighting(&mut self) {
         if self.light_loaded.as_ref().is_some_and(|(l, r)| *r == self.replica && *l == self.ws.lighting) {
             return;
         }
+        let was = self.light_loaded.as_ref().map(|(_, r)| *r);
+        // Edits playback doesn't read (fixture positions, plot shapes, names...) don't recompile.
+        let compile = !self.light_loaded.as_ref().is_some_and(|(l, r)| *r == self.replica && crate::light::playback::LightShow::same_input(l, &self.ws.lighting));
+        let light = &mut self.media.light;
         if self.replica {
-            let mut l = self.ws.lighting.clone();
-            l.outputs.clear();
-            l.inputs.clear();
-            self.media.light.load(&l);
+            if was != Some(true) {
+                light.load(&crate::light::Lighting::default());
+            }
         } else {
-            self.media.light.clear_mirror();
-            self.media.light.load(&self.ws.lighting);
+            light.clear_mirror();
+            if compile { light.load(&self.ws.lighting) } else { light.load_io(&self.ws.lighting) }
         }
         self.light_loaded = Some((self.ws.lighting.clone(), self.replica));
     }
