@@ -5,7 +5,8 @@
 //! * [`library`] — built-in generic fixture types.
 //! * [`fixlib`] — fixture type files (`.oqfixture`) and the user's fixture library folder.
 //! * [`import`] — fixture import: [`ofl`] (Open Fixture Library), [`gdtf`] (GDTF, read with
-//!   [`zipread`]), [`qxf`] (QLC+).
+//!   [`zipread`]), [`qxf`] (QLC+); [`oflsite`] searches and downloads Open Fixture Library
+//!   fixtures from its website.
 //! * [`command`] — the desk-style command line parser.
 //! * [`effects`] — effect waveforms run across fixtures (pool, runs in cues, evaluation).
 //! * [`mvr`] — MVR export of the patch with positions (for visualisers).
@@ -38,6 +39,7 @@ pub mod library;
 pub mod model;
 pub mod mvr;
 pub mod ofl;
+pub mod oflsite;
 pub mod qxf;
 pub mod patch;
 pub mod place;

@@ -5,6 +5,7 @@ mod animation;
 pub(crate) mod bench;
 #[cfg(feature = "video")]
 mod blend;
+mod code;
 mod debug;
 mod cue_list;
 mod devices;
@@ -14,6 +15,7 @@ mod fixture_types;
 mod icons;
 mod inspector;
 mod language;
+mod light_playback;
 mod lighting;
 mod manual;
 #[cfg(target_os = "macos")]
@@ -2267,10 +2269,12 @@ impl App {
     /// `OPENQ_SCREENSHOT_GOS` times (default 0), captures its window a couple of frames later and exits.
     /// `OPENQ_SCREENSHOT_CUE` / `OPENQ_SCREENSHOT_TAB` pick the cue and inspector tab shown
     /// (`OPENQ_SCREENSHOT_ANIM_TIME` sets the Animation tab playhead);
-    /// `OPENQ_SCREENSHOT_LIGHTING=<page>` opens the Lighting workspace on a page (`colour`: the
+    /// `OPENQ_SCREENSHOT_LIGHTING=<page>` opens the Lighting workspace on a page (`playback`: the
+    /// Playback page with its sequence and button cards; `colour`: the
     /// programmer's Colour encoders; `plan`: the patch's top view with four fixtures selected;
     /// `types`: the fixture type editor on a type with ranges; `beam`: the Beam encoders with
-    /// range buttons for every unit with a gobo);
+    /// range buttons for every unit with a gobo; `ofl`: the Open Fixture Library window searching
+    /// `OPENQ_SCREENSHOT_OFL`);
     /// `OPENQ_SCREENSHOT_MODE=show` starts in show mode; `OPENQ_SCREENSHOT_INLINE=1` opens an
     /// in-place pre-wait editor on the selected cue.
     /// `OPENQ_SCREENSHOT_STAGE=1` embeds stage windows in the main window for the capture
@@ -2326,7 +2330,10 @@ impl App {
                 }
                 self.light.keypad = page == "keypad";
                 if page == "effects" {
-                    self.light.effect = show.ws.lighting.effects.first().map(|e| e.id);
+                    // `OPENQ_SCREENSHOT_EFFECT=<number>` picks the effect (e.g. a script effect).
+                    let pick = std::env::var("OPENQ_SCREENSHOT_EFFECT").ok().and_then(|n| n.parse::<u32>().ok());
+                    let l = &show.ws.lighting;
+                    self.light.effect = pick.filter(|id| l.effect(*id).is_some()).or_else(|| l.effects.first().map(|e| e.id));
                 }
                 if page == "plan" {
                     self.light.patch_view = lighting::PatchView::Plan;
@@ -2338,6 +2345,10 @@ impl App {
                 {
                     self.light.patch_view = lighting::PatchView::Types;
                     self.light.types.edit = Some(fixture_types::TypeEdit::open_ranges(ty.clone()));
+                }
+                if page == "ofl" {
+                    self.light.patch_view = lighting::PatchView::Types;
+                    self.light.types.open_ofl(std::env::var("OPENQ_SCREENSHOT_OFL").unwrap_or_default());
                 }
                 // A selection and some programmer values to look at.
                 if page == "beam" {
@@ -2676,13 +2687,20 @@ impl App {
                     .frame(bar(theme::BG_APP))
                     .show(ui, |ui| self.menu_bar(ui, show));
             }
-            egui::Panel::top("header")
-                .frame(
-                    egui::Frame::new()
-                        .fill(theme::BG_PANEL)
-                        .inner_margin(egui::Margin::symmetric(14, 12)),
-                )
-                .show(ui, |ui| self.header(ui, show));
+            // Cues / Lighting switch above everything else; the GO / standby header only in the Cues view.
+            egui::Panel::top("view_tabs")
+                .frame(egui::Frame::new().fill(theme::BG_APP).inner_margin(egui::Margin { left: 10, right: 10, top: 6, bottom: 6 }))
+                .show_separator_line(false)
+                .show(ui, |ui| self.view_tabs(ui));
+            if self.view == lighting::View::Cues {
+                egui::Panel::top("header")
+                    .frame(
+                        egui::Frame::new()
+                            .fill(theme::BG_PANEL)
+                            .inner_margin(egui::Margin::symmetric(14, 12)),
+                    )
+                    .show(ui, |ui| self.header(ui, show));
+            }
             egui::Panel::bottom("status")
                 .frame(bar(theme::BG_APP))
                 .show(ui, |ui| self.status_bar(ui, show));
@@ -2710,17 +2728,18 @@ impl App {
             // Let a waiting engine tick in between panels: the engine never waits for a whole frame.
             parking_lot::MutexGuard::bump(&mut guard);
             let show: &mut Show = &mut guard;
-            egui::Panel::right("active")
-                .frame(
-                    egui::Frame::new()
-                        .fill(theme::BG_PANEL)
-                        .inner_margin(egui::Margin::same(10)),
-                )
-                .resizable(true)
-                .default_size(280.0)
-                // Narrow in the Lighting workspace, which needs the width for its own panels.
-                .max_size(if self.view == lighting::View::Lighting { 220.0 } else { f32::INFINITY })
-                .show(ui, |ui| self.active_panel(ui, show));
+            // Active cues only next to the cue lists: the Lighting workspace needs the width.
+            if self.view == lighting::View::Cues {
+                egui::Panel::right("active")
+                    .frame(
+                        egui::Frame::new()
+                            .fill(theme::BG_PANEL)
+                            .inner_margin(egui::Margin::same(10)),
+                    )
+                    .resizable(true)
+                    .default_size(280.0)
+                    .show(ui, |ui| self.active_panel(ui, show));
+            }
             egui::CentralPanel::default()
                 .frame(
                     egui::Frame::new()
@@ -2728,7 +2747,6 @@ impl App {
                         .inner_margin(egui::Margin::symmetric(10, 8)),
                 )
                 .show(ui, |ui| {
-                    self.view_tabs(ui);
                     if self.view == lighting::View::Lighting {
                         self.lighting_view(ui, show);
                         return;
@@ -2756,6 +2774,7 @@ impl App {
             #[cfg(feature = "video")]
             self.geometry_preview(&ctx, show);
             self.remote_window(&ctx, show);
+            self.playback_window(&ctx, show);
             self.about_window(&ctx);
             // One centred window at a time: the language first, then lost work.
             if self.ask_language {

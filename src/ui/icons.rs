@@ -107,3 +107,7 @@ pub const ARROW_UPWARD: &str = "\u{e5d8}";
 pub const LANGUAGE: &str = "\u{ea07}";
 pub const CODE: &str = "\u{e86f}";
 pub const DOWNLOAD: &str = "\u{f090}";
+pub const EXPAND_LESS: &str = "\u{e5ce}";
+pub const OPEN_IN_NEW: &str = "\u{e89e}";
+pub const TOUCH_APP: &str = "\u{e913}";
+pub const SMART_BUTTON: &str = "\u{f1c1}";

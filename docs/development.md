@@ -9,7 +9,16 @@ cargo test                              # engine + model tests
 cargo run --release --example smoke     # headless end-to-end check of real audio/video (muted)
 tools/stress.sh                         # stress, soak, fuzz and crash-recovery suite (slow)
 tools/ui_perf.sh show.openq [cue]       # frame times of the real window through a scripted session
+tools/demo_show.sh                      # big demo show for manual testing, opened in the app
 ```
+
+**Demo show:** `tools/demo_show.sh` downloads free media (music by Kevin MacLeod, Google sound
+library effects, Blender open film clips; ~550 MB, cached in `target/demo-show/media`), writes
+`target/demo-show/demo.openq` with `examples/demo_show.rs` and opens it. "The Lighthouse Keeper"
+has five cue lists (two acts, preshow/interval, a timecode list, a hotkey pad), 400 media cues and a
+68-fixture rig with 300 lighting cues, and uses every feature of the show model at least once.
+`--fresh` writes the show again (your edits to it are kept otherwise), `--no-run` doesn't open it,
+`--media` only downloads.
 
 **UI performance:** `src/ui/perf_tests.rs` runs the whole window headless (part of `cargo test`):
 editing and playing an animated text cue must cost about what an idle frame does and must not
@@ -45,6 +54,10 @@ processes, capped memory and time. Users get the interpreter from oqman (`python
 app); for development run `python3 -I tools/fetch_python_wasi.py`, which puts it in
 `target/python-wasi` (debug builds look there; `OPENQ_PYTHON_WASI=<dir>` points anywhere). Tests
 that need it pass with a note when it's missing.
+
+**Fixture downloads** from the Open Fixture Library website use ureq with rustls (cargo feature
+`fixture-download`, on by default; ring needs a C compiler for the target, so the cross-compile checks
+run with `--no-default-features`). `cargo test oflsite -- --ignored` talks to the real site.
 
 **Versions** are `vX.Y.Z` tags; there are no binary releases. oqman
 (<https://github.com/iagonunez/oqman>, its own repository) builds the newest tag on the user's

@@ -221,6 +221,10 @@ pub struct LightingPatch {
     pub presets: Option<ListPatch<super::model::PresetId, Preset>>,
     /// Effects pool.
     pub effects: Option<ListPatch<super::effects::EffectId, Effect>>,
+    /// Playback buttons.
+    pub buttons: Option<ListPatch<super::model::ButtonId, super::model::LightButton>>,
+    /// Size of the playback buttons.
+    pub button_scale: Option<f32>,
     /// Stop all releases the lighting.
     pub stop_all_releases: Option<bool>,
     /// Release fade.
@@ -240,6 +244,8 @@ pub fn diff(old: &Lighting, new: &Lighting) -> Option<LightingPatch> {
         shapes: diff_list(&old.shapes, &new.shapes, |s| s.id),
         presets: diff_list(&old.presets, &new.presets, |p| p.id),
         effects: diff_list(&old.effects, &new.effects, |e| e.id),
+        buttons: diff_list(&old.buttons, &new.buttons, |b| b.id),
+        button_scale: changed(old.button_scale != new.button_scale).map(|_| new.button_scale),
         stop_all_releases: changed(old.stop_all_releases != new.stop_all_releases).map(|_| new.stop_all_releases),
         release_fade: changed(old.release_fade != new.release_fade).map(|_| new.release_fade),
     };
@@ -256,6 +262,7 @@ pub fn apply(l: &mut Lighting, p: &LightingPatch) -> bool {
         && p.sequences.as_ref().is_none_or(|x| apply_sequences(&mut n.sequences, x))
         && p.presets.as_ref().is_none_or(|x| apply_list(&mut n.presets, x, |p| p.id))
         && p.effects.as_ref().is_none_or(|x| apply_list(&mut n.effects, x, |e| e.id))
+        && p.buttons.as_ref().is_none_or(|x| apply_list(&mut n.buttons, x, |b| b.id))
         && p.shapes.as_ref().is_none_or(|x| apply_list(&mut n.shapes, x, |s| s.id));
     if !ok {
         return false;
@@ -271,6 +278,9 @@ pub fn apply(l: &mut Lighting, p: &LightingPatch) -> bool {
     }
     if let Some(v) = p.release_fade {
         n.release_fade = v;
+    }
+    if let Some(v) = p.button_scale {
+        n.button_scale = v;
     }
     *l = n;
     true

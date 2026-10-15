@@ -39,6 +39,8 @@ pub(crate) enum LightTab {
     Effects,
     /// Cue stacks.
     Sequences,
+    /// Sequences and playback buttons as cards (touch screens).
+    Playback,
     /// DMX outputs.
     Outputs,
     /// DMX monitor.
@@ -50,9 +52,10 @@ impl LightTab {
     pub(crate) fn from_name(name: &str) -> Self {
         match name {
             "programmer" | "colour" | "keypad" | "beam" => LightTab::Programmer,
-            "patch" | "plan" | "types" => LightTab::Patch,
+            "patch" | "plan" | "types" | "ofl" => LightTab::Patch,
             "effects" => LightTab::Effects,
             "sequences" => LightTab::Sequences,
+            "playback" => LightTab::Playback,
             "outputs" => LightTab::Outputs,
             "monitor" => LightTab::Monitor,
             _ => LightTab::Patch,
@@ -130,6 +133,11 @@ pub(crate) struct LightUi {
     capture: bool,
     /// Audio envelope of the light thread this frame (shown by audio-reactive effects).
     audio_level: f32,
+    /// Effects tempo this frame (the preview runs at it).
+    bpm: f32,
+    /// Effects page: search text and attribute filter for the effect lists.
+    fx_search: String,
+    fx_filter: Option<FxFilter>,
     /// Wheel slot pictures on the GPU by (fixture type, image name, stored length); None = not a
     /// picture (decoded once either way).
     gobo_textures: std::collections::HashMap<(String, String, usize), Option<egui::TextureHandle>>,
@@ -185,6 +193,12 @@ pub(crate) struct LightUi {
     fx_snap: std::sync::Arc<crate::light::folder::Snapshot<crate::light::fxfile::LibraryEffect>>,
     /// Results of effect library saves/removes, shown as notifications.
     fx_results: std::sync::Arc<parking_lot::Mutex<Vec<Result<String, String>>>>,
+    /// Patch sheet column widths and the texts they were measured for (hash).
+    sheet_widths: Option<(u64, [f32; 10])>,
+    /// Feature the presets panel shows (None = all).
+    preset_filter: Option<Feature>,
+    /// Playback page and window.
+    pub(crate) playback: super::light_playback::PlaybackUi,
 }
 
 /// Arrange tool: a layout kind and the settings of each.
@@ -340,7 +354,7 @@ impl App {
         self.mode == Mode::Edit && self.can_edit_show()
     }
 
-    /// Cues / Lighting switch above the central panel.
+    /// Cues / Lighting switch, in a bar of its own above the GO / standby header (which only the Cues view shows).
     pub(super) fn view_tabs(&mut self, ui: &mut Ui) {
         ui.horizontal(|ui| {
             ui.spacing_mut().item_spacing.x = 4.0;
@@ -351,20 +365,29 @@ impl App {
 
     /// The Lighting workspace (central panel).
     pub(super) fn lighting_view(&mut self, ui: &mut Ui, show: &mut Show) {
-        egui::Panel::bottom("executors")
-            .frame(egui::Frame::new().fill(theme::BG_PANEL).inner_margin(egui::Margin::symmetric(8, 6)))
-            .resizable(false)
-            .show(ui, |ui| self.executor_bar(ui, show));
         egui::Panel::top("command_line").frame(egui::Frame::new().inner_margin(egui::Margin::symmetric(0, 4))).show(ui, |ui| self.command_bar(ui, show));
         self.keypad_window(ui.ctx(), show);
+        // Clear of the command line panel's edge.
+        ui.add_space(6.0);
         if !self.can_design() {
-            ui.add_space(4.0);
+            // Show mode: playback and the monitor only.
+            if !matches!(self.light.tab, LightTab::Playback | LightTab::Monitor) {
+                self.light.tab = LightTab::Playback;
+            }
             ui.horizontal(|ui| {
+                ui.spacing_mut().item_spacing.x = 4.0;
+                theme::tab(ui, &mut self.light.tab, LightTab::Playback, icons::TOUCH_APP, t("Playback"));
+                theme::tab(ui, &mut self.light.tab, LightTab::Monitor, icons::GRID_VIEW, t("DMX monitor"));
+                ui.add_space(12.0);
                 ui.label(RichText::new(icons::LOCK).font(theme::icon_font(16.0)).color(theme::TEXT_DIM));
                 ui.label(RichText::new(t("The lighting design is locked in Show mode.")).color(theme::TEXT_DIM));
             });
             ui.separator();
-            self.monitor_page(ui, show);
+            if self.light.tab == LightTab::Playback {
+                self.playback_page(ui, show);
+            } else {
+                self.monitor_page(ui, show);
+            }
             return;
         }
         ui.horizontal(|ui| {
@@ -373,17 +396,20 @@ impl App {
             theme::tab(ui, &mut self.light.tab, LightTab::Programmer, icons::TUNE, t("Programmer"));
             theme::tab(ui, &mut self.light.tab, LightTab::Effects, icons::AUTO_FIX_HIGH, t("Effects"));
             theme::tab(ui, &mut self.light.tab, LightTab::Sequences, icons::PLAY_CIRCLE, t("Sequences"));
+            theme::tab(ui, &mut self.light.tab, LightTab::Playback, icons::TOUCH_APP, t("Playback"));
             theme::tab(ui, &mut self.light.tab, LightTab::Outputs, icons::ROUTER, t("Outputs"));
             theme::tab(ui, &mut self.light.tab, LightTab::Monitor, icons::GRID_VIEW, t("DMX monitor"));
         });
         ui.separator();
         let before = show.ws.lighting.clone();
         self.light.audio_level = show.media.light.audio_level();
+        self.light.bpm = show.media.light.masters().bpm;
         match self.light.tab {
             LightTab::Patch => self.patch_page(ui, &mut show.ws.lighting),
             LightTab::Programmer => self.programmer_page(ui, &mut show.ws.lighting),
             LightTab::Effects => self.effects_page(ui, &mut show.ws.lighting),
             LightTab::Sequences => self.sequences_page(ui, show),
+            LightTab::Playback => self.playback_page(ui, show),
             LightTab::Outputs => self.outputs_page(ui, show),
             LightTab::Monitor => self.monitor_page(ui, show),
         }
@@ -571,6 +597,12 @@ impl App {
             {
                 self.deferred.push(super::Deferred::ImportFixture);
             }
+            if cfg!(feature = "fixture-download")
+                && ui.button(theme::with_icon(icons::DOWNLOAD, t("Open Fixture Library…"))).on_hover_text(t("Search and download fixtures from open-fixture-library.org")).clicked() {
+                self.light.patch_view = PatchView::Types;
+                self.light.types.ofl_open = true;
+                self.light.types.ofl_focus = true;
+            }
             if ui
                 .add_enabled(!l.fixtures.is_empty(), egui::Button::new(theme::with_icon(icons::DOWNLOAD, t("Export MVR…"))))
                 .on_hover_text(t("The patch with positions as an MVR file, for visualisers"))
@@ -730,9 +762,12 @@ impl App {
         }
     }
 
-    /// The fixture table (only visible rows are laid out, so big rigs stay fast).
+    /// The fixture table (only visible rows are laid out, so big rigs stay fast). Every column is
+    /// a cell of one width for all rows (fitted to what the cells hold, see [`sheet_widths`]), so
+    /// headers and rows line up, and every row takes exactly `ROW` (what the scroll area assumes:
+    /// taller rows made it jitter at the end).
     fn patch_sheet(&mut self, ui: &mut Ui, l: &mut Lighting, issues: &[PatchIssue]) {
-        const COLS: [f32; 10] = [60.0, 160.0, 180.0, 110.0, 64.0, 64.0, 44.0, 162.0, 162.0, 80.0];
+        const ROW: f32 = 26.0;
         let bad: HashSet<FixtureId> = issues
             .iter()
             .flat_map(|i| match i {
@@ -742,57 +777,104 @@ impl App {
             .collect();
         let header =
             [t("No."), t("Name"), t("Type"), t("Mode"), t("Universe"), t("Address"), t("Slots"), t("Position (m)"), t("Rotation (°)"), t("Invert")];
-        ui.horizontal(|ui| {
-            for (h, w) in header.iter().zip(COLS) {
-                ui.add_sized([w, 18.0], egui::Label::new(theme::caption(h)));
+        // Fitted widths, measured again only when the texts change.
+        let key = {
+            use std::hash::{Hash, Hasher};
+            let mut h = std::collections::hash_map::DefaultHasher::new();
+            header.hash(&mut h);
+            (t("Pan"), t("Tilt")).hash(&mut h);
+            for f in l.fixtures.iter() {
+                (&f.name, &f.fixture_type, &f.mode).hash(&mut h);
             }
+            l.fixture_types.len().hash(&mut h);
+            h.finish()
+        };
+        let cols = match self.light.sheet_widths {
+            Some((k, w)) if k == key => w,
+            _ => {
+                let w = sheet_widths(ui, l, &header);
+                self.light.sheet_widths = Some((key, w));
+                w
+            }
+        };
+        let width: f32 = cols.iter().sum::<f32>() + ui.spacing().item_spacing.x * (cols.len() - 1) as f32;
+        egui::ScrollArea::horizontal().id_salt("patch_sheet_h").auto_shrink([false, false]).show(ui, |ui| {
+            ui.horizontal(|ui| {
+                for (h, w) in header.iter().zip(cols) {
+                    sheet_cell(ui, w, 18.0, |ui| {
+                        ui.label(theme::caption(h));
+                    });
+                }
+            });
+            self.patch_rows(ui, l, &bad, cols, ROW, width);
         });
-        let row_h = 24.0;
+    }
+
+    /// The rows of [`App::patch_sheet`].
+    fn patch_rows(&mut self, ui: &mut Ui, l: &mut Lighting, bad: &HashSet<FixtureId>, cols: [f32; 10], row_h: f32, width: f32) {
         let mut renumber = None;
         let mut click: Option<(FixtureId, egui::Modifiers)> = None;
-        let Lighting { fixtures, fixture_types, .. } = l;
+        let Lighting { fixtures, fixture_types, .. } = &mut *l;
         egui::ScrollArea::vertical().auto_shrink(false).show_rows(ui, row_h, fixtures.len(), |ui, range| {
+            ui.spacing_mut().interact_size.y = row_h - 4.0;
             for f in &mut fixtures[range] {
                 let ty = fixture_types.iter().find(|t| t.id == f.fixture_type);
                 let selected = self.light.patch_sel.contains(&f.id);
-                let row = ui.horizontal(|ui| {
-                    ui.set_height(row_h - 2.0);
-                    let mut id = f.id;
-                    let r = ui.add_sized([COLS[0], 20.0], DragValue::new(&mut id).range(1..=99_999));
-                    if id != f.id {
-                        renumber = Some((f.id, id, r.dragged()));
-                    }
-                    ui.add_sized([COLS[1], 20.0], egui::TextEdit::singleline(&mut f.name).hint_text(ty.map_or("", |t| t.name.as_str())));
-                    let ty_label = ty.map_or_else(|| f.fixture_type.clone(), |t| format!("{} {}", t.manufacturer, t.name));
-                    let sel = ui.add_sized([COLS[2], 20.0], egui::Button::selectable(selected, ty_label));
-                    if sel.clicked() {
-                        click = Some((f.id, ui.input(|i| i.modifiers)));
-                    }
-                    match ty {
+                let rect = egui::Rect::from_min_size(ui.cursor().min, egui::vec2(width, row_h));
+                if bad.contains(&f.id) {
+                    ui.painter().rect_stroke(rect, 3.0, egui::Stroke::new(1.0, theme::AMBER), egui::StrokeKind::Inside);
+                } else if selected {
+                    ui.painter().rect_filled(rect, 3.0, Color32::from_rgba_unmultiplied(0x4a, 0x7c, 0xf0, 24));
+                }
+                let layout = egui::Layout::left_to_right(egui::Align::Center);
+                ui.scope_builder(egui::UiBuilder::new().max_rect(rect.shrink2(egui::vec2(0.0, 2.0))).layout(layout), |ui| {
+                    let h = row_h - 4.0;
+                    sheet_cell(ui, cols[0], h, |ui| {
+                        let mut id = f.id;
+                        let r = ui.add_sized([cols[0], h], DragValue::new(&mut id).range(1..=99_999));
+                        if id != f.id {
+                            renumber = Some((f.id, id, r.dragged()));
+                        }
+                    });
+                    sheet_cell(ui, cols[1], h, |ui| {
+                        ui.add_sized([cols[1], h], egui::TextEdit::singleline(&mut f.name).vertical_align(egui::Align::Center).hint_text(ty.map_or("", |t| t.name.as_str())));
+                    });
+                    sheet_cell(ui, cols[2], h, |ui| {
+                        let ty_label = ty.map_or_else(|| f.fixture_type.clone(), |t| format!("{} {}", t.manufacturer, t.name));
+                        let sel = ui.add_sized([cols[2], h], egui::Button::selectable(selected, ty_label).truncate());
+                        if sel.clicked() {
+                            click = Some((f.id, ui.input(|i| i.modifiers)));
+                        }
+                    });
+                    sheet_cell(ui, cols[3], h, |ui| match ty {
                         Some(ty) if ty.modes.len() > 1 => {
-                            egui::ComboBox::from_id_salt(("fx_mode", f.id)).selected_text(&f.mode).width(COLS[3] - 8.0).show_ui(ui, |ui| {
+                            egui::ComboBox::from_id_salt(("fx_mode", f.id)).selected_text(&f.mode).width(cols[3]).truncate().show_ui(ui, |ui| {
                                 for m in &ty.modes {
                                     ui.selectable_value(&mut f.mode, m.name.clone(), &m.name);
                                 }
                             });
                         }
                         _ => {
-                            ui.add_sized([COLS[3], 20.0], egui::Label::new(RichText::new(&f.mode).color(theme::TEXT_DIM)));
+                            ui.put(ui.max_rect(), egui::Label::new(RichText::new(&f.mode).color(theme::TEXT_DIM)).truncate());
                         }
-                    }
-                    ui.add_sized([COLS[4], 20.0], DragValue::new(&mut f.universe).range(1..=crate::light::model::MAX_UNIVERSE));
-                    ui.add_sized([COLS[5], 20.0], DragValue::new(&mut f.address).range(0..=512).custom_formatter(|v, _| {
-                        if v == 0.0 { "—".to_string() } else { format!("{v}") }
-                    }));
+                    });
+                    sheet_cell(ui, cols[4], h, |ui| {
+                        ui.add_sized([cols[4], h], DragValue::new(&mut f.universe).range(1..=crate::light::model::MAX_UNIVERSE));
+                    });
+                    sheet_cell(ui, cols[5], h, |ui| {
+                        ui.add_sized([cols[5], h], DragValue::new(&mut f.address).range(0..=512).custom_formatter(|v, _| {
+                            if v == 0.0 { "—".to_string() } else { format!("{v}") }
+                        }));
+                    });
                     let mode = ty.and_then(|t| t.mode(&f.mode));
                     let slots = mode.map_or(0, |m| m.footprint());
                     let breaks = mode.map_or(1, |m| m.breaks());
-                    if breaks > 1 {
-                        // Multi-break modes: the other breaks' addresses in a menu.
-                        let label = tr!("{slots} · {n} breaks", slots = slots.to_string(), n = breaks.to_string());
-                        ui.allocate_ui(egui::vec2(COLS[6], 20.0), |ui| {
-                            ui.set_min_width(COLS[6]);
-                            ui.menu_button(label, |ui| {
+                    sheet_cell(ui, cols[6], h, |ui| {
+                        if breaks > 1 {
+                            // Multi-break modes: the other breaks' addresses in a menu.
+                            let label = slots_label(slots, breaks);
+                            let button = egui::Button::new(label).truncate().min_size(egui::vec2(ui.available_width(), h));
+                            egui::containers::menu::MenuButton::from_button(button).ui(ui, |ui| {
                                 for b in 1..breaks {
                                     if f.breaks.len() < b as usize {
                                         f.breaks.resize(b as usize, Default::default());
@@ -811,27 +893,30 @@ impl App {
                                     });
                                 }
                             });
+                        } else {
+                            ui.put(ui.max_rect(), egui::Label::new(RichText::new(slots.to_string()).color(theme::TEXT_DIM)));
+                        }
+                    });
+                    // Three values per cell, each a third of it.
+                    let triple = |ui: &mut Ui, w: f32, v: &mut [f32; 3], rotation: bool| {
+                        sheet_cell(ui, w, h, |ui| {
+                            let each = (w - 8.0) / 3.0;
+                            let top = ui.max_rect().left_top();
+                            for (i, x) in v.iter_mut().enumerate() {
+                                let d = if rotation { DragValue::new(x).range(-360.0..=360.0).speed(1.0).max_decimals(1) } else { DragValue::new(x).speed(0.05).max_decimals(2) };
+                                ui.put(egui::Rect::from_min_size(top + egui::vec2(i as f32 * (each + 4.0), 0.0), egui::vec2(each, h)), d);
+                            }
                         });
-                    } else {
-                        ui.add_sized([COLS[6], 20.0], egui::Label::new(RichText::new(slots.to_string()).color(theme::TEXT_DIM)));
-                    }
-                    ui.spacing_mut().interact_size.x = 50.0;
-                    for v in &mut f.position {
-                        ui.add(DragValue::new(v).speed(0.05).max_decimals(2));
-                    }
-                    ui.add_space(6.0);
-                    for v in &mut f.rotation {
-                        ui.add(DragValue::new(v).range(-360.0..=360.0).speed(1.0).max_decimals(1));
-                    }
-                    ui.toggle_value(&mut f.invert_pan, t("Pan")).on_hover_text(t("Reverse pan"));
-                    ui.toggle_value(&mut f.invert_tilt, t("Tilt")).on_hover_text(t("Reverse tilt"));
+                    };
+                    triple(ui, cols[7], &mut f.position, false);
+                    triple(ui, cols[8], &mut f.rotation, true);
+                    sheet_cell(ui, cols[9], h, |ui| {
+                        ui.spacing_mut().item_spacing.x = 4.0;
+                        ui.toggle_value(&mut f.invert_pan, t("Pan")).on_hover_text(t("Reverse pan"));
+                        ui.toggle_value(&mut f.invert_tilt, t("Tilt")).on_hover_text(t("Reverse tilt"));
+                    });
                 });
-                let r = row.response.rect;
-                if bad.contains(&f.id) {
-                    ui.painter().rect_stroke(r, 3.0, egui::Stroke::new(1.0, theme::AMBER), egui::StrokeKind::Inside);
-                } else if selected {
-                    ui.painter().rect_filled(r, 3.0, Color32::from_rgba_unmultiplied(0x4a, 0x7c, 0xf0, 24));
-                }
+                ui.advance_cursor_after_rect(rect);
             }
         });
         if let Some((old, new, dragging)) = renumber
@@ -853,6 +938,68 @@ impl App {
     }
 }
 
+
+/// What the Slots cell of a patch sheet row shows.
+fn slots_label(slots: u16, breaks: u8) -> String {
+    if breaks > 1 { tr!("{slots} · {n} breaks", slots = slots.to_string(), n = breaks.to_string()) } else { slots.to_string() }
+}
+
+/// Patch sheet column widths: each fits its header and the widest thing its cells show, within
+/// a minimum and a maximum (longer texts are cut with "…").
+fn sheet_widths(ui: &Ui, l: &Lighting, header: &[&str; 10]) -> [f32; 10] {
+    let text = |s: &str| egui::WidgetText::from(s).into_galley(ui, Some(egui::TextWrapMode::Extend), f32::INFINITY, egui::TextStyle::Body).size().x;
+    let head: Vec<f32> = header
+        .iter()
+        .map(|h| egui::WidgetText::from(theme::caption(h)).into_galley(ui, Some(egui::TextWrapMode::Extend), f32::INFINITY, egui::TextStyle::Body).size().x + 4.0)
+        .collect();
+    // Padding of a button / text field, and a combo box's arrow.
+    let pad = ui.spacing().button_padding.x * 2.0 + 4.0;
+    let arrow = ui.spacing().icon_width + ui.spacing().icon_spacing;
+    let (mut name, mut ty, mut mode, mut slots) = (0.0f32, 0.0f32, 0.0f32, 0.0f32);
+    let mut types: std::collections::HashMap<&str, (f32, f32)> = Default::default();
+    for f in l.fixtures.iter() {
+        let t = l.fixture_type(&f.fixture_type);
+        let (tw, mw) = *types.entry(f.fixture_type.as_str()).or_insert_with(|| match t {
+            Some(t) => {
+                let modes = t.modes.iter().map(|m| text(&m.name)).fold(0.0, f32::max);
+                (text(&format!("{} {}", t.manufacturer, t.name)), if t.modes.len() > 1 { modes + arrow } else { modes })
+            }
+            None => (text(&f.fixture_type), text(&f.mode)),
+        });
+        ty = ty.max(tw);
+        mode = mode.max(mw);
+        name = name.max(text(if f.name.is_empty() { t.map_or("", |t| t.name.as_str()) } else { &f.name }));
+        let m = t.and_then(|t| t.mode(&f.mode));
+        slots = slots.max(text(&slots_label(m.map_or(0, |m| m.footprint()), m.map_or(1, |m| m.breaks()))));
+    }
+    let fit = |i: usize, content: f32, min: f32, max: f32| (content.min(max)).max(head[i]).max(min).ceil();
+    let toggles = text(t("Pan")) + text(t("Tilt")) + 2.0 * pad + 4.0;
+    [
+        fit(0, 0.0, 56.0, 56.0),
+        fit(1, name + pad, 120.0, 240.0),
+        fit(2, ty + pad, 120.0, 260.0),
+        fit(3, mode + pad, 80.0, 200.0),
+        fit(4, 0.0, 56.0, 56.0),
+        fit(5, 0.0, 56.0, 56.0),
+        fit(6, slots + pad, 44.0, 160.0),
+        fit(7, 0.0, 176.0, 176.0),
+        fit(8, 0.0, 176.0, 176.0),
+        fit(9, toggles, 80.0, 200.0),
+    ]
+}
+
+/// One cell of the patch sheet: exactly `w` wide (content is clipped to it), content on the left.
+fn sheet_cell(ui: &mut Ui, w: f32, h: f32, add: impl FnOnce(&mut Ui)) {
+    // From the top of the row (a centred layout moves the cursor's y between cells).
+    let rect = egui::Rect::from_min_size(egui::pos2(ui.cursor().min.x, ui.max_rect().top()), egui::vec2(w, h));
+    let layout = egui::Layout::left_to_right(egui::Align::Center);
+    ui.scope_builder(egui::UiBuilder::new().max_rect(rect).layout(layout), |ui| {
+        // Clipped across only (a widget's frame may poke out a pixel above or below).
+        ui.set_clip_rect(rect.expand2(egui::vec2(1.0, 4.0)).intersect(ui.clip_rect()));
+        add(ui)
+    });
+    ui.advance_cursor_after_rect(rect);
+}
 
 /// What highlight puts on an attribute: open white at full (a channel's own highlight value
 /// wins); None leaves the attribute alone.
@@ -996,51 +1143,216 @@ fn attribute_colour(a: Attribute) -> Color32 {
     }
 }
 
-/// The waveform over two cycles with a moving dot per fixture (custom effects: one curve per
-/// attribute of the first pattern row, and colour bars when the effect moves red/green/blue).
-fn effect_preview(ui: &mut Ui, e: &Effect, n: usize) {
-    let w = ui.available_width().min(640.0);
-    let (rect, _) = ui.allocate_exact_size(egui::vec2(w, 140.0), egui::Sense::hover());
-    let p = ui.painter();
-    p.rect_filled(rect, 6.0, theme::BG_INPUT);
-    let plot = rect.shrink(10.0);
-    let y = |v: f32| plot.bottom() - v.clamp(0.0, 1.0) * plot.height();
-    let table = e.table.as_ref().filter(|_| e.shape == Shape::Custom);
-    let curves: Vec<(u32, Color32)> = match table {
-        Some(t) => t.attributes.iter().enumerate().take(6).map(|(c, a)| (c as u32, attribute_colour(*a))).collect(),
-        None => vec![(0, theme::ACCENT)],
+/// Attribute filter of the effect lists: a family, or one attribute.
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub(crate) enum FxFilter {
+    Feature(Feature),
+    Attribute(Attribute),
+}
+
+impl FxFilter {
+    fn label(self) -> String {
+        match self {
+            FxFilter::Feature(f) => f.label().to_string(),
+            FxFilter::Attribute(a) => a.label().to_string(),
+        }
+    }
+}
+
+/// An effect matches the search text (in its name, lower case) and the attribute filter.
+fn fx_matches(e: &Effect, search: &str, filter: Option<FxFilter>) -> bool {
+    let named = search.is_empty() || e.name.to_lowercase().contains(search);
+    let attrs = e.attributes();
+    named
+        && match filter {
+            None => true,
+            Some(FxFilter::Feature(f)) => attrs.iter().any(|a| a.feature() == f),
+            Some(FxFilter::Attribute(a)) => attrs.contains(&a),
+        }
+}
+
+/// What an effect puts out for a shape value `v` (0..1): absolute from `base` by `size`, or
+/// around the cue's value (taken as full for intensity, half for the rest), as playback does.
+fn effect_output(e: &Effect, attr: Attribute, v: f32) -> f32 {
+    let out = match (e.relative, attr.is_htp()) {
+        (true, true) => 1.0 - e.size * (1.0 - v),
+        (true, false) => 0.5 + e.size * (v - 0.5),
+        (false, _) => e.base + e.size * v,
     };
-    for (col, colour) in &curves {
-        let pts: Vec<egui::Pos2> = (0..=200)
-            .map(|i| {
-                let x = i as f64 / 100.0;
-                let v = match table {
-                    Some(t) => t.sample(0, *col, x),
-                    None => e.shape.eval(x, e.duty, 1),
-                };
-                egui::pos2(plot.left() + plot.width() * (x / 2.0) as f32, y(v))
-            })
-            .collect();
-        p.add(egui::Shape::line(pts, egui::Stroke::new(1.5, *colour)));
-    }
-    let col_of = |a: Attribute| table.and_then(|t| t.attributes.iter().position(|x| *x == a)).map(|c| c as u32);
-    let rgb = (col_of(Attribute::Red), col_of(Attribute::Green), col_of(Attribute::Blue));
-    let t = ui.input(|i| i.time) * e.rate(120.0) as f64;
-    for i in 0..n {
-        let v = effect_level(e, i, n, t, 0);
-        let x = (t + e.phase(i, n) as f64).rem_euclid(1.0);
-        p.circle_filled(egui::pos2(plot.left() + plot.width() * (x / 2.0) as f32, y(v)), 4.0, theme::AMBER);
-        // A bar per fixture along the bottom shows its level (or colour) now.
-        let bw = plot.width() / n as f32;
-        let bar = egui::Rect::from_min_size(egui::pos2(plot.left() + i as f32 * bw + 1.0, rect.bottom() - 6.0), egui::vec2(bw - 2.0, 4.0));
-        let fill = if rgb.0.is_some() || rgb.1.is_some() || rgb.2.is_some() {
-            let c = |col: Option<u32>| col.map_or(0, |c| (effect_level(e, i, n, t, c) * 255.0) as u8);
-            Color32::from_rgb(c(rgb.0), c(rgb.1), c(rgb.2))
-        } else {
-            theme::AMBER.gamma_multiply(v.clamp(0.05, 1.0))
+    out.clamp(0.0, 1.0)
+}
+
+/// Colour that tells the `i`-th preview fixture apart (dot on the graph, lamp outline).
+fn preview_colour(i: usize) -> Color32 {
+    const HUES: [Color32; 6] = [
+        theme::AMBER,
+        theme::ACCENT,
+        theme::GREEN,
+        Color32::from_rgb(0xe0, 0x70, 0xe0),
+        Color32::from_rgb(0x5c, 0xc8, 0xd8),
+        theme::RED,
+    ];
+    HUES[i % HUES.len()]
+}
+
+/// The effect preview on `n` fixtures (`labels`: their numbers, if they are real ones):
+/// * the speed in words;
+/// * the output over two cycles (real levels, with base, size and mode; the cue's value dashed when
+///   the effect runs around it), seconds along the bottom, a playhead and a dot per fixture where it
+///   is in its own offset cycle; a circle is drawn as the pan/tilt path it makes;
+/// * the fixtures as lamps showing their level, colour or position now;
+/// * the phase (spread, groups, wings) in words.
+///
+/// `height`: what the preview may take (the graph fits the rest); None = its usual size.
+fn effect_preview(ui: &mut Ui, e: &Effect, n: usize, labels: &[FixtureId], bpm: f32, height: Option<f32>) {
+    let n = n.max(1);
+    let label = |i: usize| labels.get(i).map_or_else(|| (i + 1).to_string(), |f| fixture_label(*f));
+    let rate = e.rate(bpm).max(1e-6) as f64;
+    let now = ui.input(|i| i.time) * rate;
+    let table = e.table.as_ref().filter(|_| e.shape == Shape::Custom);
+    let cycle = 1.0 / rate;
+    let speed = if e.sync {
+        tr!(
+            "One cycle every {beats} beats ({secs} s at {bpm} BPM)",
+            beats = format!("{:.2}", 1.0 / e.speed.max(1e-6)),
+            secs = format!("{cycle:.2}"),
+            bpm = format!("{bpm:.0}")
+        )
+    } else {
+        tr!("One cycle every {secs} s", secs = format!("{cycle:.2}"))
+    };
+    ui.label(RichText::new(speed).color(theme::TEXT_DIM));
+    ui.add_space(4.0);
+    let w = ui.available_width();
+    let small = egui::FontId::proportional(10.5);
+    // The lamp strip's cell size, and what is left for the graph (label, strip, phase text, gaps).
+    let gap = 4.0;
+    let cell = ((w + gap) / n as f32 - gap).clamp(14.0, 40.0);
+    let graph_h = height.map_or(170.0, |h| (h - 18.0 - 4.0 - 8.0 - (cell + 16.0) - 32.0 - 5.0 * ui.spacing().item_spacing.y).max(100.0));
+    if e.shape == Shape::Circle {
+        // Pan across, tilt up: the path and each fixture on it.
+        let side = w.min(graph_h);
+        let (rect, _) = ui.allocate_exact_size(egui::vec2(w, side), egui::Sense::hover());
+        let sq = egui::Rect::from_center_size(rect.center(), egui::vec2(side, side));
+        let p = ui.painter();
+        p.rect_filled(sq, 6.0, theme::BG_INPUT);
+        for k in 1..4 {
+            let f = k as f32 / 4.0;
+            let (x, y) = (sq.left() + sq.width() * f, sq.top() + sq.height() * f);
+            p.line_segment([egui::pos2(x, sq.top()), egui::pos2(x, sq.bottom())], egui::Stroke::new(1.0, theme::BORDER));
+            p.line_segment([egui::pos2(sq.left(), y), egui::pos2(sq.right(), y)], egui::Stroke::new(1.0, theme::BORDER));
+        }
+        let at = |x: f64| {
+            let a = std::f32::consts::TAU * x.rem_euclid(1.0) as f32;
+            let (s, c) = a.sin_cos();
+            let r = e.size * 0.5;
+            let (pan, tilt) = if e.relative { (0.5 + r * s, 0.5 + r * c) } else { (e.base + r * (1.0 + s), e.base + r * (1.0 + c)) };
+            egui::pos2(sq.left() + pan.clamp(0.0, 1.0) * sq.width(), sq.bottom() - tilt.clamp(0.0, 1.0) * sq.height())
         };
-        p.rect_filled(bar, 1.0, fill);
+        let path: Vec<egui::Pos2> = (0..=96).map(|k| at(k as f64 / 96.0)).collect();
+        p.add(egui::Shape::line(path, egui::Stroke::new(2.0, theme::ACCENT)));
+        for i in 0..n {
+            p.circle_filled(at(now + e.phase(i, n) as f64), 5.0, preview_colour(i));
+        }
+        p.text(sq.center_bottom() - egui::vec2(0.0, 4.0), egui::Align2::CENTER_BOTTOM, t("Pan"), small.clone(), theme::TEXT_FAINT);
+        p.text(sq.left_center() + egui::vec2(4.0, 0.0), egui::Align2::LEFT_CENTER, t("Tilt"), small.clone(), theme::TEXT_FAINT);
+    } else {
+        // Output over two cycles: 0–100 % up the side, seconds along the bottom.
+        let (rect, _) = ui.allocate_exact_size(egui::vec2(w, graph_h), egui::Sense::hover());
+        let p = ui.painter();
+        p.rect_filled(rect, 6.0, theme::BG_INPUT);
+        let plot = egui::Rect::from_min_max(rect.min + egui::vec2(40.0, 10.0), rect.max - egui::vec2(12.0, 22.0));
+        let y = |v: f32| plot.bottom() - v.clamp(0.0, 1.0) * plot.height();
+        for (v, text) in [(0.0, "0 %"), (0.5, "50 %"), (1.0, "100 %")] {
+            p.line_segment([egui::pos2(plot.left(), y(v)), egui::pos2(plot.right(), y(v))], egui::Stroke::new(1.0, theme::BORDER));
+            p.text(egui::pos2(plot.left() - 6.0, y(v)), egui::Align2::RIGHT_CENTER, text, small.clone(), theme::TEXT_FAINT);
+        }
+        for c in 0..=2 {
+            let x = plot.left() + plot.width() * c as f32 / 2.0;
+            p.line_segment([egui::pos2(x, plot.top()), egui::pos2(x, plot.bottom())], egui::Stroke::new(1.0, theme::BORDER));
+            p.text(egui::pos2(x, plot.bottom() + 4.0), egui::Align2::CENTER_TOP, format!("{:.2} s", c as f64 * cycle), small.clone(), theme::TEXT_FAINT);
+        }
+        // Around the cue's value: where that value is.
+        if e.relative {
+            let yy = y(if e.attribute.is_htp() { 1.0 } else { 0.5 });
+            let mut x = plot.left();
+            while x < plot.right() {
+                p.line_segment([egui::pos2(x, yy), egui::pos2((x + 6.0).min(plot.right()), yy)], egui::Stroke::new(1.0, theme::TEXT_DIM));
+                x += 10.0;
+            }
+            p.text(egui::pos2(plot.right() - 2.0, yy + 2.0), egui::Align2::RIGHT_TOP, t("cue's value"), small.clone(), theme::TEXT_DIM);
+        }
+        let curves: Vec<(u32, Attribute, Color32)> = match table {
+            Some(tb) => tb.attributes.iter().enumerate().take(6).map(|(c, a)| (c as u32, *a, attribute_colour(*a))).collect(),
+            None => vec![(0, e.attribute, theme::ACCENT)],
+        };
+        let px = |x: f64| plot.left() + plot.width() * (x / 2.0) as f32;
+        for (col, attr, colour) in &curves {
+            let pts: Vec<egui::Pos2> = (0..=240)
+                .map(|k| {
+                    let x = k as f64 / 120.0;
+                    let v = match table {
+                        Some(tb) => tb.sample(0, *col, x),
+                        None => e.shape.eval(x, e.duty, 1),
+                    };
+                    egui::pos2(px(x), y(effect_output(e, *attr, v)))
+                })
+                .collect();
+            p.add(egui::Shape::line(pts, egui::Stroke::new(2.0, *colour)));
+        }
+        // Now: a playhead, and each fixture where it is in its own (offset) cycle.
+        let head = now.rem_euclid(1.0);
+        p.line_segment([egui::pos2(px(head), plot.top()), egui::pos2(px(head), plot.bottom())], egui::Stroke::new(1.0, Color32::from_white_alpha(90)));
+        for i in 0..n {
+            let x = (now + e.phase(i, n) as f64).rem_euclid(1.0);
+            let at = egui::pos2(px(x), y(effect_output(e, curves[0].1, effect_level(e, i, n, now, 0))));
+            p.circle_filled(at, 4.5, preview_colour(i));
+            p.circle_stroke(at, 4.5, egui::Stroke::new(1.0, theme::BG_INPUT));
+        }
     }
+    // The fixtures as lamps: what each one shows now.
+    ui.add_space(8.0);
+    let col_of = |a: Attribute| table.and_then(|tb| tb.attributes.iter().position(|x| *x == a)).map(|c| c as u32);
+    let rgb = [col_of(Attribute::Red), col_of(Attribute::Green), col_of(Attribute::Blue)];
+    let (strip, _) = ui.allocate_exact_size(egui::vec2(w, cell + 16.0), egui::Sense::hover());
+    let p = ui.painter();
+    for i in 0..n {
+        let r = egui::Rect::from_min_size(egui::pos2(strip.left() + i as f32 * (cell + gap), strip.top()), egui::vec2(cell, cell));
+        if r.right() > strip.right() + 0.5 {
+            break;
+        }
+        p.rect_filled(r, 4.0, Color32::from_gray(0x16));
+        let level = effect_output(e, e.attribute, effect_level(e, i, n, now, 0));
+        if rgb.iter().any(Option::is_some) {
+            let c = |col: Option<u32>| col.map_or(0, |c| (effect_output(e, Attribute::Red, effect_level(e, i, n, now, c)) * 255.0) as u8);
+            p.rect_filled(r.shrink(2.0), 3.0, Color32::from_rgb(c(rgb[0]), c(rgb[1]), c(rgb[2])));
+        } else if e.attribute.is_htp() && e.shape != Shape::Circle {
+            p.rect_filled(r.shrink(2.0), 3.0, Color32::from_rgb(0xff, 0xd4, 0x8a).gamma_multiply(level));
+        } else {
+            // Other attributes: how far along their range.
+            let top = r.bottom() - 2.0 - (r.height() - 4.0) * level;
+            p.rect_filled(egui::Rect::from_min_max(egui::pos2(r.left() + 2.0, top), r.max - egui::vec2(2.0, 2.0)), 2.0, theme::ACCENT.gamma_multiply(0.8));
+        }
+        p.rect_stroke(r, 4.0, egui::Stroke::new(1.0, preview_colour(i).gamma_multiply(0.7)), egui::StrokeKind::Inside);
+        if cell >= 18.0 {
+            p.text(egui::pos2(r.center().x, r.bottom() + 2.0), egui::Align2::CENTER_TOP, label(i), egui::FontId::proportional(9.5), theme::TEXT_DIM);
+        }
+    }
+    // Phase in words.
+    let next = e.groups.max(1) as usize;
+    let mut how = if e.spread <= 0.0 || n <= next {
+        t("All fixtures move together.").to_string()
+    } else {
+        let deg = (e.phase(next, n) - e.phase(0, n)).abs() * 360.0;
+        tr!("Each fixture runs {deg}° behind the one before it.", deg = format!("{deg:.0}"))
+    };
+    if e.groups > 1 {
+        how = format!("{how} {}", tr!("Groups of {n} move as one.", n = e.groups.to_string()));
+    }
+    if e.wings > 1 {
+        how = format!("{how} {}", tr!("{n} wings mirror the pattern.", n = e.wings.to_string()));
+    }
+    ui.add(egui::Label::new(RichText::new(how).small().color(theme::TEXT_DIM)).wrap());
 }
 
 /// Top view of the patch (x right, z towards the audience at the bottom): click selects
@@ -1401,11 +1713,11 @@ fn poll_script(light: &mut LightUi, l: &mut Lighting) {
 
 /// The script of a custom effect: editor, Run/Stop and what the last run printed.
 fn script_card(ui: &mut Ui, light: &mut LightUi, e: &mut Effect) {
-    ui.add_space(12.0);
     ui.horizontal(|ui| {
-        ui.label(theme::caption(t("Script")));
-        ui.label(RichText::new(t("Runs in a sandbox: no files, network or other programs.")).small().color(theme::TEXT_DIM));
+        theme::card_header(ui, icons::CODE, t("Script"));
     });
+    ui.label(RichText::new(t("Python, run in a sandbox: no files, network or other programs.")).small().color(theme::TEXT_DIM));
+    ui.add_space(4.0);
     // Starting the host now loads (and the first time compiles) the interpreter in the background.
     let python = light.python.get_or_insert_with(|| {
         let p = Python::default();
@@ -1458,14 +1770,22 @@ fn script_card(ui: &mut Ui, light: &mut LightUi, e: &mut Effect) {
         run = true;
     }
     let (_, buf) = light.script_buf.as_mut().expect("set");
-    let r = ui.add(
-        egui::TextEdit::multiline(buf)
-            .code_editor()
-            .font(theme::mono(13.0))
-            .desired_rows(16)
-            .desired_width(ui.available_width().min(900.0))
-            .lock_focus(true),
-    );
+    // Python syntax colours (the layout job is rebuilt per frame only while the editor is drawn).
+    let mut layouter = |ui: &Ui, text: &dyn egui::TextBuffer, wrap: f32| {
+        ui.fonts_mut(|f| f.layout_job(super::code::highlight(text.as_str(), theme::mono(13.0), wrap)))
+    };
+    let r = egui::Frame::new().fill(theme::BG_INPUT).corner_radius(6.0).inner_margin(egui::Margin::same(6)).show(ui, |ui| {
+        ui.add(
+            egui::TextEdit::multiline(buf)
+                .code_editor()
+                .frame(egui::Frame::NONE)
+                .font(theme::mono(13.0))
+                .desired_rows(20)
+                .desired_width(ui.available_width())
+                .lock_focus(true)
+                .layouter(&mut layouter),
+        )
+    }).inner;
     if r.has_focus() && ui.input(|i| i.modifiers.command && i.key_pressed(egui::Key::Enter)) {
         run = !running;
     }
@@ -1540,8 +1860,28 @@ fn next_cue_number(s: &Sequence) -> String {
 
 impl App {
     fn programmer_page(&mut self, ui: &mut Ui, l: &mut Lighting) {
-        // Groups pool and programmer actions.
-        ui.horizontal_wrapped(|ui| {
+        // Presets in a column of their own (a show has many), the full height of the page.
+        // Presets and effects share a column; no divider line, a gap instead (dragging that gap,
+        // the panel's edge, still resizes it).
+        egui::Panel::left("presets")
+            .frame(
+                egui::Frame::new()
+                    .fill(theme::BG_PANEL)
+                    .corner_radius(8.0)
+                    .inner_margin(egui::Margin::same(10))
+                    .outer_margin(egui::Margin { left: 0, right: 10, top: 0, bottom: 0 }),
+            )
+            .show_separator_line(false)
+            .resizable(true)
+            .default_size(250.0)
+            .size_range(190.0..=480.0)
+            .show(ui, |ui| {
+                self.preset_pool(ui, l);
+                ui.add_space(8.0);
+                self.effect_pool(ui, l);
+            });
+        // Groups pool and programmer actions; groups scroll past two rows.
+        egui::ScrollArea::vertical().id_salt("groups_pool").max_height(66.0).show(ui, |ui| ui.horizontal_wrapped(|ui| {
             ui.label(theme::caption(t("Groups")));
             let mut remove = None;
             for g in &l.groups {
@@ -1579,11 +1919,7 @@ impl App {
                     l.groups.push(Group { id, name: String::new(), fixtures: self.light.selection.clone() });
                 }
             });
-        });
-        ui.add_space(2.0);
-        self.preset_pool(ui, l);
-        ui.add_space(2.0);
-        self.effect_pool_row(ui, l);
+        }));
         ui.add_space(4.0);
         ui.horizontal_wrapped(|ui| {
             let n = self.light.selection.len();
@@ -1654,58 +1990,34 @@ impl App {
         self.fixture_tiles(ui, l);
     }
 
-    /// Presets: click applies to the selection (as references), right-click overwrites/deletes.
+    /// Presets panel: a feature filter, "new preset", then the presets as cards. Click applies one
+    /// to the selection (as references), right-click overwrites/deletes.
     fn preset_pool(&mut self, ui: &mut Ui, l: &mut Lighting) {
-        ui.horizontal_wrapped(|ui| {
+        ui.horizontal(|ui| {
             ui.label(theme::caption(t("Presets")));
-            enum Act {
-                Apply(PresetId),
-                Store(PresetId),
-                Delete(PresetId),
+            ui.label(RichText::new(l.presets.len().to_string()).font(theme::semibold(10.5)).color(theme::TEXT_DIM));
+        });
+        // Filter by feature (only those that have presets).
+        ui.horizontal_wrapped(|ui| {
+            ui.spacing_mut().item_spacing = egui::vec2(2.0, 2.0);
+            let f = &mut self.light.preset_filter;
+            if ui.selectable_label(f.is_none(), t("All")).clicked() {
+                *f = None;
             }
-            let mut action = None;
-            for p in &l.presets {
-                let glyph = p.feature.map_or(icons::CATEGORY, feature_icon);
-                let label = if p.name.is_empty() { p.id.to_string() } else { format!("{} {}", p.id, p.name) };
-                let r = ui.add(egui::Button::new(theme::with_icon(glyph, &label)).min_size(egui::vec2(0.0, 26.0)));
-                // A colour preset shows its colour (from its first fixture).
-                if p.feature == Some(Feature::Colour)
-                    && let Some(v) = p.values.values().next()
-                    && let (Some(r_), Some(g), Some(b)) = (v.get(&Attribute::Red), v.get(&Attribute::Green), v.get(&Attribute::Blue))
-                {
-                    let bar = egui::Rect::from_min_size(egui::pos2(r.rect.left() + 4.0, r.rect.bottom() - 4.0), egui::vec2(r.rect.width() - 8.0, 2.5));
-                    ui.painter().rect_filled(bar, 1.0, to_c32([*r_, *g, *b]));
+            for feat in Feature::ALL {
+                if !l.presets.iter().any(|p| p.feature == Some(feat)) {
+                    continue;
                 }
-                let r = r.on_hover_text(p.feature.map_or_else(|| t("All attributes").to_string(), |f| f.label().to_string()));
+                let r = ui.selectable_label(*f == Some(feat), RichText::new(feature_icon(feat)).font(theme::icon_font(16.0))).on_hover_text(feat.label());
                 if r.clicked() {
-                    action = Some(Act::Apply(p.id));
+                    *f = if *f == Some(feat) { None } else { Some(feat) };
                 }
-                r.context_menu(|ui| {
-                    if ui.button(theme::with_icon(icons::SAVE, t("Store the programmer here"))).clicked() {
-                        action = Some(Act::Store(p.id));
-                    }
-                    if ui.button(theme::with_icon(icons::DELETE, t("Delete preset"))).clicked() {
-                        action = Some(Act::Delete(p.id));
-                    }
-                });
             }
-            match action {
-                Some(Act::Apply(id)) => self.apply_preset(l, id),
-                Some(Act::Delete(id)) => {
-                    crate::light::model::unlink_preset(l, id, &mut self.light.programmer);
-                    l.delete_preset(id);
-                }
-                Some(Act::Store(id)) => {
-                    let feature = l.preset(id).and_then(|p| p.feature);
-                    let values = self.programmer_values(l, feature);
-                    if let Some(p) = l.presets.iter_mut().find(|p| p.id == id) {
-                        p.values = values.into();
-                    }
-                }
-                None => {}
-            }
+        });
+        ui.add_space(4.0);
+        ui.horizontal(|ui| {
             let label = self.light.preset_feature.map_or_else(|| t("All attributes").to_string(), |f| f.label().to_string());
-            egui::ComboBox::from_id_salt("preset_feature").selected_text(label).width(110.0).show_ui(ui, |ui| {
+            egui::ComboBox::from_id_salt("preset_feature").selected_text(label).width(ui.available_width() - 56.0).show_ui(ui, |ui| {
                 ui.selectable_value(&mut self.light.preset_feature, None, t("All attributes"));
                 for f in Feature::ALL {
                     ui.selectable_value(&mut self.light.preset_feature, Some(f), f.label());
@@ -1713,43 +2025,150 @@ impl App {
             });
             let values = self.programmer_values(l, self.light.preset_feature);
             if ui
-                .add_enabled(!values.is_empty(), egui::Button::new(theme::with_icon(icons::ADD, t("Preset from programmer"))))
-                .on_hover_text(t("Stores the selected fixtures' programmer values; right-click a preset to overwrite or delete it"))
+                .add_enabled(!values.is_empty(), egui::Button::new(icons::ADD))
+                .on_hover_text(t("Preset from programmer: stores the selected fixtures' programmer values; right-click a preset to overwrite or delete it"))
                 .clicked()
             {
                 let id = l.presets.iter().map(|p| p.id).max().unwrap_or(0) + 1;
                 l.presets.push(Preset { id, name: String::new(), feature: self.light.preset_feature, values: values.into() });
             }
         });
+        ui.add_space(4.0);
+        enum Act {
+            Apply(PresetId),
+            Store(PresetId),
+            Delete(PresetId),
+        }
+        let mut action = None;
+        let filter = self.light.preset_filter;
+        let shown: Vec<&Preset> = l.presets.iter().filter(|p| filter.is_none() || p.feature == filter).collect();
+        // Presets the selection refers to are marked.
+        let used: HashSet<PresetId> = self
+            .light
+            .selection
+            .iter()
+            .filter_map(|f| self.light.programmer.get(f))
+            .flat_map(|v| v.values())
+            .filter_map(|v| match v {
+                Value::Preset { preset } => Some(*preset),
+                Value::Level(_) => None,
+            })
+            .collect();
+        const GAP: f32 = 6.0;
+        const H: f32 = 44.0;
+        // Presets take at most 60 % of the column; effects get the rest.
+        let presets_h = (ui.available_height() * 0.6).max(120.0);
+        egui::ScrollArea::vertical().id_salt("preset_cards").max_height(presets_h).auto_shrink([false, true]).show(ui, |ui| {
+            // Clear of the scroll bar, or the panel would grow a little every frame.
+            let avail = ui.available_width() - 14.0;
+            let cols = ((avail + GAP) / (76.0 + GAP)).floor().max(1.0);
+            let w = ((avail + GAP) / cols - GAP).floor();
+            ui.spacing_mut().item_spacing = egui::vec2(GAP, GAP);
+            for row in shown.chunks(cols as usize) {
+                ui.horizontal(|ui| {
+                    for p in row {
+                        let (rect, r) = ui.allocate_exact_size(egui::vec2(w, H), egui::Sense::click());
+                        let on = used.contains(&p.id);
+                        let painter = ui.painter();
+                        let fill = if on { theme::accent_bg() } else if r.hovered() { theme::BG_HOVER } else { theme::BG_RAISED };
+                        painter.rect_filled(rect, 6.0, fill);
+                        painter.rect_stroke(rect, 6.0, egui::Stroke::new(1.0, if on { theme::BLUE } else { theme::BORDER }), egui::StrokeKind::Inside);
+                        let inner = rect.shrink2(egui::vec2(8.0, 6.0));
+                        let glyph = p.feature.map_or(icons::CATEGORY, feature_icon);
+                        painter.text(inner.left_top(), egui::Align2::LEFT_TOP, glyph, theme::icon_font(14.0), theme::TEXT_DIM);
+                        painter.text(inner.right_top(), egui::Align2::RIGHT_TOP, p.id.to_string(), theme::mono(10.5), theme::TEXT_FAINT);
+                        let name = if p.name.is_empty() { p.feature.map_or_else(|| t("All attributes").to_string(), |f| f.label().to_string()) } else { p.name.clone() };
+                        painter.with_clip_rect(inner).text(inner.left_bottom(), egui::Align2::LEFT_BOTTOM, name, egui::FontId::proportional(12.5), theme::TEXT);
+                        // A colour preset shows its colour (from its first fixture).
+                        if p.feature == Some(Feature::Colour)
+                            && let Some(v) = p.values.values().next()
+                            && let (Some(r_), Some(g), Some(b)) = (v.get(&Attribute::Red), v.get(&Attribute::Green), v.get(&Attribute::Blue))
+                        {
+                            let bar = egui::Rect::from_min_size(egui::pos2(rect.left() + 4.0, rect.bottom() - 4.0), egui::vec2(rect.width() - 8.0, 2.5));
+                            painter.rect_filled(bar, 1.0, to_c32([*r_, *g, *b]));
+                        }
+                        let r = r.on_hover_text(format!("{} {} · {}", p.id, p.name, p.feature.map_or_else(|| t("All attributes").to_string(), |f| f.label().to_string())));
+                        if r.clicked() {
+                            action = Some(Act::Apply(p.id));
+                        }
+                        r.context_menu(|ui| {
+                            if ui.button(theme::with_icon(icons::SAVE, t("Store the programmer here"))).clicked() {
+                                action = Some(Act::Store(p.id));
+                            }
+                            if ui.button(theme::with_icon(icons::DELETE, t("Delete preset"))).clicked() {
+                                action = Some(Act::Delete(p.id));
+                            }
+                        });
+                    }
+                });
+            }
+            if l.presets.is_empty() {
+                ui.label(RichText::new(t("Set values in the programmer, then store them as a preset with +.")).color(theme::TEXT_DIM));
+            }
+        });
+        match action {
+            Some(Act::Apply(id)) => self.apply_preset(l, id),
+            Some(Act::Delete(id)) => {
+                crate::light::model::unlink_preset(l, id, &mut self.light.programmer);
+                l.delete_preset(id);
+            }
+            Some(Act::Store(id)) => {
+                let feature = l.preset(id).and_then(|p| p.feature);
+                let values = self.programmer_values(l, feature);
+                if let Some(p) = l.presets.iter_mut().find(|p| p.id == id) {
+                    p.values = values.into();
+                }
+            }
+            None => {}
+        }
     }
 
-    /// Effects: click runs the effect on the selection from the programmer (click again stops).
-    fn effect_pool_row(&mut self, ui: &mut Ui, l: &Lighting) {
-        ui.horizontal_wrapped(|ui| {
+    /// Effects (under the presets) as cards: click runs the effect on the selection from the
+    /// programmer (click again stops it), right-click stops it in the recorded cue.
+    fn effect_pool(&mut self, ui: &mut Ui, l: &Lighting) {
+        ui.horizontal(|ui| {
             ui.label(theme::caption(t("Effects")));
-            for e in &l.effects {
-                let stopping = self.light.programmer_effects.iter().any(|r| r.effect == e.id && r.stop);
-                let running = self.light.programmer_effects.iter().any(|r| r.effect == e.id && !r.stop);
-                let label = if e.name.is_empty() { e.id.to_string() } else { format!("{} {}", e.id, e.name) };
-                let (fill, fg) = match (running, stopping) {
-                    (true, _) => (theme::RED.gamma_multiply(0.6), Color32::WHITE),
-                    (_, true) => (theme::BG_RAISED, theme::RED),
-                    _ => (theme::BG_RAISED, theme::TEXT),
-                };
-                let r = ui
-                    .add(egui::Button::new(RichText::new(theme::with_icon(icons::AUTO_FIX_HIGH, &label)).color(fg)).fill(fill).min_size(egui::vec2(0.0, 26.0)))
-                    .on_hover_text(format!("{} · {}", e.attribute.label(), e.shape.label()));
-                if r.clicked() {
-                    if running || stopping {
-                        self.light.programmer_effects.retain(|r| r.effect != e.id);
-                    } else if !self.light.selection.is_empty() {
-                        self.light.programmer_effects.push(EffectRun { effect: e.id, fixtures: self.light.selection.clone(), stop: false });
-                    }
-                }
-                r.context_menu(|ui| {
-                    if ui.button(theme::with_icon(icons::STOP, t("Stop it in the recorded cue"))).clicked() {
-                        self.light.programmer_effects.retain(|r| r.effect != e.id);
-                        self.light.programmer_effects.push(EffectRun { effect: e.id, fixtures: Vec::new(), stop: true });
+            ui.label(RichText::new(l.effects.len().to_string()).font(theme::semibold(10.5)).color(theme::TEXT_DIM));
+        });
+        ui.add_space(4.0);
+        const GAP: f32 = 6.0;
+        const H: f32 = 44.0;
+        egui::ScrollArea::vertical().id_salt("effect_cards").auto_shrink(false).show(ui, |ui| {
+            let avail = ui.available_width() - 14.0;
+            let cols = ((avail + GAP) / (76.0 + GAP)).floor().max(1.0);
+            let w = ((avail + GAP) / cols - GAP).floor();
+            ui.spacing_mut().item_spacing = egui::vec2(GAP, GAP);
+            for row in l.effects.chunks(cols as usize) {
+                ui.horizontal(|ui| {
+                    for e in row {
+                        let stopping = self.light.programmer_effects.iter().any(|r| r.effect == e.id && r.stop);
+                        let running = self.light.programmer_effects.iter().any(|r| r.effect == e.id && !r.stop);
+                        let (rect, r) = ui.allocate_exact_size(egui::vec2(w, H), egui::Sense::click());
+                        let painter = ui.painter();
+                        let fill = if running { theme::RED.gamma_multiply(0.6) } else if r.hovered() { theme::BG_HOVER } else { theme::BG_RAISED };
+                        let border = if running || stopping { theme::RED } else { theme::BORDER };
+                        painter.rect_filled(rect, 6.0, fill);
+                        painter.rect_stroke(rect, 6.0, egui::Stroke::new(1.0, border), egui::StrokeKind::Inside);
+                        let inner = rect.shrink2(egui::vec2(8.0, 6.0));
+                        let fg = if running { Color32::WHITE } else if stopping { theme::RED } else { theme::TEXT };
+                        painter.text(inner.left_top(), egui::Align2::LEFT_TOP, icons::AUTO_FIX_HIGH, theme::icon_font(14.0), if running { Color32::WHITE } else { theme::TEXT_DIM });
+                        painter.text(inner.right_top(), egui::Align2::RIGHT_TOP, e.id.to_string(), theme::mono(10.5), theme::TEXT_FAINT);
+                        let name = if e.name.is_empty() { e.shape.label().to_string() } else { e.name.clone() };
+                        painter.with_clip_rect(inner).text(inner.left_bottom(), egui::Align2::LEFT_BOTTOM, name, egui::FontId::proportional(12.5), fg);
+                        let r = r.on_hover_text(format!("{} {} · {} · {}", e.id, e.name, e.attribute.label(), e.shape.label()));
+                        if r.clicked() {
+                            if running || stopping {
+                                self.light.programmer_effects.retain(|r| r.effect != e.id);
+                            } else if !self.light.selection.is_empty() {
+                                self.light.programmer_effects.push(EffectRun { effect: e.id, fixtures: self.light.selection.clone(), stop: false });
+                            }
+                        }
+                        r.context_menu(|ui| {
+                            if ui.button(theme::with_icon(icons::STOP, t("Stop it in the recorded cue"))).clicked() {
+                                self.light.programmer_effects.retain(|r| r.effect != e.id);
+                                self.light.programmer_effects.push(EffectRun { effect: e.id, fixtures: Vec::new(), stop: true });
+                            }
+                        });
                     }
                 });
             }
@@ -1775,8 +2194,25 @@ impl App {
             }
         }
         ui.horizontal_top(|ui| {
-            ui.vertical(|ui| {
+            egui::ScrollArea::vertical().id_salt("effect_lists").max_width(250.0).auto_shrink([false, false]).show(ui, |ui| ui.vertical(|ui| {
                 ui.set_width(240.0);
+                // Search and attribute filter, for the show's effects and both libraries.
+                ui.add(egui::TextEdit::singleline(&mut self.light.fx_search).hint_text(t("Search effects")).desired_width(240.0));
+                let label = self.light.fx_filter.map_or_else(|| t("All attributes").to_string(), FxFilter::label);
+                egui::ComboBox::from_id_salt("fx_filter").selected_text(label).width(240.0).height(420.0).show_ui(ui, |ui| {
+                    ui.selectable_value(&mut self.light.fx_filter, None, t("All attributes"));
+                    ui.separator();
+                    for f in Feature::ALL {
+                        ui.selectable_value(&mut self.light.fx_filter, Some(FxFilter::Feature(f)), FxFilter::Feature(f).label());
+                    }
+                    ui.separator();
+                    for a in Attribute::ALL {
+                        ui.selectable_value(&mut self.light.fx_filter, Some(FxFilter::Attribute(a)), a.label());
+                    }
+                });
+                ui.add_space(6.0);
+                let (search, filter) = (self.light.fx_search.trim().to_lowercase(), self.light.fx_filter);
+                let shown = |e: &Effect| fx_matches(e, &search, filter);
                 ui.horizontal(|ui| {
                     ui.label(theme::caption(t("Effects")));
                     if ui.small_button(icons::ADD).on_hover_text(t("New effect")).clicked() {
@@ -1797,7 +2233,7 @@ impl App {
                     }
                 });
                 let mut delete = None;
-                for e in &l.effects {
+                for e in l.effects.iter().filter(|e| shown(e)) {
                     ui.horizontal(|ui| {
                         let name = if e.name.is_empty() { format!("{} · {}", e.id, e.shape.label()) } else { format!("{} {}", e.id, e.name) };
                         let label = if e.shape == Shape::Custom { theme::with_icon(icons::CODE, &name) } else { name };
@@ -1818,39 +2254,111 @@ impl App {
                 }
                 ui.add_space(12.0);
                 self.effect_library(ui, l, &lib);
-            });
-            ui.separator();
-            egui::ScrollArea::vertical().id_salt("effect_scroll").show(ui, |ui| {
-                ui.vertical(|ui| {
-                    let Some(e) = self.light.effect.and_then(|id| l.effects.iter_mut().find(|e| e.id == id)) else {
-                        ui.label(RichText::new(t("Choose or add an effect.")).color(theme::TEXT_DIM));
-                        return;
-                    };
-                    effect_editor(ui, e, self.light.audio_level);
-                    ui.horizontal(|ui| {
-                        if ui.button(theme::with_icon(icons::DOWNLOAD, t("Export effect file…"))).clicked() {
-                            self.deferred.push(super::Deferred::ExportEffect(e.id));
-                        }
-                        if ui.button(theme::with_icon(icons::SAVE, t("Save to library"))).on_hover_text(t("Offer it in every show (replaces a library effect of the same name)")).clicked() {
-                            let results = self.light.fx_results.clone();
-                            let name = if e.name.is_empty() { format!("{} {}", t("Effect"), e.id) } else { e.name.clone() };
-                            lib.save(e.clone(), String::new(), String::new(), move |r| {
-                                results.lock().push(match r {
-                                    Ok(()) => Ok(tr!("{name} saved to the effect library", name = name)),
-                                    Err(e) => Err(tr!("Can't save to the effect library: {e}", e = format!("{e:#}"))),
-                                });
-                            });
-                        }
-                    });
-                    ui.add_space(10.0);
-                    let n = self.light.selection.len().clamp(1, 24);
-                    ui.label(theme::caption(&tr!("Preview across {n} fixtures", n = n.to_string())));
-                    effect_preview(ui, e, n);
-                    if e.shape == Shape::Custom {
-                        script_card(ui, &mut self.light, e);
+                ui.add_space(12.0);
+                // Built-in effects: click adds a copy to the show.
+                ui.label(theme::caption(t("Built-in")));
+                for b in crate::light::effects::builtins().into_iter().filter(|b| shown(&b.effect)) {
+                    let e = &b.effect;
+                    let attrs: Vec<&str> = e.attributes().iter().map(|a| a.label()).collect();
+                    let label = if e.shape == Shape::Custom { theme::with_icon(icons::PALETTE, &e.name) } else { e.name.clone() };
+                    let tip = format!("{}\n{} · {}\n{}", b.description, attrs.join(", "), e.shape.label(), t("Add to the show"));
+                    if ui.button(label).on_hover_text(tip).clicked() {
+                        let id = l.effects.iter().map(|e| e.id).max().unwrap_or(0) + 1;
+                        l.effects.push(Effect { id, ..b.effect.clone() });
+                        self.light.effect = Some(id);
                     }
-                });
-            });
+                }
+            }));
+            ui.separator();
+            egui::ScrollArea::vertical().id_salt("effect_scroll").auto_shrink(false).show(ui, |ui| ui.vertical(|ui| {
+                let Some(e) = self.light.effect.and_then(|id| l.effects.iter_mut().find(|e| e.id == id)) else {
+                    ui.label(RichText::new(t("Choose or add an effect.")).color(theme::TEXT_DIM));
+                    return;
+                };
+                // Settings and, to their right, the preview (under them on a narrow window); the
+                // script of a script effect in a card across the bottom.
+                let total = ui.available_width();
+                let side = total >= 800.0;
+                let settings_w = if side { 440.0 } else { total };
+                // Beside the settings: about half of the rest of the row, at least 320.
+                let preview_w = if side { ((total - settings_w - 22.0) * 0.5).max(320.0).min(total - settings_w - 22.0) } else { total };
+                let selected: Vec<FixtureId> = self.light.selection.iter().copied().take(24).collect();
+                let (bpm, audio) = (self.light.bpm, self.light.audio_level);
+                let mut export = false;
+                let mut save = false;
+                // Returns the card's height (the preview beside it takes the same).
+                let settings = |ui: &mut Ui, e: &mut Effect, export: &mut bool, save: &mut bool| -> f32 {
+                    theme::card_frame().show(ui, |ui| ui.vertical(|ui| {
+                        ui.set_width(settings_w - 26.0);
+                        theme::card_header(ui, icons::TUNE, t("Settings"));
+                        effect_editor(ui, e, audio);
+                        ui.add_space(8.0);
+                        ui.horizontal_wrapped(|ui| {
+                            *export = ui.button(theme::with_icon(icons::DOWNLOAD, t("Export effect file…"))).clicked();
+                            *save = ui
+                                .button(theme::with_icon(icons::SAVE, t("Save to library")))
+                                .on_hover_text(t("Offer it in every show (replaces a library effect of the same name)"))
+                                .clicked();
+                        });
+                    }))
+                    .response
+                    .rect
+                    .height()
+                };
+                // `height`: the card's outer height to match (its graph grows or shrinks to fit).
+                let preview = |ui: &mut Ui, e: &Effect, height: Option<f32>| {
+                    theme::card_frame().show(ui, |ui| ui.vertical(|ui| {
+                        ui.set_width(preview_w - 26.0);
+                        // Inner height: the card's margins (10 + 10) and border off.
+                        let inner = height.map(|h| h - 22.0);
+                        if let Some(h) = inner {
+                            ui.set_min_height(h);
+                        }
+                        let top = ui.max_rect().top();
+                        theme::card_header(ui, icons::PREVIEW, t("Preview"));
+                        let hint = if selected.is_empty() {
+                            t("8 sample fixtures: select fixtures to see yours.").to_string()
+                        } else {
+                            tr!("On the {n} selected fixtures.", n = selected.len().to_string())
+                        };
+                        ui.label(RichText::new(hint).small().color(theme::TEXT_DIM));
+                        let n = if selected.is_empty() { 8 } else { selected.len() };
+                        let left = inner.map(|h| h - (ui.cursor().top() - top));
+                        effect_preview(ui, e, n, &selected, bpm, left);
+                    }));
+                };
+                if side {
+                    ui.horizontal_top(|ui| {
+                        ui.spacing_mut().item_spacing.x = 10.0;
+                        let h = settings(ui, e, &mut export, &mut save);
+                        preview(ui, e, Some(h));
+                    });
+                } else {
+                    settings(ui, e, &mut export, &mut save);
+                    ui.add_space(10.0);
+                    preview(ui, e, None);
+                }
+                if export {
+                    self.deferred.push(super::Deferred::ExportEffect(e.id));
+                }
+                if save {
+                    let results = self.light.fx_results.clone();
+                    let name = if e.name.is_empty() { format!("{} {}", t("Effect"), e.id) } else { e.name.clone() };
+                    lib.save(e.clone(), String::new(), String::new(), move |r| {
+                        results.lock().push(match r {
+                            Ok(()) => Ok(tr!("{name} saved to the effect library", name = name)),
+                            Err(e) => Err(tr!("Can't save to the effect library: {e}", e = format!("{e:#}"))),
+                        });
+                    });
+                }
+                if e.shape == Shape::Custom {
+                    ui.add_space(10.0);
+                    theme::card_frame().show(ui, |ui| {
+                        ui.set_width(total - 26.0 - 12.0);
+                        script_card(ui, &mut self.light, e);
+                    });
+                }
+            }));
         });
     }
 
@@ -1876,7 +2384,8 @@ impl App {
             ui.label(RichText::new(t("Effects saved to the library are offered in every show.")).small().color(theme::TEXT_DIM));
         }
         let mut remove = None;
-        for item in &snap.items {
+        let (search, filter) = (self.light.fx_search.trim().to_lowercase(), self.light.fx_filter);
+        for item in snap.items.iter().filter(|i| fx_matches(&i.contents.effect, &search, filter)) {
             let e = &item.contents.effect;
             ui.horizontal(|ui| {
                 let name = if e.name.is_empty() { item.file.clone() } else { e.name.clone() };
@@ -1913,7 +2422,8 @@ impl App {
         let id = egui::Id::new("light_command_line");
         ui.horizontal(|ui| {
             ui.label(RichText::new(icons::KEYBOARD).font(theme::icon_font(18.0)).color(theme::TEXT_DIM));
-            let w = ui.available_width() - 330.0;
+            // Room for Run, Keypad, the result and the masters.
+            let w = ui.available_width() - 330.0 - 470.0;
             let r = ui.add(
                 egui::TextEdit::singleline(&mut self.light.cmd_line)
                     .id(id)
@@ -1961,6 +2471,9 @@ impl App {
                 }
                 None => {}
             }
+            // A copy of the masters, at hand on every page.
+            ui.separator();
+            self.masters_strip(ui, show, false);
         });
     }
 
@@ -2209,8 +2722,17 @@ impl App {
         ui.add(egui::TextEdit::singleline(&mut self.light.record_number).hint_text(hint.clone()).desired_width(50.0));
         let can = !self.light.programmer.is_empty() || !self.light.programmer_effects.is_empty();
         if ui.add_enabled(can, egui::Button::new(theme::with_icon(icons::FIBER_MANUAL_RECORD, t("Record cue")))).clicked() {
-            let number = Some(self.light.record_number.trim().to_string()).filter(|n| !n.is_empty()).unwrap_or(hint);
+            let number = Some(self.light.record_number.trim().to_string()).filter(|n| !n.is_empty()).unwrap_or(hint.clone());
             self.record_cue(l, seq_id, number);
+            self.light.record_number.clear();
+        }
+        if ui
+            .add_enabled(!l.fixtures.is_empty(), egui::Button::new(theme::with_icon(icons::BRIGHTNESS_6, t("Record blackout"))))
+            .on_hover_text(t("Record a cue with every intensity at zero and every effect stopped"))
+            .clicked()
+        {
+            let number = Some(self.light.record_number.trim().to_string()).filter(|n| !n.is_empty()).unwrap_or(hint);
+            self.record_blackout(l, seq_id, number);
             self.light.record_number.clear();
         }
         let target = self.light.cue.and_then(|c| l.cue_label(c));
@@ -2226,6 +2748,27 @@ impl App {
     /// Record the programmer (values and effects) as cue `number` of a sequence (None: the
     /// first; a new sequence 1 when there is none). An existing number is recorded over.
     fn record_cue(&mut self, l: &mut Lighting, seq: Option<SequenceId>, number: String) {
+        let (values, effects) = (self.light.programmer.clone(), self.light.programmer_effects.clone());
+        self.record_into(l, seq, number, values, effects, None);
+    }
+
+    /// Record a blackout cue ([`Lighting::blackout_look`], every effect stopped) as cue `number`.
+    fn record_blackout(&mut self, l: &mut Lighting, seq: Option<SequenceId>, number: String) {
+        let values = l.blackout_look().into();
+        let effects = l.effects.iter().map(|e| EffectRun { effect: e.id, fixtures: Vec::new(), stop: true }).collect();
+        self.record_into(l, seq, number, values, effects, Some(t("Blackout").to_string()));
+    }
+
+    /// Record `values` and `effects` as cue `number` (over an existing one; `name` if given).
+    fn record_into(
+        &mut self,
+        l: &mut Lighting,
+        seq: Option<SequenceId>,
+        number: String,
+        values: crate::light::model::Shared<Look>,
+        effects: Vec<EffectRun>,
+        name: Option<String>,
+    ) {
         let seq = match seq.filter(|s| l.sequence(*s).is_some()) {
             Some(id) => id,
             None => {
@@ -2235,14 +2778,15 @@ impl App {
             }
         };
         let s = l.sequences.iter_mut().find(|s| s.id == seq).expect("sequence");
-        let values = self.light.programmer.clone();
-        let effects = self.light.programmer_effects.clone();
         if let Some(c) = s.cues.iter_mut().find(|c| c.number == number) {
             c.values = values;
             c.effects = effects;
+            if let Some(name) = name {
+                c.name = name;
+            }
             self.light.cue = Some(c.id);
         } else {
-            let c = LightCue { number, values, effects, ..Default::default() };
+            let c = LightCue { number, values, effects, name: name.unwrap_or_default(), ..Default::default() };
             self.light.cue = Some(c.id);
             let at = s.cues.iter().position(|x| number_key(&x.number) > number_key(&c.number)).unwrap_or(s.cues.len());
             s.cues.insert(at, c);
@@ -2884,91 +3428,43 @@ impl App {
 
 
 impl App {
-    /// Executors (one per sequence: GO, release, level) plus grand master and blackout.
-    /// Works in both modes; actions go through [`App::control`] so a replica drives the main device.
-    fn executor_bar(&mut self, ui: &mut Ui, show: &mut Show) {
+    /// Grand master, blackout and the effects tempo (with Tap) on one line: at the top of the
+    /// Playback page and window (`big`: touch sizes), and a copy on the command line row. Works in both modes; actions go through
+    /// [`App::control`] so a replica drives the main device.
+    pub(super) fn masters_strip(&mut self, ui: &mut Ui, show: &mut Show, big: bool) {
         use crate::control::{Command, LightControl};
         ui.ctx().request_repaint_after(std::time::Duration::from_millis(100));
-        let status = show.media.light.status();
         let masters = show.media.light.masters().clone();
-        let l = &show.ws.lighting;
         let mut cmds = Vec::new();
-        let card = |ui: &mut Ui, add: &mut dyn FnMut(&mut Ui)| {
-            egui::Frame::new()
-                .fill(theme::BG_RAISED)
-                .corner_radius(8.0)
-                .stroke(egui::Stroke::new(1.0, theme::BORDER))
-                .inner_margin(egui::Margin::same(6))
-                .show(ui, |ui| {
-                    ui.vertical(|ui| {
-                        ui.set_width(150.0);
-                        add(ui)
-                    })
-                });
-        };
-        egui::ScrollArea::horizontal().id_salt("executors").show(ui, |ui| {
-            ui.horizontal(|ui| {
-                // Masters.
-                card(ui, &mut |ui| {
-                    ui.label(theme::caption(t("Grand master")));
-                    let mut gm = masters.grand_master;
-                    if level_bar(ui, &mut gm, theme::AMBER).changed() {
-                        cmds.push(LightControl::GrandMaster(gm));
-                    }
-                    let (fill, fg) = if masters.blackout { (theme::RED, Color32::WHITE) } else { (theme::BG_INPUT, theme::TEXT) };
-                    if ui.add(egui::Button::new(RichText::new(t("Blackout")).color(fg)).fill(fill).min_size(egui::vec2(138.0, 24.0))).clicked() {
-                        cmds.push(LightControl::Blackout(!masters.blackout));
-                    }
-                });
-                card(ui, &mut |ui| {
-                    ui.label(theme::caption(t("Tempo")));
-                    let mut bpm = masters.bpm;
-                    if ui.add(DragValue::new(&mut bpm).range(20.0..=300.0).speed(0.5).max_decimals(1).suffix(" BPM")).changed() {
-                        cmds.push(LightControl::Tempo(bpm));
-                    }
-                    if ui.add(egui::Button::new(t("Tap")).min_size(egui::vec2(138.0, 24.0))).on_hover_text(t("Tap on the beat")).clicked()
-                        && let Some(bpm) = crate::surface::tap(&mut self.light.taps, std::time::Instant::now())
-                    {
-                        cmds.push(LightControl::Tempo(bpm));
-                    }
-                });
-                for seq in &l.sequences {
-                    let st = status.iter().find(|x| x.id == seq.id);
-                    let cue = st.and_then(|x| x.cue).and_then(|c| seq.index_of(c)).map(|i| &seq.cues[i]);
-                    let next = match cue {
-                        Some(c) => seq.index_of(c.id).and_then(|i| seq.cues.get(i + 1)),
-                        None => seq.cues.first(),
-                    };
-                    card(ui, &mut |ui| {
-                        let active = st.is_some_and(|x| x.active);
-                        ui.horizontal(|ui| {
-                            let mark = if active { theme::GREEN } else { theme::TEXT_FAINT };
-                            ui.label(RichText::new(icons::FIBER_MANUAL_RECORD).font(theme::icon_font(10.0)).color(mark));
-                            ui.label(RichText::new(l.sequence_label(seq.id).unwrap_or_default()).font(theme::semibold(12.5)));
-                        });
-                        let now_text = cue.map_or_else(|| "—".to_string(), |c| format!("{} {}", c.number, c.name));
-                        ui.label(RichText::new(now_text).color(theme::TEXT).small());
-                        let next_text = next.map_or_else(|| t("end").to_string(), |c| tr!("next: {cue}", cue = format!("{} {}", c.number, c.name)));
-                        ui.label(RichText::new(next_text).color(theme::TEXT_DIM).small());
-                        let mut level = masters.level(seq.id);
-                        if level_bar(ui, &mut level, theme::ACCENT).changed() {
-                            cmds.push(LightControl::Level(seq.id, level));
-                        }
-                        ui.horizontal(|ui| {
-                            if ui.add_enabled(next.is_some(), egui::Button::new(RichText::new("GO").font(theme::semibold(13.0))).fill(theme::GO).min_size(egui::vec2(66.0, 24.0))).clicked() {
-                                cmds.push(LightControl::Go(seq.id, None));
-                            }
-                            if ui.add_enabled(active, egui::Button::new(t("Release")).min_size(egui::vec2(66.0, 24.0))).clicked() {
-                                cmds.push(LightControl::Release(Some(seq.id), 1.0));
-                            }
-                        });
-                    });
-                }
-                if l.sequences.is_empty() {
-                    ui.label(RichText::new(t("Sequences appear here as executors.")).color(theme::TEXT_DIM));
-                }
-            });
+        let h = if big { 40.0 } else { 26.0 };
+        ui.label(theme::caption(t("Grand master")));
+        let mut gm = masters.grand_master;
+        let bar = ui.allocate_ui(egui::vec2(if big { 220.0 } else { 120.0 }, h), |ui| {
+            ui.set_width(if big { 220.0 } else { 120.0 });
+            level_bar_sized(ui, &mut gm, theme::AMBER, h)
         });
+        if bar.inner.changed() {
+            cmds.push(LightControl::GrandMaster(gm));
+        }
+        let (fill, fg) = if masters.blackout { (theme::RED, Color32::WHITE) } else { (theme::BG_RAISED, theme::TEXT) };
+        if ui
+            .add(egui::Button::new(RichText::new(t("Blackout")).color(fg)).fill(fill).min_size(egui::vec2(if big { 110.0 } else { 0.0 }, h)))
+            .on_hover_text(t("Intensity to zero (the grand master stays where it is)"))
+            .clicked()
+        {
+            cmds.push(LightControl::Blackout(!masters.blackout));
+        }
+        ui.add_space(6.0);
+        ui.label(theme::caption(t("Tempo")));
+        let mut bpm = masters.bpm;
+        if ui.add_sized([if big { 90.0 } else { 74.0 }, h], DragValue::new(&mut bpm).range(20.0..=300.0).speed(0.5).max_decimals(1).suffix(" BPM")).changed() {
+            cmds.push(LightControl::Tempo(bpm));
+        }
+        if ui.add(egui::Button::new(t("Tap")).min_size(egui::vec2(if big { 80.0 } else { 0.0 }, h))).on_hover_text(t("Tap on the beat")).clicked()
+            && let Some(bpm) = crate::surface::tap(&mut self.light.taps, std::time::Instant::now())
+        {
+            cmds.push(LightControl::Tempo(bpm));
+        }
         for c in cmds {
             self.control(show, Command::Light(c));
         }
@@ -3303,7 +3799,7 @@ const SWATCHES: [[f32; 3]; 12] = [
     [1.0, 0.0, 1.0],
 ];
 
-fn to_c32(c: [f32; 3]) -> Color32 {
+pub(super) fn to_c32(c: [f32; 3]) -> Color32 {
     Color32::from_rgb((c[0].clamp(0.0, 1.0) * 255.0) as u8, (c[1].clamp(0.0, 1.0) * 255.0) as u8, (c[2].clamp(0.0, 1.0) * 255.0) as u8)
 }
 
@@ -3447,8 +3943,13 @@ fn attr_bar(ui: &mut Ui, value: Option<f32>, preset: Option<PresetId>, width: f3
 }
 
 /// A horizontal level (0..=1) set by clicking or dragging, with the percentage on it.
-fn level_bar(ui: &mut Ui, value: &mut f32, color: Color32) -> egui::Response {
-    let (rect, mut r) = ui.allocate_exact_size(egui::vec2(ui.available_width(), 22.0), egui::Sense::click_and_drag());
+pub(super) fn level_bar(ui: &mut Ui, value: &mut f32, color: Color32) -> egui::Response {
+    level_bar_sized(ui, value, color, 22.0)
+}
+
+/// [`level_bar`] `height` tall.
+pub(super) fn level_bar_sized(ui: &mut Ui, value: &mut f32, color: Color32, height: f32) -> egui::Response {
+    let (rect, mut r) = ui.allocate_exact_size(egui::vec2(ui.available_width(), height), egui::Sense::click_and_drag());
     if let Some(pos) = r.interact_pointer_pos()
         && (r.dragged() || r.clicked())
     {

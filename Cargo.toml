@@ -45,6 +45,8 @@ cosmic-text = "0.19.0"
 wasmtime = { version = "47.0.4", default-features = false, features = ["anyhow", "cranelift", "runtime", "std", "parallel-compilation"], optional = true }
 wasmtime-wasi = { version = "47.0.4", default-features = false, features = ["p1"], optional = true }
 resvg = { version = "0.48.1", default-features = false, features = ["text", "system-fonts", "memmap-fonts", "svgz", "raster-images"] }
+# Fixture search and download from the Open Fixture Library website (HTTPS, rustls).
+ureq = { version = "3.4.2", default-features = false, features = ["rustls", "gzip"], optional = true }
 
 # macOS: native menu bar and the window-button position.
 [target.'cfg(target_os = "macos")'.dependencies]
@@ -58,13 +60,15 @@ objc2-foundation = "0.2"
 winresource = "0.1"
 
 [features]
-default = ["video", "pipewire", "scripting"]
+default = ["video", "pipewire", "scripting", "fixture-download"]
 video = ["dep:ffmpeg-next"]
 # Linux: talk to PipeWire directly (every sink/source listed by name, no ALSA device busy errors).
 # Needs the libpipewire-0.3 headers; without it (or without a running PipeWire) ALSA is used.
 pipewire = ["cpal/pipewire"]
 # Python effect scripts in a WebAssembly sandbox (wasmtime); the interpreter itself is installed by oqman.
 scripting = ["dep:wasmtime", "dep:wasmtime-wasi"]
+# Search and download fixtures from the Open Fixture Library website (HTTPS; rustls/ring need a C compiler).
+fixture-download = ["dep:ureq"]
 # Lets the stress tests make chosen code paths panic on purpose (see `recovery::Fault`).
 fault-injection = []
 

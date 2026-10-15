@@ -69,6 +69,13 @@ pub(crate) struct TypeUi {
     results: Arc<Mutex<Vec<Result<String, String>>>>,
     /// Fixture files parsed in the background, waiting to go into the show.
     imports: Arc<Mutex<Vec<ImportDone>>>,
+    /// Open Fixture Library catalogue and downloads.
+    ofl: crate::light::oflsite::Browser,
+    /// The "Open Fixture Library" search window is open.
+    pub(crate) ofl_open: bool,
+    ofl_query: String,
+    /// Put the cursor in the search field (the window was just opened).
+    pub(crate) ofl_focus: bool,
 }
 
 /// One batch of imported fixture files.
@@ -106,6 +113,13 @@ impl TypeUi {
                 Err(e) => Err(tr!("Can't save to the fixture library: {e}", e = format!("{e:#}"))),
             });
         });
+    }
+
+    /// Open the Open Fixture Library window searching `query` (screenshots).
+    pub(crate) fn open_ofl(&mut self, query: String) {
+        self.ofl_open = true;
+        self.ofl_focus = true;
+        self.ofl_query = query;
     }
 
     /// Results of finished background jobs.
@@ -248,6 +262,11 @@ impl App {
                         };
                         open = Some(TypeEdit::new(ty, Origin::New));
                     }
+                    if cfg!(feature = "fixture-download")
+                        && ui.button(theme::with_icon(icons::DOWNLOAD, t("Open Fixture Library…"))).on_hover_text(t("Search and download fixtures from open-fixture-library.org")).clicked() {
+                        self.light.types.ofl_open = true;
+                        self.light.types.ofl_focus = true;
+                    }
                     if let Some(dir) = self.light.types.library().dir().map(|d| d.to_path_buf())
                         && ui.button(icons::FOLDER).on_hover_text(t("Open the fixture library folder")).clicked()
                     {
@@ -351,6 +370,9 @@ impl App {
                 });
             });
         });
+        if self.light.types.ofl_open {
+            self.ofl_window(ui.ctx(), l, &snap);
+        }
         if let Some(e) = open {
             self.light.types.edit = Some(e);
         }
@@ -565,6 +587,104 @@ impl App {
         };
         if let Err(e) = std::thread::Builder::new().name("openq-fixture-import".into()).spawn(parse) {
             self.notify_error(tr!("Can't import the fixture: {e}", e = e.to_string()));
+        }
+    }
+
+    /// The Open Fixture Library window: search the site's catalogue, download into the show and
+    /// the library (through the same path as imported files).
+    fn ofl_window(&mut self, ctx: &egui::Context, l: &Lighting, snap: &Snapshot) {
+        let browser = self.light.types.ofl.clone();
+        let repaint = {
+            let ctx = ctx.clone();
+            move || ctx.request_repaint()
+        };
+        browser.open(repaint.clone());
+        let state = browser.state();
+        let mut open = true;
+        let mut fetch: Vec<crate::light::oflsite::Entry> = Vec::new();
+        let types = &mut self.light.types;
+        egui::Window::new(t("Open Fixture Library")).id(egui::Id::new("ofl_window")).open(&mut open).default_size([560.0, 480.0]).pivot(egui::Align2::CENTER_CENTER).default_pos(ctx.content_rect().center()).show(ctx, |ui| {
+            let search = ui.add(egui::TextEdit::singleline(&mut types.ofl_query).hint_text(t("Manufacturer, name or category")).desired_width(f32::INFINITY));
+            if std::mem::take(&mut types.ofl_focus) {
+                search.request_focus();
+            }
+            ui.horizontal(|ui| {
+                if let Some((done, total)) = state.fetching {
+                    ui.spinner();
+                    let text = if total == 0 { t("Fetching the fixture list…").to_string() } else { tr!("Fetching the fixture list… {done}/{total}", done = done.to_string(), total = total.to_string()) };
+                    ui.label(RichText::new(text).color(theme::TEXT_DIM));
+                } else if let Some(c) = &state.catalogue {
+                    let stamp = crate::errlog::timestamp(std::time::UNIX_EPOCH + std::time::Duration::from_secs(c.fetched));
+                    let date = stamp.get(..10).unwrap_or_default().to_string();
+                    let text = tr!("{n} fixtures from {m} manufacturers · updated {date}", n = c.fixtures.len().to_string(), m = c.makers().to_string(), date = date);
+                    ui.label(RichText::new(text).color(theme::TEXT_DIM).small());
+                }
+                if state.fetching.is_none() && ui.button(icons::REFRESH).on_hover_text(t("Fetch the fixture list again")).clicked() {
+                    browser.refresh(repaint.clone());
+                }
+            });
+            if let Some(e) = &state.error {
+                ui.label(RichText::new(format!("{} {}", icons::WARNING, tr!("Can't reach the Open Fixture Library: {e}", e = e.clone()))).color(theme::AMBER).small());
+            }
+            ui.separator();
+            let Some(c) = &state.catalogue else { return };
+            let found = c.search(&types.ofl_query, usize::MAX);
+            if found.is_empty() {
+                ui.label(RichText::new(t("No fixtures found")).color(theme::TEXT_FAINT));
+                return;
+            }
+            let row_h = ui.spacing().interact_size.y + 4.0;
+            egui::ScrollArea::vertical().id_salt("ofl_results").auto_shrink(false).show_rows(ui, row_h, found.len(), |ui, rows| {
+                for e in &found[rows] {
+                    let id = e.type_id();
+                    ui.horizontal(|ui| {
+                        ui.set_height(row_h - 4.0);
+                        ui.label(RichText::new(&e.name).strong()).on_hover_text(e.url());
+                        ui.label(RichText::new(&e.maker_name).color(theme::TEXT_DIM));
+                        ui.label(RichText::new(e.categories.join(", ")).color(theme::TEXT_FAINT).small());
+                        ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                            if state.downloading.contains(&id) {
+                                ui.spinner();
+                                return;
+                            }
+                            let have = if l.fixture_type(&id).is_some() {
+                                Some(t("in this show"))
+                            } else if snap.items.iter().any(|x| x.id == id) {
+                                Some(t("in the library"))
+                            } else {
+                                None
+                            };
+                            let label = if have.is_some() { t("Download again") } else { t("Download") };
+                            if ui.button(theme::with_icon(icons::DOWNLOAD, label)).on_hover_text(t("Add it to this show and to the fixture library")).clicked() {
+                                fetch.push((*e).clone());
+                            }
+                            if let Some(h) = have {
+                                ui.label(RichText::new(h).color(theme::GREEN).small());
+                            }
+                        });
+                    });
+                }
+            });
+        });
+        types.ofl_open = open;
+        if !fetch.is_empty() {
+            let done = types.imports.clone();
+            let ctx = ctx.clone();
+            browser.download(fetch, move |e, r| {
+                let mut batch = ImportDone { imported: Vec::new(), failed: Vec::new(), notes: 0 };
+                match r {
+                    Ok(imp) => {
+                        for n in &imp.notes {
+                            log::warn!("fixture download ({}): {n}", e.url());
+                        }
+                        batch.notes = imp.notes.len();
+                        batch.imported.push(imp.fixture);
+                    }
+                    Err(err) => batch.failed.push(format!("{} {}: {err:#}", e.maker_name, e.name)),
+                }
+                done.lock().push(batch);
+                ctx.request_repaint();
+            });
         }
     }
 

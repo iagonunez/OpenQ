@@ -322,6 +322,157 @@ impl Effect {
     pub fn rate(&self, bpm: f32) -> f32 {
         if self.sync { self.speed * bpm / 60.0 } else { self.speed }
     }
+
+    /// Attributes it moves: the table's columns, pan and tilt for a circle, else its attribute.
+    pub fn attributes(&self) -> Vec<Attribute> {
+        match (&self.table, self.shape) {
+            (Some(t), Shape::Custom) => t.attributes.clone(),
+            (_, Shape::Circle) => vec![Attribute::Pan, Attribute::Tilt],
+            _ => vec![self.attribute],
+        }
+    }
+}
+
+/// An effect of the built-in library, with what it is for.
+pub struct BuiltinEffect {
+    /// The effect (number 0: it gets one when added to a show).
+    pub effect: Effect,
+    /// One line on what it does.
+    pub description: &'static str,
+}
+
+/// A one-row table over one cycle: `at(x)` gives each attribute's level at `x` (0..1).
+fn curve_table<const N: usize>(attributes: [Attribute; N], steps: u32, smooth: bool, at: impl Fn(f32) -> [f32; N]) -> EffectTable {
+    let rows: Vec<[f32; N]> = (0..steps).map(|k| at(k as f32 / steps as f32)).collect();
+    let values = (0..N).flat_map(|c| rows.iter().map(move |r| r[c].clamp(0.0, 1.0))).collect();
+    EffectTable { attributes: attributes.to_vec(), steps, width: 1, smooth, values }
+}
+
+/// RGB table over one cycle from a colour at each step.
+fn rgb_table(steps: u32, smooth: bool, colour: impl Fn(f32) -> [f32; 3]) -> EffectTable {
+    curve_table([Attribute::Red, Attribute::Green, Attribute::Blue], steps, smooth, colour)
+}
+
+/// Pan/tilt path over one cycle (0.5 = centre); played around the cue's position.
+fn path_table(steps: u32, smooth: bool, at: impl Fn(f32) -> [f32; 2]) -> EffectTable {
+    curve_table([Attribute::Pan, Attribute::Tilt], steps, smooth, at)
+}
+
+/// Fully saturated colour at hue `h` (0..1, red → yellow → green → cyan → blue → magenta).
+fn hue(h: f32) -> [f32; 3] {
+    let f = |n: f32| {
+        let k = (n + h * 6.0).rem_euclid(6.0);
+        1.0 - (k.min(4.0 - k).clamp(0.0, 1.0))
+    };
+    [f(5.0), f(3.0), f(1.0)]
+}
+
+/// The built-in effect library (names and descriptions in the UI language): the usual chases,
+/// waves, flickers, colour, position and beam effects, ready to add to a show and adjust.
+pub fn builtins() -> Vec<BuiltinEffect> {
+    use crate::i18n::t;
+    let fx = |name: &str, description: &'static str, e: Effect| BuiltinEffect { effect: Effect { id: 0, name: name.to_string(), ..e }, description };
+    let d = Effect::default();
+    let custom = |table: EffectTable| Effect { shape: Shape::Custom, table: Some(std::sync::Arc::new(table)), ..Default::default() };
+    vec![
+        // Intensity.
+        fx(t("Sine wave"), t("Dimmer wave rolling across the fixtures"), Effect { speed: 0.5, ..d.clone() }),
+        fx(t("Chase"), t("One fixture after the other, with the tempo"), Effect { shape: Shape::Square, duty: 0.25, sync: true, speed: 0.5, ..d.clone() }),
+        fx(t("Ramp chase"), t("Each fixture snaps on and fades out, in turn"), Effect { shape: Shape::SawDown, speed: 0.5, ..d.clone() }),
+        fx(t("Pulse"), t("Every fixture pulses together on the beat"), Effect { sync: true, speed: 1.0, spread: 0.0, ..d.clone() }),
+        fx(t("Breathe"), t("Slow, gentle dip around the cue's level"), Effect { relative: true, size: 0.4, speed: 0.15, spread: 0.0, ..d.clone() }),
+        fx(t("Centre out"), t("Wave from the middle to both ends"), Effect { speed: 0.5, spread: 180.0, wings: 2, ..d.clone() }),
+        fx(t("Candle flicker"), t("Random flicker around the cue's level"), Effect { shape: Shape::Random, relative: true, size: 0.3, speed: 8.0, spread: 0.0, ..d.clone() }),
+        fx(t("Strobe"), t("Short flashes, all together"), Effect { shape: Shape::Square, duty: 0.1, speed: 10.0, spread: 0.0, ..d.clone() }),
+        fx(t("Sparkle"), t("Short flashes scattered over the fixtures"), Effect { shape: Shape::Square, duty: 0.1, speed: 4.0, spread: 137.5 * 7.0, ..d.clone() }),
+        fx(t("Triangle wave"), t("Linear fade up and down rolling across the fixtures"), Effect { shape: Shape::Triangle, speed: 0.5, ..d.clone() }),
+        fx(t("Odd / even"), t("Every other fixture, swapping on the beat"), Effect {
+            speed: 0.5,
+            sync: true,
+            spread: 0.0,
+            ..custom(EffectTable { attributes: vec![Attribute::Dimmer], steps: 2, width: 2, smooth: false, values: vec![1.0, 0.0, 0.0, 1.0] })
+        }),
+        fx(t("Mirror chase"), t("Chase from both ends towards the middle"), Effect { shape: Shape::Square, duty: 0.25, speed: 0.5, wings: 2, ..d.clone() }),
+        fx(t("Pairs chase"), t("Two fixtures at a time chasing along"), Effect { shape: Shape::Square, duty: 0.25, speed: 0.5, sync: true, groups: 2, ..d.clone() }),
+        fx(t("Random chase"), t("A new random level on every fixture, each beat"), Effect { shape: Shape::Random, speed: 1.0, sync: true, ..d.clone() }),
+        fx(t("Fast flicker"), t("Nervous flicker (fire, a faulty lamp)"), Effect { shape: Shape::Random, relative: true, size: 0.7, speed: 15.0, ..d.clone() }),
+        fx(t("Slow build"), t("Everything ramps up together, then snaps out"), Effect { shape: Shape::SawUp, speed: 0.125, spread: 0.0, ..d.clone() }),
+        fx(t("Soft chase"), t("Gentle dips travelling around the cue's level"), Effect { relative: true, size: 0.5, speed: 0.3, ..d.clone() }),
+        // Colour.
+        fx(t("Rainbow"), t("Hue wheel rolling across the fixtures (RGB)"), Effect { speed: 0.1, ..custom(rgb_table(36, true, hue)) }),
+        fx(t("Red / blue"), t("Alternating red and blue, swapping each cycle (RGB)"), Effect {
+            speed: 1.0,
+            spread: 180.0,
+            ..custom(rgb_table(2, false, |x| if x < 0.5 { [1.0, 0.0, 0.0] } else { [0.0, 0.0, 1.0] }))
+        }),
+        fx(t("Warm / cool drift"), t("Slow drift between amber and steel blue (RGB)"), Effect {
+            speed: 0.05,
+            ..custom(rgb_table(32, true, |x| {
+                let k = 0.5 - 0.5 * (std::f32::consts::TAU * x).cos();
+                [1.0 - 0.6 * k, 0.55 + 0.15 * k, 0.15 + 0.85 * k]
+            }))
+        }),
+        // Position.
+        fx(t("Circle"), t("Every head draws the same circle"), Effect { shape: Shape::Circle, attribute: Attribute::Pan, relative: true, size: 0.3, speed: 0.25, spread: 0.0, ..d.clone() }),
+        fx(t("Circle wave"), t("Circles offset across the heads"), Effect { shape: Shape::Circle, attribute: Attribute::Pan, relative: true, size: 0.25, speed: 0.25, ..d.clone() }),
+        fx(t("Pan sweep"), t("Side to side, all together"), Effect { attribute: Attribute::Pan, relative: true, size: 0.4, speed: 0.2, spread: 0.0, ..d.clone() }),
+        fx(t("Fan"), t("Heads open out from the centre and close"), Effect { attribute: Attribute::Pan, relative: true, size: 0.3, speed: 0.25, spread: 180.0, wings: 2, ..d.clone() }),
+        fx(t("Tilt bounce"), t("Up and down, rippling across the heads"), Effect { attribute: Attribute::Tilt, shape: Shape::Triangle, relative: true, size: 0.2, speed: 0.5, spread: 90.0, ..d.clone() }),
+        fx(t("Tilt nod"), t("All heads nod up and down together"), Effect { attribute: Attribute::Tilt, relative: true, size: 0.25, speed: 0.3, spread: 0.0, ..d.clone() }),
+        fx(t("Pan wave"), t("Side to side, rolling across the heads"), Effect { attribute: Attribute::Pan, relative: true, size: 0.3, speed: 0.2, ..d.clone() }),
+        fx(t("Tilt wave"), t("Beams rise and fall in a wave across the heads"), Effect { attribute: Attribute::Tilt, relative: true, size: 0.25, speed: 0.25, ..d.clone() }),
+        fx(t("Scissors"), t("Neighbouring heads swing the opposite way and cross"), Effect {
+            relative: true,
+            size: 0.35,
+            speed: 0.25,
+            spread: 0.0,
+            ..custom({
+                // Row 0 (odd fixtures) and row 1 (even ones) mirror each other.
+                let steps = 64;
+                let sine = |sign: f32| (0..steps).map(move |k| 0.5 + sign * 0.5 * (std::f32::consts::TAU * k as f32 / steps as f32).sin());
+                EffectTable { attributes: vec![Attribute::Pan], steps, width: 2, smooth: true, values: sine(1.0).chain(sine(-1.0)).collect() }
+            })
+        }),
+        fx(t("Figure eight"), t("Every head draws an eight"), Effect {
+            relative: true,
+            size: 0.3,
+            speed: 0.15,
+            spread: 0.0,
+            ..custom(path_table(64, true, |x| {
+                let a = std::f32::consts::TAU * x;
+                [0.5 + 0.5 * a.sin(), 0.5 + 0.5 * (2.0 * a).sin()]
+            }))
+        }),
+        fx(t("Square path"), t("Heads trace a square, corner to corner"), Effect {
+            relative: true,
+            size: 0.3,
+            speed: 0.15,
+            spread: 0.0,
+            ..custom(path_table(4, true, |x| match (x * 4.0) as u32 {
+                0 => [0.0, 0.0],
+                1 => [1.0, 0.0],
+                2 => [1.0, 1.0],
+                _ => [0.0, 1.0],
+            }))
+        }),
+        fx(t("Ballyhoo"), t("Heads wander at random over a wide area"), Effect {
+            relative: true,
+            size: 0.6,
+            speed: 0.1,
+            spread: 137.5 * 5.0,
+            ..custom(path_table(16, true, |x| {
+                // Fixed pseudo-random points (the same every time), joined smoothly.
+                let k = (x * 16.0).round() as u32;
+                let r = |s: u32| ((k.wrapping_mul(2_654_435_761).wrapping_add(s) >> 8) % 1000) as f32 / 1000.0;
+                [r(17), r(91_237)]
+            }))
+        }),
+        fx(t("Audience sweep"), t("Slow tilt down over the audience and back"), Effect { attribute: Attribute::Tilt, shape: Shape::Triangle, relative: true, size: 0.4, speed: 0.1, spread: 0.0, ..d.clone() }),
+        // Beam and atmosphere.
+        fx(t("Iris pulse"), t("Iris opening and closing on the beat"), Effect { attribute: Attribute::Iris, relative: true, size: 0.5, sync: true, speed: 1.0, spread: 0.0, ..d.clone() }),
+        fx(t("Zoom breathe"), t("Beams slowly widen and narrow"), Effect { attribute: Attribute::Zoom, relative: true, size: 0.5, speed: 0.2, spread: 0.0, ..d.clone() }),
+        fx(t("Haze swell"), t("Hazer output slowly rising and falling"), Effect { attribute: Attribute::Fog, base: 0.1, size: 0.3, speed: 0.02, spread: 0.0, ..d }),
+    ]
 }
 
 /// An effect run by a cue or the programmer on some fixtures (in phase order).
@@ -407,6 +558,21 @@ impl CompiledEffect {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn builtins_are_valid() {
+        let all = builtins();
+        assert!(all.len() >= 15);
+        for b in &all {
+            if let Some(t) = &b.effect.table {
+                t.validate().unwrap_or_else(|e| panic!("{}: {e}", b.effect.name));
+            }
+            assert!(!b.effect.name.is_empty() && !b.description.is_empty());
+        }
+        assert_eq!(hue(0.0), [1.0, 0.0, 0.0]);
+        assert_eq!(hue(1.0 / 3.0).map(|v| (v * 100.0).round()), [0.0, 100.0, 0.0]);
+        assert_eq!(all.iter().find(|b| b.effect.shape == Shape::Circle).unwrap().effect.attributes(), vec![Attribute::Pan, Attribute::Tilt]);
+    }
 
     #[test]
     fn shapes() {

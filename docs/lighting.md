@@ -131,6 +131,11 @@ Status (2026-10-14, P1–P6): done. How fixture types work now:
   QLC+ `.qxf` (`qxf`: presets/groups, capabilities, heads → cells). XML is parsed without DTDs (a plain
   `<!DOCTYPE>` is stripped). Imports go into the show and the library. `examples/fixture_import.rs`
   prints what a file gives (checked on real OFL, QLC+ and GDTF files).
+- **Open Fixture Library download** (`light::oflsite`, cargo feature `fixture-download`, default; ureq +
+  rustls): Patch → "Open Fixture Library…" searches the site's catalogue (manufacturers + fixture
+  names/categories from `open-fixture-library.org/api/v1`, cached in `<config>/ofl-catalogue.json`, fetched
+  again after 30 days or with the refresh button) and downloads `<maker>/<key>.json` through the OFL
+  importer into the show and the library, like an imported file.
 - **Editor** (`ui/fixture_types.rs`, Patch → Fixture types): show / library / built-in lists, header and
   physical data, modes, cells (add, repeat cell 1 N times), channel table, range editor (colours,
   equal slots). Save to library, add/update in the show (fixtures keep their mode by name), export.
@@ -743,3 +748,49 @@ Features:
   list (click adds to the show), remove, open folder.
 - Fixed on the way: "Open the fixture library folder" called `App::open_path` (opens a show); both
   folder buttons now use the system file manager.
+
+## UI/UX pass (2026-10-15)
+- Lighting view: no Active cues column (it stays in the Cues view); the page tabs sit clear of the
+  command line's edge.
+- No executor bar any more: every executor lives on the Playback page/window: Masters (grand master, Blackout,
+  tempo + Tap, `App::masters_strip`), Sequences, Executors (the playback buttons, `LightButton`, called
+  executors in the UI).
+- Masters copy back on the command line row too. Executor size: `Lighting.button_scale` (0.6–2.5, saved with
+  the show, in `LightingPatch`), slider on the Playback page in Edit mode; cards and their text scale with it.
+- Record blackout (Programmer, next to Record cue): a cue with `Lighting::blackout_look` (every unit with an
+  intensity, virtual dimmers included, at 0) that stops every effect; named "Blackout".
+- Programmer: presets moved to a resizable left column (`preset_pool`): feature filter, "new preset"
+  (+ with the feature combo), presets as cards (colour bar, marked when the selection refers to them).
+  Groups and effects rows scroll past two lines.
+- Patch sheet: every column is a fixed-width cell (`sheet_cell`) so headers and rows line up whatever
+  each cell holds; rows are laid out in exact `ROW` rects (rows taller than `show_rows` assumed made the
+  sheet jitter when scrolling past the end); wide sheets scroll sideways.
+- Plot (`light::plot`): fixture number inside the symbol, patch (universe.address) above, distance from
+  the centre line below ("CL" on it).
+- Playback buttons (`model::LightButton`, `Lighting.buttons`): a preset on chosen fixtures (selection or a
+  group) and/or values + effects stored from the programmer, fade, Toggle or Flash (on while held). They
+  play as hidden one-cue sequences numbered `BUTTON_SEQUENCES + id` (compiled after the user's sequences
+  in `LightShow::compile_from`, stable cue id `LightButton::cue_id` so a recompile keeps them on), so
+  they work in Show mode, mix HTP/LTP, mirror to replicas and are released by Release all. Renumber/remove
+  fixtures and preset deletion follow into buttons; remote patches carry them (`LightingPatch.buttons`).
+- Playback page (`ui/light_playback.rs`; Edit and Show mode): sequences (GO/Release/level) and buttons as
+  cards on a grid; buttons added/edited there in Edit mode. "Open in a window" shows the same grid
+  (playback only) in its own viewport, fullscreen on a chosen display (re-placed when the choice changes,
+  F11 toggles fullscreen). Screenshot `OPENQ_SCREENSHOT_LIGHTING=playback`.
+- Effects page: Settings card with the preview card to its right (stacked under 800 px), the script of a
+  script effect in a card across the bottom. Preview (`effect_preview`): the speed in words, the real output
+  (`effect_output`: base/size/mode as playback applies them, cue's value dashed when relative) over two cycles
+  with seconds, a playhead and a dot per fixture, a circle as its pan/tilt path, the selected fixtures (or 8)
+  as lamps with their numbers, phase/groups/wings in words. Script editor: Python highlighting
+  (`ui/code.rs`, own tokenizer, no dependency). `OPENQ_SCREENSHOT_EFFECT=<n>` picks the effect.
+- Effects page, later: the preview card is about half the remaining width and as tall as the Settings card
+  (the graph takes the spare height). Left column: search + attribute filter (family or one attribute,
+  `FxFilter`, `Effect::attributes`) over the show's effects, the user library and the built-in library
+  (`effects::builtins()`: 20 effects — intensity chases/waves/flicker/strobe, RGB tables rainbow / red-blue /
+  warm-cool, circles, pan/tilt, iris, zoom, haze; click adds a copy).
+- Built-in library grown to 37 effects: more intensity (triangle wave, odd/even and scissors as two-row
+  pattern tables, mirror chase, pairs chase, random chase, fast flicker, slow build, soft chase) and position
+  (tilt nod, pan/tilt waves, figure eight, square path, ballyhoo as pan/tilt path tables played around the
+  cue's position, audience sweep). A real ping-pong needs the fixture count, which effects don't know.
+- Not done: button pages/ordering by drag, a per-computer saved display choice, surface mappings for
+  buttons.

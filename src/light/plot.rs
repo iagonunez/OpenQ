@@ -2,8 +2,9 @@
 //!
 //! x to the right, the audience at the bottom (+z), a 1 m grid. Rectangles (stage, risers, set)
 //! and lighting bars are drawn under the fixtures. Each fixture is a symbol (a circle for moving
-//! heads, a rectangle for the rest) turned by its heading, with its number above and its DMX
-//! address below; a legend lists the fixture types.
+//! heads, a rectangle for the rest) turned by its heading, with its number inside, its patch
+//! (universe.address) above and its distance from the centre line below; a legend lists the
+//! fixture types.
 //!
 //! One drawing routine (`draw`) paints onto a `Canvas`; the SVG is drawn at a fixed 60 px per
 //! metre on a page of its own size, the PDF on an A3 landscape sheet at the largest standard
@@ -155,18 +156,22 @@ fn draw(l: &Lighting, lay: &Layout, fr: &Frame, c: &mut dyn Canvas) {
         let moving = l.fixture_type(&f.fixture_type).is_some_and(|t| t.physical.moving);
         let (cx, cy) = (px(f.position[0]), pz(f.position[2]));
         c.push([cx, cy], -f.rotation[1]);
+        // The heading mark stays clear of the number in the middle.
         if moving {
             c.circle([0.0, 0.0], 12.0 * s, Some(255), 0, 2.0 * s);
-            c.line([0.0, 0.0], [0.0, 12.0 * s], 1.0, 0, false, false);
+            c.line([0.0, 8.0 * s], [0.0, 12.0 * s], 1.5 * s, 0, false, false);
         } else {
             c.rect([-10.0 * s, -14.0 * s], [20.0 * s, 28.0 * s], 3.0 * s, Some(255), 0, 2.0 * s);
             c.line([-10.0 * s, 10.0 * s], [10.0 * s, 10.0 * s], 1.0, 0, false, false);
         }
         c.pop();
-        c.text([cx, cy - 18.0 * s], 12.0 * s, true, 0, Anchor::Middle, &f.id.to_string());
-        if f.address > 0 {
-            c.text([cx, cy + 26.0 * s], 10.0 * s, false, 85, Anchor::Middle, &format!("{}.{}", f.universe, f.address));
-        }
+        // The number fits inside the symbol (smaller for long numbers).
+        let number = f.id.to_string();
+        let size = (17.0 * s / (text_width(&number, 1.0) + 0.01)).min(11.0 * s);
+        c.text([cx, cy + size * 0.36], size, true, 0, Anchor::Middle, &number);
+        let patch = if f.address > 0 { format!("{}.{}", f.universe, f.address) } else { "—".to_string() };
+        c.text([cx, cy - 20.0 * s], 10.0 * s, true, 51, Anchor::Middle, &patch);
+        c.text([cx, cy + 27.0 * s], 9.0 * s, false, 102, Anchor::Middle, &centre_distance(f.position[0]));
     }
     let rows = lay.types.len().div_ceil(fr.legend_cols.max(1)).max(1);
     for (i, (name, moving, n)) in lay.types.iter().enumerate() {
@@ -179,6 +184,11 @@ fn draw(l: &Lighting, lay: &Layout, fr: &Frame, c: &mut dyn Canvas) {
         }
         c.text([x + 30.0, y], 12.0, false, 0, Anchor::Start, &format!("{n} × {name}"));
     }
+}
+
+/// Distance from the centre line, metres ("CL" on it).
+fn centre_distance(x: f32) -> String {
+    if x.abs() < 0.005 { "CL".to_string() } else { format!("{:.2} m", x.abs()) }
 }
 
 /// Approximate Helvetica advance width of `s` at `size` (centres labels in the PDF and places
@@ -498,6 +508,10 @@ mod tests {
         assert_eq!(s.matches(" × ").count(), kinds.len(), "a legend row per type");
         assert!(s.ends_with("</svg>\n"));
         assert!(s.contains("LX1 · 6.00 m") && s.contains(">Stage</text>"));
+        // Patch above, distance from the centre line below.
+        let f = &l.fixtures[0];
+        assert!(s.contains(&format!(">{}.{}</text>", f.universe, f.address)));
+        assert!(s.contains(">3.00 m</text>") && s.contains(">CL</text>"));
         // The stage fits: the drawing is at least 12 m (+ margins) wide.
         assert!(s.contains(r#"width="840""#), "{}", &s[..300]);
     }

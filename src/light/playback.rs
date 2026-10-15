@@ -271,13 +271,24 @@ impl LightShow {
         show.universes.sort();
         show.universes.dedup();
         // Same patch = same slots, so an unchanged sequence compiles to the same thing.
-        let reuse = prev.filter(|(pl, ps)| pl.sequences.len() == ps.sequences.len() && same_patch(pl, l) && pl.presets == l.presets && pl.effects == l.effects);
+        let reuse = prev.filter(|(pl, ps)| {
+            pl.sequences.len() + pl.buttons.len() == ps.sequences.len() && same_patch(pl, l) && pl.presets == l.presets && pl.effects == l.effects
+        });
         for s in &l.sequences {
             let kept = reuse.and_then(|(pl, ps)| {
                 let i = pl.sequences.iter().position(|x| x.id == s.id)?;
                 (pl.sequences[i] == *s).then(|| ps.sequences[i].clone()).filter(|c| c.id == s.id)
             });
             let compiled = kept.unwrap_or_else(|| Arc::new(show.compile_sequence(l, s)));
+            show.sequences.push(compiled);
+        }
+        // Playback buttons: hidden one-cue sequences after the user's.
+        for b in &l.buttons {
+            let kept = reuse.and_then(|(pl, ps)| {
+                let i = pl.buttons.iter().position(|x| x.id == b.id)?;
+                (pl.buttons[i] == *b).then(|| ps.sequences[pl.sequences.len() + i].clone()).filter(|c| c.id == b.sequence_id())
+            });
+            let compiled = kept.unwrap_or_else(|| Arc::new(show.compile_sequence(l, &b.sequence(l))));
             show.sequences.push(compiled);
         }
         show
@@ -287,7 +298,7 @@ impl LightShow {
     /// compared (not fixture names or positions, groups, plot shapes, outputs...), so edits that
     /// don't change playback don't recompile.
     pub fn same_input(a: &Lighting, b: &Lighting) -> bool {
-        same_patch(a, b) && a.sequences == b.sequences && a.presets == b.presets && a.effects == b.effects
+        same_patch(a, b) && a.sequences == b.sequences && a.presets == b.presets && a.effects == b.effects && a.buttons == b.buttons
     }
 
     fn compile_sequence(&self, l: &Lighting, s: &super::model::Sequence) -> CompiledSequence {
@@ -1201,6 +1212,64 @@ mod tests {
         p.set_show(Arc::new(LightShow::compile(&l)));
         p.go(1, Some(l.sequences[0].cues[0].id), at(t0, 5.0)).unwrap();
         assert_eq!(p.tick(at(t0, 10.0)).get(1).unwrap().data[1], 255, "the cue follows the preset");
+    }
+
+    /// A blackout cue (`Lighting::blackout_look`) takes every intensity, virtual dimmers
+    /// included, to zero and leaves the other attributes where they are.
+    #[test]
+    fn blackout_cue() {
+        let t0 = Instant::now();
+        let mut l = design();
+        let look = l.blackout_look();
+        assert_eq!(look.len(), 3, "dimmer, RGB (virtual dimmer) and spot");
+        l.sequences[0].cues.push(LightCue { fade: 0.0, values: look.into(), ..Default::default() });
+        let ids: Vec<_> = l.sequences[0].cues.iter().map(|c| c.id).collect();
+        let mut p = Playback::new(Arc::new(LightShow::compile(&l)), t0);
+        p.go(1, Some(ids[1]), t0).unwrap();
+        let f = p.tick(at(t0, 1.0)).get(1).unwrap().data;
+        assert!(f[1] > 0 && f[9] == 255, "RGB red on, spot pan at full");
+        p.go(1, Some(ids[2]), at(t0, 1.0)).unwrap();
+        let f = p.tick(at(t0, 1.1)).get(1).unwrap().data;
+        assert_eq!((f[0], f[1]), (0, 0), "dimmer out, red scaled to 0 by the virtual dimmer");
+        assert_eq!(f[9], 255, "pan tracks");
+    }
+
+    /// A playback button: a preset on its fixtures plus its own values, played as a hidden
+    /// sequence; it stays on across a recompile and survives preset deletion as plain values.
+    #[test]
+    fn buttons_play_as_sequences() {
+        use crate::light::model::{LightButton, Preset};
+        let t0 = Instant::now();
+        let mut l = design();
+        l.presets.push(Preset { id: 1, values: [(2, [(Attribute::Red, 0.2)].into_iter().collect())].into_iter().collect::<BTreeMap<_, _>>().into(), ..Default::default() });
+        let mut b = LightButton { id: 3, preset: Some(1), fixtures: vec![2], ..Default::default() };
+        b.values.entry(1).or_default().insert(Attribute::Dimmer, 0.8.into());
+        b.values.entry(2).or_default().insert(Attribute::Dimmer, 1.0.into());
+        l.buttons.push(b.clone());
+        let show = LightShow::compile(&l);
+        assert_eq!(show.sequences.len(), 3);
+        assert_eq!(show.sequences[2].id, b.sequence_id());
+        let mut p = Playback::new(Arc::new(show), t0);
+        p.go(b.sequence_id(), Some(b.cue_id()), t0).unwrap();
+        let f = p.tick(at(t0, 0.1)).get(1).unwrap().data;
+        assert_eq!((f[0], f[1]), (204, 51), "own value on 1, preset red on 2");
+        // An edit recompiles; the button stays on.
+        l.buttons[0].name = "Fog".into();
+        let next = LightShow::compile_from(&l, Some((&design(), p.show())));
+        p.set_show(Arc::new(next));
+        assert_eq!(p.tick(at(t0, 0.2)).get(1).unwrap().data[0], 204);
+        assert!(p.status().iter().any(|s| s.id == b.sequence_id() && s.cue == Some(b.cue_id())));
+        p.release(b.sequence_id(), 0.0, at(t0, 0.3));
+        assert_eq!(p.tick(at(t0, 0.4)).get(1).unwrap().data[0], 0);
+        // Deleting the preset keeps its level in the button.
+        l.delete_preset(1);
+        assert_eq!(l.buttons[0].preset, None);
+        assert_eq!(l.buttons[0].values[&2][&Attribute::Red], 0.2.into());
+        // Renumbering and removing fixtures follow into buttons.
+        assert!(l.renumber_fixture(2, 20));
+        assert!(l.buttons[0].values.contains_key(&20));
+        l.remove_fixtures(&[1].into_iter().collect());
+        assert!(!l.buttons[0].values.contains_key(&1));
     }
 
     /// Releasing the sequence that owns an LTP slot fades it to the value an older sequence

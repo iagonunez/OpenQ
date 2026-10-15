@@ -905,6 +905,99 @@ pub struct Preset {
     pub values: Shared<BTreeMap<FixtureId, BTreeMap<Attribute, f32>>>,
 }
 
+/// Number of a playback button.
+pub type ButtonId = u32;
+
+/// Buttons play as hidden one-cue sequences numbered from here (`BUTTON_SEQUENCES + id`), so they
+/// fade, mix (HTP/LTP), mirror to replicas and release like any sequence. User sequences never
+/// get numbers this high.
+pub const BUTTON_SEQUENCES: SequenceId = 0x4000_0000;
+
+/// A playback button (Playback window, touch screens): a preset put on chosen fixtures, and/or
+/// stored values and effects, switched on and off (or held, `flash`) without the programmer, so it
+/// works in Show mode. Typical uses: fog or haze on, a strobe hit, a special.
+#[derive(Serialize, Deserialize, Clone, PartialEq, Debug)]
+#[serde(default)]
+pub struct LightButton {
+    /// Button number.
+    pub id: ButtonId,
+    /// Name on the button.
+    pub name: String,
+    /// Colour of the button.
+    pub color: [u8; 3],
+    /// Preset put on `fixtures` (every attribute it has for them).
+    pub preset: Option<PresetId>,
+    /// Fixtures (and cells) the preset is applied to.
+    pub fixtures: Vec<FixtureId>,
+    /// Stored values (from the programmer); win over the preset.
+    pub values: Shared<Look>,
+    /// Effects the button runs.
+    pub effects: Vec<super::effects::EffectRun>,
+    /// Fade in and out, seconds.
+    pub fade: f64,
+    /// On only while held down (otherwise each press toggles it).
+    pub flash: bool,
+}
+
+impl Default for LightButton {
+    fn default() -> Self {
+        Self {
+            id: 0,
+            name: String::new(),
+            color: [0x4a, 0x7c, 0xf0],
+            preset: None,
+            fixtures: Vec::new(),
+            values: Default::default(),
+            effects: Vec::new(),
+            fade: 0.0,
+            flash: false,
+        }
+    }
+}
+
+impl LightButton {
+    /// The sequence number the button plays as.
+    pub fn sequence_id(&self) -> SequenceId {
+        BUTTON_SEQUENCES + self.id
+    }
+
+    /// Id of the one cue of its sequence (derived from the button number, so a recompile, e.g.
+    /// an edit while the button is on, keeps it on).
+    pub fn cue_id(&self) -> LightCueId {
+        Uuid::from_u64_pair(0x6f70_656e_7162_746e, self.id as u64)
+    }
+
+    /// What the button puts on stage: the preset on its fixtures, then its own values.
+    pub fn look(&self, l: &Lighting) -> Look {
+        let mut look = Look::new();
+        if let Some(p) = self.preset {
+            for f in &self.fixtures {
+                for a in l.preset_attributes(p, *f) {
+                    look.entry(*f).or_default().insert(a, Value::Preset { preset: p });
+                }
+            }
+        }
+        for (f, v) in self.values.iter() {
+            look.entry(*f).or_default().extend(v.iter().map(|(a, x)| (*a, *x)));
+        }
+        look
+    }
+
+    /// The one-cue sequence it plays as.
+    pub fn sequence(&self, l: &Lighting) -> Sequence {
+        let cue = LightCue {
+            id: self.cue_id(),
+            number: "1".into(),
+            name: self.name.clone(),
+            fade: self.fade,
+            values: self.look(l).into(),
+            effects: self.effects.clone(),
+            ..Default::default()
+        };
+        Sequence { id: self.sequence_id(), name: self.name.clone(), cues: vec![cue].into(), ..Default::default() }
+    }
+}
+
 /// A lighting cue: the values it changes (tracking) and its timing.
 #[derive(Serialize, Deserialize, Clone, PartialEq, Debug)]
 #[serde(default)]
@@ -1144,6 +1237,11 @@ pub struct Lighting {
     pub presets: Vec<Preset>,
     /// Effects pool.
     pub effects: Vec<super::effects::Effect>,
+    /// Playback buttons (Playback window).
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub buttons: Vec<LightButton>,
+    /// Size of the playback buttons' cards on the Playback page and window (1 = normal).
+    pub button_scale: f32,
     /// OpenQ's Stop all (and Stop cues without a target) also fade the lighting out.
     pub stop_all_releases: bool,
     /// Fade used when a Stop cue releases a sequence, seconds.
@@ -1189,6 +1287,8 @@ impl Default for Lighting {
             shapes: Vec::new(),
             presets: Vec::new(),
             effects: Vec::new(),
+            buttons: Vec::new(),
+            button_scale: 1.0,
             stop_all_releases: false,
             release_fade: 1.0,
             index: FixtureIndex::default(),
@@ -1205,6 +1305,7 @@ impl Lighting {
             && self.shapes.is_empty()
             && self.presets.is_empty()
             && self.effects.is_empty()
+            && self.buttons.is_empty()
     }
 
     /// A fixture by number.
@@ -1310,6 +1411,21 @@ impl Lighting {
         self.effects.iter().find(|e| e.id == id)
     }
 
+    /// Every unit with an intensity (its own dimmer or the virtual one) at zero: the values of a
+    /// blackout cue.
+    pub fn blackout_look(&self) -> Look {
+        self.units()
+            .into_iter()
+            .filter(|u| self.unit_attributes(*u).contains(&Attribute::Dimmer))
+            .map(|u| (u, [(Attribute::Dimmer, Value::Level(0.0))].into_iter().collect()))
+            .collect()
+    }
+
+    /// A playback button by number.
+    pub fn button(&self, id: ButtonId) -> Option<&LightButton> {
+        self.buttons.iter().find(|b| b.id == id)
+    }
+
     /// A preset by number.
     pub fn preset(&self, id: PresetId) -> Option<&Preset> {
         self.presets.iter().find(|p| p.id == id)
@@ -1343,6 +1459,28 @@ impl Lighting {
         let mut it = cues.into_iter();
         for c in self.sequences.iter_mut().flat_map(|s| s.cues.iter_mut()) {
             *c = it.next().expect("same cues");
+        }
+        // Buttons keep what the preset put on their fixtures as their own values.
+        let looks: Vec<Option<Look>> = self
+            .buttons
+            .iter()
+            .map(|b| {
+                let refers = b.preset == Some(id) || b.values.values().any(|v| v.values().any(|x| *x == Value::Preset { preset: id }));
+                refers.then(|| {
+                    let mut look = b.look(self);
+                    unlink_preset(self, id, &mut look);
+                    look
+                })
+            })
+            .collect();
+        for (b, look) in self.buttons.iter_mut().zip(looks) {
+            if let Some(look) = look {
+                if b.preset == Some(id) {
+                    b.preset = None;
+                    b.fixtures.clear();
+                }
+                b.values = look.into();
+            }
         }
         self.presets.retain(|p| p.id != id);
     }
@@ -1399,6 +1537,13 @@ impl Lighting {
         for p in &mut self.presets {
             rekey(&mut p.values, map);
         }
+        for b in &mut self.buttons {
+            b.fixtures.iter_mut().for_each(|x| *x = map(*x).unwrap_or(*x));
+            rekey(&mut b.values, map);
+            for r in &mut b.effects {
+                r.fixtures.iter_mut().for_each(|x| *x = map(*x).unwrap_or(*x));
+            }
+        }
         true
     }
 
@@ -1418,6 +1563,13 @@ impl Lighting {
         }
         for p in &mut self.presets {
             p.values.retain(|f, _| !gone(f));
+        }
+        for b in &mut self.buttons {
+            b.fixtures.retain(|f| !gone(f));
+            b.values.retain(|f, _| !gone(f));
+            for r in &mut b.effects {
+                r.fixtures.retain(|f| !gone(f));
+            }
         }
         let used: std::collections::HashSet<&str> = self.fixtures.iter().map(|f| f.fixture_type.as_str()).collect();
         self.fixture_types.retain(|t| used.contains(t.id.as_str()));

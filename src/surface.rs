@@ -3,7 +3,7 @@
 //!
 //! A [`Mapping`] ties one [`SurfaceInput`] (a MIDI controller change or note, or an OSC address)
 //! to one [`SurfaceAction`]. Executors are numbered by their place in the sequence list (executor
-//! 1 = the first sequence), like the executor bar. Mappings live in the show's settings
+//! 1 = the first sequence), like the Playback page. Mappings live in the show's settings
 //! ([`SurfaceSettings`]); the MIDI input port is per computer ([`saved_midi_port`]), so a replica
 //! uses its own controller (its commands go to the main device like the rest of its UI).
 //!
