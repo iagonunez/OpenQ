@@ -24,7 +24,7 @@ disponible escrita en Rust con [egui](https://github.com/emilk/egui), y su uso e
 en producciones comerciales.
 
 <p align="center">
-  <img src="docs/img/screenshot.webp" alt="OpenQ llevando un espectáculo: el botón GO, la cue en espera, una lista con cues de audio, vídeo, texto, grupo, fundido y red, y las cues que están sonando" width="900">
+  <img src="docs/img/screenshot.es.webp" alt="OpenQ llevando un espectáculo: el botón GO, la cue en espera, una lista con cues de audio, vídeo, texto, grupo, fundido y red, y las cues que están sonando" width="900">
 </p>
 
 <p align="center">

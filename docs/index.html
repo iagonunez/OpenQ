@@ -64,6 +64,74 @@
   </div>
   <p class="more">The installer, <a href="https://github.com/iagonunez/oqman">oqman</a>, builds OpenQ on your computer. Later: <code>oqman update</code> · <code>oqman uninstall</code>.</p>
 </section>
+<section class="guide" id="guide">
+  <h2>Step by step</h2>
+  <p>OpenQ is built on your own computer by its installer, <a href="https://github.com/iagonunez/oqman">oqman</a>. The installer downloads the source code of the
+  newest version, installs what the build needs (Rust, a C compiler, and FFmpeg for video), builds OpenQ and adds it
+  to your applications. Your shows are never touched.</p>
+  <div class="note tip"><span class="label">Before you start</span><p>You need an internet connection, several gigabytes of
+  free disk space, and an administrator password on Linux and Windows (it is used to install system packages). The first
+  install is the longest, because the whole program is compiled; on an older computer it can take a long time. Later
+  updates are quicker, because the dependencies are already built.</p></div>
+
+  <h4>Linux</h4>
+  <ol>
+    <li>Open a terminal, paste the command below and press Enter:
+<pre><code>curl --proto '=https' --tlsv1.2 -fsSL https://github.com/iagonunez/oqman/releases/latest/download/install.sh | sh</code></pre></li>
+    <li>The first step downloads the installer, checks it against the published checksum and puts it in
+    <code>~/.local/bin</code>. Then it starts.</li>
+    <li>When it lists the system packages it needs (a C compiler, libclang, the ALSA and PipeWire audio headers, udev and
+    FFmpeg), it asks before installing them with your distribution's package manager. Answer yes; the package manager
+    asks for your password.</li>
+    <li>If the computer has no Rust, oqman installs a private copy in its own folder. Any Rust already on the system is
+    left alone.</li>
+    <li>The build prints each crate it compiles. Leave the terminal open until it says that OpenQ is installed.</li>
+    <li>Open OpenQ from your applications menu (search for "OpenQ"), or type <code>openq</code> in a terminal.</li>
+  </ol>
+  <p>If the terminal says <code>openq: command not found</code>, <code>~/.local/bin</code> is not in your PATH yet. Add it
+  once, then open a new terminal:</p>
+<pre><code>fish_add_path ~/.local/bin                                 # fish
+echo 'export PATH="$HOME/.local/bin:$PATH"' &gt;&gt; ~/.bashrc   # bash (zsh: ~/.zshrc)</code></pre>
+
+  <h4>macOS</h4>
+  <ol>
+    <li>Open Terminal (press ⌘ Space and type "Terminal").</li>
+    <li>Paste the command below and press Enter:
+<pre><code>curl --proto '=https' --tlsv1.2 -fsSL https://github.com/iagonunez/oqman/releases/latest/download/install.sh | sh</code></pre></li>
+    <li>If the Mac has no Apple Command Line Tools yet, macOS opens Apple's installer. Accept Apple's licence, let it
+    finish, then run the same command again.</li>
+    <li>oqman builds FFmpeg from its source code, which takes a while. On an Intel Mac it also builds NASM, the assembler
+    FFmpeg uses.</li>
+    <li>The app is placed at <code>~/Applications/OpenQ.app</code>, the Applications folder in your home folder. Open it
+    from the Finder (Go → Home → Applications) or with Spotlight. Because you built it on this Mac, macOS does not show
+    the "unidentified developer" warning.</li>
+  </ol>
+
+  <h4>Windows</h4>
+  <ol>
+    <li>Open PowerShell: press the Start key, type <em>PowerShell</em> and press Enter.</li>
+    <li>Paste the command below and press Enter:
+<pre><code>powershell -ExecutionPolicy Bypass -c "irm https://github.com/iagonunez/oqman/releases/latest/download/install.ps1 | iex"</code></pre></li>
+    <li>If the computer has no Microsoft C++ Build Tools, their installer opens with the "Desktop development with C++"
+    workload selected. Accept Microsoft's licence and let it finish; it is large and can take a while. oqman then carries
+    on in the same window.</li>
+    <li>oqman downloads FFmpeg (the shared LGPL build) and libclang from LLVM, then compiles OpenQ.</li>
+    <li>When it is done, OpenQ is in the Start menu and listed under <em>Settings → Apps → Installed apps</em>.</li>
+  </ol>
+
+  <h4>If something goes wrong</h4>
+  <ul>
+    <li><code>oqman doctor</code> shows what is installed and what the build still needs.</li>
+    <li>If the build stops, read the last lines it printed, fix the cause (usually a missing package or a cancelled
+    installer) and run the command again. What already compiled is kept, so the second try is quicker.</li>
+  </ul>
+
+  <h4>Updating and removing</h4>
+  <p>To get a newer version, run <code>oqman update</code>: it rebuilds OpenQ when a new version is released. To remove
+  OpenQ, run <code>oqman uninstall</code>; it asks first. Add <code>--purge</code> to remove oqman's Rust, dependencies and
+  build cache as well. On Windows you can also remove OpenQ from <em>Settings → Apps → Installed apps</em>. Your shows
+  are never touched.</p>
+</section>
 
 <div class="shot"><img src="img/screenshot.webp" width="1600" height="1466" alt="OpenQ running a show: the GO button, the standby cue, a cue list with audio, video, text, group, fade and network cues, and the cues that are playing" loading="lazy"></div>
 

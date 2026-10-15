@@ -64,8 +64,78 @@
   </div>
   <p class="more">El instalador, <a href="https://github.com/iagonunez/oqman">oqman</a>, compila OpenQ en tu ordenador. Más adelante: <code>oqman update</code> · <code>oqman uninstall</code>.</p>
 </section>
+<section class="guide" id="guide">
+  <h2>Paso a paso</h2>
+  <p>OpenQ se compila en tu propio ordenador con su instalador, <a href="https://github.com/iagonunez/oqman">oqman</a>. El instalador descarga el código de la versión más
+  reciente, instala lo que necesita la compilación (Rust, un compilador de C y FFmpeg para el vídeo), compila OpenQ y lo
+  añade a tus aplicaciones. Tus espectáculos nunca se tocan.</p>
+  <div class="note tip"><span class="label">Antes de empezar</span><p>Necesitas conexión a internet, varios gigabytes de
+  espacio libre en el disco y, en Linux y Windows, la contraseña de administrador (se usa para instalar paquetes del
+  sistema). La primera instalación es la más larga, porque compila el programa entero; en un ordenador antiguo puede tardar
+  mucho. Las actualizaciones posteriores son más rápidas, porque las dependencias ya están compiladas.</p></div>
 
-<div class="shot"><img src="../img/screenshot.webp" width="1600" height="1466" alt="OpenQ llevando un espectáculo: el botón GO, la cue en espera, una lista con cues de audio, vídeo, texto, grupo, fundido y red, y las cues que están sonando" loading="lazy"></div>
+  <h4>Linux</h4>
+  <ol>
+    <li>Abre una terminal, pega la orden de abajo y pulsa Intro:
+<pre><code>curl --proto '=https' --tlsv1.2 -fsSL https://github.com/iagonunez/oqman/releases/latest/download/install.sh | sh</code></pre></li>
+    <li>El primer paso descarga el instalador, comprueba la suma de control publicada y lo guarda en
+    <code>~/.local/bin</code>. Después arranca.</li>
+    <li>Cuando muestre los paquetes del sistema que necesita (un compilador de C, libclang, las cabeceras de audio ALSA y
+    PipeWire, udev y FFmpeg), pregunta antes de instalarlos con el gestor de paquetes de tu distribución. Responde que sí;
+    el gestor pedirá tu contraseña.</li>
+    <li>Si el ordenador no tiene Rust, oqman instala una copia privada en su propia carpeta. El Rust que ya haya en el
+    sistema no se toca.</li>
+    <li>La compilación muestra cada paquete que compila. Deja la terminal abierta hasta que diga que OpenQ está
+    instalado.</li>
+    <li>Abre OpenQ desde el menú de aplicaciones (busca "OpenQ"), o escribe <code>openq</code> en una terminal.</li>
+  </ol>
+  <p>Si la terminal dice <code>openq: orden no encontrada</code>, <code>~/.local/bin</code> todavía no está en tu PATH.
+  Añádela una vez y abre una terminal nueva:</p>
+<pre><code>fish_add_path ~/.local/bin                                 # fish
+echo 'export PATH="$HOME/.local/bin:$PATH"' &gt;&gt; ~/.bashrc   # bash (zsh: ~/.zshrc)</code></pre>
+
+  <h4>macOS</h4>
+  <ol>
+    <li>Abre Terminal (pulsa ⌘ Espacio y escribe "Terminal").</li>
+    <li>Pega la orden de abajo y pulsa Intro:
+<pre><code>curl --proto '=https' --tlsv1.2 -fsSL https://github.com/iagonunez/oqman/releases/latest/download/install.sh | sh</code></pre></li>
+    <li>Si el Mac todavía no tiene las Command Line Tools de Apple, macOS abre su instalador. Acepta la licencia de Apple,
+    espera a que termine y vuelve a ejecutar la misma orden.</li>
+    <li>oqman compila FFmpeg desde su código fuente, lo que tarda un rato. En un Mac Intel compila también NASM, el
+    ensamblador que usa FFmpeg.</li>
+    <li>La app queda en <code>~/Applications/OpenQ.app</code>, la carpeta Applications de tu carpeta personal. Ábrela desde
+    el Finder (Ir → Carpeta personal → Applications) o con Spotlight. Como la has compilado tú en este Mac, macOS no muestra
+    el aviso de "desarrollador no identificado".</li>
+  </ol>
+
+  <h4>Windows</h4>
+  <ol>
+    <li>Abre PowerShell: pulsa la tecla Inicio, escribe <em>PowerShell</em> y pulsa Intro.</li>
+    <li>Pega la orden de abajo y pulsa Intro:
+<pre><code>powershell -ExecutionPolicy Bypass -c "irm https://github.com/iagonunez/oqman/releases/latest/download/install.ps1 | iex"</code></pre></li>
+    <li>Si el ordenador no tiene las C++ Build Tools de Microsoft, se abre su instalador con la carga de trabajo "Desarrollo
+    para el escritorio con C++" marcada. Acepta la licencia de Microsoft y espera a que termine; es grande y puede tardar.
+    Después oqman continúa solo en la misma ventana.</li>
+    <li>oqman descarga FFmpeg (la versión compartida LGPL) y libclang de LLVM, y compila OpenQ.</li>
+    <li>Al terminar, OpenQ está en el menú Inicio y en <em>Configuración → Aplicaciones → Aplicaciones instaladas</em>.</li>
+  </ol>
+
+  <h4>Si algo falla</h4>
+  <ul>
+    <li><code>oqman doctor</code> muestra qué está instalado y qué le falta a la compilación.</li>
+    <li>Si la compilación se detiene, lee las últimas líneas que muestra, corrige la causa (casi siempre un paquete que falta
+    o un instalador cancelado) y vuelve a ejecutar la orden. Lo que ya se compiló se conserva, así que el segundo intento
+    es más rápido.</li>
+  </ul>
+
+  <h4>Actualizar y desinstalar</h4>
+  <p>Para obtener una versión más nueva, ejecuta <code>oqman update</code>: recompila OpenQ cuando sale una versión nueva.
+  Para quitar OpenQ, ejecuta <code>oqman uninstall</code>; pregunta antes. Con <code>--purge</code> quita también el Rust, las
+  dependencias y la caché de compilación de oqman. En Windows también puedes quitarlo desde <em>Configuración →
+  Aplicaciones → Aplicaciones instaladas</em>. Tus espectáculos nunca se tocan.</p>
+</section>
+
+<div class="shot"><img src="../img/screenshot.es.webp" width="1600" height="1466" alt="OpenQ llevando un espectáculo: el botón GO, la cue en espera, una lista con cues de audio, vídeo, texto, grupo, fundido y red, y las cues que están sonando" loading="lazy"></div>
 
 <section class="section">
   <h2>Qué hace</h2>

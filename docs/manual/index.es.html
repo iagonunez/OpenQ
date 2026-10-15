@@ -136,6 +136,7 @@ pre code { background: none; border: 0; padding: 0; font-size: inherit; }
 
 figure { margin: 18px 0 22px; }
 figure img { display: block; width: 100%; height: auto; border-radius: 10px; border: 1px solid var(--border); background: #141518; }
+h4 { font: 600 17px/1.3 var(--display); margin: 20px 0 6px; }
 figcaption { font-size: 13px; color: var(--faint); margin-top: 8px; }
 figure.narrow { max-width: 560px; }
 
@@ -228,24 +229,73 @@ footer { margin-top: 56px; padding-top: 18px; border-top: 1px solid var(--border
 <section id="start">
   <h2><span class="n">01</span>Primeros pasos</h2>
   <h3>Instalación</h3>
-  <p>OpenQ se compila en tu propio ordenador con su instalador, <a href="https://github.com/iagonunez/oqman">oqman</a>.
-  Instala lo que necesita la compilación (Rust, un compilador y FFmpeg para el vídeo), compila la versión más reciente
-  y añade OpenQ a tus aplicaciones. La primera instalación tarda unos minutos; las actualizaciones son más rápidas.</p>
-  <div class="table-wrap"><table>
-    <thead><tr><th>Sistema</th><th>Cómo</th></tr></thead>
-    <tbody>
-      <tr><td>macOS 11 o posterior, Linux</td><td>En el Terminal, ejecuta
-      <code>curl --proto '=https' --tlsv1.2 -fsSL https://github.com/iagonunez/oqman/releases/latest/download/install.sh | sh</code>.
-      En un Mac sin las Command Line Tools de Apple, macOS pide instalarlas primero; después vuelve a ejecutar la orden.
-      OpenQ queda en <code>Applications</code> dentro de tu carpeta personal (macOS) o en el menú de aplicaciones (Linux).</td></tr>
-      <tr><td>Windows 10/11 (64 bits)</td><td>En PowerShell, ejecuta
-      <code>powershell -ExecutionPolicy Bypass -c "irm https://github.com/iagonunez/oqman/releases/latest/download/install.ps1 | iex"</code>.
-      Sin las C++ Build Tools de Microsoft, primero se abre su instalador: acéptalo y deja que termine.
-      Después OpenQ está en el menú Inicio.</td></tr>
-    </tbody>
-  </table></div>
-  <p>Para obtener una versión más nueva, ejecuta <code>oqman update</code>. Para quitar OpenQ, ejecuta <code>oqman uninstall</code>
-  (en Windows también puedes usar <em>Configuración → Aplicaciones → Aplicaciones instaladas</em>). Tus espectáculos nunca se tocan.</p>
+  <p>OpenQ se compila en tu propio ordenador con su instalador, <a href="https://github.com/iagonunez/oqman">oqman</a>. El instalador descarga el código de la versión más
+  reciente, instala lo que necesita la compilación (Rust, un compilador de C y FFmpeg para el vídeo), compila OpenQ y lo
+  añade a tus aplicaciones. Tus espectáculos nunca se tocan.</p>
+  <div class="note tip"><span class="label">Antes de empezar</span><p>Necesitas conexión a internet, varios gigabytes de
+  espacio libre en el disco y, en Linux y Windows, la contraseña de administrador (se usa para instalar paquetes del
+  sistema). La primera instalación es la más larga, porque compila el programa entero; en un ordenador antiguo puede tardar
+  mucho. Las actualizaciones posteriores son más rápidas, porque las dependencias ya están compiladas.</p></div>
+
+  <h4>Linux</h4>
+  <ol>
+    <li>Abre una terminal, pega la orden de abajo y pulsa Intro:
+<pre><code>curl --proto '=https' --tlsv1.2 -fsSL https://github.com/iagonunez/oqman/releases/latest/download/install.sh | sh</code></pre></li>
+    <li>El primer paso descarga el instalador, comprueba la suma de control publicada y lo guarda en
+    <code>~/.local/bin</code>. Después arranca.</li>
+    <li>Cuando muestre los paquetes del sistema que necesita (un compilador de C, libclang, las cabeceras de audio ALSA y
+    PipeWire, udev y FFmpeg), pregunta antes de instalarlos con el gestor de paquetes de tu distribución. Responde que sí;
+    el gestor pedirá tu contraseña.</li>
+    <li>Si el ordenador no tiene Rust, oqman instala una copia privada en su propia carpeta. El Rust que ya haya en el
+    sistema no se toca.</li>
+    <li>La compilación muestra cada paquete que compila. Deja la terminal abierta hasta que diga que OpenQ está
+    instalado.</li>
+    <li>Abre OpenQ desde el menú de aplicaciones (busca "OpenQ"), o escribe <code>openq</code> en una terminal.</li>
+  </ol>
+  <p>Si la terminal dice <code>openq: orden no encontrada</code>, <code>~/.local/bin</code> todavía no está en tu PATH.
+  Añádela una vez y abre una terminal nueva:</p>
+<pre><code>fish_add_path ~/.local/bin                                 # fish
+echo 'export PATH="$HOME/.local/bin:$PATH"' &gt;&gt; ~/.bashrc   # bash (zsh: ~/.zshrc)</code></pre>
+
+  <h4>macOS</h4>
+  <ol>
+    <li>Abre Terminal (pulsa ⌘ Espacio y escribe "Terminal").</li>
+    <li>Pega la orden de abajo y pulsa Intro:
+<pre><code>curl --proto '=https' --tlsv1.2 -fsSL https://github.com/iagonunez/oqman/releases/latest/download/install.sh | sh</code></pre></li>
+    <li>Si el Mac todavía no tiene las Command Line Tools de Apple, macOS abre su instalador. Acepta la licencia de Apple,
+    espera a que termine y vuelve a ejecutar la misma orden.</li>
+    <li>oqman compila FFmpeg desde su código fuente, lo que tarda un rato. En un Mac Intel compila también NASM, el
+    ensamblador que usa FFmpeg.</li>
+    <li>La app queda en <code>~/Applications/OpenQ.app</code>, la carpeta Applications de tu carpeta personal. Ábrela desde
+    el Finder (Ir → Carpeta personal → Applications) o con Spotlight. Como la has compilado tú en este Mac, macOS no muestra
+    el aviso de "desarrollador no identificado".</li>
+  </ol>
+
+  <h4>Windows</h4>
+  <ol>
+    <li>Abre PowerShell: pulsa la tecla Inicio, escribe <em>PowerShell</em> y pulsa Intro.</li>
+    <li>Pega la orden de abajo y pulsa Intro:
+<pre><code>powershell -ExecutionPolicy Bypass -c "irm https://github.com/iagonunez/oqman/releases/latest/download/install.ps1 | iex"</code></pre></li>
+    <li>Si el ordenador no tiene las C++ Build Tools de Microsoft, se abre su instalador con la carga de trabajo "Desarrollo
+    para el escritorio con C++" marcada. Acepta la licencia de Microsoft y espera a que termine; es grande y puede tardar.
+    Después oqman continúa solo en la misma ventana.</li>
+    <li>oqman descarga FFmpeg (la versión compartida LGPL) y libclang de LLVM, y compila OpenQ.</li>
+    <li>Al terminar, OpenQ está en el menú Inicio y en <em>Configuración → Aplicaciones → Aplicaciones instaladas</em>.</li>
+  </ol>
+
+  <h4>Si algo falla</h4>
+  <ul>
+    <li><code>oqman doctor</code> muestra qué está instalado y qué le falta a la compilación.</li>
+    <li>Si la compilación se detiene, lee las últimas líneas que muestra, corrige la causa (casi siempre un paquete que falta
+    o un instalador cancelado) y vuelve a ejecutar la orden. Lo que ya se compiló se conserva, así que el segundo intento
+    es más rápido.</li>
+  </ul>
+
+  <h4>Actualizar y desinstalar</h4>
+  <p>Para obtener una versión más nueva, ejecuta <code>oqman update</code>: recompila OpenQ cuando sale una versión nueva.
+  Para quitar OpenQ, ejecuta <code>oqman uninstall</code>; pregunta antes. Con <code>--purge</code> quita también el Rust, las
+  dependencias y la caché de compilación de oqman. En Windows también puedes quitarlo desde <em>Configuración →
+  Aplicaciones → Aplicaciones instaladas</em>. Tus espectáculos nunca se tocan.</p>
   <p>Para ejecutar una copia en la que estés trabajando desde el código fuente:</p>
 <pre><code>cargo run --release                  # empezar con un espectáculo vacío
 cargo run --release -- show.openq    # abrir un espectáculo guardado</code></pre>
@@ -268,7 +318,7 @@ cargo run --release -- show.openq    # abrir un espectáculo guardado</code></pr
 <section id="window">
   <h2><span class="n">02</span>La ventana principal</h2>
   <figure>
-    <img src="img/edit-mode.webp" width="1400" height="1535" alt="Ventana principal de OpenQ en modo edición: botón GO, tarjeta de espera, transporte, medidores, barra de herramientas, lista de cues e inspector.">
+    <img src="img/es/edit-mode.webp" width="1400" height="1535" alt="Ventana principal de OpenQ en modo edición: botón GO, tarjeta de espera, transporte, medidores, barra de herramientas, lista de cues e inspector.">
     <figcaption>Modo edición con la primera cue seleccionada y el inspector mostrando su pestaña Tiempo y bucles.</figcaption>
   </figure>
   <ul>
@@ -327,7 +377,7 @@ cargo run --release -- show.openq    # abrir un espectáculo guardado</code></pr
   en los dos modos.</p>
   <p>Cambia con el interruptor a la izquierda de la barra de estado, <span class="menu">Función → Entrar en modo función</span>, o <kbd>Ctrl</kbd>+<kbd>E</kbd>.</p>
   <figure>
-    <img src="img/show-mode.webp" width="1400" height="735" alt="Modo función: filas grandes, varias cues en marcha con cuenta atrás y el panel de cues activas a la derecha.">
+    <img src="img/es/show-mode.webp" width="1400" height="735" alt="Modo función: filas grandes, varias cues en marcha con cuenta atrás y el panel de cues activas a la derecha.">
     <figcaption>Modo función mientras se ejecuta una secuencia. Las filas verdes están sonando y la columna de acción hace la cuenta atrás.</figcaption>
   </figure>
   <h3>Parar</h3>
@@ -407,7 +457,7 @@ cargo run --release -- show.openq    # abrir un espectáculo guardado</code></pr
   <h2><span class="n">06</span>Cues de audio</h2>
   <h3>Tiempo y bucles</h3>
   <figure>
-    <img src="img/waveform.webp" width="1400" height="369" alt="Pestaña Tiempo y bucles: forma de onda con marcadores de recorte y curvas de fundido, y las tarjetas Recorte, Bucles, Reproducción y Fundidos.">
+    <img src="img/es/waveform.webp" width="1400" height="369" alt="Pestaña Tiempo y bucles: forma de onda con marcadores de recorte y curvas de fundido, y las tarjetas Recorte, Bucles, Reproducción y Fundidos.">
     <figcaption>La pestaña Tiempo y bucles. Arrastra los marcadores verde y rojo para recortar; haz doble clic para añadir un fragmento.
     Las curvas naranjas son la entrada y la salida en fundido de la cue.</figcaption>
   </figure>
@@ -426,7 +476,7 @@ cargo run --release -- show.openq    # abrir un espectáculo guardado</code></pr
   </ul>
   <h3>I/O</h3>
   <figure>
-    <img src="img/io.webp" width="1400" height="348" alt="Pestaña I/O: datos del archivo de entrada, dispositivo de salida y la tarjeta de enrutado.">
+    <img src="img/es/io.webp" width="1400" height="348" alt="Pestaña I/O: datos del archivo de entrada, dispositivo de salida y la tarjeta de enrutado.">
     <figcaption>De dónde viene el sonido y a dónde va.</figcaption>
   </figure>
   <ul>
@@ -439,7 +489,7 @@ cargo run --release -- show.openq    # abrir un espectáculo guardado</code></pr
   </ul>
   <h3>Audio por objetos</h3>
   <figure>
-    <img src="img/object-audio.webp" width="1400" height="382" alt="Pestaña I/O en modo audio por objetos: una sala con cuatro altavoces y dos objetos numerados, y sus posiciones.">
+    <img src="img/es/object-audio.webp" width="1400" height="382" alt="Pestaña I/O en modo audio por objetos: una sala con cuatro altavoces y dos objetos numerados, y sus posiciones.">
     <figcaption>Audio por objetos: cada canal del archivo es un objeto numerado en la sala. Los altavoces se iluminan con lo que reproducen.</figcaption>
   </figure>
   <p>El audio por objetos enruta el sonido según <em>de dónde debe venir</em> en lugar de por salida. Elige
@@ -453,7 +503,7 @@ cargo run --release -- show.openq    # abrir un espectáculo guardado</code></pr
   suena no produce chasquidos.</p>
   <h3>Niveles</h3>
   <figure>
-    <img src="img/levels.webp" width="1400" height="314" alt="Pestaña Niveles: faders verticales para el nivel principal y las salidas 1 y 2, y una tarjeta de panorama.">
+    <img src="img/es/levels.webp" width="1400" height="314" alt="Pestaña Niveles: faders verticales para el nivel principal y las salidas 1 y 2, y una tarjeta de panorama.">
     <figcaption>Faders para el nivel principal de la cue y cada salida del dispositivo.</figcaption>
   </figure>
   <p>El fader <strong>Principal</strong> fija el nivel de la cue. A su lado hay un fader por cada salida del dispositivo de audio, que
@@ -461,14 +511,14 @@ cargo run --release -- show.openq    # abrir un espectáculo guardado</code></pr
   en un fader para devolverlo a 0 dB. <strong>Panorama</strong> mueve el sonido entre las salidas 1 y 2 mientras el enrutado es automático.</p>
   <h3>EQ</h3>
   <figure>
-    <img src="img/eq.webp" width="1400" height="421" alt="Ecualizador con una curva de respuesta y una lista de bandas.">
+    <img src="img/es/eq.webp" width="1400" height="421" alt="Ecualizador con una curva de respuesta y una lista de bandas.">
     <figcaption>Hasta ocho bandas por cue. Arrastra los tiradores para ajustar frecuencia y ganancia, y usa la rueda sobre un tirador para cambiar la Q.</figcaption>
   </figure>
   <p>Los tipos de banda son paso alto, shelf de graves, pico, shelf de agudos y paso bajo. <strong>EQ activado</strong> activa y
   desactiva todo el ecualizador.</p>
   <h3>FX de audio</h3>
   <figure>
-    <img src="img/audio-fx.webp" width="1400" height="283" alt="Pestaña FX de audio: reverb, compresor y un delay desactivado como tarjetas, y una tarjeta para añadir efectos.">
+    <img src="img/es/audio-fx.webp" width="1400" height="283" alt="Pestaña FX de audio: reverb, compresor y un delay desactivado como tarjetas, y una tarjeta para añadir efectos.">
     <figcaption>Una cadena de efectos: reverb y después compresor; el delay está apagado.</figcaption>
   </figure>
   <p>Las cues de audio, Mic y vídeo tienen una pestaña <strong>FX de audio</strong>: una cadena de hasta ocho efectos que actúan de arriba
@@ -492,7 +542,7 @@ cargo run --release -- show.openq    # abrir un espectáculo guardado</code></pr
   delay continúan a través de una edición.</p></div>
   <h3>Cues Micro</h3>
   <figure>
-    <img src="img/mic.webp" width="1400" height="312" alt="Pestaña I/O de una cue Micro: dispositivo de entrada, canales y medidor de nivel, tiempos y enrutado.">
+    <img src="img/es/mic.webp" width="1400" height="312" alt="Pestaña I/O de una cue Micro: dispositivo de entrada, canales y medidor de nivel, tiempos y enrutado.">
     <figcaption>La pestaña I/O de una cue Micro. La barra de nivel se mueve mientras la cue está en marcha.</figcaption>
   </figure>
   <p>Una cue Micro envía una entrada en directo (un micrófono, una entrada de línea, un reproductor) por el mezclador de OpenQ, así que
@@ -523,7 +573,7 @@ cargo run --release -- show.openq    # abrir un espectáculo guardado</code></pr
     se queda donde estaba.</li>
   </ul>
   <figure class="narrow">
-    <img src="img/geometry-preview.webp" width="660" height="460" alt="Ventana de vista previa de geometría con una capa girada y recortada en un escenario de 1920 por 1080.">
+    <img src="img/es/geometry-preview.webp" width="660" height="460" alt="Ventana de vista previa de geometría con una capa girada y recortada en un escenario de 1920 por 1080.">
     <figcaption>La vista previa de geometría. Una línea discontinua muestra la imagen sin recortar.</figcaption>
   </figure>
   <p>La <strong>vista previa de geometría</strong> (<span class="menu">Ver → Vista previa de geometría</span>, o <em>Vista previa</em> en la pestaña Geometría)
@@ -541,7 +591,7 @@ cargo run --release -- show.openq    # abrir un espectáculo guardado</code></pr
   Las pestañas <strong>Geometría</strong> y <strong>Animación</strong> funcionan como en el vídeo, y las cues Fade pueden mover y fundir
   el texto. Los cambios en la pestaña <strong>Texto</strong> aparecen al momento en una cue que se está mostrando.</p>
   <figure>
-    <img src="img/text-cue.webp" width="1400" height="383" alt="Pestaña Texto en tarjetas: el texto, la fuente (peso, tamaño, interlineado, espaciado), el aspecto (color, alineación, contorno, sombra, caja de fondo) y una muestra.">
+    <img src="img/es/text-cue.webp" width="1400" height="383" alt="Pestaña Texto en tarjetas: el texto, la fuente (peso, tamaño, interlineado, espaciado), el aspecto (color, alineación, contorno, sombra, caja de fondo) y una muestra.">
     <figcaption>La pestaña Texto. Bajo los ajustes aparece una vista previa de la primera línea con el estilo elegido.</figcaption>
   </figure>
   <div class="table-wrap"><table>
@@ -572,7 +622,7 @@ cargo run --release -- show.openq    # abrir un espectáculo guardado</code></pr
   escala, gira, recorta, funde y cambia el color de la capa con fotogramas clave. La animación empieza cuando arranca la cue y sigue el
   reloj de la propia cue: pausar la cue la pausa.</p>
   <figure>
-    <img src="img/animation.webp" width="1400" height="427" alt="Pestaña Animación: una línea de tiempo con filas para X, Opacidad, Escala X, Escala Y, Color del texto y Fondo, cada una con fotogramas clave en forma de rombo, un cabezal azul en 2,2 segundos y, debajo, los ajustes de animación y el tiempo y valor del fotograma clave seleccionado.">
+    <img src="img/es/animation.webp" width="1400" height="427" alt="Pestaña Animación: una línea de tiempo con filas para X, Opacidad, Escala X, Escala Y, Color del texto y Fondo, cada una con fotogramas clave en forma de rombo, un cabezal azul en 2,2 segundos y, debajo, los ajustes de animación y el tiempo y valor del fotograma clave seleccionado.">
     <figcaption>La pestaña Animación. Cada fila es una propiedad animada; los rombos son fotogramas clave.</figcaption>
   </figure>
   <ul>
@@ -605,7 +655,7 @@ cargo run --release -- show.openq    # abrir un espectáculo guardado</code></pr
   <p>Como los valores son relativos, una cue Fade o un cambio en la pestaña Geometría siguen moviendo o fundiendo toda la capa animada.
   Por ejemplo, una animación puede hacer que un logotipo suba y baje mientras una cue Fade lo desliza por el escenario.</p>
   <figure class="narrow">
-    <img src="img/animation-stage.webp" width="900" height="449" alt="Un escenario con un título animado en ámbar sobre una caja roja redondeada y un logotipo SVG girado del revés y teñido de verde.">
+    <img src="img/es/animation-stage.webp" width="900" height="449" alt="Un escenario con un título animado en ámbar sobre una caja roja redondeada y un logotipo SVG girado del revés y teñido de verde.">
     <figcaption>En el escenario, a mitad de animación: el título ha entrado deslizándose, ha crecido y ha cambiado de color; el logotipo SVG gira con un tinte verde en bucle.</figcaption>
   </figure>
   <div class="note"><span class="label">Sin carga para el espectáculo</span><p>Las animaciones se calculan en directo mientras se dibuja
@@ -615,14 +665,14 @@ cargo run --release -- show.openq    # abrir un espectáculo guardado</code></pr
   <a href="#videofx">efectos de vídeo</a>, que una cue Fade puede animar.</p></div>
   <h3 id="videofx">FX de vídeo</h3>
   <figure>
-    <img src="img/video-fx.webp" width="1400" height="237" alt="Pestaña FX de vídeo de una cue de texto: tarjetas Colorear, Desenfoque y Viñeta y una tarjeta para añadir efectos.">
+    <img src="img/es/video-fx.webp" width="1400" height="237" alt="Pestaña FX de vídeo de una cue de texto: tarjetas Colorear, Desenfoque y Viñeta y una tarjeta para añadir efectos.">
     <figcaption>Una cue de texto coloreada de naranja, algo desenfocada y con viñeta.</figcaption>
   </figure>
   <p>Las cues de vídeo, cámara y texto tienen una pestaña <strong>FX de vídeo</strong>, una pila de efectos sobre la imagen. Añádelos,
   reordénalos y actívalos como los efectos de audio. Los dibuja la tarjeta gráfica mientras dibuja el escenario, así que casi no cuestan
   nada y cambian en directo, incluso en una cue en marcha.</p>
   <figure class="narrow">
-    <img src="img/video-fx-stage.webp" width="750" height="285" alt="Un escenario con el título 'Act One' en naranja.">
+    <img src="img/es/video-fx-stage.webp" width="750" height="285" alt="Un escenario con el título 'Act One' en naranja.">
     <figcaption>El resultado en el escenario.</figcaption>
   </figure>
   <div class="table-wrap"><table>
@@ -676,7 +726,7 @@ cargo run --release -- show.openq    # abrir un espectáculo guardado</code></pr
   seguir el LTC de la banda mientras otra se lleva a mano.</p>
   <h3>Disparadores por código de tiempo</h3>
   <figure>
-    <img src="img/triggers.webp" width="1400" height="255" alt="Pestaña Disparadores: una tarjeta de atajo y una tarjeta de código de tiempo con el tiempo de disparo, la fuente de la lista y lo que está recibiendo.">
+    <img src="img/es/triggers.webp" width="1400" height="255" alt="Pestaña Disparadores: una tarjeta de atajo y una tarjeta de código de tiempo con el tiempo de disparo, la fuente de la lista y lo que está recibiendo.">
     <figcaption>La pestaña Disparadores de una cue que se dispara en 01:00:05:00.</figcaption>
   </figure>
   <p>En la pestaña <strong>Disparadores</strong> de una cue, marca <em>Disparar en</em> y escribe el tiempo (hh:mm:ss:ff). Cuando el código de
@@ -697,7 +747,7 @@ cargo run --release -- show.openq    # abrir un espectáculo guardado</code></pr
   escenario, haz doble clic o pulsa <kbd>F11</kbd> para alternar la pantalla completa.</p>
   <h3>Mapeado</h3>
   <figure>
-    <img src="img/mapping.webp" width="1100" height="551" alt="Patrón de ajuste de mapping en un escenario con corrección de trapecio: lienzo blanco con cuadrícula, reglas de píxeles en cada borde, círculos y esquinas numeradas.">
+    <img src="img/es/mapping.webp" width="1100" height="551" alt="Patrón de ajuste de mapping en un escenario con corrección de trapecio: lienzo blanco con cuadrícula, reglas de píxeles en cada borde, círculos y esquinas numeradas.">
     <figcaption>El patrón de ajuste de mapping. Círculos que parecen óvalos, o cuadros de la cuadrícula que no son cuadrados, muestran lo que aún está desajustado.</figcaption>
   </figure>
   <p><em>Editar mapeado</em> muestra un patrón de ajuste en el escenario: un lienzo blanco con una cuadrícula cuadrada, reglas de píxeles
@@ -720,7 +770,7 @@ cargo run --release -- show.openq    # abrir un espectáculo guardado</code></pr
     <li>Introduce el código y haz clic en <em>Conectar</em>. A partir de la primera vez, conectar no necesita código.</li>
   </ol>
   <figure class="narrow">
-    <img src="img/remote-share.webp" width="700" height="680" alt="Ventana Remoto del dispositivo principal con un código de emparejamiento y una lista de dispositivos emparejados.">
+    <img src="img/es/remote-share.webp" width="700" height="680" alt="Ventana Remoto del dispositivo principal con un código de emparejamiento y una lista de dispositivos emparejados.">
     <figcaption>El dispositivo principal durante el emparejamiento. Los dispositivos emparejados aparecen bajo el código, con su rol.</figcaption>
   </figure>
   <h3>Roles</h3>
@@ -779,7 +829,7 @@ cargo run --release -- show.openq    # abrir un espectáculo guardado</code></pr
     </tbody>
   </table></div>
   <figure class="narrow">
-    <img src="img/room.webp" width="731" height="465" alt="El editor de sala: una sala cuadrada con cuatro altavoces FL, FR, RL, RR y una tabla con sus salidas y posiciones.">
+    <img src="img/es/room.webp" width="731" height="465" alt="El editor de sala: una sala cuadrada con cuatro altavoces FL, FR, RL, RR y una tabla con sus salidas y posiciones.">
     <figcaption>La sala para audio por objetos. Arrastra los altavoces o escribe sus posiciones.</figcaption>
   </figure>
   <p>Mientras no la cambies, la sala sigue al dispositivo de salida: un par estéreo, cuadrafónico, 5.1 o 7.1 (sin altavoz en la salida
@@ -797,7 +847,7 @@ cargo run --release -- show.openq    # abrir un espectáculo guardado</code></pr
   <p>Mientras un espectáculo tiene cambios sin guardar, OpenQ guarda una copia cada pocos segundos. Guardar el espectáculo,
   o salir con normalidad, borra la copia. Si OpenQ o el ordenador se caen, el siguiente arranque te ofrece la copia:</p>
   <figure class="narrow">
-    <img src="img/recovery.webp" width="702" height="382" alt="Ventana Recuperar trabajo sin guardar con dos espectáculos autoguardados, cada uno con botones Recuperar y Descartar, y un botón Más tarde.">
+    <img src="img/es/recovery.webp" width="702" height="382" alt="Ventana Recuperar trabajo sin guardar con dos espectáculos autoguardados, cada uno con botones Recuperar y Descartar, y un botón Más tarde.">
     <figcaption>Después de un fallo: cada espectáculo con cambios sin guardar, cuándo se autoguardó y a qué archivo pertenece.</figcaption>
   </figure>
   <ul>
