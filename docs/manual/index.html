@@ -145,6 +145,7 @@ th, td { text-align: left; padding: 8px 12px; border-bottom: 1px solid var(--bor
 th { font: 600 11px/1.4 var(--body); letter-spacing: .1em; text-transform: uppercase; color: var(--faint); background: var(--raised); }
 tr:last-child td { border-bottom: 0; }
 td:first-child { white-space: nowrap; }
+.table-wrap.split td:first-child { white-space: normal; width: 50%; }
 
 .note {
   border: 1px solid var(--border); border-left: 3px solid var(--amber); border-radius: 8px;
@@ -266,7 +267,7 @@ cargo run --release -- show.openq    # open a saved show</code></pre>
 <section id="window">
   <h2><span class="n">02</span>The main window</h2>
   <figure>
-    <img src="img/edit-mode.webp" width="1400" height="1525" alt="OpenQ main window in edit mode: GO button, standby card, transport, meters, toolbar, cue list and inspector.">
+    <img src="img/edit-mode.webp" width="1400" height="1535" alt="OpenQ main window in edit mode: GO button, standby card, transport, meters, toolbar, cue list and inspector.">
     <figcaption>Edit mode with the first cue selected and the inspector showing its Time &amp; Loops tab.</figcaption>
   </figure>
   <ul>
@@ -323,7 +324,7 @@ cargo run --release -- show.openq    # open a saved show</code></pre>
   in a dark booth. GO, stop, pause, hotkeys and moving the playhead all work in both modes.</p>
   <p>Switch with the switch at the left of the status bar, <span class="menu">Show → Enter show mode</span>, or <kbd>Ctrl</kbd>+<kbd>E</kbd>.</p>
   <figure>
-    <img src="img/show-mode.webp" width="1400" height="736" alt="Show mode: large rows, several cues running with countdowns, active cues panel on the right.">
+    <img src="img/show-mode.webp" width="1400" height="735" alt="Show mode: large rows, several cues running with countdowns, active cues panel on the right.">
     <figcaption>Show mode while a sequence runs. Green rows are playing, and the action column counts down.</figcaption>
   </figure>
   <h3>Stopping</h3>
@@ -397,7 +398,7 @@ cargo run --release -- show.openq    # open a saved show</code></pre>
       <tr><td>Start random child and go to next cue</td><td>Fires one child picked at random.</td></tr>
     </tbody>
   </table></div>
-  <p>Select cues and press <kbd>Ctrl</kbd>+<kbd>G</kbd> to group them. <kbd>←</kbd> and <kbd>→</kbd> collapse and expand a group.</p>
+  <p>Select cues and press <kbd>Ctrl</kbd>+<kbd>G</kbd> to group them. <kbd>←</kbd> and <kbd>→</kbd> collapse and expand a group. Groups can hold other groups. Each level is inset with a guide line, so you can see where a group ends.</p>
 </section>
 
 <section id="audio">
@@ -1079,16 +1080,13 @@ cargo run --release -- show.openq    # open a saved show</code></pre>
 <section id="license">
   <h2><span class="n">18</span>License and credits</h2>
   <p>OpenQ is licensed under the <a href="https://www.apache.org/licenses/LICENSE-2.0">Apache License 2.0</a>.</p>
-  <div class="table-wrap"><table>
+  <div class="table-wrap split"><table>
     <thead><tr><th>You may</th><th>You must</th></tr></thead>
-    <tbody><tr>
-      <td>Use OpenQ for anything, commercial included: run paid shows, concerts, tours, events and installations,
-      and be paid to program or operate them. Copy, change and share it, with the copyright notice,
-      <code>LICENSE.md</code> and <code>NOTICE.md</code> kept. Sell copies, changed
-      versions or services built on it.</td>
-      <td>Keep the copyright notice, <code>LICENSE.md</code> and <code>NOTICE.md</code> with every copy, and say
-      in the files you change that they were changed. The license gives no right to use the OpenQ name as a trademark.</td>
-    </tr></tbody>
+    <tbody>
+      <tr><td>Use OpenQ for anything, commercial included: run paid shows, concerts, tours, events and installations, and be paid to program or operate them.</td><td>Keep the copyright notice, <code>LICENSE.md</code> and <code>NOTICE.md</code> with every copy.</td></tr>
+      <tr><td>Copy, change and share it.</td><td>Say in the files you change that they were changed.</td></tr>
+      <tr><td>Sell copies, changed versions or services built on it.</td><td>Not use the OpenQ name as a trademark: the license gives no right to it.</td></tr>
+    </tbody>
   </table></div>
   <pre><code>Copyright 2026 Iago Núñez — OpenQ (https://github.com/iagonunez/OpenQ)</code></pre>
   <p><span class="menu">Help → About OpenQ and licenses</span> shows the version, the license and every third-party

@@ -71,6 +71,31 @@ enum Deferred {
     ExportEffect(crate::light::effects::EffectId),
     /// Save the patch as an MVR file (false) or the plan as an SVG plot (true).
     ExportPatch(bool),
+    /// Close the window (asks about unsaved changes first).
+    Quit,
+}
+
+/// How long shutting down may take after the window closes before the process exits anyway.
+const EXIT_GRACE: Duration = Duration::from_secs(3);
+
+/// What waits for an answer in the "Unsaved changes" window ([`App::may_discard`]).
+enum Discarding {
+    Quit,
+    New,
+    Open,
+    Recover(crate::recovery::Orphan),
+}
+
+impl Discarding {
+    /// The deferred action that carries on once the user has answered.
+    fn resume(self) -> Deferred {
+        match self {
+            Discarding::Quit => Deferred::Quit,
+            Discarding::New => Deferred::New,
+            Discarding::Open => Deferred::Open,
+            Discarding::Recover(o) => Deferred::Recover(o),
+        }
+    }
 }
 
 /// Edit mode allows changing the show; show mode locks it down for running a performance.
@@ -201,6 +226,10 @@ pub struct App {
     scroll_to: Option<CueId>,
     title: String,
     allow_close: bool,
+    /// The "Unsaved changes" window is open, for this action.
+    discard_prompt: Option<Discarding>,
+    /// The user chose Discard: the next [`App::may_discard`] goes ahead without asking.
+    discard_ok: bool,
     frame_count: u64,
     mode: Mode,
     inline: Option<cue_list::InlineEdit>,
@@ -283,6 +312,8 @@ impl App {
             scroll_to: None,
             title: String::new(),
             allow_close: false,
+            discard_prompt: None,
+            discard_ok: false,
             frame_count: 0,
             mode: Mode::Edit,
             inline: None,
@@ -2006,18 +2037,66 @@ impl App {
 
     // ------------------------------------------------------------------ files
 
-    fn confirm_discard(&self) -> bool {
-        if !self.show.lock().dirty {
+    /// True when `then` may replace the current show now: nothing unsaved, or the user chose Discard. Otherwise the
+    /// "Unsaved changes" window opens and runs `then` again after the answer. In-app rather than a system message box:
+    /// on Linux that needs zenity, and without it every answer was "no", so the window could never be closed.
+    fn may_discard(&mut self, then: Discarding) -> bool {
+        if std::mem::take(&mut self.discard_ok) || !self.show.lock().dirty {
             return true;
         }
-        matches!(
-            rfd::MessageDialog::new()
-                .set_title(t("Unsaved changes"))
-                .set_description(t("Discard unsaved changes to this workspace?"))
-                .set_buttons(rfd::MessageButtons::YesNo)
-                .show(),
-            rfd::MessageDialogResult::Yes
-        )
+        self.discard_prompt = Some(then);
+        false
+    }
+
+    /// The "Unsaved changes" window (Save / Discard / Cancel). Doesn't lock the show.
+    fn discard_window(&mut self, ctx: &egui::Context) {
+        if self.discard_prompt.is_none() {
+            return;
+        }
+        let mut answer: Option<Option<bool>> = None;
+        let modal = egui::Modal::new(egui::Id::new("unsaved-changes")).show(ctx, |ui| {
+            ui.set_width(380.0);
+            ui.label(RichText::new(theme::with_icon(icons::WARNING, t("Unsaved changes"))).size(15.0).strong());
+            ui.add_space(6.0);
+            ui.label(t("Discard unsaved changes to this workspace?"));
+            ui.add_space(10.0);
+            ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                if ui.button(theme::with_icon(icons::SAVE, t("Save"))).clicked() {
+                    answer = Some(Some(true));
+                }
+                if ui.button(t("Discard")).clicked() {
+                    answer = Some(Some(false));
+                }
+                if ui.button(t("Cancel")).clicked() {
+                    answer = Some(None);
+                }
+            });
+        });
+        if modal.should_close() && answer.is_none() {
+            answer = Some(None);
+        }
+        if let Some(answer) = answer {
+            self.answer_discard(answer);
+        }
+    }
+
+    /// The answer to the "Unsaved changes" window: `Some(save)` goes on (saving first or not), `None` cancels.
+    fn answer_discard(&mut self, answer: Option<bool>) {
+        let Some(then) = self.discard_prompt.take() else { return };
+        match answer {
+            // Saving first: the action asks again if the save didn't happen (cancelled or failed).
+            Some(true) => self.deferred.extend([Deferred::Save, then.resume()]),
+            Some(false) => {
+                self.discard_ok = true;
+                self.deferred.push(then.resume());
+            }
+            None => {
+                if let Discarding::Recover(o) = then {
+                    // Offer it again.
+                    self.recovery.orphans.insert(0, o);
+                }
+            }
+        }
     }
 
     fn save_to(&mut self, path: Option<PathBuf>) {
@@ -2089,7 +2168,7 @@ impl App {
                 Deferred::ExportEffect(id) => self.export_effect(id),
                 Deferred::ExportPatch(plot) => self.export_patch(plot),
                 Deferred::New => {
-                    if self.confirm_discard() {
+                    if self.may_discard(Discarding::New) {
                         self.show
                             .lock()
                             .replace_workspace(Workspace::default(), None);
@@ -2098,7 +2177,7 @@ impl App {
                     }
                 }
                 Deferred::Open => {
-                    if self.confirm_discard()
+                    if self.may_discard(Discarding::Open)
                         && let Some(p) = rfd::FileDialog::new()
                             .add_filter(t("OpenQ workspace"), &[Workspace::EXTENSION])
                             .pick_file()
@@ -2107,6 +2186,12 @@ impl App {
                     }
                 }
                 Deferred::Recover(o) => self.recover(o),
+                Deferred::Quit => {
+                    if self.may_discard(Discarding::Quit) {
+                        self.allow_close = true;
+                        ctx.send_viewport_cmd(egui::ViewportCommand::Close);
+                    }
+                }
                 Deferred::Save => self.save_to(None),
                 Deferred::SaveAs => {
                     if let Some(p) = rfd::FileDialog::new()
@@ -2499,6 +2584,16 @@ fn stage_span_blend(ui: &mut egui::Ui, st: &mut Stage, surfaces: &[(StageId, Str
 
 impl eframe::App for App {
     fn on_exit(&mut self) {
+        // The window is gone: if a device or worker thread hangs while everything is dropped after this, the process
+        // still ends instead of lingering until it is killed.
+        std::thread::Builder::new()
+            .name("openq-exit".into())
+            .spawn(|| {
+                std::thread::sleep(EXIT_GRACE);
+                log::error!("quitting took longer than {EXIT_GRACE:?}: exiting anyway");
+                std::process::exit(0);
+            })
+            .ok();
         self.show.lock().shutdown();
         // A normal quit (unsaved changes were confirmed away): nothing to recover next time.
         if let Some(a) = &self.recovery.autosave {
@@ -2668,6 +2763,7 @@ impl App {
             } else {
                 self.recovery_window(&ctx);
             }
+            self.discard_window(&ctx);
             self.track_undo(&ctx, show);
             self.sync_osc(&ctx, show);
             self.sync_surfaces(&ctx, show);
@@ -2726,12 +2822,8 @@ impl App {
 
             if ctx.input(|i| i.viewport().close_requested()) && show.dirty && !self.allow_close {
                 ctx.send_viewport_cmd(egui::ViewportCommand::CancelClose);
-                drop(guard);
-                if self.confirm_discard() {
-                    self.allow_close = true;
-                    ctx.send_viewport_cmd(egui::ViewportCommand::Close);
-                }
-                return;
+                self.discard_prompt.get_or_insert(Discarding::Quit);
+                ctx.request_repaint();
             }
         }
         #[cfg(feature = "video")]
@@ -2770,6 +2862,45 @@ mod tests {
         let mut huge: Vec<UndoState> = (0..UNDO_STEPS).map(|_| step(UNDO_CUE_BUDGET)).collect();
         trim_undo(&mut huge);
         assert_eq!(huge.len(), UNDO_MIN_STEPS, "a few steps stay whatever the size");
+    }
+
+    /// Closing with unsaved changes asks in the window itself: a system message box needs zenity on Linux, and
+    /// without it the answer was always "no", so the window couldn't be closed at all. Cancel keeps the window,
+    /// Discard closes it, and a show without changes closes straight away.
+    #[test]
+    fn closing_with_unsaved_changes_asks_in_the_window() {
+        let prober = Prober::new();
+        let shared: SharedShow = Arc::new(parking_lot::Mutex::new(Show::new(prober.clone())));
+        let mut app = App::new(shared.clone(), prober);
+        app.ask_language = false;
+        let ctx = egui::Context::default();
+        theme::install(&ctx);
+        let frame = |app: &mut App, close: bool| {
+            let mut input = egui::RawInput::default();
+            if close {
+                input.viewports.entry(egui::ViewportId::ROOT).or_default().events.push(egui::ViewportEvent::Close);
+            }
+            let out = ctx.run_ui(input, |ui| app.draw(ui, None));
+            out.viewport_output.get(&egui::ViewportId::ROOT).map(|v| v.commands.clone()).unwrap_or_default()
+        };
+        let closes = |cmds: &[egui::ViewportCommand]| cmds.contains(&egui::ViewportCommand::Close);
+        let cancels = |cmds: &[egui::ViewportCommand]| cmds.contains(&egui::ViewportCommand::CancelClose);
+
+        for _ in 0..3 {
+            frame(&mut app, false);
+        }
+        assert!(!shared.lock().dirty, "a few frames of an untouched show left it unsaved");
+        assert!(!cancels(&frame(&mut app, true)), "a show without changes must close");
+
+        shared.lock().dirty = true;
+        assert!(cancels(&frame(&mut app, true)));
+        assert!(app.discard_prompt.is_some(), "no Unsaved changes window");
+        app.answer_discard(None);
+        assert!(!closes(&frame(&mut app, false)), "Cancel closed the window");
+        assert!(cancels(&frame(&mut app, true)), "asks again on the next close");
+        app.answer_discard(Some(false));
+        assert!(closes(&frame(&mut app, false)), "Discard didn't close the window");
+        assert!(!cancels(&frame(&mut app, true)), "the close that follows Discard was held back");
     }
 
     /// The OSC checkbox: on starts the listener, off stops it (it once stayed running, and shown

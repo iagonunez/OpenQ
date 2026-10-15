@@ -145,6 +145,7 @@ th, td { text-align: left; padding: 8px 12px; border-bottom: 1px solid var(--bor
 th { font: 600 11px/1.4 var(--body); letter-spacing: .1em; text-transform: uppercase; color: var(--faint); background: var(--raised); }
 tr:last-child td { border-bottom: 0; }
 td:first-child { white-space: nowrap; }
+.table-wrap.split td:first-child { white-space: normal; width: 50%; }
 
 .note {
   border: 1px solid var(--border); border-left: 3px solid var(--amber); border-radius: 8px;
@@ -268,7 +269,7 @@ cargo run --release -- show.openq    # abrir un espectáculo guardado</code></pr
 <section id="window">
   <h2><span class="n">02</span>La ventana principal</h2>
   <figure>
-    <img src="img/edit-mode.webp" width="1400" height="1525" alt="Ventana principal de OpenQ en modo edición: botón GO, tarjeta de espera, transporte, medidores, barra de herramientas, lista de cues e inspector.">
+    <img src="img/edit-mode.webp" width="1400" height="1535" alt="Ventana principal de OpenQ en modo edición: botón GO, tarjeta de espera, transporte, medidores, barra de herramientas, lista de cues e inspector.">
     <figcaption>Modo edición con la primera cue seleccionada y el inspector mostrando su pestaña Tiempo y bucles.</figcaption>
   </figure>
   <ul>
@@ -327,7 +328,7 @@ cargo run --release -- show.openq    # abrir un espectáculo guardado</code></pr
   en los dos modos.</p>
   <p>Cambia con el interruptor a la izquierda de la barra de estado, <span class="menu">Función → Entrar en modo función</span>, o <kbd>Ctrl</kbd>+<kbd>E</kbd>.</p>
   <figure>
-    <img src="img/show-mode.webp" width="1400" height="736" alt="Modo función: filas grandes, varias cues en marcha con cuenta atrás y el panel de cues activas a la derecha.">
+    <img src="img/show-mode.webp" width="1400" height="735" alt="Modo función: filas grandes, varias cues en marcha con cuenta atrás y el panel de cues activas a la derecha.">
     <figcaption>Modo función mientras se ejecuta una secuencia. Las filas verdes están sonando y la columna de acción hace la cuenta atrás.</figcaption>
   </figure>
   <h3>Parar</h3>
@@ -401,7 +402,7 @@ cargo run --release -- show.openq    # abrir un espectáculo guardado</code></pr
       <tr><td>Iniciar una hija al azar y pasar a la siguiente cue</td><td>Dispara una hija elegida al azar.</td></tr>
     </tbody>
   </table></div>
-  <p>Selecciona cues y pulsa <kbd>Ctrl</kbd>+<kbd>G</kbd> para agruparlas. <kbd>←</kbd> y <kbd>→</kbd> pliegan y despliegan un grupo.</p>
+  <p>Selecciona cues y pulsa <kbd>Ctrl</kbd>+<kbd>G</kbd> para agruparlas. <kbd>←</kbd> y <kbd>→</kbd> pliegan y despliegan un grupo. Los grupos pueden contener otros grupos. Cada nivel se sangra con una línea guía, para ver dónde termina un grupo.</p>
 </section>
 
 <section id="audio">
@@ -1091,16 +1092,13 @@ cargo run --release -- show.openq    # abrir un espectáculo guardado</code></pr
 <section id="license">
   <h2><span class="n">18</span>Licencia y créditos</h2>
   <p>OpenQ se distribuye bajo la <a href="https://www.apache.org/licenses/LICENSE-2.0">Apache License 2.0</a>. Este resumen es orientativo; el texto en inglés es el que vale.</p>
-  <div class="table-wrap"><table>
+  <div class="table-wrap split"><table>
     <thead><tr><th>Puedes</th><th>Debes</th></tr></thead>
-    <tbody><tr>
-      <td>Usar OpenQ para cualquier cosa, también comercial: hacer funciones, conciertos, giras, eventos e instalaciones de pago,
-      y cobrar por programarlos u operarlos. Copiarlo, modificarlo y compartirlo, conservando el aviso de copyright,
-      <code>LICENSE.md</code> y <code>NOTICE.md</code>. Vender copias, versiones
-      modificadas o servicios basados en él.</td>
-      <td>Conservar el aviso de copyright, <code>LICENSE.md</code> y <code>NOTICE.md</code> en cada copia, e indicar
-      en los archivos que modifiques que han cambiado. La licencia no da derecho a usar el nombre OpenQ como marca.</td>
-    </tr></tbody>
+    <tbody>
+      <tr><td>Usar OpenQ para cualquier cosa, también comercial: hacer funciones, conciertos, giras, eventos e instalaciones de pago, y cobrar por programarlos u operarlos.</td><td>Conservar el aviso de copyright, <code>LICENSE.md</code> y <code>NOTICE.md</code> en cada copia.</td></tr>
+      <tr><td>Copiarlo, modificarlo y compartirlo.</td><td>Indicar en los archivos que modifiques que han cambiado.</td></tr>
+      <tr><td>Vender copias, versiones modificadas o servicios basados en él.</td><td>No usar el nombre OpenQ como marca: la licencia no da derecho a ello.</td></tr>
+    </tbody>
   </table></div>
   <pre><code>Copyright 2026 Iago Núñez — OpenQ (https://github.com/iagonunez/OpenQ)</code></pre>
   <p><span class="menu">Ayuda → Acerca de OpenQ y licencias</span> muestra la versión, la licencia y todos los avisos de terceros.
