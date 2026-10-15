@@ -26,7 +26,8 @@ pub const MAX_UNIVERSE: u16 = 32768;
 pub const UNIVERSE_SIZE: u16 = 512;
 
 /// What a channel controls. Values are stored per attribute, so a look survives a mode change.
-#[derive(Serialize, Deserialize, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Debug)]
+/// Saved as its name (`"Gobo2"`, `"Extra3"`), so it can key JSON maps.
+#[derive(Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Debug)]
 #[allow(missing_docs)]
 pub enum Attribute {
     Dimmer,
@@ -69,6 +70,121 @@ pub enum Attribute {
     Control3,
     Effect2,
     Effect2Speed,
+    /// A further channel of a unit whose attribute and its alternates are all taken (a third
+    /// gobo wheel, a fourth control channel), numbered from 1 within the unit. Control family,
+    /// latest takes precedence; [`ChannelDef::name`] says what it is.
+    Extra(u8),
+}
+
+impl Attribute {
+    /// Saved name.
+    pub fn name(self) -> std::borrow::Cow<'static, str> {
+        use Attribute::*;
+        std::borrow::Cow::Borrowed(match self {
+            Dimmer => "Dimmer",
+            Red => "Red",
+            Green => "Green",
+            Blue => "Blue",
+            White => "White",
+            Amber => "Amber",
+            Lime => "Lime",
+            Uv => "Uv",
+            Cyan => "Cyan",
+            Magenta => "Magenta",
+            Yellow => "Yellow",
+            Cto => "Cto",
+            ColorWheel => "ColorWheel",
+            ColorMacro => "ColorMacro",
+            Pan => "Pan",
+            Tilt => "Tilt",
+            PanTiltSpeed => "PanTiltSpeed",
+            Zoom => "Zoom",
+            Focus => "Focus",
+            Iris => "Iris",
+            Frost => "Frost",
+            Gobo => "Gobo",
+            GoboRotation => "GoboRotation",
+            Gobo2 => "Gobo2",
+            Gobo2Rotation => "Gobo2Rotation",
+            Prism => "Prism",
+            PrismRotation => "PrismRotation",
+            Shutter => "Shutter",
+            Control => "Control",
+            Effect => "Effect",
+            EffectSpeed => "EffectSpeed",
+            Fog => "Fog",
+            Fan => "Fan",
+            ColorWheel2 => "ColorWheel2",
+            Frost2 => "Frost2",
+            Prism2 => "Prism2",
+            Control2 => "Control2",
+            Control3 => "Control3",
+            Effect2 => "Effect2",
+            Effect2Speed => "Effect2Speed",
+            Extra(n) => return std::borrow::Cow::Owned(format!("Extra{n}")),
+        })
+    }
+
+    /// The attribute a saved name stands for.
+    pub fn from_name(s: &str) -> Option<Attribute> {
+        use Attribute::*;
+        Some(match s {
+            "Dimmer" => Dimmer,
+            "Red" => Red,
+            "Green" => Green,
+            "Blue" => Blue,
+            "White" => White,
+            "Amber" => Amber,
+            "Lime" => Lime,
+            "Uv" => Uv,
+            "Cyan" => Cyan,
+            "Magenta" => Magenta,
+            "Yellow" => Yellow,
+            "Cto" => Cto,
+            "ColorWheel" => ColorWheel,
+            "ColorMacro" => ColorMacro,
+            "Pan" => Pan,
+            "Tilt" => Tilt,
+            "PanTiltSpeed" => PanTiltSpeed,
+            "Zoom" => Zoom,
+            "Focus" => Focus,
+            "Iris" => Iris,
+            "Frost" => Frost,
+            "Gobo" => Gobo,
+            "GoboRotation" => GoboRotation,
+            "Gobo2" => Gobo2,
+            "Gobo2Rotation" => Gobo2Rotation,
+            "Prism" => Prism,
+            "PrismRotation" => PrismRotation,
+            "Shutter" => Shutter,
+            "Control" => Control,
+            "Effect" => Effect,
+            "EffectSpeed" => EffectSpeed,
+            "Fog" => Fog,
+            "Fan" => Fan,
+            "ColorWheel2" => ColorWheel2,
+            "Frost2" => Frost2,
+            "Prism2" => Prism2,
+            "Control2" => Control2,
+            "Control3" => Control3,
+            "Effect2" => Effect2,
+            "Effect2Speed" => Effect2Speed,
+            _ => Extra(s.strip_prefix("Extra")?.parse().ok().filter(|n| *n > 0)?),
+        })
+    }
+}
+
+impl Serialize for Attribute {
+    fn serialize<S: serde::Serializer>(&self, s: S) -> Result<S::Ok, S::Error> {
+        s.serialize_str(&self.name())
+    }
+}
+
+impl<'de> Deserialize<'de> for Attribute {
+    fn deserialize<D: serde::Deserializer<'de>>(d: D) -> Result<Self, D::Error> {
+        let s = std::borrow::Cow::<str>::deserialize(d)?;
+        Attribute::from_name(&s).ok_or_else(|| serde::de::Error::custom(format!("unknown attribute {s:?}")))
+    }
 }
 
 /// Attribute families, as on a desk's encoder bar.
@@ -151,7 +267,7 @@ impl Attribute {
             Red | Green | Blue | White | Amber | Lime | Uv | Cyan | Magenta | Yellow | Cto | ColorWheel | ColorWheel2 | ColorMacro => Feature::Colour,
             Pan | Tilt | PanTiltSpeed => Feature::Position,
             Zoom | Focus | Iris | Frost | Frost2 | Gobo | GoboRotation | Gobo2 | Gobo2Rotation | Prism | PrismRotation | Prism2 | Shutter => Feature::Beam,
-            Control | Control2 | Control3 | Effect | EffectSpeed | Effect2 | Effect2Speed | Fog | Fan => Feature::Control,
+            Control | Control2 | Control3 | Effect | EffectSpeed | Effect2 | Effect2Speed | Fog | Fan | Extra(_) => Feature::Control,
         }
     }
 
@@ -221,8 +337,16 @@ impl Attribute {
             Attribute::Control3 => t("Control 3"),
             Attribute::Effect2 => t("Effect 2"),
             Attribute::Effect2Speed => t("Effect 2 speed"),
+            Attribute::Extra(n) => extra_label(n),
         }
     }
+}
+
+/// "Extra 3" in the current language, kept for the rest of the run (at most 255 per language).
+fn extra_label(n: u8) -> &'static str {
+    static LABELS: parking_lot::Mutex<BTreeMap<(String, u8), &'static str>> = parking_lot::Mutex::new(BTreeMap::new());
+    let text = crate::tr!("Extra {n}", n = n.to_string());
+    LABELS.lock().entry((crate::i18n::t("Extra {n}").to_string(), n)).or_insert_with(|| Box::leak(text.into_boxed_str()))
 }
 
 /// One DMX channel (or a coarse/fine pair) of a fixture mode.
@@ -231,6 +355,13 @@ impl Attribute {
 pub struct ChannelDef {
     /// What it controls.
     pub attribute: Attribute,
+    /// The fixture file's own name for the channel (shown for [`Attribute::Extra`] channels).
+    #[serde(skip_serializing_if = "String::is_empty")]
+    pub name: String,
+    /// DMX break the channel is on (0 = the fixture's address; 1 = its second address...):
+    /// fixtures that take several DMX inputs, like a moving light with a separate pixel input.
+    #[serde(skip_serializing_if = "is_zero_u8")]
+    pub dmx_break: u8,
     /// Offset of the coarse byte from the fixture's start address (0-based).
     pub offset: u16,
     /// Offset of the fine byte (16-bit attributes).
@@ -246,7 +377,7 @@ pub struct ChannelDef {
 
 impl Default for ChannelDef {
     fn default() -> Self {
-        Self { attribute: Attribute::Dimmer, offset: 0, fine: None, default: None, highlight: None, ranges: Vec::new() }
+        Self { attribute: Attribute::Dimmer, name: String::new(), dmx_break: 0, offset: 0, fine: None, default: None, highlight: None, ranges: Vec::new() }
     }
 }
 
@@ -451,9 +582,20 @@ impl FixtureMode {
         Self { name: name.into(), channels, heads: Vec::new(), slots: 0 }
     }
 
-    /// DMX slots used.
+    /// DMX slots used at the fixture's address (the first break).
     pub fn footprint(&self) -> u16 {
-        self.all_channels().map(|c| c.offset.max(c.fine.unwrap_or(0)) + 1).max().unwrap_or(0).max(self.slots.min(UNIVERSE_SIZE))
+        self.footprint_of(0)
+    }
+
+    /// DMX slots used on break `brk` (`slots` counts on the first only).
+    pub fn footprint_of(&self, brk: u8) -> u16 {
+        let used = self.all_channels().filter(|c| c.dmx_break == brk).map(|c| c.offset.max(c.fine.unwrap_or(0)) + 1).max().unwrap_or(0);
+        if brk == 0 { used.max(self.slots.min(UNIVERSE_SIZE)) } else { used }
+    }
+
+    /// Number of DMX breaks (addresses) a fixture in this mode takes; 1 for most.
+    pub fn breaks(&self) -> u8 {
+        self.all_channels().map(|c| c.dmx_break).max().map_or(1, |b| b.saturating_add(1))
     }
 
     /// The channel driving an attribute.
@@ -534,6 +676,9 @@ pub struct FixtureType {
     pub modes: Vec<FixtureMode>,
     /// Physical properties.
     pub physical: Physical,
+    /// Wheel slot pictures by [`ChannelRange::image`] name ([`super::gobo`] thumbnails).
+    #[serde(skip_serializing_if = "BTreeMap::is_empty")]
+    pub images: BTreeMap<String, String>,
 }
 
 impl FixtureType {
@@ -541,6 +686,20 @@ impl FixtureType {
     pub fn mode(&self, name: &str) -> Option<&FixtureMode> {
         self.modes.iter().find(|m| m.name == name).or(self.modes.first())
     }
+}
+
+fn is_zero_u8(v: &u8) -> bool {
+    *v == 0
+}
+
+/// Where one DMX break of a fixture is patched.
+#[derive(Serialize, Deserialize, Clone, Copy, PartialEq, Eq, Debug, Default)]
+#[serde(default)]
+pub struct DmxAddress {
+    /// Universe (1-based).
+    pub universe: u16,
+    /// Start address (1..=512), 0 = not patched.
+    pub address: u16,
 }
 
 /// A patched fixture.
@@ -567,6 +726,20 @@ pub struct Fixture {
     pub invert_pan: bool,
     /// Reverse tilt.
     pub invert_tilt: bool,
+    /// Addresses of the second, third... DMX break of a multi-break mode
+    /// ([`ChannelDef::dmx_break`]); a missing one isn't patched.
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub breaks: Vec<DmxAddress>,
+}
+
+impl Fixture {
+    /// Where break `brk` is patched (break 0 = `universe`/`address`).
+    pub fn address_of(&self, brk: u8) -> DmxAddress {
+        match brk {
+            0 => DmxAddress { universe: self.universe, address: self.address },
+            b => self.breaks.get(b as usize - 1).copied().unwrap_or_default(),
+        }
+    }
 }
 
 impl Default for Fixture {
@@ -582,6 +755,7 @@ impl Default for Fixture {
             rotation: [0.0; 3],
             invert_pan: false,
             invert_tilt: false,
+            breaks: Vec::new(),
         }
     }
 }
@@ -624,12 +798,20 @@ impl From<f32> for Value {
 /// Attribute values per fixture.
 pub type Look = BTreeMap<FixtureId, BTreeMap<Attribute, Value>>;
 
-/// Copy-on-write holder for the big parts of a design (cue and preset values). Cloning a design
+/// Copy-on-write holder for the big parts of a design (fixtures, cue lists, cue and preset
+/// values). Cloning a design
 /// shares them and comparing two designs skips values that are still the same allocation, so
 /// the UI can snapshot a large design every frame and keep undo steps without copying every
 /// cue. Writing through `DerefMut` copies the value only while it is shared.
 #[derive(Default)]
 pub struct Shared<T>(std::sync::Arc<T>);
+
+impl<T> Shared<T> {
+    /// Both hold the same allocation (a clone nobody has written to since).
+    pub fn ptr_eq(a: &Self, b: &Self) -> bool {
+        std::sync::Arc::ptr_eq(&a.0, &b.0)
+    }
+}
 
 impl<T> Clone for Shared<T> {
     fn clone(&self) -> Self {
@@ -681,6 +863,12 @@ where
     type IntoIter = <&'a mut T as IntoIterator>::IntoIter;
     fn into_iter(self) -> Self::IntoIter {
         std::sync::Arc::make_mut(&mut self.0).into_iter()
+    }
+}
+
+impl<T> FromIterator<T> for Shared<Vec<T>> {
+    fn from_iter<I: IntoIterator<Item = T>>(iter: I) -> Self {
+        Self(std::sync::Arc::new(iter.into_iter().collect()))
     }
 }
 
@@ -800,7 +988,7 @@ pub struct Sequence {
     /// Name.
     pub name: String,
     /// Cues in order.
-    pub cues: Vec<LightCue>,
+    pub cues: Shared<Vec<LightCue>>,
     /// Move in black: fixtures that are dark move to their next cue's position, colour and beam
     /// while still dark, so they don't move live.
     pub move_in_black: bool,
@@ -812,7 +1000,7 @@ pub struct Sequence {
 
 impl Default for Sequence {
     fn default() -> Self {
-        Self { id: 1, name: String::new(), cues: Vec::new(), move_in_black: false, mib_delay: 0.5, mib_fade: 2.0 }
+        Self { id: 1, name: String::new(), cues: Default::default(), move_in_black: false, mib_delay: 0.5, mib_fade: 2.0 }
     }
 }
 
@@ -939,7 +1127,7 @@ pub struct Lighting {
     /// Fixture types used by the patch (copied from the library when patched).
     pub fixture_types: Vec<FixtureType>,
     /// Patched fixtures.
-    pub fixtures: Vec<Fixture>,
+    pub fixtures: Shared<Vec<Fixture>>,
     /// Groups.
     pub groups: Vec<Group>,
     /// Cue stacks.
@@ -993,7 +1181,7 @@ impl Default for Lighting {
     fn default() -> Self {
         Self {
             fixture_types: Vec::new(),
-            fixtures: Vec::new(),
+            fixtures: Default::default(),
             groups: Vec::new(),
             sequences: Vec::new(),
             outputs: Vec::new(),
@@ -1068,6 +1256,15 @@ impl Lighting {
     /// Attributes of a fixture or cell (plus a virtual dimmer, see [`FixtureMode::unit_attributes`]).
     pub fn unit_attributes(&self, id: FixtureId) -> Vec<Attribute> {
         self.unit(id).and_then(|(f, cell)| Some(self.mode_of(f)?.unit_attributes(cell))).unwrap_or_default()
+    }
+
+    /// What to call an attribute of a unit: an [`Attribute::Extra`] channel goes by the fixture
+    /// file's name for it ("Gobo 3", "Lamp control"), everything else by [`Attribute::label`].
+    pub fn attribute_label(&self, id: FixtureId, attr: Attribute) -> String {
+        let named = matches!(attr, Attribute::Extra(_))
+            .then(|| self.unit_channels(id)?.iter().find(|c| c.attribute == attr).filter(|c| !c.name.is_empty()).map(|c| c.name.clone()))
+            .flatten();
+        named.unwrap_or_else(|| attr.label().to_string())
     }
 
     /// Number of cells of a fixture (0 for an ordinary one).
@@ -1235,14 +1432,29 @@ impl Lighting {
         id
     }
 
+    /// The DMX spans a fixture's patched breaks take: (universe, first, last slot).
+    pub fn spans(&self, f: &Fixture) -> Vec<(u16, u32, u32)> {
+        let Some(mode) = self.mode_of(f) else { return Vec::new() };
+        (0..mode.breaks())
+            .filter_map(|b| {
+                let at = f.address_of(b);
+                (at.address > 0).then(|| (at.universe, at.address as u32, at.address as u32 + mode.footprint_of(b).max(1) as u32 - 1))
+            })
+            .collect()
+    }
+
     /// First start address in `universe` where `footprint` slots are free, if any.
     pub fn next_free_address(&self, universe: u16, footprint: u16) -> Option<u16> {
         let mut used = [false; UNIVERSE_SIZE as usize];
-        for f in self.fixtures.iter().filter(|f| f.universe == universe && f.address > 0) {
-            let n = self.mode_of(f).map_or(1, |m| m.footprint());
-            for s in f.address..f.address + n {
-                if let Some(u) = used.get_mut(s as usize - 1) {
-                    *u = true;
+        for f in self.fixtures.iter() {
+            for (u, first, last) in self.spans(f) {
+                if u != universe {
+                    continue;
+                }
+                for s in first..=last {
+                    if let Some(u) = used.get_mut(s as usize - 1) {
+                        *u = true;
+                    }
                 }
             }
         }
@@ -1275,15 +1487,13 @@ impl Lighting {
                 issues.push(PatchIssue::OutOfRange(f.id));
                 continue;
             }
-            if f.address == 0 {
-                continue;
-            }
-            let last = f.address as u32 + mode.footprint().max(1) as u32 - 1;
-            if f.universe == 0 || f.universe > MAX_UNIVERSE || last > UNIVERSE_SIZE as u32 {
+            let _ = mode;
+            let all = self.spans(f);
+            if all.iter().any(|(u, _, last)| *u == 0 || *u > MAX_UNIVERSE || *last > UNIVERSE_SIZE as u32) {
                 issues.push(PatchIssue::OutOfRange(f.id));
                 continue;
             }
-            spans.push((f.universe, f.address as u32, last, f.id));
+            spans.extend(all.into_iter().map(|(u, first, last)| (u, first, last, f.id)));
         }
         spans.sort();
         for w in spans.windows(2) {
@@ -1299,6 +1509,21 @@ impl Lighting {
 mod tests {
     use super::*;
     use crate::light::library;
+
+    #[test]
+    fn clones_share_fixtures_and_cues() {
+        // `Show::sync_lighting` compares the design on every edit: with fixtures and cue lists
+        // shared, an untouched design compares by pointer.
+        let a = library::bench_rig(20, 2, 5);
+        let mut b = a.clone();
+        assert!(Shared::ptr_eq(&a.fixtures, &b.fixtures));
+        assert!(a.sequences.iter().zip(&b.sequences).all(|(x, y)| Shared::ptr_eq(&x.cues, &y.cues)));
+        assert_eq!(a, b);
+        b.fixtures[3].name = "Spot".into();
+        assert!(!Shared::ptr_eq(&a.fixtures, &b.fixtures));
+        assert_ne!(a, b);
+        assert_eq!(a.fixtures[3].name, "");
+    }
 
     fn rig() -> Lighting {
         let mut l = Lighting::default();
@@ -1337,7 +1562,7 @@ mod tests {
         l.groups.push(Group { id: 1, name: String::new(), fixtures: vec![101, 102] });
         let mut c = LightCue::default();
         c.values.entry(101).or_default().insert(Attribute::Red, 1.0.into());
-        l.sequences.push(Sequence { id: 1, cues: vec![c], ..Default::default() });
+        l.sequences.push(Sequence { id: 1, cues: vec![c].into(), ..Default::default() });
         assert!(!l.renumber_fixture(101, 102), "taken");
         assert!(l.renumber_fixture(101, 201));
         assert_eq!(l.groups[0].fixtures, [201, 102]);
@@ -1492,7 +1717,7 @@ mod tests {
         assert_eq!(l.preset_attributes(1, 104), [Attribute::Red]);
         let mut cue = LightCue::default();
         cue.values.entry(103).or_default().insert(Attribute::Red, p);
-        l.sequences.push(Sequence { id: 1, cues: vec![cue], ..Default::default() });
+        l.sequences.push(Sequence { id: 1, cues: vec![cue].into(), ..Default::default() });
         let mut d = l.clone();
         d.delete_preset(1);
         assert_eq!(d.sequences[0].cues[0].values[&103][&Attribute::Red], Value::Level(0.7), "unlinked, not lost");
@@ -1510,7 +1735,7 @@ mod tests {
         let mut l = rig();
         let mut c = LightCue::default();
         c.values.entry(101).or_default().insert(Attribute::Red, 0.25.into());
-        l.sequences.push(Sequence { id: 1, name: "Main".into(), cues: vec![c], ..Default::default() });
+        l.sequences.push(Sequence { id: 1, name: "Main".into(), cues: vec![c].into(), ..Default::default() });
         let s = serde_json::to_string(&l).unwrap();
         assert_eq!(serde_json::from_str::<Lighting>(&s).unwrap(), l);
     }

@@ -128,6 +128,11 @@ pub(crate) struct LightUi {
     pub(crate) keypad: bool,
     /// "Capture input" was pressed: read the DMX inputs into the programmer.
     capture: bool,
+    /// Audio envelope of the light thread this frame (shown by audio-reactive effects).
+    audio_level: f32,
+    /// Wheel slot pictures on the GPU by (fixture type, image name, stored length); None = not a
+    /// picture (decoded once either way).
+    gobo_textures: std::collections::HashMap<(String, String, usize), Option<egui::TextureHandle>>,
     /// `Show::light_selection_gen` last taken (a remote device set the selection).
     selection_gen: u64,
     /// The programmer as last sent to the light thread.
@@ -175,6 +180,11 @@ pub(crate) struct LightUi {
     script_run: Option<(EffectId, ScriptRun, bool)>,
     /// Last run of an effect's script: (effect, what it printed, error).
     script_out: Option<(EffectId, String, Option<String>)>,
+    /// The effect library (opened the first time the Effects page is shown) and its contents.
+    fx_lib: Option<crate::light::fxfile::EffectLibrary>,
+    fx_snap: std::sync::Arc<crate::light::folder::Snapshot<crate::light::fxfile::LibraryEffect>>,
+    /// Results of effect library saves/removes, shown as notifications.
+    fx_results: std::sync::Arc<parking_lot::Mutex<Vec<Result<String, String>>>>,
 }
 
 /// Arrange tool: a layout kind and the settings of each.
@@ -368,6 +378,7 @@ impl App {
         });
         ui.separator();
         let before = show.ws.lighting.clone();
+        self.light.audio_level = show.media.light.audio_level();
         match self.light.tab {
             LightTab::Patch => self.patch_page(ui, &mut show.ws.lighting),
             LightTab::Programmer => self.programmer_page(ui, &mut show.ws.lighting),
@@ -461,7 +472,7 @@ impl App {
         let library = self.light.types.refresh();
         static GENERICS: std::sync::LazyLock<Vec<FixtureType>> = std::sync::LazyLock::new(crate::light::library::generics);
         // Borrowed, not cloned: this runs every frame under the show lock.
-        let (types, in_show, in_lib) = super::fixture_types::available_types(l, &library.types, &GENERICS);
+        let (types, in_show, in_lib) = super::fixture_types::available_types(l, &library.items, &GENERICS);
         // Add fixtures.
         let form = &mut self.light.add;
         let mut short = None;
@@ -773,8 +784,37 @@ impl App {
                     ui.add_sized([COLS[5], 20.0], DragValue::new(&mut f.address).range(0..=512).custom_formatter(|v, _| {
                         if v == 0.0 { "—".to_string() } else { format!("{v}") }
                     }));
-                    let slots = ty.and_then(|t| t.mode(&f.mode)).map_or(0, |m| m.footprint());
-                    ui.add_sized([COLS[6], 20.0], egui::Label::new(RichText::new(slots.to_string()).color(theme::TEXT_DIM)));
+                    let mode = ty.and_then(|t| t.mode(&f.mode));
+                    let slots = mode.map_or(0, |m| m.footprint());
+                    let breaks = mode.map_or(1, |m| m.breaks());
+                    if breaks > 1 {
+                        // Multi-break modes: the other breaks' addresses in a menu.
+                        let label = tr!("{slots} · {n} breaks", slots = slots.to_string(), n = breaks.to_string());
+                        ui.allocate_ui(egui::vec2(COLS[6], 20.0), |ui| {
+                            ui.set_min_width(COLS[6]);
+                            ui.menu_button(label, |ui| {
+                                for b in 1..breaks {
+                                    if f.breaks.len() < b as usize {
+                                        f.breaks.resize(b as usize, Default::default());
+                                    }
+                                    let at = &mut f.breaks[b as usize - 1];
+                                    if at.universe == 0 {
+                                        at.universe = f.universe;
+                                    }
+                                    ui.horizontal(|ui| {
+                                        ui.label(tr!("Break {n}", n = (b + 1).to_string()));
+                                        ui.add(DragValue::new(&mut at.universe).range(1..=crate::light::model::MAX_UNIVERSE));
+                                        ui.label(".");
+                                        ui.add(DragValue::new(&mut at.address).range(0..=512).custom_formatter(|v, _| if v == 0.0 { "—".to_string() } else { format!("{v}") }));
+                                        let n = mode.map_or(0, |m| m.footprint_of(b));
+                                        ui.label(RichText::new(tr!("{n} slots", n = n.to_string())).color(theme::TEXT_DIM));
+                                    });
+                                }
+                            });
+                        });
+                    } else {
+                        ui.add_sized([COLS[6], 20.0], egui::Label::new(RichText::new(slots.to_string()).color(theme::TEXT_DIM)));
+                    }
                     ui.spacing_mut().interact_size.x = 50.0;
                     for v in &mut f.position {
                         ui.add(DragValue::new(v).speed(0.05).max_decimals(2));
@@ -842,7 +882,7 @@ fn format_number(n: f64) -> String {
 }
 
 /// Effect parameters.
-fn effect_editor(ui: &mut Ui, e: &mut Effect) {
+fn effect_editor(ui: &mut Ui, e: &mut Effect, audio_level: f32) {
     egui::Grid::new("effect_editor").num_columns(2).spacing([12.0, 6.0]).show(ui, |ui| {
         ui.label(t("Name"));
         ui.add(egui::TextEdit::singleline(&mut e.name).desired_width(220.0));
@@ -912,6 +952,25 @@ fn effect_editor(ui: &mut Ui, e: &mut Effect) {
         ui.end_row();
         ui.label(t("Wings"));
         ui.add(DragValue::new(&mut e.wings).range(1..=16)).on_hover_text(t("Mirror the pattern across this many parts of the selection"));
+        ui.end_row();
+        ui.label(t("Audio"));
+        ui.horizontal(|ui| {
+            let mut on = e.audio.is_some();
+            if ui.checkbox(&mut on, t("Size follows the sound")).on_hover_text(t("The louder OpenQ plays, the bigger the effect")).changed() {
+                e.audio = on.then(Default::default);
+            }
+            if let Some(a) = &mut e.audio {
+                ui.label(t("Gain"));
+                ui.add(DragValue::new(&mut a.gain).range(0.0..=100.0).speed(0.05).max_decimals(2).prefix("× "));
+                ui.label(t("Floor"));
+                ui.add(percent_drag(&mut a.floor)).on_hover_text(t("Size left in silence"));
+                ui.ctx().request_repaint_after(std::time::Duration::from_millis(50));
+                let (r, _) = ui.allocate_exact_size(egui::vec2(60.0, 10.0), egui::Sense::hover());
+                ui.painter().rect_filled(r, 2.0, theme::BG_INPUT);
+                let lit = egui::Rect::from_min_size(r.min, egui::vec2(r.width() * a.depth(audio_level), r.height()));
+                ui.painter().rect_filled(lit, 2.0, theme::GREEN);
+            }
+        });
         ui.end_row();
     });
 }
@@ -1299,7 +1358,8 @@ fn start_script(light: &mut LightUi, e: &mut Effect, code: String, fresh: bool) 
     light.script_buf = Some((e.id, code.clone()));
     let python = light.python.get_or_insert_with(Python::default);
     let name = if e.name.is_empty() { format!("effect {}", e.id) } else { e.name.clone() };
-    light.script_run = Some((e.id, python.run(Request::new(&name, &code)), fresh));
+    let params = e.params.iter().map(|p| (p.name.clone(), p.value)).collect();
+    light.script_run = Some((e.id, python.run(Request { params, ..Request::new(&name, &code) }), fresh));
     light.script_out = None;
 }
 
@@ -1322,6 +1382,7 @@ fn poll_script(light: &mut LightUi, l: &mut Lighting) {
                     e.shape = Shape::Custom;
                     e.attribute = first.attribute;
                     e.table = first.table;
+                    e.params = first.params;
                     if e.name.is_empty() {
                         e.name = first.name;
                     }
@@ -1377,6 +1438,25 @@ fn script_card(ui: &mut Ui, light: &mut LightUi, e: &mut Effect) {
             run = ui.button(theme::with_icon(icons::PLAY_ARROW, t("Run"))).on_hover_text(t("Ctrl+Enter in the editor")).clicked();
         }
     });
+    // The script's settings: a change runs it again (once the slider is let go).
+    let mut rerun = false;
+    if !e.params.is_empty() {
+        egui::Grid::new(("script_params", e.id)).num_columns(2).spacing([12.0, 4.0]).show(ui, |ui| {
+            for p in &mut e.params {
+                ui.label(&p.name);
+                let mut s = egui::Slider::new(&mut p.value, p.min..=p.max).clamping(egui::SliderClamping::Always);
+                if p.integer {
+                    s = s.integer();
+                }
+                let r = ui.add(s);
+                rerun |= r.drag_stopped() || (r.changed() && !r.dragged());
+                ui.end_row();
+            }
+        });
+    }
+    if rerun && !running {
+        run = true;
+    }
     let (_, buf) = light.script_buf.as_mut().expect("set");
     let r = ui.add(
         egui::TextEdit::multiline(buf)
@@ -1683,6 +1763,17 @@ impl App {
     fn effects_page(&mut self, ui: &mut Ui, l: &mut Lighting) {
         ui.ctx().request_repaint_after(std::time::Duration::from_millis(33));
         poll_script(&mut self.light, l);
+        let lib = self.light.fx_lib.get_or_insert_with(Default::default).clone();
+        if let Some(s) = lib.snapshot_if_newer(self.light.fx_snap.generation) {
+            self.light.fx_snap = s;
+        }
+        let results = std::mem::take(&mut *self.light.fx_results.lock());
+        for r in results {
+            match r {
+                Ok(m) => self.notify(m),
+                Err(e) => self.notify_error(e),
+            }
+        }
         ui.horizontal_top(|ui| {
             ui.vertical(|ui| {
                 ui.set_width(240.0);
@@ -1725,6 +1816,8 @@ impl App {
                     }
                     self.light.programmer_effects.retain(|r| r.effect != id);
                 }
+                ui.add_space(12.0);
+                self.effect_library(ui, l, &lib);
             });
             ui.separator();
             egui::ScrollArea::vertical().id_salt("effect_scroll").show(ui, |ui| {
@@ -1733,10 +1826,22 @@ impl App {
                         ui.label(RichText::new(t("Choose or add an effect.")).color(theme::TEXT_DIM));
                         return;
                     };
-                    effect_editor(ui, e);
-                    if ui.button(theme::with_icon(icons::DOWNLOAD, t("Export effect file…"))).clicked() {
-                        self.deferred.push(super::Deferred::ExportEffect(e.id));
-                    }
+                    effect_editor(ui, e, self.light.audio_level);
+                    ui.horizontal(|ui| {
+                        if ui.button(theme::with_icon(icons::DOWNLOAD, t("Export effect file…"))).clicked() {
+                            self.deferred.push(super::Deferred::ExportEffect(e.id));
+                        }
+                        if ui.button(theme::with_icon(icons::SAVE, t("Save to library"))).on_hover_text(t("Offer it in every show (replaces a library effect of the same name)")).clicked() {
+                            let results = self.light.fx_results.clone();
+                            let name = if e.name.is_empty() { format!("{} {}", t("Effect"), e.id) } else { e.name.clone() };
+                            lib.save(e.clone(), String::new(), String::new(), move |r| {
+                                results.lock().push(match r {
+                                    Ok(()) => Ok(tr!("{name} saved to the effect library", name = name)),
+                                    Err(e) => Err(tr!("Can't save to the effect library: {e}", e = format!("{e:#}"))),
+                                });
+                            });
+                        }
+                    });
                     ui.add_space(10.0);
                     let n = self.light.selection.len().clamp(1, 24);
                     ui.label(theme::caption(&tr!("Preview across {n} fixtures", n = n.to_string())));
@@ -1747,6 +1852,60 @@ impl App {
                 });
             });
         });
+    }
+
+    /// The effect library: its effects (click adds one to the show), remove, open the folder.
+    fn effect_library(&mut self, ui: &mut Ui, l: &mut Lighting, lib: &crate::light::fxfile::EffectLibrary) {
+        let snap = self.light.fx_snap.clone();
+        ui.horizontal(|ui| {
+            ui.label(theme::caption(t("Library")));
+            if snap.loading {
+                ui.spinner();
+            }
+            if let Some(dir) = lib.dir().map(|d| d.to_path_buf())
+                && ui.small_button(icons::FOLDER).on_hover_text(t("Open the effect library folder")).clicked()
+                && let Err(e) = std::fs::create_dir_all(&dir).and_then(|_| super::manual::open_with_default_app(&dir))
+            {
+                self.notify_error(tr!("Can't open {path}: {e}", path = dir.display().to_string(), e = e.to_string()));
+            }
+            if ui.small_button(icons::REFRESH).on_hover_text(t("Read the folder again")).clicked() {
+                lib.reload();
+            }
+        });
+        if snap.items.is_empty() && !snap.loading {
+            ui.label(RichText::new(t("Effects saved to the library are offered in every show.")).small().color(theme::TEXT_DIM));
+        }
+        let mut remove = None;
+        for item in &snap.items {
+            let e = &item.contents.effect;
+            ui.horizontal(|ui| {
+                let name = if e.name.is_empty() { item.file.clone() } else { e.name.clone() };
+                let label = if e.shape == Shape::Custom { theme::with_icon(icons::CODE, &name) } else { name };
+                let mut tip = format!("{}\n{} · {}", t("Add to the show"), e.shape.label(), item.file);
+                if !item.contents.description.is_empty() {
+                    tip = format!("{}\n{tip}", item.contents.description);
+                }
+                if ui.button(label).on_hover_text(tip).clicked() {
+                    let id = l.effects.iter().map(|e| e.id).max().unwrap_or(0) + 1;
+                    l.effects.push(Effect { id, ..e.clone() });
+                    self.light.effect = Some(id);
+                }
+                if ui.small_button(icons::DELETE).on_hover_text(t("Remove from the library")).clicked() {
+                    remove = Some(item.file.clone());
+                }
+            });
+        }
+        for (file, err) in &snap.errors {
+            ui.label(RichText::new(format!("{file}: {err}")).small().color(theme::AMBER));
+        }
+        if let Some(file) = remove {
+            let results = self.light.fx_results.clone();
+            lib.remove(file, move |r| {
+                if let Err(e) = r {
+                    results.lock().push(Err(tr!("Can't remove from the effect library: {e}", e = format!("{e:#}"))));
+                }
+            });
+        }
     }
 
     /// The command line: Enter runs it, Up/Down walk the history, Esc clears.
@@ -2295,10 +2454,18 @@ impl App {
         for a in page {
             let current = self.selection_value(l, a);
             let preset = self.selection_preset(a);
+            // Extra channels go by their name in the first selected unit that has one.
+            let label = match a {
+                Attribute::Extra(_) => self.light.selection.iter().find(|f| attributes_of(l, **f).contains(&a)).map_or_else(|| a.label().to_string(), |f| l.attribute_label(*f, a)),
+                _ => a.label().to_string(),
+            };
             ui.horizontal(|ui| {
-                let (r, _) = ui.allocate_exact_size(egui::vec2(92.0, 26.0), egui::Sense::hover());
+                let (r, resp) = ui.allocate_exact_size(egui::vec2(92.0, 26.0), egui::Sense::hover());
                 let fg = if current.is_some() { theme::TEXT } else { theme::TEXT_DIM };
-                ui.painter().with_clip_rect(r).text(r.left_center(), egui::Align2::LEFT_CENTER, a.label(), egui::FontId::proportional(13.0), fg);
+                ui.painter().with_clip_rect(r).text(r.left_center(), egui::Align2::LEFT_CENTER, &label, egui::FontId::proportional(13.0), fg);
+                if matches!(a, Attribute::Extra(_)) {
+                    resp.on_hover_text(a.label());
+                }
                 let w = bar_w;
                 if let Some(v) = attr_bar(ui, current, preset, w) {
                     self.set_selection(l, a, v);
@@ -2358,9 +2525,13 @@ impl App {
     /// Named ranges of an attribute (wheel slots, shutter states) as buttons, taken from the
     /// first selected unit that has them; the range the value is in is lit. Long lists are a menu.
     fn range_row(&mut self, ui: &mut Ui, l: &Lighting, a: Attribute, current: Option<f32>) {
-        let Some(chan) = self.light.selection.iter().find_map(|f| l.unit_channels(*f)?.iter().find(|c| c.attribute == a && !c.ranges.is_empty()).cloned()) else {
+        let Some((chan, type_id)) = self.light.selection.iter().find_map(|f| {
+            let c = l.unit_channels(*f)?.iter().find(|c| c.attribute == a && !c.ranges.is_empty()).cloned()?;
+            Some((c, l.unit(*f)?.0.fixture_type.clone()))
+        }) else {
             return;
         };
+        let images = l.fixture_type(&type_id).map(|t| &t.images);
         let active = current.and_then(|v| chan.range_at(v)).map(|r| r.name.clone());
         let mut pick = None;
         if chan.ranges.len() > 24 {
@@ -2383,9 +2554,18 @@ impl App {
                         let on = active.as_deref() == Some(r.name.as_str());
                         let (fill, fg) = if on { (theme::ACCENT, Color32::WHITE) } else { (theme::BG_RAISED, theme::TEXT) };
                         let label = if r.name.is_empty() { format!("{}–{}", r.from, r.to) } else { r.name.clone() };
-                        let b = ui
-                            .add(egui::Button::new(RichText::new(label).size(11.5).color(fg)).fill(fill).min_size(egui::vec2(0.0, 22.0)))
-                            .on_hover_text(format!("DMX {}–{}", r.from, r.to));
+                        let text = RichText::new(label).size(11.5).color(fg);
+                        let picture = images.and_then(|m| m.get(&r.image)).and_then(|data| self.gobo_texture(ui.ctx(), &type_id, &r.image, data));
+                        let b = match &picture {
+                            Some(tex) => ui.add(egui::Button::image_and_text(egui::Image::from_texture((tex.id(), egui::vec2(18.0, 18.0))), text).fill(fill).min_size(egui::vec2(0.0, 22.0))),
+                            None => ui.add(egui::Button::new(text).fill(fill).min_size(egui::vec2(0.0, 22.0))),
+                        };
+                        let b = b.on_hover_ui(|ui| {
+                            if let Some(tex) = &picture {
+                                ui.add(egui::Image::from_texture((tex.id(), egui::vec2(96.0, 96.0))));
+                            }
+                            ui.label(format!("DMX {}–{}", r.from, r.to));
+                        });
                         if let Some([cr, cg, cb]) = r.color {
                             let bar = egui::Rect::from_min_size(egui::pos2(b.rect.left() + 3.0, b.rect.bottom() - 4.0), egui::vec2(b.rect.width() - 6.0, 2.5));
                             ui.painter().rect_filled(bar, 1.0, Color32::from_rgb(cr, cg, cb));
@@ -2405,6 +2585,20 @@ impl App {
             }
         }
         ui.add_space(2.0);
+    }
+
+    /// A wheel slot picture as a texture (decoded on first use, then cached).
+    fn gobo_texture(&mut self, ctx: &egui::Context, type_id: &str, name: &str, data: &str) -> Option<egui::TextureHandle> {
+        let key = (type_id.to_string(), name.to_string(), data.len());
+        self.light
+            .gobo_textures
+            .entry(key)
+            .or_insert_with(|| {
+                let (w, h, rgba) = crate::light::gobo::decode(data)?;
+                let img = egui::ColorImage::from_rgba_unmultiplied([w as usize, h as usize], &rgba);
+                Some(ctx.load_texture(format!("gobo-{type_id}-{name}"), img, egui::TextureOptions::LINEAR))
+            })
+            .clone()
     }
 
     /// RGB/CMY picker for the selection.
@@ -3296,6 +3490,13 @@ fn add_fixtures(l: &mut Lighting, ty: &FixtureType, form: &mut AddForm) -> u32 {
             address: start,
             ..Default::default()
         });
+        // Further DMX breaks: the next free addresses in the same universe (unpatched if full).
+        for b in 1..mode.breaks() {
+            let at = l.next_free_address(form.universe, mode.footprint_of(b).max(1)).unwrap_or(0);
+            if let Some(f) = l.fixtures.last_mut() {
+                f.breaks.push(crate::light::model::DmxAddress { universe: form.universe, address: at });
+            }
+        }
         added += 1;
         if address != 0 {
             address = start + footprint;

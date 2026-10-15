@@ -107,6 +107,38 @@ fn wheel_slot<'a>(wheels: Option<&'a Map<String, Value>>, wheel: &str, slot: usi
     wheels?.get(wheel)?.get("slots")?.as_array()?.get(slot.checked_sub(1)?)
 }
 
+/// The name a slot's `resource` goes by: the string itself, or an embedded resource's key.
+fn resource_key(r: &Value) -> Option<String> {
+    r.as_str().or_else(|| r.get("key")?.as_str()).or_else(|| r.get("name")?.as_str()).map(str::to_string)
+}
+
+/// Thumbnails of the resources embedded in the wheels (`"resource": {"key", "image": {"mimeType",
+/// "data", "encoding": "utf8"|"base64"}}`, as the OFL website's own export writes them).
+fn embedded_images(wheels: Option<&Map<String, Value>>, notes: &mut Vec<String>) -> std::collections::BTreeMap<String, String> {
+    use base64::Engine;
+    let mut out = std::collections::BTreeMap::new();
+    let slots = wheels.into_iter().flat_map(|w| w.values()).filter_map(|w| w.get("slots")?.as_array()).flatten();
+    for r in slots.filter_map(|s| s.get("resource")).filter(|r| r.is_object()) {
+        let (Some(key), Some(img)) = (resource_key(r), r.get("image")) else { continue };
+        if out.contains_key(&key) || out.len() >= super::gobo::MAX_IMAGES {
+            continue;
+        }
+        let Some(data) = img.get("data").and_then(Value::as_str) else { continue };
+        let bytes = match img.get("encoding").and_then(Value::as_str) {
+            Some("base64") => base64::engine::general_purpose::STANDARD.decode(data.trim()).ok(),
+            _ => Some(data.as_bytes().to_vec()),
+        };
+        match bytes.map(|b| super::gobo::thumbnail(&b)) {
+            Some(Ok(t)) => {
+                out.insert(key, t);
+            }
+            Some(Err(e)) => notes.push(format!("picture \"{key}\": {e:#}")),
+            None => notes.push(format!("picture \"{key}\": bad base64")),
+        }
+    }
+    out
+}
+
 /// Name (and colour) of a capability for its range.
 fn range_label(cap: &Value, channel: &str, wheels: Option<&Map<String, Value>>) -> (String, Option<[u8; 3]>, String) {
     let s = |k: &str| cap.get(k).and_then(Value::as_str).map(str::to_string);
@@ -139,7 +171,7 @@ fn range_label(cap: &Value, channel: &str, wheels: Option<&Map<String, Value>>) 
             if n.fract() == 0.0 {
                 if let Some((sn, v)) = slot_name(n as usize) {
                     colour = colour.or_else(|| v.get("colors").and_then(Value::as_array).and_then(|c| c.first()).and_then(Value::as_str).and_then(super::import::hex_colour));
-                    image = v.get("resource").and_then(Value::as_str).unwrap_or("").to_string();
+                    image = v.get("resource").and_then(resource_key).unwrap_or_default();
                     name = Some(sn);
                 } else {
                     name = Some(format!("Slot {n}"));
@@ -323,10 +355,8 @@ pub fn import(json: &str, manufacturer: &str) -> anyhow::Result<Imported> {
                 continue;
             };
             let caps = capabilities(r.def);
-            let Some(attr) = caps.iter().find_map(|c| attribute(n, c, wheels)) else {
-                notes.push(format!("channel \"{n}\": function not supported, left unused"));
-                continue;
-            };
+            // Unknown functions become Extra channels (set by hand, named after the channel).
+            let attr = caps.iter().find_map(|c| attribute(n, c, wheels)).unwrap_or(super::import::ANY_EXTRA);
             // Its fine bytes in this mode (16-bit only; a 24-bit byte is ignored).
             let fines: Vec<(usize, usize)> = names
                 .iter()
@@ -360,6 +390,8 @@ pub fn import(json: &str, manufacturer: &str) -> anyhow::Result<Imported> {
             }
             let def = ChannelDef {
                 attribute: attr,
+                name: n.clone(),
+                dmx_break: 0,
                 offset: offset as u16,
                 fine,
                 default: r.def.get("defaultValue").and_then(|x| level(x, max)),
@@ -425,7 +457,8 @@ pub fn import(json: &str, manufacturer: &str) -> anyhow::Result<Imported> {
         moving: moving || modes.iter().any(|m| m.channel(Attribute::Pan).is_some() && m.channel(Attribute::Tilt).is_some()),
     };
     let id = type_id("ofl", &manufacturer, name);
-    Ok(Imported { fixture: super::fixlib::sanitize(FixtureType { id, manufacturer, name: name.to_string(), modes, physical })?, notes })
+    let images = embedded_images(wheels, &mut notes);
+    Ok(Imported { fixture: super::fixlib::sanitize(FixtureType { id, manufacturer, name: name.to_string(), modes, physical, images })?, notes })
 }
 
 #[cfg(test)]
@@ -520,6 +553,17 @@ mod tests {
         let gobo = m.channel(Attribute::Gobo).unwrap();
         assert_eq!(gobo.ranges.len(), 2, "hidden capability left out");
         assert_eq!(gobo.ranges[1].image, "gobos/star");
+        assert!(f.images.is_empty(), "a resource name only: no picture");
+        // The website's export embeds the resource with its picture.
+        let svg = r#"<svg xmlns='http://www.w3.org/2000/svg' width='4' height='4'><rect width='4' height='4' fill='white'/></svg>"#;
+        let embedded = WHEELS.replace(
+            r#""resource": "gobos/star""#,
+            &format!(r#""resource": {{"key": "gobos/star", "name": "Star", "image": {{"mimeType": "image/svg+xml", "data": "{svg}", "encoding": "utf8"}}}}"#),
+        );
+        let f2 = import(&embedded, "Acme").unwrap().fixture;
+        assert_eq!(f2.modes[0].channel(Attribute::Gobo).unwrap().ranges[1].image, "gobos/star");
+        let (w, _, px) = crate::light::gobo::decode(&f2.images["gobos/star"]).unwrap();
+        assert_eq!((w, px[((32 * w + 32) * 4) as usize]), (crate::light::gobo::THUMB, 255));
         let g2 = m.channel(Attribute::Gobo2).unwrap();
         assert_eq!((g2.offset, g2.ranges[1].name.as_str()), (2, "Gobo 2"));
         let dim = m.channel(Attribute::Dimmer).unwrap();

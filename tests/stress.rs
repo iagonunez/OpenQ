@@ -986,7 +986,7 @@ mod faults {
             })
             .collect();
         let ids: Vec<_> = cues.iter().map(|c| c.id).collect();
-        l.sequences.push(Sequence { id: 1, cues, ..Default::default() });
+        l.sequences.push(Sequence { id: 1, cues: cues.into(), ..Default::default() });
         let mut e = LightEngine::start();
         e.load(&l);
         e.go_cue(ids[0], Instant::now());
@@ -1482,7 +1482,7 @@ mod lighting {
             })
             .collect();
         let ids: Vec<_> = cues.iter().map(|c| c.id).collect();
-        l.sequences.push(Sequence { id: 1, cues, ..Default::default() });
+        l.sequences.push(Sequence { id: 1, cues: cues.into(), ..Default::default() });
         eprintln!("{bars} bars, {} cells, {} universes", cells.len(), bars.div_ceil(5));
         // Compile and frame cost, measured directly.
         let t = Instant::now();
@@ -1557,7 +1557,7 @@ mod lighting {
         assert!(!lib.snapshot().loading);
         let s = lib.snapshot();
         let expect = 8 * (per - per / 4);
-        assert_eq!(s.types.len(), expect, "saved minus removed");
+        assert_eq!(s.items.len(), expect, "saved minus removed");
         assert_eq!(s.errors.len(), 1, "the junk file: {:?}", s.errors);
         let _ = std::fs::remove_dir_all(&dir);
     }

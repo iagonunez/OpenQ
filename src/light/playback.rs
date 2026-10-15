@@ -230,10 +230,12 @@ impl LightShow {
             if f.id > MAX_FIXTURE_ID || !seen.insert(f.id) {
                 continue;
             }
-            let footprint = mode.footprint();
-            let valid = f.address > 0
-                && (1..=MAX_UNIVERSE).contains(&f.universe)
-                && f.address as u32 + footprint as u32 - 1 <= UNIVERSE_SIZE as u32;
+            // Each DMX break is output where it is patched (most modes have one).
+            let breaks = mode.breaks();
+            let valid_break = |b: u8| {
+                let at = f.address_of(b);
+                at.address > 0 && (1..=MAX_UNIVERSE).contains(&at.universe) && at.address as u32 + mode.footprint_of(b) as u32 - 1 <= UNIVERSE_SIZE as u32
+            };
             // The fixture (master channels), then each cell as a unit of its own.
             let cells = mode.heads.len().min(MAX_CELLS as usize) as u32;
             for cell in std::iter::once(None).chain((1..=cells).map(Some)) {
@@ -244,13 +246,17 @@ impl LightShow {
                     show.index.insert((id, attr), show.slots.len() as u32);
                     show.slots.push(SlotInfo { fixture: id, attr, home });
                 }
-                if valid && !chans.is_empty() {
-                    let channels = chans.iter().map(|c| (c.clone(), show.index[&(id, c.attribute)])).collect();
-                    let has_dimmer = chans.iter().any(|c| c.attribute == Attribute::Dimmer);
-                    let dimmer = if has_dimmer { None } else { show.index.get(&(id, Attribute::Dimmer)).copied() };
+                let has_dimmer = chans.iter().any(|c| c.attribute == Attribute::Dimmer);
+                let dimmer = if has_dimmer { None } else { show.index.get(&(id, Attribute::Dimmer)).copied() };
+                for b in (0..breaks).filter(|b| valid_break(*b)) {
+                    let channels: Vec<(ChannelDef, u32)> = chans.iter().filter(|c| c.dmx_break == b).map(|c| (c.clone(), show.index[&(id, c.attribute)])).collect();
+                    if channels.is_empty() {
+                        continue;
+                    }
+                    let at = f.address_of(b);
                     show.fixtures.push(FixtureOut {
-                        universe: f.universe,
-                        start: f.address as usize - 1,
+                        universe: at.universe,
+                        start: at.address as usize - 1,
                         channels,
                         dimmer,
                         invert_pan: f.invert_pan,
@@ -258,8 +264,8 @@ impl LightShow {
                     });
                 }
             }
-            if valid {
-                show.universes.push(f.universe);
+            for b in (0..breaks).filter(|b| valid_break(*b)) {
+                show.universes.push(f.address_of(b).universe);
             }
         }
         show.universes.sort();
@@ -431,6 +437,7 @@ impl LightShow {
 fn same_patch(a: &Lighting, b: &Lighting) -> bool {
     let same = |x: &super::model::Fixture, y: &super::model::Fixture| {
         (x.id, x.universe, x.address, x.invert_pan, x.invert_tilt) == (y.id, y.universe, y.address, y.invert_pan, y.invert_tilt)
+            && x.breaks == y.breaks
             && x.fixture_type == y.fixture_type
             && x.mode == y.mode
     };
@@ -552,6 +559,8 @@ pub struct Playback {
     pub blackout: bool,
     /// Tempo for effects that follow it.
     pub bpm: f32,
+    /// Audio envelope for audio-reactive effects (see [`Playback::set_audio`]), and its time.
+    audio: (f32, f64),
     /// Effects run from the programmer (on top of everything).
     programmer_effects: Vec<CompiledEffect>,
     frame: DmxFrame,
@@ -575,6 +584,7 @@ impl Playback {
             grand_master: 1.0,
             blackout: false,
             bpm: 120.0,
+            audio: (0.0, 0.0),
             programmer_effects: Vec::new(),
             frame: DmxFrame::default(),
         };
@@ -772,6 +782,20 @@ impl Playback {
         }
     }
 
+    /// Feed the audio peak measured since the last call (linear 0..1): the envelope jumps up to
+    /// it and falls with [`super::effects::AUDIO_RELEASE`].
+    pub fn set_audio(&mut self, peak: f32, now: Instant) {
+        let t = self.time(now);
+        let dt = (t - self.audio.1).max(0.0) as f32;
+        let fallen = self.audio.0 * (-dt / super::effects::AUDIO_RELEASE).exp();
+        self.audio = (if peak.is_finite() { fallen.max(peak.clamp(0.0, 1.0)) } else { fallen }, t);
+    }
+
+    /// The audio envelope effects follow.
+    pub fn audio_level(&self) -> f32 {
+        self.audio.0
+    }
+
     /// Replace the programmer's effects.
     pub fn set_programmer_effects(&mut self, effects: &[(Effect, Vec<FixtureId>)]) {
         self.programmer_effects = effects.iter().filter_map(|(e, f)| self.show.compile_effect(e, f)).collect();
@@ -779,17 +803,21 @@ impl Playback {
 
     /// Sequence states, for the UI.
     pub fn status(&self) -> Vec<SequenceStatus> {
-        self.show
-            .sequences
-            .iter()
-            .zip(&self.seqs)
-            .map(|(s, st)| SequenceStatus {
-                id: s.id,
-                cue: st.cue.map(|c| s.cues[c].id),
-                active: !st.tracks.is_empty() || st.effects.is_some(),
-                level: st.level,
-            })
-            .collect()
+        let mut out = Vec::new();
+        self.status_into(&mut out);
+        out
+    }
+
+    /// [`Playback::status`] into an existing list: no allocation once it has the capacity
+    /// (the light thread refreshes the shared status this way).
+    pub fn status_into(&self, out: &mut Vec<SequenceStatus>) {
+        out.clear();
+        out.extend(self.show.sequences.iter().zip(&self.seqs).map(|(s, st)| SequenceStatus {
+            id: s.id,
+            cue: st.cue.map(|c| s.cues[c].id),
+            active: !st.tracks.is_empty() || st.effects.is_some(),
+            level: st.level,
+        }));
     }
 
     /// Resolved value of a slot after the last tick (before the grand master).
@@ -834,6 +862,8 @@ impl Playback {
         // Effects of each sequence: the current cue's fade in (unless the previous cue ran them
         // too), earlier cues' fade out (an effect a later list has too is left to that one).
         let htp = |slot: u32| show.slots[slot as usize].attr.is_htp();
+        // The envelope as of this frame (it falls between peaks even without a new feed).
+        let audio = self.audio.0 * (-((t - self.audio.1).max(0.0) as f32) / super::effects::AUDIO_RELEASE).exp();
         for (si, st) in self.seqs.iter_mut().enumerate() {
             let cues = &show.sequences[si].cues;
             let list = |f: Option<FxState>| f.map_or(&[][..], |f| &cues[f.cue].effects[..]);
@@ -843,14 +873,14 @@ impl Playback {
             for e in new {
                 let carried = prev.iter().any(|o| o.id == e.id);
                 let ramp = if carried { 1.0 } else { st.effects.map_or(1.0, |f| f.ramp(t)) };
-                e.apply(t, self.bpm, ramp * st.level, &mut self.values, htp);
+                e.apply(t, self.bpm, audio, ramp * st.level, &mut self.values, htp);
             }
             for (k, of) in olds.iter().enumerate() {
                 let Some(of) = *of else { continue };
                 let ramp = of.ramp(t);
                 let later = |id| olds[k + 1..].iter().flatten().any(|l| list(Some(*l)).iter().any(|x| x.id == id));
                 for e in list(Some(of)).iter().filter(|o| !new.iter().any(|n| n.id == o.id) && !later(o.id)) {
-                    e.apply(t, self.bpm, (1.0 - ramp) * st.level, &mut self.values, htp);
+                    e.apply(t, self.bpm, audio, (1.0 - ramp) * st.level, &mut self.values, htp);
                 }
                 if ramp >= 1.0 {
                     st.old_effects[k] = None;
@@ -871,7 +901,7 @@ impl Playback {
             }
         }
         for e in &self.programmer_effects {
-            e.apply(t, self.bpm, 1.0, &mut self.values, htp);
+            e.apply(t, self.bpm, audio, 1.0, &mut self.values, htp);
         }
         let master = if self.blackout { 0.0 } else { self.grand_master.clamp(0.0, 1.0) };
         self.frame.clear();
@@ -927,10 +957,10 @@ mod tests {
             cues: vec![
                 cue(&[(1, Attribute::Dimmer, 1.0), (2, Attribute::Dimmer, 1.0), (2, Attribute::Red, 1.0)], 2.0),
                 cue(&[(1, Attribute::Dimmer, 0.0), (3, Attribute::Pan, 1.0), (3, Attribute::Dimmer, 0.5)], 0.0),
-            ],
+            ].into(),
             ..Default::default()
         });
-        l.sequences.push(Sequence { id: 2, name: "Sub".into(), cues: vec![cue(&[(1, Attribute::Dimmer, 0.4), (3, Attribute::Pan, 0.25)], 0.0)], ..Default::default() });
+        l.sequences.push(Sequence { id: 2, name: "Sub".into(), cues: vec![cue(&[(1, Attribute::Dimmer, 0.4), (3, Attribute::Pan, 0.25)], 0.0)].into(), ..Default::default() });
         l
     }
 
@@ -1087,6 +1117,50 @@ mod tests {
     }
 
     #[test]
+    fn multi_break_fixtures_output_each_break_at_its_address() {
+        use crate::light::model::{ChannelDef, DmxAddress, FixtureMode, FixtureType};
+        let ch = |attribute, dmx_break, offset| ChannelDef { attribute, dmx_break, offset, ..Default::default() };
+        let ty = FixtureType {
+            id: "test/two".into(),
+            modes: vec![FixtureMode { name: "m".into(), channels: vec![ch(Attribute::Dimmer, 0, 0), ch(Attribute::Red, 1, 0), ch(Attribute::Blue, 1, 2)], ..Default::default() }],
+            ..Default::default()
+        };
+        let mut l = Lighting::default();
+        l.add_type(&ty);
+        let breaks = vec![DmxAddress { universe: 2, address: 10 }];
+        l.fixtures.push(Fixture { id: 1, fixture_type: ty.id.clone(), mode: "m".into(), address: 5, breaks, ..Default::default() });
+        let t0 = Instant::now();
+        let mut p = Playback::new(Arc::new(LightShow::compile(&l)), t0);
+        p.set_programmer(&[(1, Attribute::Dimmer, 1.0), (1, Attribute::Red, 1.0), (1, Attribute::Blue, 0.5)]);
+        let frame = p.tick(t0);
+        assert_eq!(frame.get(1).unwrap().data[4], 255, "break 1 at 1.5");
+        assert_eq!(&frame.get(2).unwrap().data[9..12], &[255, 0, 128], "break 2 at 2.10");
+        assert_eq!(l.spans(&l.fixtures[0]), [(1, 5, 5), (2, 10, 12)]);
+        assert_eq!(l.next_free_address(2, 3), Some(1));
+        assert_eq!(l.next_free_address(2, 10), Some(13), "break 2 takes 2.10–12");
+        // An unpatched second break: the first still outputs.
+        l.fixtures[0].breaks.clear();
+        let mut p = Playback::new(Arc::new(LightShow::compile(&l)), t0);
+        p.set_programmer(&[(1, Attribute::Dimmer, 1.0)]);
+        let frame = p.tick(t0);
+        assert_eq!(frame.get(1).unwrap().data[4], 255);
+        assert!(frame.get(2).is_none());
+    }
+
+    #[test]
+    fn audio_envelope_rises_at_once_and_falls_slowly() {
+        let show = Arc::new(LightShow::compile(&design()));
+        let t0 = Instant::now();
+        let mut p = Playback::new(show, t0);
+        p.set_audio(0.8, t0);
+        assert_eq!(p.audio_level(), 0.8);
+        p.set_audio(0.1, t0 + Duration::from_secs_f32(super::super::effects::AUDIO_RELEASE));
+        assert!((p.audio_level() - 0.8 / std::f32::consts::E).abs() < 1e-3, "{}", p.audio_level());
+        p.set_audio(f32::NAN, t0 + Duration::from_secs(5));
+        assert!(p.audio_level() < 0.01);
+    }
+
+    #[test]
     fn effects_track_fade_and_stop() {
         use crate::light::effects::{Effect, EffectRun, Shape};
         let t0 = Instant::now();
@@ -1234,7 +1308,7 @@ mod tests {
         let start = LightCue { fade: 0.0, effects: vec![EffectRun { effect: 1, fixtures: vec![1], stop: false }], ..Default::default() };
         let stop = LightCue { fade: 2.0, effects: vec![EffectRun { effect: 1, stop: true, ..Default::default() }], ..Default::default() };
         let next = LightCue { fade: 2.0, ..Default::default() };
-        l.sequences.push(Sequence { id: 3, cues: vec![start, stop, next], ..Default::default() });
+        l.sequences.push(Sequence { id: 3, cues: vec![start, stop, next].into(), ..Default::default() });
         let mut p = Playback::new(Arc::new(LightShow::compile(&l)), t0);
         p.go(3, None, t0).unwrap();
         p.go(3, None, at(t0, 10.0)).unwrap(); // effect fades out over 2 s

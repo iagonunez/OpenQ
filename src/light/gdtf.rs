@@ -8,8 +8,11 @@
 //! * Multi-instance fixtures: channels on a geometry used by `GeometryReference`s are repeated
 //!   for every reference (offset by its DMX break offset), one cell each. Channels on geometries
 //!   that repeat another geometry's attributes (pixels without references) are cells too.
-//! * Not read: 3D models, gobo images (only their names), multi-break modes (channels on a
-//!   second DMX break are noted and skipped), virtual channels, macros.
+//! * Multi-break modes: a channel on a later DMX break keeps it ([`ChannelDef::dmx_break`]; a
+//!   reference's offset for that break places its cells), and each break is patched at an
+//!   address of its own ([`super::model::Fixture::breaks`]).
+//! * Wheel slot pictures (`wheels/*.png|svg`) become thumbnails ([`super::gobo`]).
+//! * Not read: 3D models, virtual channels, macros.
 
 use super::import::{attribute_from_name, place, type_id, Imported};
 use super::model::{Attribute, ChannelDef, ChannelRange, FixtureMode, FixtureType, Head, Physical};
@@ -18,6 +21,17 @@ use std::collections::HashMap;
 
 /// Largest `description.xml` read.
 const MAX_XML: usize = 32 << 20;
+
+/// Most DMX breaks a mode may use.
+const MAX_BREAKS: u8 = 8;
+
+/// A GDTF `DMXBreak` as OpenQ's 0-based [`ChannelDef::dmx_break`] ("Overwrite" = the first).
+fn dmx_break(s: &str) -> Option<u8> {
+    match s.trim() {
+        "Overwrite" => Some(0),
+        n => n.parse::<u8>().ok().filter(|b| (1..=MAX_BREAKS).contains(b)).map(|b| b - 1),
+    }
+}
 
 /// OpenQ attribute of a GDTF attribute name.
 pub fn attribute(name: &str) -> Option<Attribute> {
@@ -150,8 +164,25 @@ fn geometries<'a, 'i>(root: Node<'a, 'i>) -> HashMap<&'a str, Node<'a, 'i>> {
 pub fn import(zip: &[u8]) -> anyhow::Result<Imported> {
     let xml = super::zipread::read(zip, "description.xml", MAX_XML)?;
     let text = std::str::from_utf8(&xml).map_err(|_| anyhow::anyhow!("description.xml is not UTF-8"))?;
-    import_xml(text)
+    let mut r = import_xml(text)?;
+    // Wheel slot pictures: `wheels/<MediaFileName>.png` (or .svg, or the name as it is).
+    let names: std::collections::BTreeSet<String> =
+        r.fixture.modes.iter().flat_map(|m| m.all_channels()).flat_map(|c| c.ranges.iter()).map(|r| r.image.clone()).filter(|i| !i.is_empty()).collect();
+    for name in names.into_iter().take(super::gobo::MAX_IMAGES) {
+        let data = ["png", "svg"].iter().map(|e| format!("wheels/{name}.{e}")).chain([format!("wheels/{name}")]).find_map(|p| super::zipread::read(zip, &p, MAX_IMAGE).ok());
+        match data.map(|d| super::gobo::thumbnail(&d)) {
+            Some(Ok(t)) => {
+                r.fixture.images.insert(name, t);
+            }
+            Some(Err(e)) => r.notes.push(format!("picture \"{name}\": {e:#}")),
+            None => {}
+        }
+    }
+    Ok(r)
 }
+
+/// Largest wheel picture read from a GDTF file.
+const MAX_IMAGE: usize = 8 << 20;
 
 /// Read a GDTF `description.xml`.
 pub fn import_xml(text: &str) -> anyhow::Result<Imported> {
@@ -177,17 +208,16 @@ pub fn import_xml(text: &str) -> anyhow::Result<Imported> {
         wheels.insert(attr(w, "Name").unwrap_or(""), slots);
     }
     let geoms = geometries(ft);
-    // Geometry references: template geometry → [(reference name, DMX offset of break 1)].
-    let mut refs: HashMap<&str, Vec<(String, i64)>> = HashMap::new();
+    // Geometry references: template geometry → [(reference name, DMX offset per break)].
+    type Refs<'a> = HashMap<&'a str, Vec<(String, HashMap<u8, i64>)>>;
+    let mut refs: Refs = HashMap::new();
     for r in ft.descendants().filter(|n| n.has_tag_name("GeometryReference")) {
         let Some(g) = attr(r, "Geometry") else { continue };
-        let off = children(r, "Break")
-            .find(|b| attr(*b, "DMXBreak").unwrap_or("1") == "1")
-            .and_then(|b| attr(b, "DMXOffset")?.parse::<i64>().ok())
-            .unwrap_or(1);
+        let offs: HashMap<u8, i64> =
+            children(r, "Break").filter_map(|b| Some((dmx_break(attr(b, "DMXBreak").unwrap_or("1"))?, attr(b, "DMXOffset")?.parse::<i64>().ok()?))).collect();
         let list = refs.entry(g).or_default();
         if list.len() < super::model::MAX_CELLS as usize {
-            list.push((attr(r, "Name").unwrap_or(g).to_string(), off));
+            list.push((attr(r, "Name").unwrap_or(g).to_string(), offs));
         }
     }
     // A geometry's template: itself, or the referenced geometry it lies inside.
@@ -216,24 +246,25 @@ pub fn import_xml(text: &str) -> anyhow::Result<Imported> {
             let geometry = attr(c, "Geometry").unwrap_or("").to_string();
             let offsets: Vec<u16> = attr(c, "Offset").unwrap_or("").split(',').filter_map(|x| x.trim().parse::<u16>().ok()).filter(|x| (1..=512).contains(x)).collect();
             let Some(&coarse) = offsets.first() else { continue }; // virtual channel
-            let brk = attr(c, "DMXBreak").unwrap_or("1");
+            let brk_text = attr(c, "DMXBreak").unwrap_or("1");
             let functions: Vec<Node> = c.descendants().filter(|n| n.has_tag_name("ChannelFunction")).collect();
             fn gattr<'a>(f: &Node<'a, '_>) -> &'a str {
                 f.attribute("Attribute").unwrap_or("")
             }
             let label = functions.first().map(gattr).or(c.children().find(|x| x.has_tag_name("LogicalChannel")).and_then(|l| attr(l, "Attribute"))).unwrap_or("?").to_string();
-            if brk != "1" && brk != "Overwrite" {
-                notes.push(format!("mode \"{mname}\": channel {label} on DMX break {brk}, skipped"));
-                continue;
-            }
-            if template_of(&geometry).is_none() {
-                slots = slots.max(offsets.iter().copied().max().unwrap_or(0));
-            }
-            let Some(a) = functions.iter().find_map(|f| attribute(gattr(f))).or_else(|| c.children().filter(|x| x.has_tag_name("LogicalChannel")).find_map(|l| attribute(attr(l, "Attribute")?)))
-            else {
-                notes.push(format!("mode \"{mname}\": channel {label} not supported, left unused"));
+            let Some(brk) = dmx_break(brk_text) else {
+                notes.push(format!("mode \"{mname}\": channel {label} on DMX break {brk_text}, skipped"));
                 continue;
             };
+            if brk == 0 && template_of(&geometry).is_none() {
+                slots = slots.max(offsets.iter().copied().max().unwrap_or(0));
+            }
+            // Unknown functions become Extra channels (set by hand, named after the GDTF attribute).
+            let a = functions
+                .iter()
+                .find_map(|f| attribute(gattr(f)))
+                .or_else(|| c.children().filter(|x| x.has_tag_name("LogicalChannel")).find_map(|l| attribute(attr(l, "Attribute")?)))
+                .unwrap_or(super::import::ANY_EXTRA);
             // Ranges: channel sets, or the functions themselves when there are several.
             let end_of = |i: usize, list: &[(u8, String, Option<[u8; 3]>, String)]| list.get(i + 1).map_or(255, |n| n.0.saturating_sub(1).max(list[i].0));
             let mut starts: Vec<(u8, String, Option<[u8; 3]>, String)> = Vec::new();
@@ -280,6 +311,8 @@ pub fn import_xml(text: &str) -> anyhow::Result<Imported> {
             }
             let def = ChannelDef {
                 attribute: a,
+                name: label.clone(),
+                dmx_break: brk,
                 offset: coarse - 1,
                 fine: offsets.get(1).map(|f| f - 1),
                 default,
@@ -312,7 +345,8 @@ pub fn import_xml(text: &str) -> anyhow::Result<Imported> {
         for c in &list {
             let what = format!("mode \"{mname}\", channel {}", c.label);
             if let Some(t) = template_of(&c.geometry) {
-                for (rname, off) in &refs[t.as_str()] {
+                for (rname, offs) in &refs[t.as_str()] {
+                    let off = offs.get(&c.def.dmx_break).copied().unwrap_or(1);
                     let shift = |o: u16| (o as i64 + off - 1).clamp(0, 511) as u16;
                     let def = ChannelDef { offset: shift(c.def.offset), fine: c.def.fine.map(shift), ..c.def.clone() };
                     let i = add_head(&mut heads, rname.clone());
@@ -345,7 +379,7 @@ pub fn import_xml(text: &str) -> anyhow::Result<Imported> {
         beam_max: if beam.is_empty() { d.beam_max } else { beam.iter().cloned().fold(0.0, f32::max) },
         moving,
     };
-    let fixture = FixtureType { id: type_id("gdtf", &manufacturer, &name), manufacturer, name, modes, physical };
+    let fixture = FixtureType { id: type_id("gdtf", &manufacturer, &name), manufacturer, name, modes, physical, images: Default::default() };
     Ok(Imported { fixture: super::fixlib::sanitize(fixture)?, notes })
 }
 
@@ -424,9 +458,16 @@ mod tests {
 
     #[test]
     fn spot() {
-        let zip = super::super::zipread::tests::make(&[("description.xml", SPOT.as_bytes())]);
+        // The star gobo's picture is in the zip; a missing one is simply left out.
+        let mut png = Vec::new();
+        image::DynamicImage::ImageRgba8(image::RgbaImage::from_pixel(8, 8, image::Rgba([255, 255, 255, 255])))
+            .write_to(&mut std::io::Cursor::new(&mut png), image::ImageFormat::Png)
+            .unwrap();
+        let zip = super::super::zipread::tests::make(&[("description.xml", SPOT.as_bytes()), ("wheels/star.png", &png)]);
         let r = import(&zip).unwrap();
         let f = &r.fixture;
+        assert_eq!(f.images.keys().collect::<Vec<_>>(), ["star"]);
+        assert!(crate::light::gobo::decode(&f.images["star"]).is_some());
         assert_eq!((f.id.as_str(), f.manufacturer.as_str(), f.name.as_str()), ("gdtf/acme/test-spot-300", "Acme", "Test Spot 300"));
         let m = &f.modes[0];
         let pan = m.channel(Attribute::Pan).unwrap();
@@ -446,8 +487,12 @@ mod tests {
         assert_eq!(gobo.ranges[1].image, "star");
         assert_eq!(m.channel(Attribute::Gobo2).unwrap().offset, 4);
         assert_eq!(m.channel(Attribute::Dimmer).unwrap().highlight, Some(1.0));
-        assert!(m.channel(Attribute::Zoom).is_none());
-        assert!(r.notes.iter().any(|n| n.contains("break 2")));
+        // Zoom is on the second DMX break, at its first slot.
+        let zoom = m.channel(Attribute::Zoom).unwrap();
+        assert_eq!((zoom.dmx_break, zoom.offset), (1, 0));
+        assert_eq!(m.breaks(), 2);
+        assert_eq!(m.footprint_of(1), 1);
+        assert!(r.notes.is_empty(), "{:?}", r.notes);
         assert!(!f.physical.moving, "no tilt channel");
     }
 
@@ -462,6 +507,24 @@ mod tests {
         assert_eq!(offs(&m.heads[0]), [1, 2, 3]);
         assert_eq!(offs(&m.heads[1]), [4, 5, 6]);
         assert_eq!(m.footprint(), 7);
+    }
+
+    #[test]
+    fn multi_break_cells() {
+        // A moving light whose pixels take a second DMX input: two pixels at 1 and 4 of break 2.
+        let xml = BAR
+            .replace(r#"<Break DMXBreak="1" DMXOffset="2"/>"#, r#"<Break DMXBreak="1" DMXOffset="1"/><Break DMXBreak="2" DMXOffset="1"/>"#)
+            .replace(r#"<Break DMXBreak="1" DMXOffset="5"/>"#, r#"<Break DMXBreak="1" DMXOffset="1"/><Break DMXBreak="2" DMXOffset="4"/>"#)
+            .replace(r#"DMXBreak="1" Offset="1" Geometry="Pixel""#, r#"DMXBreak="2" Offset="1" Geometry="Pixel""#)
+            .replace(r#"DMXBreak="1" Offset="2" Geometry="Pixel""#, r#"DMXBreak="2" Offset="2" Geometry="Pixel""#)
+            .replace(r#"DMXBreak="1" Offset="3" Geometry="Pixel""#, r#"DMXBreak="2" Offset="3" Geometry="Pixel""#);
+        let r = import_xml(&xml).unwrap();
+        let m = &r.fixture.modes[0];
+        assert_eq!((m.breaks(), m.footprint(), m.footprint_of(1)), (2, 1, 6));
+        let offs = |h: &Head| h.channels.iter().map(|c| (c.dmx_break, c.offset)).collect::<Vec<_>>();
+        assert_eq!(offs(&m.heads[1]), [(1, 3), (1, 4), (1, 5)]);
+        assert_eq!(dmx_break("9"), None);
+        assert_eq!(dmx_break("Overwrite"), Some(0));
     }
 
     #[test]

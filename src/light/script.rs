@@ -94,12 +94,14 @@ pub struct Request {
     pub code: String,
     /// Stop the script after this long.
     pub timeout: Duration,
+    /// Values for the settings the script declares (`openq.param`), by name.
+    pub params: Vec<(String, f64)>,
 }
 
 impl Request {
     /// A request with the default timeout.
     pub fn new(name: &str, code: &str) -> Self {
-        Self { name: name.into(), code: code.into(), timeout: DEFAULT_TIMEOUT }
+        Self { name: name.into(), code: code.into(), timeout: DEFAULT_TIMEOUT, params: Vec::new() }
     }
 }
 
@@ -147,7 +149,8 @@ impl std::fmt::Display for ScriptError {
 pub struct Finished {
     /// What the script printed.
     pub output: String,
-    /// The effects it generated (checked, numbers 0, script attached), or why there are none.
+    /// The effects it generated (checked, numbers 0, script and its settings attached), or why
+    /// there are none.
     pub result: Result<Vec<Effect>, ScriptError>,
 }
 
@@ -346,7 +349,8 @@ impl Host {
             Ok(s) => s,
             Err(e) => return Finished::failed(e),
         };
-        let input = serde_json::json!({ "api": API, "name": req.name, "code": req.code }).to_string();
+        let params: serde_json::Map<String, serde_json::Value> = req.params.iter().map(|(k, v)| (k.clone(), serde_json::json!(v))).collect();
+        let input = serde_json::json!({ "api": API, "name": req.name, "code": req.code, "params": params }).to_string();
         match sb.run(input.into_bytes(), req.timeout, cancel) {
             Ok(reply) => parse_reply(&reply, req),
             Err(e) => Finished::failed(e),
@@ -368,6 +372,7 @@ fn parse_reply(reply: &[u8], req: &Request) -> Finished {
         ok: bool,
         output: String,
         effects: Vec<serde_json::Value>,
+        params: Vec<super::effects::ScriptParam>,
         message: String,
         line: Option<u32>,
         traceback: String,
@@ -383,12 +388,14 @@ fn parse_reply(reply: &[u8], req: &Request) -> Finished {
     if !r.ok {
         return Finished { output, result: Err(ScriptError::Script { message: r.message, line: r.line, traceback: r.traceback }) };
     }
+    let params = super::effects::sanitize_params(r.params);
     let mut effects = Vec::new();
     for (i, v) in r.effects.into_iter().enumerate().take(64) {
         let e = serde_json::from_value::<Effect>(v).map_err(|e| e.to_string()).and_then(|e| super::fxfile::sanitize(e).map_err(|e| format!("{e:#}")));
         match e {
             Ok(mut e) => {
                 e.script = req.code.clone();
+                e.params = params.clone();
                 effects.push(e);
             }
             Err(m) => return Finished { output, result: Err(ScriptError::BadResult(format!("effect {}: {m}", i + 1))) },
@@ -597,6 +604,28 @@ mod tests {
         assert!(matches!(f.result, Err(ScriptError::BadResult(_))), "{:?}", f.result);
     }
 
+    #[test]
+    fn params_are_declared_and_passed_back() {
+        if host().is_none() {
+            return;
+        }
+        let code = "import openq\nn = openq.param('Lit', 2, 1, 8, integer=True)\nh = openq.param('Hue', 0.25)\n\
+                    openq.param('Hue', 0.9)\nprint(n, h)\n\
+                    fx = openq.effect('Chase', ['dimmer', 'extra3'], steps=8, width=1)\nfx.fill(lambda t, r, w: (1 if t * 8 < n else 0, h))\n";
+        let f = run(code);
+        assert_eq!(f.output, "2 0.25\n", "defaults; a second declaration returns the first");
+        let e = f.result.unwrap().remove(0);
+        let names: Vec<(&str, f64, bool)> = e.params.iter().map(|p| (p.name.as_str(), p.value, p.integer)).collect();
+        assert_eq!(names, [("Lit", 2.0, true), ("Hue", 0.25, false)]);
+        assert_eq!(e.table.as_ref().unwrap().attributes[1], crate::light::Attribute::Extra(3));
+        // OpenQ's values (one out of range) on the next run.
+        let req = Request { params: vec![("Lit".into(), 5.0), ("Hue".into(), 7.0)], ..Request::new("test.py", code) };
+        let f = host().unwrap().run(req).wait();
+        assert_eq!(f.output, "5 1.0\n");
+        assert_eq!(f.result.unwrap()[0].params[1].value, 1.0);
+        assert!(matches!(run("import openq\nopenq.param('x', 0, 1, 1)").result, Err(ScriptError::Script { .. })), "min must be below max");
+    }
+
     /// The standard library oqman installs covers what scripts are told they can use.
     #[test]
     fn standard_modules_import() {
@@ -708,6 +737,7 @@ print(found)
             assert!(API.contains(&format!("\n{py} = {rust}\n")), "{py} differs from Rust");
         }
         assert!(API.contains("\nMAX_VALUES = 1 << 20\n") && T::MAX_VALUES == 1 << 20);
+        assert!(API.contains(&format!("\nMAX_PARAMS = {}\n", crate::light::effects::MAX_PARAMS)));
     }
 
     /// Every public name of the module is in the stub.

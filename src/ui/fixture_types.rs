@@ -244,14 +244,17 @@ impl App {
                             name: t("New fixture").into(),
                             modes: vec![FixtureMode::sequential("1 channel", &[(Attribute::Dimmer, false)])],
                             physical: Default::default(),
+                            images: Default::default(),
                         };
                         open = Some(TypeEdit::new(ty, Origin::New));
                     }
                     if let Some(dir) = self.light.types.library().dir().map(|d| d.to_path_buf())
                         && ui.button(icons::FOLDER).on_hover_text(t("Open the fixture library folder")).clicked()
                     {
-                        let _ = std::fs::create_dir_all(&dir);
-                        self.open_path(dir);
+                        // In the file manager (open_path would try to load it as a show).
+                        if let Err(e) = std::fs::create_dir_all(&dir).and_then(|_| super::manual::open_with_default_app(&dir)) {
+                            self.notify_error(tr!("Can't open {path}: {e}", path = dir.display().to_string(), e = e.to_string()));
+                        }
                     }
                 });
                 ui.add(egui::TextEdit::singleline(&mut self.light.types.filter).hint_text(t("Search")).desired_width(290.0));
@@ -266,7 +269,7 @@ impl App {
                     for ty in l.fixture_types.iter().filter(|t| shown(t)) {
                         let n = l.fixtures.iter().filter(|f| f.fixture_type == ty.id).count();
                         let on = editing.as_ref() == Some(&(ty.id.clone(), Origin::Show));
-                        let in_lib = snap.types.iter().find(|x| x.id == ty.id);
+                        let in_lib = snap.items.iter().find(|x| x.id == ty.id);
                         // The show's copy and the library's have drifted apart.
                         let diff = in_lib.filter(|x| *x != ty).map(|x| crate::light::fixlib::differences(ty, x));
                         let r = match &diff {
@@ -304,10 +307,10 @@ impl App {
                             ui.spinner();
                         }
                     });
-                    if snap.types.is_empty() && !snap.loading {
+                    if snap.items.is_empty() && !snap.loading {
                         ui.label(RichText::new(t("Imported and saved types appear here, in every show")).color(theme::TEXT_FAINT).small());
                     }
-                    for ty in snap.types.iter().filter(|t| shown(t)) {
+                    for ty in snap.items.iter().filter(|t| shown(t)) {
                         let on = editing.as_ref() == Some(&(ty.id.clone(), Origin::Library));
                         let r = ui.selectable_label(on, type_label(ty)).on_hover_text(&ty.id);
                         if r.clicked() {
@@ -493,7 +496,7 @@ impl App {
         range_editor(ui, e);
         // Actions (after the edits of this frame).
         if save_lib || use_show {
-            let taken = |id: &str| l.fixture_type(id).is_some() || snap.types.iter().any(|t| t.id == id);
+            let taken = |id: &str| l.fixture_type(id).is_some() || snap.items.iter().any(|t| t.id == id);
             if matches!(e.origin, Origin::BuiltIn | Origin::New) {
                 e.ty.id = new_id(&e.ty, &taken);
                 e.origin = if use_show { Origin::Show } else { Origin::Library };
@@ -719,13 +722,14 @@ fn channel_table(ui: &mut Ui, e: &mut TypeEdit) {
         None => &mut m.channels,
         Some(i) => &mut m.heads[i].channels,
     };
-    const COLS: [f32; 6] = [64.0, 88.0, 150.0, 96.0, 96.0, 90.0];
+    const COLS: [f32; 7] = [64.0, 88.0, 150.0, 96.0, 96.0, 90.0, 52.0];
     ui.horizontal(|ui| {
-        for (h, w) in [t("DMX"), t("Fine"), t("Attribute"), t("Default"), t("Highlight"), t("Ranges")].iter().zip(COLS) {
+        for (h, w) in [t("DMX"), t("Fine"), t("Attribute"), t("Default"), t("Highlight"), t("Ranges"), t("Break")].iter().zip(COLS) {
             ui.add_sized([w, 18.0], egui::Label::new(theme::caption(h)));
         }
     });
     let mut delete = None;
+    let taken: Vec<Attribute> = chans.iter().map(|c| c.attribute).collect();
     for (i, c) in chans.iter_mut().enumerate() {
         ui.horizontal(|ui| {
             // 1-based DMX slots in the UI.
@@ -746,11 +750,24 @@ fn channel_table(ui: &mut Ui, e: &mut TypeEdit) {
             });
             ui.allocate_ui(egui::vec2(COLS[2], 20.0), |ui| {
                 ui.set_min_width(COLS[2]);
-                egui::ComboBox::from_id_salt(("type_attr", i)).selected_text(c.attribute.label()).width(COLS[2] - 8.0).height(420.0).show_ui(ui, |ui| {
+                let shown = match c.attribute {
+                    Attribute::Extra(_) if !c.name.is_empty() => c.name.clone(),
+                    a => a.label().to_string(),
+                };
+                // Extra channels: the next number free in this unit (or the channel's own).
+                let extra = match c.attribute {
+                    Attribute::Extra(n) => Attribute::Extra(n),
+                    _ => (1..=255).map(Attribute::Extra).find(|a| !taken.contains(a)).unwrap_or(Attribute::Extra(255)),
+                };
+                egui::ComboBox::from_id_salt(("type_attr", i)).selected_text(shown).width(COLS[2] - 8.0).height(420.0).show_ui(ui, |ui| {
+                    ui.add(egui::TextEdit::singleline(&mut c.name).hint_text(t("Channel name")).desired_width(160.0));
                     for f in Feature::ALL {
                         ui.label(theme::caption(f.label()));
                         for a in Attribute::ALL.into_iter().filter(|a| a.feature() == f) {
                             ui.selectable_value(&mut c.attribute, a, a.label());
+                        }
+                        if f == Feature::Control {
+                            ui.selectable_value(&mut c.attribute, extra, extra.label()).on_hover_text(t("A further channel with no attribute of its own (named above)"));
                         }
                     }
                 });
@@ -762,6 +779,10 @@ fn channel_table(ui: &mut Ui, e: &mut TypeEdit) {
             if ui.add_sized([COLS[5], 20.0], egui::Button::selectable(e.channel == Some(i), label)).clicked() {
                 e.channel = if e.channel == Some(i) { None } else { Some(i) };
             }
+            // 1-based in the UI, like GDTF.
+            let mut brk = c.dmx_break + 1;
+            ui.add_sized([COLS[6], 20.0], DragValue::new(&mut brk).range(1..=8)).on_hover_text(t("DMX break (fixtures with several DMX inputs)"));
+            c.dmx_break = brk - 1;
             if ui.small_button(icons::DELETE).on_hover_text(t("Delete channel")).clicked() {
                 delete = Some(i);
             }

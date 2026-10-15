@@ -7,14 +7,12 @@
 //!   patching, in every show. Imports (OFL, GDTF, QLC+) and the fixture editor save there.
 //! * Files come from anywhere, so every type read goes through [`sanitize`] (sizes, offsets,
 //!   names) before it reaches the show.
-//! * [`Library`] reads and writes the folder on its own thread, one job at a time and in order:
-//!   the UI never touches the disk in a frame.
+//! * [`Library`] reads and writes the folder on its own thread, one job at a time and in order
+//!   ([`super::folder`]): the UI never touches the disk in a frame.
 
 use super::model::{ChannelDef, FixtureMode, FixtureType, MAX_CELLS, UNIVERSE_SIZE};
-use parking_lot::Mutex;
 use serde::{Deserialize, Serialize};
 use std::path::{Path, PathBuf};
-use std::sync::Arc;
 
 /// File extension of fixture type files.
 pub const EXTENSION: &str = "oqfixture";
@@ -102,12 +100,21 @@ pub fn sanitize(mut t: FixtureType) -> anyhow::Result<FixtureType> {
     if t.modes.len() > MAX_MODES {
         anyhow::bail!("too many modes ({})", t.modes.len());
     }
+    // Pictures: thumbnails only (anything else is dropped, not decoded here).
+    if t.images.len() > super::gobo::MAX_IMAGES {
+        anyhow::bail!("too many pictures ({})", t.images.len());
+    }
+    t.images.retain(|k, v| k.len() <= 1024 && v.len() <= super::gobo::MAX_IMAGE_TEXT);
     let fix_channel = |c: &mut ChannelDef| -> anyhow::Result<()> {
         if c.offset >= UNIVERSE_SIZE || c.fine.is_some_and(|f| f >= UNIVERSE_SIZE) {
             anyhow::bail!("a channel lies outside the 512 DMX slots");
         }
         if c.ranges.len() > MAX_RANGES {
             anyhow::bail!("a channel has too many ranges ({})", c.ranges.len());
+        }
+        clip(&mut c.name);
+        if c.dmx_break >= 8 {
+            anyhow::bail!("a channel is on DMX break {} (8 at most)", c.dmx_break + 1);
         }
         c.default = c.default.filter(|v| v.is_finite()).map(|v| v.clamp(0.0, 1.0));
         c.highlight = c.highlight.filter(|v| v.is_finite()).map(|v| v.clamp(0.0, 1.0));
@@ -204,51 +211,18 @@ pub fn remove(dir: &Path, t: &FixtureType) -> anyhow::Result<()> {
     Ok(())
 }
 
-/// What the library holds right now.
-#[derive(Default, Clone)]
-pub struct Snapshot {
-    /// Types, sorted.
-    pub types: Vec<FixtureType>,
-    /// Files that didn't read: (file name, error).
-    pub errors: Vec<(String, String)>,
-    /// Jobs are queued or running.
-    pub loading: bool,
-    /// Bumped after every load (the UI refreshes its menus).
-    pub generation: u64,
-}
-
-impl State {
-    /// Publish `loading` (a new generation, so the UI's spinner follows it).
-    fn set_loading(&mut self) {
-        let loading = self.pending > 0;
-        if self.snap.loading != loading {
-            let snap = Arc::make_mut(&mut self.snap);
-            snap.loading = loading;
-            snap.generation += 1;
-        }
+impl super::folder::Stored for FixtureType {
+    const THREAD: &'static str = "openq-fixtures";
+    fn load_dir(dir: &Path) -> (Vec<Self>, Vec<(String, String)>) {
+        load_dir(dir)
     }
 }
 
-type Work = Box<dyn FnOnce(&Path) -> anyhow::Result<()> + Send>;
-type Done = Box<dyn FnOnce(anyhow::Result<()>) + Send>;
-type Queue = Arc<Mutex<Option<std::sync::mpsc::Sender<(Work, Done)>>>>;
+/// What the fixture library holds right now.
+pub type Snapshot = super::folder::Snapshot<FixtureType>;
 
-#[derive(Default)]
-struct State {
-    /// Shared with the UI: a snapshot is replaced, never edited in place, so handing it out is cheap.
-    snap: Arc<Snapshot>,
-    /// Jobs queued or running.
-    pending: usize,
-}
-
-/// The fixture library. Reads and writes run one at a time, in order, on one worker thread
-/// (`openq-fixtures`, started on the first job), so a remove never overtakes its save.
-#[derive(Clone)]
-pub struct Library {
-    dir: Option<PathBuf>,
-    state: Arc<Mutex<State>>,
-    queue: Queue,
-}
+/// The fixture library ([`super::folder::Library`] of types).
+pub type Library = super::folder::Library<FixtureType>;
 
 impl Default for Library {
     fn default() -> Self {
@@ -257,37 +231,9 @@ impl Default for Library {
 }
 
 impl Library {
-    /// A library on `dir` (None: no config dir; stays empty). Starts loading.
-    pub fn new(dir: Option<PathBuf>) -> Self {
-        let lib = Self { dir, state: Arc::default(), queue: Arc::default() };
-        lib.reload();
-        lib
-    }
-
-    /// The folder.
-    pub fn dir(&self) -> Option<&Path> {
-        self.dir.as_deref()
-    }
-
-    /// The current contents (shared, not copied).
-    pub fn snapshot(&self) -> Arc<Snapshot> {
-        self.state.lock().snap.clone()
-    }
-
-    /// The contents if they changed since `generation`.
-    pub fn snapshot_if_newer(&self, generation: u64) -> Option<Arc<Snapshot>> {
-        let s = self.state.lock();
-        (s.snap.generation != generation).then(|| s.snap.clone())
-    }
-
     /// A type by id.
     pub fn get(&self, id: &str) -> Option<FixtureType> {
-        self.state.lock().snap.types.iter().find(|t| t.id == id).cloned()
-    }
-
-    /// Read the folder again in the background.
-    pub fn reload(&self) {
-        self.job(|_| Ok(()), |_| {});
+        self.snapshot().items.iter().find(|t| t.id == id).cloned()
     }
 
     /// Save types into the folder, then reload. `done` gets the result (on the worker thread).
@@ -306,56 +252,6 @@ impl Library {
     /// Remove a type's file, then reload.
     pub fn remove(&self, t: FixtureType, done: impl FnOnce(anyhow::Result<()>) + Send + 'static) {
         self.job(move |dir| remove(dir, &t), done);
-    }
-
-    fn job(&self, work: impl FnOnce(&Path) -> anyhow::Result<()> + Send + 'static, done: impl FnOnce(anyhow::Result<()>) + Send + 'static) {
-        let Some(dir) = self.dir.clone() else {
-            done(Err(anyhow::anyhow!("no settings folder")));
-            return;
-        };
-        let mut q = self.queue.lock();
-        if q.is_none() {
-            let (tx, rx) = std::sync::mpsc::channel::<(Work, Done)>();
-            let state = self.state.clone();
-            let spawned = std::thread::Builder::new().name("openq-fixtures".into()).spawn(move || {
-                for (work, done) in rx {
-                    let r = crate::recovery::catch(|| work(&dir));
-                    let (types, errors) = load_dir(&dir);
-                    {
-                        let mut s = state.lock();
-                        s.pending -= 1;
-                        let generation = s.snap.generation + 1;
-                        s.snap = Arc::new(Snapshot { types, errors, loading: s.pending > 0, generation });
-                    }
-                    // A panicking callback must not stop the worker.
-                    let _ = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| done(r)));
-                }
-            });
-            match spawned {
-                Ok(_) => *q = Some(tx),
-                Err(e) => {
-                    done(Err(anyhow::anyhow!("can't start the library thread: {e}")));
-                    return;
-                }
-            }
-        }
-        {
-            let mut s = self.state.lock();
-            s.pending += 1;
-            s.set_loading();
-        }
-        if q.as_ref().expect("started").send((Box::new(work), Box::new(done))).is_err() {
-            let mut s = self.state.lock();
-            s.pending -= 1;
-            s.set_loading();
-        }
-    }
-
-    /// Wait until every queued job has run (tests).
-    pub fn wait(&self) {
-        while self.state.lock().pending > 0 {
-            std::thread::sleep(std::time::Duration::from_millis(2));
-        }
     }
 }
 
@@ -414,7 +310,7 @@ mod tests {
         let _ = std::fs::remove_dir_all(&dir);
         let lib = Library::new(Some(dir.clone()));
         lib.wait();
-        assert!(lib.snapshot().types.is_empty());
+        assert!(lib.snapshot().items.is_empty());
         let (tx, rx) = std::sync::mpsc::channel();
         lib.save(vec![bar()], move |r| tx.send(r.is_ok()).unwrap());
         assert!(rx.recv().unwrap());

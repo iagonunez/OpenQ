@@ -13,7 +13,8 @@
 //! arguments is a press. [`resolve`] turns an input into [`Command`]s; [`SurfaceHub`] holds what
 //! the inputs share (learn mode, the last input, button states, commands waiting for a replica's
 //! UI to route them) and [`MidiSurface`] reads a MIDI input port on its own thread, reconnecting
-//! when the device comes back.
+//! when the device comes back. The same port can carry MIDI clock: with
+//! [`SurfaceSettings::midi_clock`] on, [`MidiClock`] turns it into the effects tempo.
 
 use crate::control::{Command, LightControl};
 use crate::light::Lighting;
@@ -161,12 +162,14 @@ pub struct Mapping {
 pub struct SurfaceSettings {
     /// Controls and what they do (OSC addresses come through the OSC listener).
     pub mappings: Vec<Mapping>,
+    /// The effects tempo follows MIDI clock arriving on the surface's MIDI input.
+    pub midi_clock: bool,
 }
 
 impl SurfaceSettings {
     /// Nothing set up (left out of the show file).
     pub fn is_empty(&self) -> bool {
-        self.mappings.is_empty()
+        self.mappings.is_empty() && !self.midi_clock
     }
 
     /// Mappings of `n` faders as executor levels on CC `first`.. and `n` buttons as executor GOs
@@ -234,6 +237,63 @@ pub fn tap(taps: &mut Vec<Instant>, now: Instant) -> Option<f32> {
     }
     let n = taps.len();
     (n >= 2).then(|| 60.0 * (n - 1) as f32 / taps[n - 1].duration_since(taps[0]).as_secs_f32())
+}
+
+/// MIDI clock ticks in one beat.
+const CLOCK_PPQN: usize = 24;
+/// Ticks the tempo is measured over (two beats: steady, yet follows a change within a bar).
+const CLOCK_WINDOW: usize = 2 * CLOCK_PPQN;
+
+/// Tempo from MIDI clock (24 ticks per beat). Feed it every message; it answers with a tempo
+/// once per beat when the tempo moved, measured over the last two beats of ticks so the
+/// jitter of single ticks averages out. Start/Continue/Stop and a pause over a second start the
+/// measurement again (the last tempo stays).
+#[derive(Default)]
+pub struct MidiClock {
+    /// Tick times, µs, oldest first (at most `CLOCK_WINDOW + 1`).
+    ticks: std::collections::VecDeque<u64>,
+    count: usize,
+    sent: Option<f32>,
+}
+
+impl MidiClock {
+    /// Handle one MIDI message received at `us` (microseconds on any steady clock). Returns the
+    /// tempo in BPM when there is a new one to set.
+    pub fn message(&mut self, msg: &[u8], us: u64) -> Option<f32> {
+        match msg.first()? {
+            0xf8 => {}
+            0xfa..=0xfc => {
+                self.reset();
+                return None;
+            }
+            _ => return None,
+        }
+        if self.ticks.back().is_some_and(|&t| us <= t || us - t > 1_000_000) {
+            self.reset();
+        }
+        self.ticks.push_back(us);
+        if self.ticks.len() > CLOCK_WINDOW + 1 {
+            self.ticks.pop_front();
+        }
+        self.count += 1;
+        let n = self.ticks.len() - 1;
+        if !self.count.is_multiple_of(CLOCK_PPQN) || n < CLOCK_PPQN {
+            return None;
+        }
+        let span = (self.ticks[n] - self.ticks[0]) as f64 / 1e6;
+        let bpm = (60.0 * n as f64 / CLOCK_PPQN as f64 / span) as f32;
+        let bpm = (bpm * 10.0).round() / 10.0;
+        if !(20.0..=300.0).contains(&bpm) || self.sent.is_some_and(|s| (s - bpm).abs() < 0.2) {
+            return None;
+        }
+        self.sent = Some(bpm);
+        Some(bpm)
+    }
+
+    fn reset(&mut self) {
+        self.ticks.clear();
+        self.count = 0;
+    }
 }
 
 /// What button handling remembers between inputs.
@@ -364,6 +424,8 @@ struct HubState {
     learned: Option<SurfaceInput>,
     /// Commands a replica's UI routes to the main device.
     pending: Vec<Command>,
+    /// Last tempo measured from MIDI clock, and when.
+    clock: Option<(f32, Instant)>,
 }
 
 /// What every surface input shares. Cheap to clone (one shared state).
@@ -408,6 +470,32 @@ impl SurfaceHub {
             }
         }
         used
+    }
+
+    /// A tempo measured from MIDI clock: sets the effects tempo when the show follows MIDI clock
+    /// ([`SurfaceSettings::midi_clock`]), else is only kept for [`SurfaceHub::clock`].
+    pub fn clock_tempo(&self, show: &SharedShow, bpm: f32) {
+        let now = Instant::now();
+        let mut show = show.lock();
+        let mut st = self.state.lock();
+        st.clock = Some((bpm, now));
+        if !show.ws.settings.surfaces.midi_clock {
+            return;
+        }
+        let cmd = Command::Light(LightControl::Tempo(bpm));
+        if show.replica {
+            st.pending.push(cmd);
+            return;
+        }
+        drop(st);
+        if let Err(e) = crate::control::apply(&mut show, cmd, now) {
+            log::warn!("MIDI clock: {e}");
+        }
+    }
+
+    /// The tempo MIDI clock gave in the last two seconds.
+    pub fn clock(&self) -> Option<f32> {
+        self.state.lock().clock.filter(|(_, at)| at.elapsed() < Duration::from_secs(2)).map(|(b, _)| b)
     }
 
     /// Start or stop learn mode (the next input is kept for [`SurfaceHub::take_learned`]).
@@ -472,14 +560,27 @@ impl MidiSurface {
                     let (show, hub, repaint) = (show.clone(), hub.clone(), repaint.clone());
                     let conn = (|| {
                         let mut m = midir::MidiInput::new("OpenQ").map_err(|e| e.to_string())?;
-                        m.ignore(midir::Ignore::All);
+                        // Timing messages too: MIDI clock (cheap, 24 per beat).
+                        m.ignore(midir::Ignore::SysexAndActiveSense);
                         let ports = m.ports();
                         let p = ports.iter().find(|p| m.port_name(p).ok().as_deref() == Some(name.as_str())).ok_or_else(|| format!("MIDI input not found: {name}"))?.clone();
+                        let (epoch, mut clock) = (Instant::now(), MidiClock::default());
                         m.connect(
                             &p,
                             "openq-surface",
                             move |_, msg, _| {
-                                if let Some((input, value)) = parse_midi(msg) {
+                                if msg.first().is_some_and(|b| *b >= 0xf8) {
+                                    if let Some(bpm) = clock.message(msg, epoch.elapsed().as_micros() as u64) {
+                                        let r = crate::recovery::catch(|| {
+                                            hub.clock_tempo(&show, bpm);
+                                            Ok(())
+                                        });
+                                        if let Err(e) = r {
+                                            log::warn!("MIDI clock: {e:#}");
+                                        }
+                                        repaint();
+                                    }
+                                } else if let Some((input, value)) = parse_midi(msg) {
                                     // A failure on one message must not end the connection.
                                     let r = crate::recovery::catch(|| Ok(hub.input(&show, input, Some(value), None)));
                                     if let Err(e) = r {
@@ -588,7 +689,7 @@ mod tests {
     fn faders_and_buttons() {
         let cc = |n| SurfaceInput::MidiCc { channel: 0, number: n };
         let note = |n| SurfaceInput::MidiNote { channel: 0, number: n };
-        let mut s = SurfaceSettings { mappings: SurfaceSettings::executor_bank(3, 0, 1, 36) };
+        let mut s = SurfaceSettings { mappings: SurfaceSettings::executor_bank(3, 0, 1, 36), ..Default::default() };
         s.mappings.push(Mapping { input: note(50), action: SurfaceAction::Blackout });
         s.mappings.push(Mapping { input: cc(20), action: SurfaceAction::Go });
         let (mut feel, m) = (Feel::default(), Masters::default());
@@ -616,7 +717,7 @@ mod tests {
     #[test]
     fn flash_goes_and_restores() {
         let b = SurfaceInput::Osc("/flash".into());
-        let s = SurfaceSettings { mappings: vec![Mapping { input: b.clone(), action: SurfaceAction::ExecutorFlash(1) }] };
+        let s = SurfaceSettings { mappings: vec![Mapping { input: b.clone(), action: SurfaceAction::ExecutorFlash(1) }], ..Default::default() };
         let mut feel = Feel::default();
         let mut m = Masters::default();
         m.levels.insert(7, 0.3);
@@ -632,7 +733,7 @@ mod tests {
     #[test]
     fn osc_without_arguments_is_a_press() {
         let b = SurfaceInput::Osc("/x".into());
-        let s = SurfaceSettings { mappings: vec![Mapping { input: b.clone(), action: SurfaceAction::ExecutorGo(2) }] };
+        let s = SurfaceSettings { mappings: vec![Mapping { input: b.clone(), action: SurfaceAction::ExecutorGo(2) }], ..Default::default() };
         let mut feel = Feel::default();
         let m = Masters::default();
         for _ in 0..3 {
@@ -664,6 +765,50 @@ mod tests {
         assert_eq!(show.lock().media.light.masters().level(7), 0.4, "a replica doesn't apply locally");
         assert!(matches!(hub.take_pending()[..], [Command::Light(LightControl::Level(7, v))] if v == 0.6));
         assert_eq!(hub.last().unwrap().input, cc);
+    }
+
+    #[test]
+    fn midi_clock_tempo() {
+        let mut c = MidiClock::default();
+        // 120 BPM = a tick every 20 833 µs; ±1 ms jitter on every other tick.
+        let mut t = 1_000_000u64;
+        let mut got = Vec::new();
+        for i in 0..24 * 8 {
+            let jitter = if i % 2 == 0 { 1000 } else { 0 };
+            if let Some(b) = c.message(&[0xf8], t + jitter) {
+                got.push(b);
+            }
+            t += 20_833;
+        }
+        assert_eq!(got.len(), 1, "one tempo, then only changes: {got:?}");
+        assert!((got[0] - 120.0).abs() <= 0.1, "{got:?}");
+        assert_eq!(c.message(&[0x90, 1, 1], t), None, "not clock");
+        // A new tempo after Stop/Start: 90 BPM.
+        c.message(&[0xfc], t);
+        c.message(&[0xfa], t);
+        let mut last = None;
+        for _ in 0..24 * 3 {
+            t += 27_778;
+            last = c.message(&[0xf8], t).or(last);
+        }
+        assert!(last.is_some_and(|b| (b - 90.0).abs() <= 0.1), "{last:?}");
+        // A pause over a second starts again rather than reading a very slow tempo.
+        t += 5_000_000;
+        assert_eq!(c.message(&[0xf8], t), None);
+    }
+
+    #[test]
+    fn hub_follows_clock_only_when_on() {
+        let show: SharedShow = Arc::new(Mutex::new(crate::show::Show::new(crate::media::Prober::new())));
+        let hub = SurfaceHub::new();
+        let bpm = || show.lock().media.light.masters().bpm;
+        let before = bpm();
+        hub.clock_tempo(&show, 133.0);
+        assert_eq!(bpm(), before, "off by default");
+        assert_eq!(hub.clock(), Some(133.0), "still shown");
+        show.lock().ws.settings.surfaces.midi_clock = true;
+        hub.clock_tempo(&show, 133.0);
+        assert_eq!(bpm(), 133.0);
     }
 
     #[test]

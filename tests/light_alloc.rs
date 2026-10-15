@@ -62,9 +62,13 @@ fn light_frame_does_not_allocate() {
     }
     p.release(2, 1.0, t0);
     p.tick(t0);
+    let mut status = p.status();
     let before = ALLOCS.with(|c| c.get());
     for i in 0..500 {
         p.tick(t0 + Duration::from_millis(i * 23));
+        if i % 4 == 0 {
+            p.status_into(&mut status);
+        }
     }
     assert_eq!(ALLOCS.with(|c| c.get()) - before, 0, "allocations in steady-state frames");
     // GO into a cue of the same size: no allocation either.

@@ -200,17 +200,23 @@ pub fn import(text_: &str) -> anyhow::Result<Imported> {
                 notes.push(format!("mode \"{mname}\": unknown channel \"{cname}\""));
                 continue;
             };
-            let Some(a) = d.attr else {
-                if !cname.is_empty() {
-                    notes.push(format!("channel \"{cname}\": function not supported, left unused"));
+            // Unknown functions become Extra channels (set by hand, named after the channel); a
+            // fine byte of one is left out.
+            let a = match d.attr {
+                Some(a) => a,
+                None if !d.fine && !cname.is_empty() => super::import::ANY_EXTRA,
+                None => {
+                    if !cname.is_empty() {
+                        notes.push(format!("channel \"{cname}\": function not supported, left unused"));
+                    }
+                    continue;
                 }
-                continue;
             };
             if d.fine {
                 fines.push((*num, a, *cname));
                 continue;
             }
-            let def = ChannelDef { attribute: a, offset: *num, fine: None, default: d.default, highlight: None, ranges: d.ranges.clone() };
+            let def = ChannelDef { attribute: a, name: cname.to_string(), dmx_break: 0, offset: *num, fine: None, default: d.default, highlight: None, ranges: d.ranges.clone() };
             let what = format!("mode \"{mname}\", channel \"{cname}\"");
             match head_of.get(num) {
                 Some(i) => place(&mut heads[*i].channels, def, &what, &mut notes),
@@ -240,7 +246,8 @@ pub fn import(text_: &str) -> anyhow::Result<Imported> {
         anyhow::bail!("no usable modes");
     }
     phys.moving |= modes.iter().any(|m| m.channel(Attribute::Pan).is_some() && m.channel(Attribute::Tilt).is_some());
-    let fixture = FixtureType { id: type_id("qlc", &manufacturer, &name), manufacturer, name, modes, physical: phys };
+    // Gobo pictures are files of QLC+'s own gobo folder: only their names come across.
+    let fixture = FixtureType { id: type_id("qlc", &manufacturer, &name), manufacturer, name, modes, physical: phys, images: Default::default() };
     Ok(Imported { fixture: super::fixlib::sanitize(fixture)?, notes })
 }
 
@@ -305,8 +312,11 @@ mod tests {
         assert_eq!(m.heads[1].channels.iter().map(|c| c.offset).collect::<Vec<_>>(), [7, 8, 9]);
         assert_eq!(m.heads[0].channels[0].attribute, Attribute::Red);
         assert_eq!(f.physical.beam_max, 20.0);
-        assert!(r.notes.iter().any(|n| n.contains("Hue")));
-        assert_eq!(m.footprint(), 11, "the unused Hue channel keeps its slot");
+        // The Hue channel (no OpenQ attribute) becomes an extra channel under its own name.
+        let hue = m.channel(Attribute::Extra(1)).unwrap();
+        assert_eq!((hue.offset, hue.name.as_str()), (10, "Hue"));
+        assert!(r.notes.is_empty(), "{:?}", r.notes);
+        assert_eq!(m.footprint(), 11);
     }
 
     #[test]

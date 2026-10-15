@@ -6,7 +6,7 @@
 use super::model::{Attribute as A, FixtureMode, FixtureType, Physical};
 
 fn simple(id: &str, name: &str, modes: Vec<FixtureMode>, physical: Physical) -> FixtureType {
-    FixtureType { id: id.into(), manufacturer: "Generic".into(), name: name.into(), modes, physical }
+    FixtureType { id: id.into(), manufacturer: "Generic".into(), name: name.into(), modes, physical, images: Default::default() }
 }
 
 fn mode(name: &str, ch: &[(A, bool)]) -> FixtureMode {

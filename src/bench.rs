@@ -199,7 +199,7 @@ fn light_cells(m: &mut Vec<Metric>, quick: bool, reps: usize) {
     }
     l.effects.push(Effect { id: 1, shape: Shape::Square, ..Default::default() });
     cue.effects.push(EffectRun { effect: 1, fixtures: cells.clone(), stop: false });
-    l.sequences.push(Sequence { id: 1, cues: vec![cue], ..Default::default() });
+    l.sequences.push(Sequence { id: 1, cues: vec![cue].into(), ..Default::default() });
     let t = Instant::now();
     let show = Arc::new(LightShow::compile(&l));
     let n = cells.len();

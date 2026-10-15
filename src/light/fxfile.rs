@@ -4,10 +4,14 @@
 //! script that made it. Files are plain data: reading one never runs its script (that only
 //! happens in the sandbox when someone presses Run). Everything read is checked and clamped by
 //! [`sanitize`], which also checks what scripts return.
+//!
+//! The effect library is the folder `<config>/effects` ([`EffectLibrary`]): effects saved there
+//! are offered in every show.
 
 use super::effects::{Effect, Shape};
 use anyhow::{bail, Context};
 use serde::{Deserialize, Serialize};
+use std::path::{Path, PathBuf};
 
 /// File extension (without the dot).
 pub const EXTENSION: &str = "oqfx";
@@ -81,6 +85,11 @@ pub fn sanitize(mut e: Effect) -> anyhow::Result<Effect> {
     e.spread = finite(e.spread, 0.0).clamp(0.0, 1440.0);
     e.groups = e.groups.clamp(1, 64);
     e.wings = e.wings.clamp(1, 16);
+    e.params = super::effects::sanitize_params(std::mem::take(&mut e.params));
+    if let Some(a) = &mut e.audio {
+        a.gain = finite(a.gain, 1.0).clamp(0.0, 100.0);
+        a.floor = finite(a.floor, 0.0).clamp(0.0, 1.0);
+    }
     match (&e.table, e.shape) {
         (Some(t), Shape::Custom) => {
             t.validate().map_err(|m| anyhow::anyhow!("invalid effect table: {m}"))?;
@@ -95,6 +104,88 @@ pub fn sanitize(mut e: Effect) -> anyhow::Result<Effect> {
 
 fn clip(s: &str, max: usize) -> String {
     s.chars().filter(|c| !c.is_control() || *c == '\n').take(max).collect()
+}
+
+/// The user's effect library folder (`<config>/effects`).
+pub fn dir() -> Option<PathBuf> {
+    crate::remote::config_dir().map(|d| d.join("effects"))
+}
+
+/// An effect file in the library.
+#[derive(Clone, Debug, PartialEq)]
+pub struct LibraryEffect {
+    /// File name in the folder.
+    pub file: String,
+    /// What the file holds.
+    pub contents: EffectFile,
+}
+
+/// File name for an effect: its name with anything unusual replaced (`effect` when unnamed).
+pub fn file_name(e: &Effect) -> String {
+    let stem: String = e.name.trim().chars().take(80).map(|c| if c.is_alphanumeric() || c == '-' || c == '_' { c } else { '_' }).collect();
+    format!("{}.{EXTENSION}", if stem.is_empty() { "effect" } else { &stem })
+}
+
+impl super::folder::Stored for LibraryEffect {
+    const THREAD: &'static str = "openq-effects";
+    /// Every `.oqfx` in the folder, by effect name.
+    fn load_dir(dir: &Path) -> (Vec<Self>, Vec<(String, String)>) {
+        let (mut items, mut errors) = (Vec::new(), Vec::new());
+        let Ok(rd) = std::fs::read_dir(dir) else { return (items, errors) };
+        for e in rd.flatten() {
+            let p = e.path();
+            if p.extension().and_then(|x| x.to_str()) != Some(EXTENSION) {
+                continue;
+            }
+            let file = p.file_name().map(|n| n.to_string_lossy().to_string()).unwrap_or_default();
+            let r = std::fs::metadata(&p)
+                .map_err(anyhow::Error::from)
+                .and_then(|m| if m.len() as usize > MAX_FILE { Err(anyhow::anyhow!("too big")) } else { Ok(()) })
+                .and_then(|_| std::fs::read_to_string(&p).map_err(anyhow::Error::from))
+                .and_then(|s| read(&s));
+            match r {
+                Ok(contents) => items.push(LibraryEffect { file, contents }),
+                Err(e) => errors.push((file, format!("{e:#}"))),
+            }
+        }
+        items.sort_by_key(|x| (x.contents.effect.name.to_lowercase(), x.file.clone()));
+        (items, errors)
+    }
+}
+
+/// The effect library ([`super::folder::Library`] of effect files).
+pub type EffectLibrary = super::folder::Library<LibraryEffect>;
+
+impl Default for EffectLibrary {
+    fn default() -> Self {
+        Self::new(dir())
+    }
+}
+
+impl EffectLibrary {
+    /// Save an effect into the folder (replacing a file of the same name), then reload.
+    pub fn save(&self, effect: Effect, author: String, description: String, done: impl FnOnce(anyhow::Result<()>) + Send + 'static) {
+        self.job(
+            move |dir| {
+                std::fs::create_dir_all(dir)?;
+                crate::recovery::write_atomic(&dir.join(file_name(&effect)), write(&effect, &author, &description).as_bytes())
+            },
+            done,
+        );
+    }
+
+    /// Remove a file from the folder, then reload.
+    pub fn remove(&self, file: String, done: impl FnOnce(anyhow::Result<()>) + Send + 'static) {
+        self.job(
+            move |dir| {
+                // Only plain names inside the folder.
+                anyhow::ensure!(!file.contains(['/', '\\']) && file.ends_with(EXTENSION), "not a library file");
+                std::fs::remove_file(dir.join(&file))?;
+                Ok(())
+            },
+            done,
+        );
+    }
 }
 
 #[cfg(test)]
@@ -122,6 +213,38 @@ mod tests {
         assert_eq!((f.author.as_str(), f.description.as_str()), ("Me", "A two-step chase"));
         let plain = Effect { shape: Shape::Square, ..Default::default() };
         assert_eq!(read(&write(&plain, "", "")).unwrap().effect.shape, Shape::Square, "waveform effects too");
+    }
+
+    #[test]
+    fn library_saves_lists_and_removes() {
+        let dir = std::env::temp_dir().join(format!("openq-fxlib-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        let lib = EffectLibrary::new(Some(dir.clone()));
+        lib.wait();
+        assert!(lib.snapshot().items.is_empty());
+        let (tx, rx) = std::sync::mpsc::channel();
+        let tx2 = tx.clone();
+        lib.save(custom(), "me".into(), "a chase".into(), move |r| tx.send(r.is_ok()).unwrap());
+        lib.save(Effect { name: "../Wave".into(), ..Default::default() }, String::new(), String::new(), move |r| tx2.send(r.is_ok()).unwrap());
+        assert!(rx.recv().unwrap() && rx.recv().unwrap());
+        lib.wait();
+        let snap = lib.snapshot();
+        let files: Vec<&str> = snap.items.iter().map(|x| x.file.as_str()).collect();
+        assert_eq!(files, ["___Wave.oqfx", "Chase.oqfx"], "sorted by effect name; no path in the file name");
+        assert_eq!(snap.items[1].contents.description, "a chase");
+        assert_eq!(snap.items[1].contents.effect.table, custom().table);
+        std::fs::write(dir.join("bad.oqfx"), "{").unwrap();
+        let (tx, rx) = std::sync::mpsc::channel();
+        lib.remove("Chase.oqfx".into(), move |r| tx.send(r.is_ok()).unwrap());
+        assert!(rx.recv().unwrap());
+        let (tx, rx) = std::sync::mpsc::channel();
+        lib.remove("../x.oqfx".into(), move |r| tx.send(r.is_ok()).unwrap());
+        assert!(!rx.recv().unwrap(), "no paths");
+        lib.wait();
+        let snap = lib.snapshot();
+        assert_eq!(snap.items.len(), 1);
+        assert_eq!(snap.errors.len(), 1, "the damaged file is reported");
+        let _ = std::fs::remove_dir_all(&dir);
     }
 
     #[test]

@@ -1424,7 +1424,7 @@ mod tests {
         stop.kind = CueKind::Stop { target: Some(li) };
         let stop_all = cue("3", KindTag::Stop);
         let mut w = ws(vec![l, stop, stop_all]);
-        w.lighting.sequences.push(Sequence { id: 7, cues: vec![lc], ..Default::default() });
+        w.lighting.sequences.push(Sequence { id: 7, cues: vec![lc].into(), ..Default::default() });
         let mut e = Engine::new();
         let mut m = Mock::default();
         let t0 = Instant::now();

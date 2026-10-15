@@ -140,12 +140,20 @@ Status (2026-10-14, P1–P6): done. How fixture types work now:
 - Repeated channels (2026-10-15): extra attributes `ColorWheel2`, `Frost2`, `Prism2`, `Control2`,
   `Control3`, `Effect2`, `Effect2Speed`; `import::alternates` gives each repeated attribute its list
   (Control → Control2 → Control3…), GDTF `Color2`/`Frost2`/`Prism2`/`Effects2*` map to them, command
-  line words `wheel2 prism2 frost2 control2 control3`. A fourth Control channel is still left unused.
+  line words `wheel2 prism2 frost2 control2 control3`. Beyond those (and for functions OpenQ doesn't
+  know) a channel becomes `Attribute::Extra(n)` (Control family, LTP, saved as `"Extra3"`), named by
+  `ChannelDef.name` (the file's channel name) in the programmer; nothing is left unused (2026-10-15).
 - Show vs library (2026-10-15): a show type whose library copy differs is marked (amber) in Patch →
   Fixture types, the tooltip lists what differs (`fixlib::differences`: name, physical, modes added/
   missing, channels, cells/slots, order); "Update from library" in the row menu.
-- Still open: multi-break GDTF modes (needs a second address per fixture); gobo images aren't
-  loaded (only the file name is kept).
+- Multi-break modes (2026-10-15): `ChannelDef.dmx_break` (0-based), `FixtureMode::breaks()`/
+  `footprint_of(b)`, `Fixture.breaks` (addresses of breaks 2…; `address_of(b)`); one `FixtureOut` per
+  unit and break; `Lighting::spans` for overlap checks and free addresses; patch sheet menu
+  "5 · 2 breaks"; MVR writes one `Address break=n` each; GDTF reads `DMXBreak` up to 8 (and the
+  references' per-break offsets for cells); fixture editor Break column.
+- Gobo pictures (2026-10-15): `light::gobo` thumbnails (64 px PNG, base64) in `FixtureType.images`,
+  keyed by `ChannelRange.image`; GDTF `wheels/<name>.png|svg`, OFL embedded resources (website
+  export); QLC+ gobos are QLC+'s own files (names only). Shown on the programmer's range buttons.
 
 ## C. DMX output and input
 
@@ -237,7 +245,8 @@ Tasks
 - **F1 (M)** Effect model + evaluator (shape tables, phase per fixture).
 - **F2 (M)** Effect editor UI with live preview (in the visualiser, blind if needed).
 - **F3 (S)** Tap tempo, BPM masters, MIDI clock in.
-- **F4 (M)** Audio-reactive input (envelope/beat from mixer meters).
+- **F4 (M)** Audio-reactive input (envelope/beat from mixer meters). **Done** (size only, see
+  "Next steps" below; no beat detection).
 
 ## G. Python scripting (effects only, sandboxed)
 
@@ -277,7 +286,7 @@ Tasks
 - **G4 (M)** Script editor on the Effects page. **Done.**
 - **G6 (S)** ~~Trust prompt~~: not needed, scripts can't reach the system.
 - (G5 live script effects: dropped; Python never runs during playback.)
-- Later: script parameters (sliders a script declares), an effect library folder.
+- Script parameters (`openq.param`) and the effect library folder: done 2026-10-15 (below).
 
 ## H. Visualiser link (the visualiser itself is a separate program)
 
@@ -597,8 +606,8 @@ lighting, manual chapter.
   select a bar or a rectangle's outline (the inside still pans), drag to move, white handles for
   ends/corners (5 cm snap), Delete key, settings row (name, from/to, height, length), "Hang n
   fixtures" (`PlotShape::hang`: evenly along the bar, half a gap in from the ends, at its
-  height). SVG plot draws rectangles and bars under the fixtures. Not in the MVR export yet
-  (would need truss/scene-object geometry). Also fixed: Delete/Backspace and Enter in the
+  height). SVG plot draws rectangles and bars under the fixtures. MVR export: since 2026-10-15
+  (see below). Also fixed: Delete/Backspace and Enter in the
   Lighting view acted on the selected cues of the hidden cue list.
 
 Phase 3 is complete. Left for later: L3 USITT ASCII import/export, F4 audio-reactive effects,
@@ -627,11 +636,6 @@ MVR import, Phase 4 (hardware console: K1 `Surface` trait, K3 console protocol, 
 - **Fixture profiles:** repeated-channel attributes and the show/library difference marker (§B).
 
 Known issues to look at:
-- `Show::sync_lighting` compares the whole design on every edit under the show lock (0.6 ms on the
-  2000-fixture rig; a change counter would be cheaper for very large designs).
-- Duplicate attributes in one unit (two Control channels) can't both be used; importers take a
-  second wheel/gobo as `Gobo2`/`ColorMacro`/`PrismRotation`, a second light source as a cell, and leave
-  the rest unused with a note.
 - Untested on real hardware: Art-Net nodes, sACN receivers, Enttec USB Pro. Importers were checked
   on a few real files only (OFL: MAC Aura, Robin 600E, COLORband PiX; QLC+: Sharpy, ColorBand Pix IP;
   GDTF: four BlenderDMX profiles).
@@ -706,3 +710,36 @@ Performance:
 - **P4 Status without allocation.** The light thread builds a new `Vec<SequenceStatus>` 11 times a
   second (`*s = playback.status()`); fill the shared one in place (`status_into`) so the thread is
   allocation-free after loading, like `tick`.
+
+## Next steps (2026-10-15, after merging master 0.2.4)
+Bugs:
+- P4 done: `Playback::status_into` fills the shared status in place (checked by `tests/light_alloc.rs`).
+- `sync_lighting` compare: `Lighting.fixtures` and `Sequence.cues` are `Shared<Vec<…>>` (copy on
+  write), so the kept copy shares them and an untouched design compares by pointer (was 0.4 ms
+  compare + 0.2 ms clone on the 2000 × 10 × 300 rig). Chosen over a change counter: no edit site
+  can forget to bump it. Pages that edit through `&mut` every frame (patch sheet, cue table)
+  unshare their list once per frame, as the old full clone did.
+- Duplicate attributes: `Attribute::Extra(n)` (§B), so no channel is dropped.
+Features:
+- MIDI clock in (`surface::MidiClock`): the surface MIDI input no longer ignores timing messages;
+  24 PPQN measured over two beats, one tempo per beat when it moves ≥ 0.2 BPM, Start/Stop/Continue
+  or a 1 s gap restart the measurement. `SurfaceSettings.midi_clock` (show file) makes
+  `SurfaceHub::clock_tempo` set the effects tempo (replicas queue it); Settings → Control surfaces
+  shows the measured BPM.
+- Audio-reactive effects (F4): `Effect.audio: Option<AudioReact{gain, floor}>` scales the size by
+  the output level. The mixer has a third meter reader (`MeterReader::Light`, `MeterTap`), handed to
+  the light thread by `Media::update` whenever the output (re)opens; `Playback::set_audio` keeps an
+  envelope (instant attack, `AUDIO_RELEASE` 0.25 s). Effect editor: "Size follows the sound", gain,
+  floor, live meter. Not done: beat detection, a choice of input (it is everything OpenQ plays).
+- MVR plot shapes: bars → `Truss`, rectangles → `SceneObject` in a "Plot" layer, each with a box mesh
+  `shape-<id>.glb` (glTF, metres, y up) in the zip.
+- Multi-break GDTF and gobo pictures: §B.
+- Script parameters: `openq.param(name, default, min, max, integer=False)` returns the value OpenQ
+  passes (`Request.params`), declared ones come back in the reply → `Effect.params`
+  (`effects::ScriptParam`, `sanitize_params`); sliders under the script re-run it when let go.
+  Scripts may also use `extra1…extra255` attributes.
+- Effect library: `<config>/effects` (`fxfile::EffectLibrary`, on `light::folder::Library`, the generic
+  background folder worker the fixture library now uses too). Effects page: Save to library, library
+  list (click adds to the show), remove, open folder.
+- Fixed on the way: "Open the fixture library folder" called `App::open_path` (opens a show); both
+  folder buttons now use the system file manager.

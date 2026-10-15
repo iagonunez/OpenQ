@@ -7,7 +7,9 @@
 //!
 //! Readers map each channel to one [`Attribute`]. A mode can hold an attribute once per unit
 //! (the fixture or one cell), so a second channel with the same attribute takes its
-//! [`alternates`] (a second gobo wheel becomes `Gobo2`, a second control channel `Control2`) or is left unused with a note.
+//! [`alternates`] (a second gobo wheel becomes `Gobo2`, a second control channel `Control2`), else an
+//! [`Attribute::Extra`] channel named after the file's channel; so does a channel whose function
+//! OpenQ doesn't know.
 
 use super::model::{Attribute, ChannelDef, FixtureType};
 
@@ -94,22 +96,36 @@ pub fn alternates(a: Attribute) -> &'static [Attribute] {
     }
 }
 
-/// Add a channel to a unit's list: its attribute if free, else the first free alternate; None
-/// (and a note) when all are taken.
+/// Add a channel to a unit's list: its attribute if free, else the first free alternate, else
+/// the next free [`Attribute::Extra`]; None (and a note) only when all 255 extras are taken.
 pub fn place(defs: &mut Vec<ChannelDef>, def: ChannelDef, what: &str, notes: &mut Vec<String>) -> bool {
+    let def = match try_place(defs, def) {
+        Ok(()) => return true,
+        Err(def) => ChannelDef { attribute: ANY_EXTRA, ..def },
+    };
     match try_place(defs, def) {
         Ok(()) => true,
-        Err(def) => {
-            notes.push(format!("{what}: a further {:?} channel, left unused", def.attribute));
+        Err(_) => {
+            notes.push(format!("{what}: too many channels in one unit, left unused"));
             false
         }
     }
 }
 
-/// Like [`place`] but quiet: gives the channel back when its attribute and alternates are taken.
+/// Stands for "the next free [`Attribute::Extra`]" in [`place`]/[`try_place`]: what a reader
+/// gives a channel whose function it doesn't know, so it can still be set by hand.
+pub const ANY_EXTRA: Attribute = Attribute::Extra(0);
+
+/// Like [`place`] but without the extras for a taken attribute: gives the channel back when its
+/// attribute and alternates are taken (the OFL reader then puts a second light source in a cell).
 pub fn try_place(defs: &mut Vec<ChannelDef>, mut def: ChannelDef) -> Result<(), ChannelDef> {
     let taken = |defs: &[ChannelDef], a: Attribute| defs.iter().any(|d| d.attribute == a);
-    if taken(defs, def.attribute) {
+    if def.attribute == ANY_EXTRA {
+        match (1..=255).map(Attribute::Extra).find(|a| !taken(defs, *a)) {
+            Some(a) => def.attribute = a,
+            None => return Err(def),
+        }
+    } else if taken(defs, def.attribute) {
         match alternates(def.attribute).iter().copied().find(|a| !taken(defs, *a)) {
             Some(a) => def.attribute = a,
             None => return Err(def),
@@ -249,14 +265,41 @@ mod tests {
         assert!(place(&mut defs, ch(Attribute::Gobo), "x", &mut notes));
         assert!(place(&mut defs, ch(Attribute::Gobo), "x", &mut notes));
         assert_eq!(defs[1].attribute, Attribute::Gobo2);
-        assert!(!place(&mut defs, ch(Attribute::Gobo), "x", &mut notes));
-        assert_eq!(notes.len(), 1);
-        for _ in 0..3 {
+        // A third gobo wheel: an extra channel, kept.
+        assert!(place(&mut defs, ch(Attribute::Gobo), "x", &mut notes));
+        assert_eq!(defs[2].attribute, Attribute::Extra(1));
+        for _ in 0..4 {
             assert!(place(&mut defs, ch(Attribute::Control), "x", &mut notes));
         }
-        let ctl: Vec<Attribute> = defs[2..].iter().map(|d| d.attribute).collect();
-        assert_eq!(ctl, [Attribute::Control, Attribute::Control2, Attribute::Control3]);
-        assert!(!place(&mut defs, ch(Attribute::Control), "x", &mut notes), "a fourth is left out");
+        let ctl: Vec<Attribute> = defs[3..].iter().map(|d| d.attribute).collect();
+        assert_eq!(ctl, [Attribute::Control, Attribute::Control2, Attribute::Control3, Attribute::Extra(2)]);
+        // Unknown functions take extras too; only the 256th extra is left out.
+        for _ in 2..255 {
+            assert!(place(&mut defs, ch(ANY_EXTRA), "x", &mut notes));
+        }
+        assert!(notes.is_empty());
+        assert!(!place(&mut defs, ch(ANY_EXTRA), "x", &mut notes));
+        assert_eq!(notes.len(), 1);
+        assert!(try_place(&mut defs, ch(Attribute::Control)).is_err());
+    }
+
+    #[test]
+    fn extra_attributes_are_saved_by_name() {
+        let a = Attribute::Extra(12);
+        assert_eq!(serde_json::to_string(&a).unwrap(), "\"Extra12\"");
+        assert_eq!(serde_json::from_str::<Attribute>("\"Extra12\"").unwrap(), a);
+        assert_eq!(serde_json::from_str::<Attribute>("\"Gobo2\"").unwrap(), Attribute::Gobo2);
+        assert!(serde_json::from_str::<Attribute>("\"Extra0\"").is_err());
+        assert!(serde_json::from_str::<Attribute>("\"Extra256\"").is_err());
+        for a in Attribute::ALL {
+            assert_eq!(Attribute::from_name(&a.name()), Some(a));
+        }
+        // As a map key (cue values).
+        let m: std::collections::BTreeMap<Attribute, f32> = [(a, 0.5), (Attribute::Pan, 0.1)].into();
+        let text = serde_json::to_string(&m).unwrap();
+        assert_eq!(serde_json::from_str::<std::collections::BTreeMap<Attribute, f32>>(&text).unwrap(), m);
+        assert_eq!(a.feature(), crate::light::Feature::Control);
+        assert!(!a.is_htp());
     }
 
     #[test]

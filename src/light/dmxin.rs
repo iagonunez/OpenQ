@@ -491,11 +491,13 @@ pub fn capture(l: &Lighting, frame: &DmxFrame, units: &[FixtureId]) -> Vec<(Fixt
     let mut out = Vec::new();
     for id in units {
         let Some((f, _)) = l.unit(id) else { continue };
-        let (Some(chans), Some(u)) = (l.unit_channels(id), frame.get(f.universe)) else { continue };
-        let Some(start) = (f.address as usize).checked_sub(1) else { continue };
+        let Some(chans) = l.unit_channels(id) else { continue };
         let mut values: Vec<(Attribute, f32)> = Vec::new();
         let mut changed = false;
         for c in chans {
+            // Each channel from where its DMX break is patched.
+            let at = f.address_of(c.dmx_break);
+            let (Some(u), Some(start)) = (frame.get(at.universe), (at.address as usize).checked_sub(1)) else { continue };
             let Some(mut v) = c.read(start, &u.data) else { continue };
             changed |= (v - c.default_value()).abs() > 0.5 / 255.0;
             if (c.attribute == Attribute::Pan && f.invert_pan) || (c.attribute == Attribute::Tilt && f.invert_tilt) {

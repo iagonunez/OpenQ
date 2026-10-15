@@ -107,7 +107,7 @@ pub struct SequencePatch {
 /// The sequence without its cues (every other field, so a new field can't be missed).
 fn head(s: &Sequence) -> Sequence {
     let Sequence { id, name, cues: _, move_in_black, mib_delay, mib_fade } = s;
-    Sequence { id: *id, name: name.clone(), cues: Vec::new(), move_in_black: *move_in_black, mib_delay: *mib_delay, mib_fade: *mib_fade }
+    Sequence { id: *id, name: name.clone(), cues: Default::default(), move_in_black: *move_in_black, mib_delay: *mib_delay, mib_fade: *mib_fade }
 }
 
 /// Changes to the sequences: new ones whole, existing ones as [`SequencePatch`]es.

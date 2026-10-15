@@ -1,6 +1,7 @@
 # OpenQ's script runner, passed to the sandboxed interpreter with -c.
-# Reads {"api", "name", "code"} as JSON on stdin, runs the script with the `openq` module built from
-# "api", and writes one JSON reply on stdout: {"ok", "effects" | "message"/"line"/"traceback", "output"}.
+# Reads {"api", "name", "code", "params"} as JSON on stdin, runs the script with the `openq` module built
+# from "api" (openq.param reads "params"), and writes one JSON reply on stdout:
+# {"ok", "effects", "params" | "message"/"line"/"traceback", "output"}.
 # The script's own prints are captured into "output". The sandbox has no files besides a read-only
 # standard library, no network and no other programs; this file only shapes the reply.
 import json
@@ -14,6 +15,7 @@ req = json.loads(sys.stdin.read())
 name = req.get("name") or "<script>"
 api = types.ModuleType("openq")
 exec(compile(req["api"], "<openq>", "exec"), api.__dict__)
+api._values = dict(req.get("params") or {})
 sys.modules["openq"] = api
 reply_to = sys.stdout
 
@@ -55,6 +57,7 @@ except BaseException as e:  # noqa: BLE001
 if reply["ok"]:
     try:
         reply["effects"] = [e._json() for e in api._made]
+        reply["params"] = api._params
     except BaseException as e:  # noqa: BLE001
         reply = {"ok": False, "message": f"{type(e).__name__}: {e}", "line": None, "traceback": ""}
 text = "".join(cap.text)

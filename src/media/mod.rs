@@ -529,6 +529,8 @@ pub struct Media {
     room: Vec<crate::spatial::Speaker>,
     /// The light thread (lighting playback and DMX outputs).
     pub light: crate::light::engine::LightEngine,
+    /// The output whose meters the light thread reads ([`audio::MeterTap::id`]).
+    light_audio: Option<usize>,
 }
 
 /// A Mic cue's live input. Opening a device can take a while, so it opens on its own thread;
@@ -609,6 +611,7 @@ impl Media {
         Self {
             audio,
             audio_error,
+            light_audio: None,
             #[cfg(feature = "video")]
             video,
             video_error,
@@ -1228,6 +1231,12 @@ impl Backend for Media {
 
     fn update(&mut self, now: Instant) {
         self.watch_audio(now);
+        // Audio-reactive effects read the current output's meters.
+        let tap = self.audio.as_ref().map(|a| a.meter_tap());
+        if tap.as_ref().map(|t| t.id()) != self.light_audio {
+            self.light_audio = tap.as_ref().map(|t| t.id());
+            self.light.set_audio(tap);
+        }
         self.watch_mics(now);
         self.start_pending_audio(now);
         if let Some(a) = &mut self.audio {

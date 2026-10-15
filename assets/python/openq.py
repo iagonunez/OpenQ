@@ -17,7 +17,7 @@ import colorsys
 import math
 
 __all__ = [
-    "ATTRIBUTES", "Effect", "effect",
+    "ATTRIBUTES", "Effect", "effect", "param",
     "hsv", "lerp", "clamp", "smoothstep", "sine", "triangle", "square", "saw",
 ]
 
@@ -34,16 +34,50 @@ MAX_ATTRIBUTES = 16
 MAX_STEPS = 4096
 MAX_WIDTH = 512
 MAX_VALUES = 1 << 20
+MAX_PARAMS = 32
 
 _ATTR = {a.lower(): a for a in ATTRIBUTES}
 _made = []
+_params = []
+_values = {}
+"""Values OpenQ passes for the settings (set before the script runs)."""
 
 
 def _attr(name):
     k = str(name).replace("_", "").replace(" ", "").lower()
+    if k.startswith("extra") and k[5:].isdigit() and 1 <= int(k[5:]) <= 255:
+        return f"Extra{int(k[5:])}"
     if k not in _ATTR:
-        raise ValueError(f"unknown attribute {name!r} (see openq.ATTRIBUTES)")
+        raise ValueError(f"unknown attribute {name!r} (see openq.ATTRIBUTES, or extra1…extra255)")
     return _ATTR[k]
+
+
+def param(name, default=0.5, min=0.0, max=1.0, integer=False):
+    """Declare a setting and return its value: OpenQ shows a slider for it under the script, and
+    moving the slider runs the script again with the new value (the default the first time).
+
+        count = openq.param("Pixels lit", 3, 1, 8, integer=True)
+        hue = openq.param("Hue", 0.6)
+    """
+    name = str(name)[:64]
+    lo, hi = float(min), float(max)
+    if not (math.isfinite(lo) and math.isfinite(hi) and lo < hi):
+        raise ValueError("param needs finite min < max")
+    for p in _params:
+        if p["name"] == name:
+            return p["value"]
+    if len(_params) >= MAX_PARAMS:
+        raise ValueError(f"at most {MAX_PARAMS} params per script")
+    v = _values.get(name, default)
+    try:
+        v = float(v)
+    except (TypeError, ValueError):
+        v = float(default)
+    v = clamp(v if math.isfinite(v) else float(default), lo, hi)
+    if integer:
+        v = int(round(v))
+    _params.append({"name": name, "min": lo, "max": hi, "value": float(v), "integer": bool(integer)})
+    return v
 
 
 def _level(v):

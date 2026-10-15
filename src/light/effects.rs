@@ -183,6 +183,13 @@ pub struct Effect {
     /// Custom effects: the generated curves.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub table: Option<std::sync::Arc<EffectTable>>,
+    /// Audio-reactive: the depth follows the sound OpenQ plays.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub audio: Option<AudioReact>,
+    /// Custom effects: the settings the script declares (`openq.param`), shown as sliders; a
+    /// change runs the script again with the new values.
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub params: Vec<ScriptParam>,
     /// Custom effects: the Python script that generates `table` (kept so it can be edited and
     /// run again; empty for imported tables without a script).
     #[serde(skip_serializing_if = "String::is_empty")]
@@ -207,9 +214,87 @@ impl Default for Effect {
             wings: 1,
             table: None,
             script: String::new(),
+            audio: None,
+            params: Vec::new(),
         }
     }
 }
+
+/// A setting an effect script declares with `openq.param(name, default, min, max)`.
+#[derive(Serialize, Deserialize, Clone, PartialEq, Debug, Default)]
+#[serde(default)]
+pub struct ScriptParam {
+    /// Name (the script reads the value by it).
+    pub name: String,
+    /// Lowest value.
+    pub min: f64,
+    /// Highest value.
+    pub max: f64,
+    /// Current value.
+    pub value: f64,
+    /// Whole numbers only.
+    pub integer: bool,
+}
+
+/// Most settings a script can declare.
+pub const MAX_PARAMS: usize = 32;
+
+/// Check settings from outside (a file, a script's reply): finite, `min < max`, value in range,
+/// names short and unique, at most [`MAX_PARAMS`].
+pub fn sanitize_params(params: Vec<ScriptParam>) -> Vec<ScriptParam> {
+    let mut out: Vec<ScriptParam> = Vec::new();
+    for mut p in params {
+        p.name = p.name.chars().filter(|c| !c.is_control()).take(64).collect();
+        if p.name.is_empty() || out.iter().any(|q| q.name == p.name) || out.len() >= MAX_PARAMS {
+            continue;
+        }
+        if !(p.min.is_finite() && p.max.is_finite() && p.min < p.max) {
+            continue;
+        }
+        if p.integer {
+            p.min = p.min.ceil();
+            p.max = p.max.floor().max(p.min);
+        }
+        p.value = if p.value.is_finite() { p.value.clamp(p.min, p.max) } else { p.min };
+        if p.integer {
+            p.value = p.value.round();
+        }
+        out.push(p);
+    }
+    out
+}
+
+/// How an effect follows the audio output ([`Effect::audio`]): its size is scaled by the level
+/// of everything OpenQ plays (peak over all outputs, after the master; instant attack, release
+/// [`AUDIO_RELEASE`]). Quiet passages shrink the effect to `floor` of its size, loud ones play it
+/// in full: a chase that pumps with the music, or a dimmer that follows it (an absolute Square
+/// with the on time at 100 %).
+#[derive(Serialize, Deserialize, Clone, Copy, PartialEq, Debug)]
+#[serde(default)]
+pub struct AudioReact {
+    /// Sensitivity: the level is multiplied by this (1 = a full-scale peak plays the full size).
+    pub gain: f32,
+    /// Part of the size left in silence, 0..=1.
+    pub floor: f32,
+}
+
+impl Default for AudioReact {
+    fn default() -> Self {
+        Self { gain: 2.0, floor: 0.0 }
+    }
+}
+
+impl AudioReact {
+    /// Part of the effect's size played at envelope level `env`.
+    pub fn depth(&self, env: f32) -> f32 {
+        let f = self.floor.clamp(0.0, 1.0);
+        let level = env * self.gain.max(0.0);
+        f + (1.0 - f) * if level.is_finite() { level.clamp(0.0, 1.0) } else { 0.0 }
+    }
+}
+
+/// Seconds the audio envelope takes to fall to about a third (1/e) after a peak.
+pub const AUDIO_RELEASE: f32 = 0.25;
 
 impl Effect {
     /// Pattern position of the `i`-th fixture (fixtures of one group share it).
@@ -283,11 +368,13 @@ impl CompiledEffect {
     /// Apply at `t` seconds, scaled by `scale` (fade in/out), onto resolved slot values.
     /// Intensity is dimmed (relative) or replaced; other attributes move around (relative) or
     /// replace the value.
-    pub fn apply(&self, t: f64, bpm: f32, scale: f32, values: &mut [f32], htp: impl Fn(u32) -> bool) {
+    /// `audio` is the audio envelope (0..1) an audio-reactive effect follows.
+    pub fn apply(&self, t: f64, bpm: f32, audio: f32, scale: f32, values: &mut [f32], htp: impl Fn(u32) -> bool) {
         if scale <= 0.0 {
             return;
         }
         let e = &self.effect;
+        let size = e.audio.map_or(e.size, |a| e.size * a.depth(audio));
         let x0 = t * e.rate(bpm) as f64;
         for m in &self.members {
             let x = x0 + m.phase as f64;
@@ -295,7 +382,7 @@ impl CompiledEffect {
             if e.shape == Shape::Circle {
                 let a = std::f32::consts::TAU * x.rem_euclid(1.0) as f32;
                 let (s, c) = a.sin_cos();
-                let r = e.size * 0.5;
+                let r = size * 0.5;
                 if let Some(j) = m.slot2.map(|s| s as usize) {
                     let (pan, tilt) = if e.relative { (values[i] + r * s, values[j] + r * c) } else { (e.base + r * (1.0 + s), e.base + r * (1.0 + c)) };
                     values[i] += (pan.clamp(0.0, 1.0) - values[i]) * scale;
@@ -308,9 +395,9 @@ impl CompiledEffect {
                 _ => e.shape.eval(x, e.duty, m.seed),
             };
             let target = match (e.relative, htp(m.slot)) {
-                (true, true) => values[i] * (1.0 - e.size * (1.0 - v)),
-                (true, false) => values[i] + e.size * (v - 0.5),
-                (false, _) => e.base + e.size * v,
+                (true, true) => values[i] * (1.0 - size * (1.0 - v)),
+                (true, false) => values[i] + size * (v - 0.5),
+                (false, _) => e.base + size * v,
             };
             values[i] += (target.clamp(0.0, 1.0) - values[i]) * scale;
         }
@@ -361,7 +448,7 @@ mod tests {
         let e = Effect { shape: Shape::Custom, table: Some(t.into()), base: 0.0, size: 1.0, speed: 1.0, ..Default::default() };
         let fx = CompiledEffect { id: 1, effect: e, members: vec![Member { col: 1, row: 1, ..Default::default() }] };
         let mut v = [0.0];
-        fx.apply(0.5, 120.0, 1.0, &mut v, |_| false);
+        fx.apply(0.5, 120.0, 0.0, 1.0, &mut v, |_| false);
         assert_eq!(v[0], 14.0 / 15.0);
     }
 
@@ -383,13 +470,45 @@ mod tests {
         let members = vec![Member::default()];
         let chase = CompiledEffect { id: 1, effect: Effect { shape: Shape::Square, relative: true, ..Default::default() }, members: members.clone() };
         let mut v = [0.8];
-        chase.apply(0.1, 120.0, 1.0, &mut v, |_| true);
+        chase.apply(0.1, 120.0, 0.0, 1.0, &mut v, |_| true);
         assert_eq!(v[0], 0.8, "on: the cue's level");
-        chase.apply(1.5, 120.0, 1.0, &mut v, |_| true);
+        chase.apply(1.5, 120.0, 0.0, 1.0, &mut v, |_| true);
         assert_eq!(v[0], 0.0, "off");
         let abs = CompiledEffect { id: 2, effect: Effect { shape: Shape::SawUp, base: 0.2, size: 0.5, speed: 1.0, ..Default::default() }, members };
         let mut v = [0.9];
-        abs.apply(0.5, 120.0, 0.5, &mut v, |_| false);
+        abs.apply(0.5, 120.0, 0.0, 0.5, &mut v, |_| false);
         assert!((v[0] - (0.9 + (0.45 - 0.9) * 0.5)).abs() < 1e-6, "half faded in");
+    }
+
+    #[test]
+    fn script_params_are_checked() {
+        let p = |name: &str, min, max, value, integer| ScriptParam { name: name.into(), min, max, value, integer };
+        let out = sanitize_params(vec![
+            p("a", 0.0, 1.0, 2.0, false),
+            p("a", 0.0, 1.0, 0.5, false),
+            p("", 0.0, 1.0, 0.5, false),
+            p("bad", 1.0, 1.0, 1.0, false),
+            p("nan", 0.0, f64::NAN, 0.5, false),
+            p("n", 0.5, 8.7, f64::INFINITY, true),
+        ]);
+        let got: Vec<(&str, f64, f64, f64)> = out.iter().map(|p| (p.name.as_str(), p.min, p.max, p.value)).collect();
+        assert_eq!(got, [("a", 0.0, 1.0, 1.0), ("n", 1.0, 8.0, 1.0)]);
+        assert_eq!(sanitize_params((0..40).map(|i| p(&i.to_string(), 0.0, 1.0, 0.0, false)).collect()).len(), MAX_PARAMS);
+    }
+
+    #[test]
+    fn audio_scales_the_size() {
+        // An absolute "always on" dimmer whose size follows the audio: a level meter.
+        let react = AudioReact { gain: 2.0, floor: 0.1 };
+        let e = Effect { shape: Shape::Square, duty: 1.0, base: 0.0, size: 1.0, audio: Some(react), ..Default::default() };
+        let fx = CompiledEffect { id: 1, effect: e, members: vec![Member::default()] };
+        let level = |audio: f32| {
+            let mut v = [0.5];
+            fx.apply(0.25, 120.0, audio, 1.0, &mut v, |_| true);
+            v[0]
+        };
+        assert!((level(0.0) - 0.1).abs() < 1e-6, "silence: the floor");
+        assert!((level(0.25) - 0.55).abs() < 1e-6, "0.25 × gain 2 = half way above the floor");
+        assert_eq!(level(0.9), 1.0, "loud: full size");
     }
 }

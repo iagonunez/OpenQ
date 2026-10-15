@@ -191,7 +191,9 @@ impl Show {
 
     /// Recompile the lighting design for the light thread if it (or the replica flag) changed.
     /// A replica plays nothing (it mirrors the main device's states and output), so it loads
-    /// an empty design once: no compile, no DMX outputs or inputs.
+    /// an empty design once: no compile, no DMX outputs or inputs. The kept copy shares the
+    /// fixture and cue lists ([`crate::light::model::Shared`]), so when the edit was elsewhere the
+    /// compare is a few pointer checks rather than a walk over the whole design.
     pub fn sync_lighting(&mut self) {
         if self.light_loaded.as_ref().is_some_and(|(l, r)| *r == self.replica && *l == self.ws.lighting) {
             return;
@@ -329,7 +331,7 @@ mod tests {
         let mut lc = LightCue { fade: 0.0, delay: 0.5, ..Default::default() };
         lc.values.entry(1).or_default().insert(Attribute::Dimmer, 1.0.into());
         let target = lc.id;
-        ws.lighting.sequences.push(Sequence { id: 1, cues: vec![lc], ..Default::default() });
+        ws.lighting.sequences.push(Sequence { id: 1, cues: vec![lc].into(), ..Default::default() });
         ws.cue_list.cues.push(Cue::new(CueKind::Light(LightingCue { action: LightAction::Go, cue: Some(target), ..Default::default() })));
         show.replace_workspace(ws, None);
         let t0 = Instant::now();

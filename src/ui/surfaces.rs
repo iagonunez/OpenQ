@@ -94,6 +94,19 @@ impl App {
                 None => ui.label(RichText::new("—").weak()),
             };
             ui.end_row();
+            ui.label(t("MIDI clock"));
+            ui.horizontal(|ui| {
+                let mut on = show.ws.settings.surfaces.midi_clock;
+                if ui.add_enabled(self.can_edit_show(), egui::Checkbox::new(&mut on, t("Effects follow its tempo"))).changed() {
+                    show.ws.settings.surfaces.midi_clock = on;
+                    show.edited();
+                }
+                match self.surfaces.clock() {
+                    Some(bpm) => ui.label(RichText::new(format!("{bpm:.1} BPM")).font(theme::mono(12.0)).color(theme::GREEN)),
+                    None => ui.label(RichText::new(t("no clock")).weak().small()),
+                };
+            });
+            ui.end_row();
         });
         ui.add_space(8.0);
         let can_edit = self.can_edit_show();

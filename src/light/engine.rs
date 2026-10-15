@@ -117,6 +117,10 @@ struct Shared {
     /// Set when the engine drops: the compile thread may still hold a sender, so the channel
     /// alone wouldn't end the light thread until a long compile finishes.
     quit: std::sync::atomic::AtomicBool,
+    /// The audio output's meters, for audio-reactive effects.
+    audio: Mutex<Option<crate::media::audio::MeterTap>>,
+    /// Audio envelope of the last frame (`f32` bits), for the UI.
+    audio_level: std::sync::atomic::AtomicU32,
 }
 
 /// Owns the light thread. Dropping it stops the thread (outputs close).
@@ -328,6 +332,17 @@ impl LightEngine {
         }
     }
 
+    /// Give the light thread the audio output's meters (None: no output) for audio-reactive
+    /// effects. [`crate::media::Media`] calls it whenever the output opens or reopens.
+    pub fn set_audio(&self, tap: Option<crate::media::audio::MeterTap>) {
+        *self.shared.audio.lock() = tap;
+    }
+
+    /// The audio envelope audio-reactive effects follow (0..1).
+    pub fn audio_level(&self) -> f32 {
+        f32::from_bits(self.shared.audio_level.load(Ordering::Relaxed))
+    }
+
     /// Sequence states (the main device's on a replica).
     pub fn status(&self) -> Vec<SequenceStatus> {
         match &self.mirrored {
@@ -515,6 +530,12 @@ fn run(rx: mpsc::Receiver<LightCommand>, shared: Arc<Shared>) {
             release_held(&mut playback, &mut held, &mut held_since, u64::MAX, &shared);
         }
         let now = Instant::now();
+        if let Some(a) = shared.audio.try_lock()
+            && let Some(tap) = a.as_ref()
+        {
+            playback.set_audio(tap.take_peak(), now);
+            shared.audio_level.store(playback.audio_level().to_bits(), Ordering::Relaxed);
+        }
         let built = crate::recovery::catch(|| {
             crate::recovery::fault_point(crate::recovery::Fault::LightTick);
             last_good.universes.clone_from(&playback.tick(now).universes);
@@ -549,7 +570,7 @@ fn run(rx: mpsc::Receiver<LightCommand>, shared: Arc<Shared>) {
         if n.is_multiple_of(4)
             && let Some(mut s) = shared.status.try_lock()
         {
-            *s = playback.status();
+            playback.status_into(&mut s);
         }
         next += period;
         let now = Instant::now();
@@ -703,7 +724,7 @@ mod tests {
         let mut c = LightCue { fade: 0.0, ..Default::default() };
         c.values.entry(1).or_default().insert(Attribute::Dimmer, 1.0.into());
         let id = c.id;
-        l.sequences.push(Sequence { id: 1, cues: vec![c], ..Default::default() });
+        l.sequences.push(Sequence { id: 1, cues: vec![c].into(), ..Default::default() });
 
         let mut e = LightEngine::start();
         e.load(&l);
@@ -735,7 +756,7 @@ mod tests {
         let mut c = LightCue { fade: 0.0, ..Default::default() };
         let id = c.id;
         c.values.entry(1).or_default().insert(Attribute::Dimmer, 1.0.into());
-        l.sequences.push(Sequence { id: 1, cues: vec![c], ..Default::default() });
+        l.sequences.push(Sequence { id: 1, cues: vec![c].into(), ..Default::default() });
         let e = LightEngine::start();
         let seen = Arc::new(Mutex::new(0u8));
         let s2 = seen.clone();
@@ -769,7 +790,7 @@ mod tests {
         let mut c = LightCue { fade: 0.0, ..Default::default() };
         let id = c.id;
         c.values.entry(1).or_default().insert(Attribute::Dimmer, 0.0.into());
-        l.sequences.push(Sequence { id: 1, cues: vec![c], ..Default::default() });
+        l.sequences.push(Sequence { id: 1, cues: vec![c].into(), ..Default::default() });
         let mut e = LightEngine::start();
         let seen = Arc::new(Mutex::new(0u8));
         let s2 = seen.clone();
