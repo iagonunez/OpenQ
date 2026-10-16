@@ -17,11 +17,6 @@ pub(super) struct DisplayList {
     pub asked: Option<std::time::Instant>,
 }
 
-/// How often the display list is refreshed while a stage is assigned to a display, so an
-/// unplugged projector is noticed and its stage goes back to it when it returns.
-#[cfg(feature = "video")]
-pub(super) const DISPLAY_RECHECK: std::time::Duration = std::time::Duration::from_secs(5);
-
 impl App {
     pub(super) fn refresh_displays(&self, ctx: &egui::Context) {
         {

@@ -1256,5 +1256,17 @@
  "Record a cue with every intensity at zero and every effect stopped": "Grabar un cue con todas las intensidades a cero y todos los efectos parados",
  "Record blackout": "Grabar blackout",
  "Sequences and executors in a window of their own, e.g. on a touch screen": "Secuencias y ejecutores en una ventana propia, p. ej. en una pantalla táctil",
- "Executor size": "Tamaño de los ejecutores"
+ "Executor size": "Tamaño de los ejecutores",
+ "Allow": "Permitir",
+ "Allow only changes you expect: they decide which computers this one sends to.": "Permite solo los cambios que esperas: deciden a qué ordenadores envía este.",
+ "DMX inputs: {list}": "Entradas DMX: {list}",
+ "DMX outputs: {list}": "Salidas DMX: {list}",
+ "Deny": "Denegar",
+ "Network cue {cue}: {from} → {to}": "Cue de red {cue}: {from} → {to}",
+ "Network settings change": "Cambio de ajustes de red",
+ "New network cue {cue} sending to {to}": "Nueva cue de red {cue} que envía a {to}",
+ "{device} asks to change where this OpenQ sends or listens on the network:": "{device} pide cambiar adónde envía o qué escucha este OpenQ en la red:",
+ "{n} more waiting": "{n} más en espera",
+ "video output restarting…": "salida de vídeo reiniciándose…",
+ "video output unavailable: {why}": "salida de vídeo no disponible: {why}"
 }

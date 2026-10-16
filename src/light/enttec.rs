@@ -23,6 +23,18 @@ pub fn ports() -> Vec<String> {
     serialport::available_ports().map(|p| p.into_iter().map(|p| p.port_name).collect()).unwrap_or_default()
 }
 
+/// True for names a serial port can have (`/dev/ttyUSB0`, `/dev/cu.usbserial-1`, `COM3`): the port
+/// comes from the show file, which mustn't make OpenQ open (and write DMX into) any other file.
+pub fn is_serial_port_name(port: &str) -> bool {
+    if cfg!(windows) {
+        let p = port.strip_prefix(r"\\.\").unwrap_or(port);
+        p.len() > 3 && p.get(..3).is_some_and(|c| c.eq_ignore_ascii_case("COM")) && p.bytes().skip(3).all(|b| b.is_ascii_digit())
+    } else {
+        let Some(name) = port.strip_prefix("/dev/") else { return false };
+        !name.is_empty() && !name.split('/').any(|c| c == ".." || c.is_empty()) && (name.starts_with("tty") || name.starts_with("cu.") || name.starts_with("serial/"))
+    }
+}
+
 /// An open USB Pro. Only the first universe sent each frame goes out (the device has one port).
 pub struct EnttecPro {
     port: Box<dyn Write + Send>,
@@ -35,6 +47,9 @@ impl EnttecPro {
     pub fn open(port: &str) -> anyhow::Result<Self> {
         if port.trim().is_empty() {
             anyhow::bail!("no serial port chosen");
+        }
+        if !is_serial_port_name(port) {
+            anyhow::bail!("{port} is not a serial port");
         }
         // The baud rate is ignored by the USB device but must be valid for the driver.
         let p = serialport::new(port, 115_200).timeout(Duration::from_millis(500)).open()?;
@@ -67,6 +82,21 @@ impl DmxOutput for EnttecPro {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn serial_port_names() {
+        if cfg!(windows) {
+            assert!(is_serial_port_name("COM3") && is_serial_port_name(r"\\.\COM12"));
+            assert!(!is_serial_port_name(r"C:\x") && !is_serial_port_name("COM"));
+        } else {
+            for ok in ["/dev/ttyUSB0", "/dev/ttyACM1", "/dev/cu.usbserial-EN1", "/dev/serial/by-id/usb-ENTTEC_DMX_USB_PRO-if00"] {
+                assert!(is_serial_port_name(ok), "{ok}");
+            }
+            for bad in ["/dev/sda", "/home/u/.bashrc", "/dev/tty/../sda", "/dev/../etc/passwd", "ttyUSB0", "/dev/"] {
+                assert!(!is_serial_port_name(bad), "{bad}");
+            }
+        }
+    }
     use parking_lot::Mutex;
     use std::sync::Arc;
 

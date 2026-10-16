@@ -11,6 +11,33 @@ use std::time::{Duration, Instant};
 use uuid::Uuid;
 
 const QUERY: &[u8] = b"OPENQ-DISCOVER/1";
+/// Answers sent per second at most: the answer is bigger than the query, so without a cap
+/// queries with a forged sender address would turn this into a traffic amplifier.
+const ANSWERS_PER_SECOND: u32 = 20;
+
+/// At most `per_second` events in each one-second window.
+pub(crate) struct Budget {
+    per_second: u32,
+    window: Instant,
+    used: u32,
+}
+
+impl Budget {
+    /// A budget of `per_second`.
+    pub(crate) fn new(per_second: u32) -> Self {
+        Self { per_second, window: Instant::now(), used: 0 }
+    }
+
+    /// Use one; false when this second's are used up.
+    pub(crate) fn take(&mut self) -> bool {
+        if self.window.elapsed() >= Duration::from_secs(1) {
+            self.window = Instant::now();
+            self.used = 0;
+        }
+        self.used += 1;
+        self.used <= self.per_second
+    }
+}
 
 #[derive(Serialize, Deserialize, Clone, Debug, PartialEq)]
 struct Announce {
@@ -39,9 +66,11 @@ pub fn respond(id: Uuid, name: impl Fn() -> String + Send + 'static, port: u16, 
     sock.set_read_timeout(Some(Duration::from_millis(300)))?;
     std::thread::Builder::new().name("openq-discovery".into()).spawn(move || {
         let mut buf = [0u8; 64];
+        let mut budget = Budget::new(ANSWERS_PER_SECOND);
         while !stop.load(Ordering::Relaxed) {
             if let Ok((n, from)) = sock.recv_from(&mut buf)
                 && &buf[..n] == QUERY
+                && budget.take()
             {
                 let a = Announce { openq: PROTOCOL, id, name: name(), port };
                 if let Ok(bytes) = serde_json::to_vec(&a) {

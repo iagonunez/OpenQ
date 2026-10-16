@@ -413,6 +413,47 @@ impl App {
 
     // ------------------------------------------------------------------ window
 
+    /// Ask the operator about network settings changes a replica made (Network cue destinations,
+    /// DMX outputs and inputs): they only reach the show once allowed here.
+    pub(super) fn network_requests_window(&mut self, ctx: &egui::Context, show: &mut Show) {
+        let Some(r) = show.network_requests.first() else { return };
+        let (id, more) = (r.id, show.network_requests.len() - 1);
+        let mut answer = None;
+        egui::Window::new(theme::with_icon(icons::LAN, t("Network settings change")))
+            .id(egui::Id::new("network-request"))
+            .collapsible(false)
+            .resizable(false)
+            .anchor(egui::Align2::CENTER_CENTER, [0.0, 0.0])
+            .fixed_size([520.0, 0.0])
+            .show(ctx, |ui| {
+                ui.label(tr!("{device} asks to change where this OpenQ sends or listens on the network:", device = r.device.as_str()));
+                ui.add_space(6.0);
+                theme::card_frame().show(ui, |ui| {
+                    ui.set_width(ui.available_width());
+                    for line in r.change.describe() {
+                        ui.label(RichText::new(line).font(theme::mono(12.0)));
+                    }
+                });
+                ui.add_space(4.0);
+                ui.label(RichText::new(t("Allow only changes you expect: they decide which computers this one sends to.")).small().color(theme::TEXT_DIM));
+                ui.add_space(6.0);
+                ui.horizontal(|ui| {
+                    if ui.button(theme::with_icon(icons::CHECK_CIRCLE, t("Allow"))).clicked() {
+                        answer = Some(true);
+                    }
+                    if ui.button(t("Deny")).clicked() {
+                        answer = Some(false);
+                    }
+                    if more > 0 {
+                        ui.label(RichText::new(tr!("{n} more waiting", n = more.to_string())).small().color(theme::TEXT_DIM));
+                    }
+                });
+            });
+        if let Some(allow) = answer {
+            show.answer_network_request(id, allow);
+        }
+    }
+
     pub(super) fn remote_window(&mut self, ctx: &egui::Context, show: &mut Show) {
         if !self.remote.window {
             return;

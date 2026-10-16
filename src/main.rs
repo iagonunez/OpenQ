@@ -13,6 +13,15 @@ fn main() -> eframe::Result {
         }
         return Ok(());
     }
+    // The video output process: stage windows and video playback, separate from the UI.
+    #[cfg(feature = "video")]
+    if std::env::args().nth(1).as_deref() == Some(openq::vout::FLAG) {
+        std::process::exit(openq::vout::child::main());
+    }
+    // The settings folder first, so it is created private to this user.
+    if let Some(dir) = openq::remote::config_dir() {
+        let _ = openq::remote::create_config_dir(&dir);
+    }
     // stderr as before, plus warnings/errors/crashes in the error log file (Help → Error log).
     errlog::init("openq=info");
 
@@ -54,7 +63,10 @@ fn main() -> eframe::Result {
         // keeps drawing its window buttons on top of it.
         viewport = viewport.with_fullsize_content_view(true).with_titlebar_shown(false).with_title_shown(false);
     }
-    let options = eframe::NativeOptions { viewport, ..Default::default() };
+    let mut options = eframe::NativeOptions { viewport, ..Default::default() };
+    if std::env::var("OPENQ_PRESENT").as_deref() == Ok("mailbox") {
+        options.wgpu_options.surface.present_mode = eframe::wgpu::PresentMode::AutoNoVsync;
+    }
 
     eframe::run_native(
         "OpenQ",

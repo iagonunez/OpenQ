@@ -45,6 +45,9 @@ pub struct Show {
     pub light_selection: Vec<crate::light::model::FixtureId>,
     /// Bumped when a remote device sets [`Show::light_selection`] (the UI then takes it).
     pub light_selection_gen: u64,
+    /// Network settings changes from replicas waiting for the operator to allow or deny them
+    /// ([`crate::remote::netguard`]), oldest first.
+    pub network_requests: Vec<crate::remote::netguard::NetworkRequest>,
 }
 
 /// How well the engine thread is keeping time.
@@ -88,6 +91,7 @@ impl Show {
             light_loaded: None,
             light_selection: Vec::new(),
             light_selection_gen: 0,
+            network_requests: Vec::new(),
         }
     }
 
@@ -220,6 +224,11 @@ impl Show {
         ws.settings.audio_device = mine.audio_device.clone();
         ws.settings.osc_enabled = mine.osc_enabled;
         ws.settings.osc_port = mine.osc_port;
+        // Displays are this computer's (a replica lists its own): stage outputs are chosen here,
+        // so a replica can't put fullscreen windows over the operator's screens either.
+        for st in &mut ws.stages {
+            st.output = self.ws.stages.iter().find(|s| s.id == st.id).and_then(|s| s.output.clone());
+        }
         if ws.settings.master_volume_db != mine.master_volume_db
             && let Some(a) = &mut self.media.audio
         {
@@ -245,12 +254,35 @@ impl Show {
         true
     }
 
+    /// Queue a replica's held network settings change for the operator (nothing if empty).
+    pub fn request_network_change(&mut self, device: &str, change: crate::remote::netguard::NetworkChange) {
+        if change.is_empty() {
+            return;
+        }
+        let id = self.network_requests.last().map_or(1, |r| r.id + 1);
+        self.network_requests.push(crate::remote::netguard::NetworkRequest { id, device: device.to_string(), change });
+        let extra = self.network_requests.len().saturating_sub(crate::remote::netguard::MAX_REQUESTS);
+        self.network_requests.drain(..extra);
+    }
+
+    /// Answer a network settings request: allowed ones are applied to the show.
+    pub fn answer_network_request(&mut self, id: u64, allow: bool) {
+        let Some(i) = self.network_requests.iter().position(|r| r.id == id) else { return };
+        let r = self.network_requests.remove(i);
+        if allow {
+            r.change.apply(&mut self.ws);
+            self.edited();
+        }
+    }
+
     /// Swap in another workspace: stops everything, reopens audio with its settings.
     pub fn replace_workspace(&mut self, ws: Workspace, path: Option<PathBuf>) {
         let now = Instant::now();
         self.engine.stop_all(&mut self.media, now, 0.0);
         self.ws = ws;
         self.path = path;
+        // Requests were about the show that was open.
+        self.network_requests.clear();
         self.dirty = false;
         self.engine.set_playhead(self.ws.cue_list.first());
         self.engine.workspace_changed();

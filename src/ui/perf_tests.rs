@@ -110,9 +110,10 @@ fn animation_editing_and_playback_stay_cheap() {
     app.inspector_tab = inspector::Tab::Animation;
     app.show_preview = true;
 
-    // Warm up: fonts, the first text render (preview and preload), textures.
+    // Warm up: fonts, the first text render (the preview's; the preload renders in the video
+    // output process), textures.
     let t0 = Instant::now();
-    while crate::media::text::render_count(text) < 2 || t0.elapsed() < Duration::from_millis(300) {
+    while crate::media::text::render_count(text) < 1 || t0.elapsed() < Duration::from_millis(300) {
         frame(&ctx, &mut app, &shared);
         assert!(t0.elapsed() < Duration::from_secs(30), "text never rendered");
         std::thread::sleep(Duration::from_millis(5));
@@ -160,9 +161,6 @@ fn animation_editing_and_playback_stay_cheap() {
             })
             .collect(),
     );
-    let shown = shared.lock().media.stage_layers().iter().find_map(|l| l.frame.lock().planes.as_ref().map(|p| (p.width, p.height)));
-    let (w, h) = shown.expect("text never showed");
-    assert!(w.max(h) <= 2048, "{w}×{h} text doesn't fit the GPU's textures");
     {
         let mut s = shared.lock();
         app.control(&mut s, Command::Panic);

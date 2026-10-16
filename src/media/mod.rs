@@ -28,6 +28,41 @@ pub fn set_max_texture_side(px: usize) {
     MAX_TEXTURE_SIDE.store(px.clamp(256, 1 << 15) as u32, std::sync::atomic::Ordering::Relaxed);
 }
 
+/// True for a Windows network path (`\\server\share\...`, `//server/share`, `\\?\UNC\...`,
+/// device paths other than drive letters). Opening one, even just to check that it exists, makes
+/// Windows sign in to that server with the user's credentials, which hands a password hash to
+/// whoever runs it; a show file or a replica could name any server. Always false elsewhere (other
+/// systems only reach shares the user mounted).
+pub fn is_network_path(path: &Path) -> bool {
+    cfg!(windows) && windows_network_path(&path.to_string_lossy())
+}
+
+/// [`is_network_path`] for a path written the Windows way (on any system, for tests).
+fn windows_network_path(s: &str) -> bool {
+    let s = s.replace('/', "\\");
+    // `\\?\C:\...`, `\\.\C:\...` and `\??\C:\...` are local; any other device or verbatim
+    // path (`\\?\UNC\`, `\\?\GLOBALROOT\...`) may reach the network.
+    for prefix in ["\\\\?\\", "\\\\.\\", "\\??\\"] {
+        if let Some(rest) = s.strip_prefix(prefix) {
+            let b = rest.as_bytes();
+            return !(b.len() >= 2 && b[0].is_ascii_alphabetic() && b[1] == b':');
+        }
+    }
+    s.starts_with("\\\\")
+}
+
+/// Refuse a [network path](is_network_path): media are opened from local disks (or shares mapped
+/// to a drive letter) only.
+pub fn check_local(path: &Path) -> anyhow::Result<()> {
+    if is_network_path(path) {
+        anyhow::bail!(
+            "{} is on a network share: OpenQ doesn't open \\\\server paths (Windows would send your login to that server). Map the share to a drive letter.",
+            path.display()
+        );
+    }
+    Ok(())
+}
+
 /// Largest texture side the renderer accepts, in pixels.
 pub fn max_texture_side() -> u32 {
     MAX_TEXTURE_SIDE.load(std::sync::atomic::Ordering::Relaxed)
@@ -329,6 +364,7 @@ fn load_poster(path: &Path, at: f64) -> anyhow::Result<Poster> {
 }
 
 fn probe_now(path: &Path) -> Result<MediaInfo, String> {
+    check_local(path).map_err(|e| format!("{e:#}"))?;
     let audio = || {
         decoder::probe(path)
             .map(|i| MediaInfo {
@@ -373,7 +409,8 @@ impl Prober {
         Arc::new_cyclic(|weak: &std::sync::Weak<Self>| {
             let w = weak.clone();
             let stat_jobs = pool::Pool::new("openq-stat", 8, move |path: PathBuf| {
-                let size = std::fs::metadata(&path).ok().filter(|m| m.is_file()).map(|m| m.len());
+                // A network path isn't even looked at (see `is_network_path`): it reads as missing.
+                let size = if is_network_path(&path) { None } else { std::fs::metadata(&path).ok().filter(|m| m.is_file()).map(|m| m.len()) };
                 if let Some(p) = w.upgrade() {
                     p.stats.lock().insert(path, (Some(size), std::time::Instant::now()));
                 }
@@ -505,9 +542,9 @@ pub struct Media {
     pub audio: Option<audio::AudioOutput>,
     /// Why audio isn't available.
     pub audio_error: Option<String>,
-    /// Video layers, if FFmpeg initialised.
+    /// Video layers (shown by the video output process), if FFmpeg initialised.
     #[cfg(feature = "video")]
-    pub video: Option<video::VideoOutput>,
+    pub video: Option<crate::vout::link::VideoLink>,
     /// Why video isn't available.
     pub video_error: Option<String>,
     /// Media-info cache.
@@ -599,7 +636,7 @@ impl Media {
             }
         };
         #[cfg(feature = "video")]
-        let (video, video_error) = match video::VideoOutput::new() {
+        let (video, video_error) = match crate::vout::link::VideoLink::new() {
             Ok(v) => (Some(v), None),
             Err(e) => {
                 log::error!("video unavailable: {e:#}");
@@ -651,12 +688,6 @@ impl Media {
             return a.elapsed(id);
         }
         None
-    }
-
-    /// Layers currently on stages, for the stage windows.
-    #[cfg(feature = "video")]
-    pub fn stage_layers(&self) -> Vec<video::StageLayer> {
-        self.video.as_ref().map(|v| v.stage_layers()).unwrap_or_default()
     }
 
     /// Release every player and the audio stream.
@@ -822,7 +853,7 @@ impl Media {
             #[cfg(feature = "video")]
             CueKind::Camera(c) => {
                 if let Some(v) = &mut self.video {
-                    v.update_live(cue.id, &video::camera_layer_params(c));
+                    v.update_camera(cue.id, c);
                 }
             }
             #[cfg(feature = "video")]
@@ -1256,6 +1287,19 @@ impl Backend for Media {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// Network paths are recognised in every spelling Windows accepts; local ones pass.
+    #[test]
+    fn windows_network_paths() {
+        for net in [r"\\server\share\a.wav", "//server/share/a.wav", r"\\?\UNC\server\share\a.wav", r"\\?\GLOBALROOT\Device\Mup\s\x",
+            r"\\.\UNC\server\x", r"\??\UNC\server\x", r"\\attacker@SSL\DavWWWRoot\x.png", r"/\server\x"] {
+            assert!(windows_network_path(net), "{net}");
+        }
+        for local in [r"C:\Show\a.wav", "D:/media/a.wav", r"\\?\C:\Show\a.wav", r"\\.\D:\a.wav", r"\Show\a.wav", "a.wav", "/home/u/a.wav", ""] {
+            assert!(!windows_network_path(local), "{local}");
+        }
+        assert_eq!(is_network_path(Path::new(r"\\server\share\a.wav")), cfg!(windows));
+    }
     use rosc::OscType;
 
     /// `Prober::stat` answers from its cache without touching the disk (the UI calls it per

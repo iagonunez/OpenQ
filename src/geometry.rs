@@ -39,6 +39,24 @@ impl Homography {
         }
     }
 
+    /// The inverse map as a 3×3 matrix (rows), taking quad points `(x, y, 1)` back to
+    /// `k·(u, v, 1)` with `k > 0` inside the quad. None for a degenerate quad.
+    pub fn inverse(&self) -> Option<[[f32; 3]; 3]> {
+        let m = [[self.a, self.b, self.c], [self.d, self.e, self.f], [self.g, self.h, 1.0]];
+        let cof = |r0: usize, r1: usize, c0: usize, c1: usize| m[r0][c0] * m[r1][c1] - m[r0][c1] * m[r1][c0];
+        let det = m[0][0] * cof(1, 2, 1, 2) - m[0][1] * cof(1, 2, 0, 2) + m[0][2] * cof(1, 2, 0, 1);
+        if !det.is_finite() || det.abs() < 1e-12 {
+            return None;
+        }
+        // Adjugate / det.
+        let adj = [
+            [cof(1, 2, 1, 2), -cof(0, 2, 1, 2), cof(0, 1, 1, 2)],
+            [-cof(1, 2, 0, 2), cof(0, 2, 0, 2), -cof(0, 1, 0, 2)],
+            [cof(1, 2, 0, 1), -cof(0, 2, 0, 1), cof(0, 1, 0, 1)],
+        ];
+        Some(adj.map(|r| r.map(|v| v / det)))
+    }
+
     /// Map unit-square coordinates (u, v) to the quad.
     pub fn map(&self, u: f32, v: f32) -> [f32; 2] {
         let w = self.g * u + self.h * v + 1.0;
@@ -134,6 +152,18 @@ mod tests {
 
     fn close(a: [f32; 2], b: [f32; 2]) -> bool {
         (a[0] - b[0]).abs() < 1e-4 && (a[1] - b[1]).abs() < 1e-4
+    }
+
+    #[test]
+    fn inverse_homography_maps_back() {
+        let h = Homography::square_to_quad([[0.1, 0.05], [0.9, 0.12], [0.8, 0.95], [0.05, 0.85]]);
+        let inv = h.inverse().unwrap();
+        for (u, v) in [(0.0, 0.0), (1.0, 0.0), (0.3, 0.7), (1.0, 1.0)] {
+            let [x, y] = h.map(u, v);
+            let q = inv.map(|r| r[0] * x + r[1] * y + r[2]);
+            assert!(q[2] > 0.0);
+            assert!(close([q[0] / q[2], q[1] / q[2]], [u, v]), "{u},{v}: {q:?}");
+        }
     }
 
     #[test]

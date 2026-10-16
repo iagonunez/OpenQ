@@ -37,7 +37,7 @@ impl PreviewText {
                 Some(p) if !self.frame.lock().planes.as_ref().is_some_and(|q| std::sync::Arc::ptr_eq(q, &p)) => {
                     let mut f = self.frame.lock();
                     let generation = f.generation.wrapping_add(1);
-                    *f = Frame { width: p.width, height: p.height, density: p.density, planes: Some(p), generation, data: Vec::new(), premultiplied: false };
+                    *f = Frame { width: p.width, height: p.height, density: p.density, planes: Some(p), generation, ..Default::default() };
                 }
                 Some(_) => {}
                 None => ctx.request_repaint_after(std::time::Duration::from_millis(15)),
@@ -134,13 +134,9 @@ impl App {
         self.show_preview = open;
     }
 
-    /// Texture and source size for the layer: the live frame while it plays, else a poster.
+    /// Texture and source size for the layer: a poster frame (the live picture is in the video
+    /// output process), or a stand-in for a camera.
     fn preview_texture(&mut self, ctx: &egui::Context, t: &Target) -> Result<Option<(egui::TextureId, [f32; 2])>, String> {
-        // Movies show their live frame; text is re-rendered here (its live texture is supersampled).
-        if let (Source::Poster(..) | Source::Camera(_), Some((tex, _))) = (&t.source, self.textures.get(&(t.layer, 0))) {
-            let s = tex.size();
-            return Ok(Some((tex.id(), [s[0] as f32, s[1] as f32])));
-        }
         let key = match &t.source {
             Source::Poster(p, at) => format!("{}@{at:.2}", p.display()),
             Source::Text(_) => return Ok(None),

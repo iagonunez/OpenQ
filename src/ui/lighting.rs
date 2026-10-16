@@ -263,7 +263,7 @@ fn issue_text(i: &PatchIssue) -> String {
 
 impl App {
     /// Pick effect files (`.oqfx`) and add them to the effects pool (outside the show lock: the
-    /// dialog blocks). Files are data only; their scripts don't run.
+    /// dialog blocks). Files are data only: no script comes with them ([`crate::light::fxfile`]).
     pub(super) fn import_effects(&mut self) {
         if !self.can_design() {
             return;

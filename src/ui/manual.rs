@@ -96,15 +96,35 @@ fn extract(dir: &Path) -> std::io::Result<PathBuf> {
     Ok(dir.join("index.html"))
 }
 
+/// Where the manual is written: the per-user settings folder. Not a fixed name in the shared
+/// temporary folder, where another user of the computer could have put links or their own pages
+/// first.
+fn manual_dir() -> anyhow::Result<PathBuf> {
+    let version = env!("CARGO_PKG_VERSION");
+    if let Some(d) = crate::remote::config_dir() {
+        return Ok(d.join("manual").join(version));
+    }
+    // No settings folder: a new folder of our own (creating it fails if the name is taken).
+    let dir = std::env::temp_dir().join(format!("openq-manual-{version}-{}", uuid::Uuid::new_v4().simple()));
+    #[allow(unused_mut)] // only Unix sets a mode
+    let mut b = std::fs::DirBuilder::new();
+    #[cfg(unix)]
+    std::os::unix::fs::DirBuilderExt::mode(&mut b, 0o700);
+    b.create(&dir)?;
+    Ok(dir)
+}
+
 /// Ask the operating system to open a file with its default application.
 pub(super) fn open_with_default_app(path: &Path) -> std::io::Result<()> {
+    // Absolute: a relative path (from a show file) could start with `-` and pass as an option.
+    let path = std::path::absolute(path)?;
     #[cfg(target_os = "windows")]
     let mut cmd = std::process::Command::new("explorer");
     #[cfg(target_os = "macos")]
     let mut cmd = std::process::Command::new("open");
     #[cfg(not(any(target_os = "windows", target_os = "macos")))]
     let mut cmd = std::process::Command::new("xdg-open");
-    cmd.arg(path).spawn().map(|_| ())
+    cmd.arg(&path).spawn().map(|_| ())
 }
 
 /// The manual page for a language code or POSIX locale name such as `es_ES.UTF-8` or `gl` (English otherwise).
@@ -118,7 +138,7 @@ fn page_for(locale: &str) -> &'static str {
 
 /// Extract the manual for this version and open it in the browser. Returns where it was written.
 pub(super) fn open() -> anyhow::Result<PathBuf> {
-    let dir = std::env::temp_dir().join(format!("openq-manual-{}", env!("CARGO_PKG_VERSION")));
+    let dir = manual_dir()?;
     extract(&dir).map_err(|e| anyhow::anyhow!("cannot write the manual to {}: {e}", dir.display()))?;
     let page = dir.join(page_for(crate::i18n::lang().code()));
     open_with_default_app(&page).map_err(|e| anyhow::anyhow!("cannot open a browser ({e}); the manual is at {}", page.display()))?;

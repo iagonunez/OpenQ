@@ -292,6 +292,8 @@ fn run(shared: &Shared, config: &InputConfig, port: u16) {
     let mut socket: Option<UdpSocket> = None;
     let mut next_open = Instant::now();
     let mut sources: Vec<Source> = Vec::new();
+    // Desks poll every few seconds; a few answers a second is plenty.
+    let mut poll_budget = crate::remote::discovery::Budget::new(10);
     let mut buf = vec![0u8; 1500];
     let mut merged = DmxFrame::default();
     let mut last_status = Instant::now();
@@ -325,7 +327,11 @@ fn run(shared: &Shared, config: &InputConfig, port: u16) {
         match sock.recv_from(&mut buf) {
             Ok((n, from)) => {
                 if config.protocol == InputProtocol::ArtNet && super::artnet::is_poll(&buf[..n]) {
-                    answer_poll(sock, config, from);
+                    // Replies are bigger than polls: capped, so forged polls can't use OpenQ to
+                    // flood someone else.
+                    if poll_budget.take() {
+                        answer_poll(sock, config, from);
+                    }
                 } else if take(config, &buf[..n], from, &mut sources) {
                     packets += 1;
                     dirty = true;

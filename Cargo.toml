@@ -27,6 +27,8 @@ sha2 = "0.10"
 getrandom = "0.2"
 midir = "0.11.1"
 parking_lot = "0.12.5"
+# Waits for wgpu device requests in the video output process.
+pollster = "0.4"
 rfd = "0.17.2"
 rosc = "0.11.4"
 rtrb = "0.4.0"

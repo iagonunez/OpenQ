@@ -180,6 +180,43 @@ fn pair_sync_control_and_revoke() {
     });
     link.send(ClientMsg::Subscribe { dmx: false });
 
+    // Network settings from a replica wait for the operator; the rest of the edit goes through.
+    {
+        let mut s = show.lock();
+        s.ws.cue_list.cues.push(Cue::new(CueKind::Network(openq::model::NetworkCue { host: "10.0.0.5".into(), ..Default::default() })));
+        s.edited();
+    }
+    let mut net = show.lock().ws.clone();
+    let n = net.cue_list.cues.len() - 1;
+    net.cue_list.cues[n].name = "Console".into();
+    if let CueKind::Network(c) = &mut net.cue_list.cues[n].kind {
+        c.host = "203.0.113.9".into();
+    }
+    net.lighting.outputs.push(Default::default());
+    link.send(ClientMsg::Edit(Box::new(net)));
+    wait_for("network change held", || (show.lock().network_requests.len() == 1).then_some(()));
+    {
+        let s = show.lock();
+        let cue = &s.ws.cue_list.cues[n];
+        assert_eq!(cue.name, "Console", "the rest of the edit applied");
+        assert!(matches!(&cue.kind, CueKind::Network(c) if c.host == "10.0.0.5"), "destination unchanged until allowed");
+        assert!(s.ws.lighting.outputs.is_empty());
+    }
+    let id = show.lock().network_requests[0].id;
+    show.lock().answer_network_request(id, true);
+    assert!(matches!(&show.lock().ws.cue_list.cues[n].kind, CueKind::Network(c) if c.host == "203.0.113.9"));
+    assert_eq!(show.lock().ws.lighting.outputs.len(), 1);
+
+    // A replica can't bring in media files.
+    let mut sneaky = show.lock().ws.clone();
+    sneaky.cue_list.cues.push(Cue::new(CueKind::Audio(openq::model::AudioCue { path: "/etc/shadow".into(), ..Default::default() })));
+    let cues_before = show.lock().ws.cue_list.cues.len();
+    link.send(ClientMsg::Edit(Box::new(sneaky)));
+    wait_for("media refused", || {
+        link.drain().into_iter().find_map(|m| matches!(m, ServerMsg::Refused(why) if why.contains("media")).then_some(()))
+    });
+    assert_eq!(show.lock().ws.cue_list.cues.len(), cues_before);
+
     // An edit on the main device that keeps the cue tree's shape reaches replicas as the changed
     // cue only; a replica that asks for a resync gets the whole workspace again.
     {

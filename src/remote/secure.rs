@@ -32,6 +32,7 @@ use sha2::{Digest, Sha256};
 use spake2::{Ed25519Group, Identity, Password, Spake2};
 use std::io::{Read, Write};
 use std::net::TcpStream;
+use std::time::Instant;
 use uuid::Uuid;
 
 /// Largest frame accepted.
@@ -43,7 +44,7 @@ const COMPRESS_FROM: usize = 64 << 10;
 /// Largest deflated message accepted (all parts together).
 const MAX_PACKED: usize = 512 << 20;
 /// Largest message accepted once inflated (a big rig's lighting design is a few hundred MB).
-const MAX_MESSAGE: u64 = 1 << 30;
+pub const MAX_MESSAGE: usize = 1 << 30;
 /// Frame kind: the rest is a whole JSON message.
 const KIND_PLAIN: u8 = 0;
 /// Frame kind: part of a deflated message, more follow.
@@ -52,6 +53,9 @@ const KIND_PART: u8 = 1;
 const KIND_LAST: u8 = 2;
 /// Largest frame accepted before the peer is authenticated.
 const MAX_HANDSHAKE_FRAME: usize = 4096;
+/// Longest a whole handshake may take: a peer that trickles bytes can't hold a connection (and
+/// one of the main device's few connection slots) open for longer.
+pub const HANDSHAKE_TIME: std::time::Duration = std::time::Duration::from_secs(10);
 
 fn write_frame(w: &mut impl Write, data: &[u8]) -> std::io::Result<()> {
     let len = u32::try_from(data.len()).map_err(|_| std::io::Error::other("frame too large"))?;
@@ -70,6 +74,47 @@ fn read_frame(r: &mut impl Read, max: usize) -> anyhow::Result<Vec<u8>> {
     let mut buf = vec![0u8; len];
     r.read_exact(&mut buf)?;
     Ok(buf)
+}
+
+/// Fill `buf` before `deadline` (the read timeout alone restarts with every byte that arrives).
+/// Running out of time is a [`std::io::ErrorKind::TimedOut`] error.
+fn read_exact_by(stream: &mut TcpStream, mut buf: &mut [u8], deadline: Instant) -> std::io::Result<()> {
+    use std::io::ErrorKind;
+    while !buf.is_empty() {
+        let left = deadline
+            .checked_duration_since(Instant::now())
+            .filter(|d| !d.is_zero())
+            .ok_or_else(|| std::io::Error::new(ErrorKind::TimedOut, "the handshake took too long"))?;
+        stream.set_read_timeout(Some(left))?;
+        match stream.read(buf) {
+            Ok(0) => return Err(ErrorKind::UnexpectedEof.into()),
+            Ok(n) => buf = &mut buf[n..],
+            Err(e) if e.kind() == ErrorKind::Interrupted => {}
+            Err(e) if matches!(e.kind(), ErrorKind::WouldBlock | ErrorKind::TimedOut) => {
+                return Err(std::io::Error::new(ErrorKind::TimedOut, "the handshake took too long"));
+            }
+            Err(e) => return Err(e),
+        }
+    }
+    Ok(())
+}
+
+/// A handshake frame, read before `deadline`.
+fn read_frame_by(stream: &mut TcpStream, deadline: Instant) -> std::io::Result<Vec<u8>> {
+    let mut len = [0u8; 4];
+    read_exact_by(stream, &mut len, deadline)?;
+    let len = u32::from_be_bytes(len) as usize;
+    if len > MAX_HANDSHAKE_FRAME {
+        return Err(std::io::Error::new(std::io::ErrorKind::InvalidData, format!("handshake frame of {len} bytes is too large")));
+    }
+    let mut buf = vec![0u8; len];
+    read_exact_by(stream, &mut buf, deadline)?;
+    Ok(buf)
+}
+
+/// True if a handshake failed because the peer ran out of time ([`HANDSHAKE_TIME`]).
+pub fn is_timeout(e: &anyhow::Error) -> bool {
+    e.downcast_ref::<std::io::Error>().is_some_and(|e| e.kind() == std::io::ErrorKind::TimedOut)
 }
 
 fn nonce(counter: u64) -> Nonce {
@@ -126,14 +171,18 @@ pub struct Receiver {
     stream: std::io::BufReader<TcpStream>,
     cipher: ChaCha20Poly1305,
     counter: u64,
+    /// Largest message accepted (JSON bytes, inflated), at most [`MAX_MESSAGE`].
+    limit: usize,
 }
 
 impl Receiver {
     /// Receive and decrypt one message; fails on any tampering, replay or reordering.
     pub fn recv<T: DeserializeOwned>(&mut self) -> anyhow::Result<T> {
+        let limit = self.limit;
         let mut packed: Vec<u8> = Vec::new();
         loop {
-            let sealed = read_frame(&mut self.stream, MAX_FRAME)?;
+            // A frame carries at most `limit` bytes of JSON (or of deflated JSON) plus its header and tag.
+            let sealed = read_frame(&mut self.stream, MAX_FRAME.min(limit + 64))?;
             let plain = self
                 .cipher
                 .decrypt(&nonce(self.counter), sealed.as_slice())
@@ -143,15 +192,15 @@ impl Receiver {
             match kind {
                 KIND_PLAIN if packed.is_empty() => return Ok(serde_json::from_slice(body)?),
                 KIND_PART | KIND_LAST => {
-                    if packed.len() + body.len() > MAX_PACKED {
+                    if packed.len() + body.len() > MAX_PACKED.min(limit) {
                         bail!("message too large");
                     }
                     packed.extend_from_slice(body);
                     if kind == KIND_LAST {
                         // Inflate with a cap, so a hostile peer can't exhaust memory.
                         let mut json = Vec::new();
-                        flate2::read::DeflateDecoder::new(packed.as_slice()).take(MAX_MESSAGE + 1).read_to_end(&mut json)?;
-                        if json.len() as u64 > MAX_MESSAGE {
+                        flate2::read::DeflateDecoder::new(packed.as_slice()).take(limit as u64 + 1).read_to_end(&mut json)?;
+                        if json.len() > limit {
                             bail!("message too large");
                         }
                         drop(packed);
@@ -161,6 +210,12 @@ impl Receiver {
                 _ => bail!("unexpected frame kind {kind}"),
             }
         }
+    }
+
+    /// Largest message `recv` accepts from now on (capped at [`MAX_MESSAGE`]): the main device
+    /// keeps it small for devices that can't edit, so they can't make it hold big messages.
+    pub fn set_limit(&mut self, bytes: usize) {
+        self.limit = bytes.min(MAX_MESSAGE);
     }
 
     /// Read timeout for `recv`.
@@ -276,7 +331,12 @@ fn channel(stream: TcpStream, send_key: [u8; 32], recv_key: [u8; 32]) -> anyhow:
     let reader = stream.try_clone()?;
     Ok((
         Sender { stream, cipher: ChaCha20Poly1305::new(Key::from_slice(&send_key)), counter: 0 },
-        Receiver { stream: std::io::BufReader::new(reader), cipher: ChaCha20Poly1305::new(Key::from_slice(&recv_key)), counter: 0 },
+        Receiver {
+            stream: std::io::BufReader::new(reader),
+            cipher: ChaCha20Poly1305::new(Key::from_slice(&recv_key)),
+            counter: 0,
+            limit: MAX_MESSAGE,
+        },
     ))
 }
 
@@ -287,9 +347,11 @@ pub fn client_handshake(
     hello: &Hello,
     secret_for: impl FnOnce(&ServerInfo) -> Result<Vec<u8>, String>,
 ) -> Result<(Sender, Receiver, ServerInfo), HandshakeError> {
+    let deadline = Instant::now() + HANDSHAKE_TIME;
+    let timeout = stream.read_timeout()?;
     let hello_bytes = serde_json::to_vec(hello).map_err(anyhow::Error::from)?;
     write_frame(&mut stream, &hello_bytes)?;
-    let reply_bytes = read_frame(&mut stream, MAX_HANDSHAKE_FRAME)?;
+    let reply_bytes = read_frame_by(&mut stream, deadline)?;
     let server = match serde_json::from_slice(&reply_bytes).context("bad handshake reply")? {
         HelloReply::Challenge { protocol, server_id, server_name } => {
             if protocol != PROTOCOL {
@@ -305,7 +367,7 @@ pub fn client_handshake(
     let (id_a, id_b) = identities(hello.client_id, server.id);
     let (spake, msg_a) = Spake2::<Ed25519Group>::start_a(&Password::new(&secret), &id_a, &id_b);
     write_frame(&mut stream, &msg_a)?;
-    let msg_b = read_frame(&mut stream, MAX_HANDSHAKE_FRAME)?;
+    let msg_b = read_frame_by(&mut stream, deadline)?;
     let key = spake.finish(&msg_b).map_err(|_| HandshakeError::Auth("bad key exchange message".into()))?;
     let transcript: [u8; 32] = Sha256::new()
         .chain_update(&hello_bytes)
@@ -316,7 +378,7 @@ pub fn client_handshake(
         .into();
     let keys = derive(&key, &transcript);
     write_frame(&mut stream, &mac(&keys.confirm_client, &transcript))?;
-    let verdict: Verdict = serde_json::from_slice(&read_frame(&mut stream, MAX_HANDSHAKE_FRAME)?).context("bad handshake verdict")?;
+    let verdict: Verdict = serde_json::from_slice(&read_frame_by(&mut stream, deadline)?).context("bad handshake verdict")?;
     match verdict {
         Verdict::Accepted { confirm } if mac_ok(&keys.confirm_server, &transcript, &confirm) => {}
         Verdict::Accepted { .. } => {
@@ -324,6 +386,7 @@ pub fn client_handshake(
         }
         Verdict::Refused(why) => return Err(HandshakeError::Auth(why)),
     }
+    stream.set_read_timeout(timeout)?;
     let (tx, rx) = channel(stream, keys.c2s, keys.s2c)?;
     Ok((tx, rx, server))
 }
@@ -334,7 +397,9 @@ pub fn server_handshake(
     server: &ServerInfo,
     secret_for: impl FnOnce(&Hello) -> Result<Vec<u8>, String>,
 ) -> Result<(Sender, Receiver, Hello), HandshakeError> {
-    let hello_bytes = read_frame(&mut stream, MAX_HANDSHAKE_FRAME)?;
+    let deadline = Instant::now() + HANDSHAKE_TIME;
+    let timeout = stream.read_timeout()?;
+    let hello_bytes = read_frame_by(&mut stream, deadline)?;
     let hello: Hello = serde_json::from_slice(&hello_bytes).context("bad hello")?;
     let refuse = |stream: &mut TcpStream, why: String| -> HandshakeError {
         let _ = write_frame(stream, &serde_json::to_vec(&HelloReply::Refused(why.clone())).unwrap_or_default());
@@ -352,7 +417,7 @@ pub fn server_handshake(
     write_frame(&mut stream, &reply_bytes)?;
     let (id_a, id_b) = identities(hello.client_id, server.id);
     let (spake, msg_b) = Spake2::<Ed25519Group>::start_b(&Password::new(&secret), &id_a, &id_b);
-    let msg_a = read_frame(&mut stream, MAX_HANDSHAKE_FRAME)?;
+    let msg_a = read_frame_by(&mut stream, deadline)?;
     write_frame(&mut stream, &msg_b)?;
     let key = spake.finish(&msg_a).map_err(|_| HandshakeError::Auth("bad key exchange message".into()))?;
     let transcript: [u8; 32] = Sha256::new()
@@ -363,7 +428,7 @@ pub fn server_handshake(
         .finalize()
         .into();
     let keys = derive(&key, &transcript);
-    let confirm = read_frame(&mut stream, MAX_HANDSHAKE_FRAME)?;
+    let confirm = read_frame_by(&mut stream, deadline)?;
     if !mac_ok(&keys.confirm_client, &transcript, &confirm) {
         let why = if hello.pairing { "Wrong pairing code" } else { "Authentication failed: pair this device again" };
         let _ = write_frame(&mut stream, &serde_json::to_vec(&Verdict::Refused(why.into())).unwrap_or_default());
@@ -371,6 +436,7 @@ pub fn server_handshake(
     }
     let verdict = Verdict::Accepted { confirm: mac(&keys.confirm_server, &transcript) };
     write_frame(&mut stream, &serde_json::to_vec(&verdict).map_err(anyhow::Error::from)?)?;
+    stream.set_read_timeout(timeout)?;
     let (tx, rx) = channel(stream, keys.s2c, keys.c2s)?;
     Ok((tx, rx, hello))
 }
@@ -435,6 +501,56 @@ mod tests {
         // Compressible: one part.
         tx.send(&vec![7u32; 1 << 20]).unwrap();
         assert_eq!(server.join().unwrap(), 1 << 20);
+    }
+
+    /// A peer that trickles bytes runs into the handshake's overall deadline, although each byte
+    /// arrives well within a read timeout.
+    #[test]
+    fn slow_handshakes_time_out() {
+        let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+        let addr = listener.local_addr().unwrap();
+        let slow = std::thread::spawn(move || {
+            let mut s = TcpStream::connect(addr).unwrap();
+            // A 256-byte frame, one byte at a time.
+            for b in [0, 0, 1, 0].into_iter().chain(std::iter::repeat(0)).take(24) {
+                if s.write_all(&[b]).is_err() {
+                    break;
+                }
+                std::thread::sleep(std::time::Duration::from_millis(50));
+            }
+        });
+        let (mut s, _) = listener.accept().unwrap();
+        s.set_read_timeout(Some(std::time::Duration::from_secs(5))).unwrap();
+        let t = Instant::now();
+        let e = read_frame_by(&mut s, Instant::now() + std::time::Duration::from_millis(300)).unwrap_err();
+        assert_eq!(e.kind(), std::io::ErrorKind::TimedOut);
+        assert!(is_timeout(&anyhow::Error::from(e)));
+        assert!(t.elapsed() < std::time::Duration::from_secs(1));
+        drop(s);
+        slow.join().unwrap();
+    }
+
+    /// A receiver refuses messages over its limit, plain or deflated.
+    #[test]
+    fn messages_over_the_limit_are_refused() {
+        let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+        let addr = listener.local_addr().unwrap();
+        let server = std::thread::spawn(move || {
+            let (s, _) = listener.accept().unwrap();
+            let info = ServerInfo { id: Uuid::new_v4(), name: "main".into() };
+            let (_tx, mut rx, _) = server_handshake(s, &info, |_| Ok(b"K".to_vec())).unwrap();
+            rx.set_limit(1000);
+            let small: String = rx.recv().unwrap();
+            let big = rx.recv::<String>().is_err();
+            (small, big)
+        });
+        let hello = Hello { protocol: PROTOCOL, client_id: Uuid::new_v4(), client_name: "tablet".into(), pairing: true };
+        let (mut tx, _rx, _) = client_handshake(TcpStream::connect(addr).unwrap(), &hello, |_| Ok(b"K".to_vec())).unwrap();
+        tx.send(&"x".repeat(10)).unwrap();
+        let _ = tx.send(&"y".repeat(1 << 20));
+        let (small, big) = server.join().unwrap();
+        assert_eq!(small, "x".repeat(10));
+        assert!(big, "a 1 MB message got through a 1000-byte limit");
     }
 
     #[test]

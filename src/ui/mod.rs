@@ -3,8 +3,6 @@
 mod about;
 mod animation;
 pub(crate) mod bench;
-#[cfg(feature = "video")]
-mod blend;
 mod code;
 mod debug;
 mod cue_list;
@@ -183,10 +181,8 @@ pub struct App {
     stage_open: HashSet<StageId>,
     stage_fullscreen: HashSet<StageId>,
     mapping_edit: HashSet<StageId>,
-    /// Displays a stage can be sent to, and the monitor index last applied to each stage window.
+    /// Displays a stage can be sent to.
     displays: Arc<Mutex<outputs::DisplayList>>,
-    #[cfg(feature = "video")]
-    stage_monitor: std::collections::HashMap<StageId, Option<usize>>,
     show_preview: bool,
     /// The user has dragged the inspector's edge; until then it keeps its default height.
     inspector_resized: bool,
@@ -211,11 +207,6 @@ pub struct App {
     settings_tab: SettingsTab,
     /// Cached audio device list for the settings window.
     devices: Option<Vec<DeviceEntry>>,
-    #[cfg(feature = "video")]
-    textures: stage::LayerTextures,
-    /// The wgpu renderer, for stage layers with a blend mode (None when headless).
-    #[cfg(feature = "video")]
-    gpu: Option<eframe::egui_wgpu::RenderState>,
     meters: Vec<f32>,
     status: Option<(String, Instant)>,
     /// The engine log entry shown in the status bar and when it appeared (hidden after
@@ -254,6 +245,9 @@ pub struct App {
     /// `OPENQ_DEBUG_SCRIPT` run and frame timings.
     debug_run: debug::DebugRun,
     debug_gos: u64,
+    /// `OPENQ_SCREENSHOT_STAGE`: the stage snapshot was asked for (false) / has arrived (true).
+    #[cfg(feature = "video")]
+    debug_stage_shot: Option<bool>,
     /// Autosave session and shows to recover after a crash.
     recovery: recovery::Recovery,
     /// Audio was reconnecting at the last frame (to announce changes).
@@ -281,8 +275,6 @@ impl App {
             stage_fullscreen: HashSet::new(),
             mapping_edit: HashSet::new(),
             displays: Default::default(),
-            #[cfg(feature = "video")]
-            stage_monitor: Default::default(),
             show_preview: false,
             inspector_resized: false,
             list_rename: None,
@@ -301,10 +293,6 @@ impl App {
             anim_edit: Default::default(),
             settings_tab: SettingsTab::General,
             devices: None,
-            #[cfg(feature = "video")]
-            textures: Default::default(),
-            #[cfg(feature = "video")]
-            gpu: None,
             meters: Vec::new(),
             status: None,
             log_tail: (0, String::new(), Instant::now()),
@@ -334,6 +322,8 @@ impl App {
             debug_t0: None,
             debug_run: Default::default(),
             debug_gos: 0,
+            #[cfg(feature = "video")]
+            debug_stage_shot: None,
             recovery: Default::default(),
             audio_reconnecting: false,
             view: Default::default(),
@@ -1692,10 +1682,22 @@ impl App {
                 ),
             }
             ui.add_space(10.0);
-            match &show.media.video_error {
+            #[cfg(feature = "video")]
+            let video_status = show.media.video.as_ref().map(|v| v.status());
+            #[cfg(not(feature = "video"))]
+            let video_status: Option<()> = None;
+            match (&show.media.video_error, video_status) {
                 _ if replica => {}
-                None => item(ui, icons::VIDEOCAM, t("video ready").into(), theme::TEXT_DIM),
-                Some(e) => item(ui, icons::VIDEOCAM, tr!("video: {e}", e), AMBER),
+                (Some(e), _) => item(ui, icons::VIDEOCAM, tr!("video: {e}", e), AMBER),
+                #[cfg(feature = "video")]
+                (None, Some(crate::vout::link::Status::Restarting(_))) => {
+                    item(ui, icons::VIDEOCAM, t("video output restarting…").into(), AMBER)
+                }
+                #[cfg(feature = "video")]
+                (None, Some(crate::vout::link::Status::Unavailable(why))) => {
+                    item(ui, icons::VIDEOCAM, tr!("video output unavailable: {why}", why), RED)
+                }
+                (None, _) => item(ui, icons::VIDEOCAM, t("video ready").into(), theme::TEXT_DIM),
             }
             ui.add_space(10.0);
             match (&self.osc, &self.osc_error) {
@@ -1953,15 +1955,9 @@ impl App {
                         .clicked()
                     {
                         self.stage_open.insert(st.id);
-                        let fs = !self.stage_fullscreen.remove(&st.id);
-                        if fs {
+                        if !self.stage_fullscreen.remove(&st.id) {
                             self.stage_fullscreen.insert(st.id);
                         }
-                        #[cfg(feature = "video")]
-                        ui.ctx().send_viewport_cmd_to(
-                            stage::viewport_id(st.id),
-                            egui::ViewportCommand::Fullscreen(fs),
-                        );
                     }
                     let mut editing = self.mapping_edit.contains(&st.id);
                     if ui
@@ -2277,8 +2273,9 @@ impl App {
     /// `OPENQ_SCREENSHOT_OFL`);
     /// `OPENQ_SCREENSHOT_MODE=show` starts in show mode; `OPENQ_SCREENSHOT_INLINE=1` opens an
     /// in-place pre-wait editor on the selected cue.
-    /// `OPENQ_SCREENSHOT_STAGE=1` embeds stage windows in the main window for the capture
-    /// (`OPENQ_SCREENSHOT_MAPPING=1` turns on the first stage's mapping test pattern).
+    /// `OPENQ_SCREENSHOT_STAGE=<n>` also saves stage n's output (1 = the first), as the video
+    /// output process draws it, next to the capture (`<path>.stage.png`;
+    /// `OPENQ_SCREENSHOT_MAPPING=1` turns on the first stage's mapping test pattern).
     fn debug_screenshot(&mut self, ctx: &egui::Context, show: &mut Show) {
         let Some(path) = std::env::var_os("OPENQ_SCREENSHOT") else {
             return;
@@ -2402,6 +2399,22 @@ impl App {
                 self.remote.window = true;
                 self.remote.tab = if t == "connect" { remote::RemoteTab::Connect } else { remote::RemoteTab::Share };
             }
+            if std::env::var_os("OPENQ_SCREENSHOT_NETREQ").is_some() {
+                // A replica's held network change, as the operator sees it.
+                use crate::remote::netguard::{HeldCue, NetworkChange};
+                let change = NetworkChange {
+                    cues: vec![HeldCue {
+                        id: crate::model::CueId::new_v4(),
+                        label: "12 \u{201c}Lights GO\u{201d}".into(),
+                        before: Some(("10.0.0.5".into(), 53000)),
+                        wanted: ("203.0.113.9".into(), 9000),
+                    }],
+                    outputs: Some(vec![crate::light::dmx::OutputConfig::default()]),
+                    inputs: None,
+                };
+                show.request_network_change("Tablet", change.clone());
+                show.request_network_change("Tablet", change);
+            }
             if std::env::var_os("OPENQ_SCREENSHOT_ABOUT").is_some() {
                 self.show_about = true;
             }
@@ -2434,11 +2447,26 @@ impl App {
             self.control(show, Command::Go);
             self.debug_gos += 1;
         }
-        if std::env::var_os("OPENQ_SCREENSHOT_STAGE").is_some() {
-            // Render stage windows embedded in the main window so one capture shows them.
-            ctx.set_embed_viewports(true);
+        #[cfg(not(feature = "video"))]
+        let stage_ready = true;
+        #[cfg(feature = "video")]
+        let mut stage_ready = true;
+        #[cfg(feature = "video")]
+        if std::env::var_os("OPENQ_SCREENSHOT_STAGE").is_some() && self.frame_count > 2 && elapsed > gos as f64 * 0.4 + 2.0 {
+            // The output is drawn by the video process: it saves its own picture.
+            if self.debug_stage_shot.is_none()
+                && let Some(v) = show.media.video.as_mut()
+                && let n = std::env::var("OPENQ_SCREENSHOT_STAGE").ok().and_then(|n| n.parse::<usize>().ok()).unwrap_or(1)
+                && let Some(st) = show.ws.stages.get(n.saturating_sub(1))
+            {
+                let mut p = std::path::PathBuf::from(&path).into_os_string();
+                p.push(".stage.png");
+                v.snapshot(st.id, p.into());
+                self.debug_stage_shot = Some(false);
+            }
+            stage_ready = self.debug_stage_shot != Some(false) || elapsed > gos as f64 * 0.4 + 12.0;
         }
-        if self.frame_count > 2 && elapsed > gos as f64 * 0.4 + 2.0 {
+        if self.frame_count > 2 && elapsed > gos as f64 * 0.4 + 2.0 && stage_ready {
             ctx.send_viewport_cmd(egui::ViewportCommand::Screenshot(Default::default()));
         }
         let shot = ctx.input(|i| {
@@ -2613,10 +2641,6 @@ impl eframe::App for App {
     }
 
     fn ui(&mut self, ui: &mut egui::Ui, frame: &mut eframe::Frame) {
-        #[cfg(feature = "video")]
-        if self.gpu.is_none() {
-            self.gpu = frame.wgpu_render_state().cloned();
-        }
         self.draw(ui, frame.info().cpu_usage);
         #[cfg(target_os = "macos")]
         native_menu::place_window_buttons(frame, MAC_TITLE_H as f64);
@@ -2631,8 +2655,6 @@ impl App {
         let ctx = ui.ctx().clone();
         media::set_max_texture_side(ctx.input(|i| i.max_texture_side));
         let show_arc = self.show.clone();
-        #[cfg(feature = "video")]
-        let stage_input: Option<(Vec<crate::model::Stage>, Vec<media::video::StageLayer>)>;
         {
             let mut guard = show_arc.lock();
 
@@ -2774,6 +2796,7 @@ impl App {
             #[cfg(feature = "video")]
             self.geometry_preview(&ctx, show);
             self.remote_window(&ctx, show);
+            self.network_requests_window(&ctx, show);
             self.playback_window(&ctx, show);
             self.about_window(&ctx);
             // One centred window at a time: the language first, then lost work.
@@ -2789,16 +2812,9 @@ impl App {
             self.lighting_frame(show);
             self.poll_fixture_imports(show);
 
-            // Stage windows are drawn after the lock is released, from this snapshot.
+            // The video output process draws the stage windows; tell it which to show.
             #[cfg(feature = "video")]
-            let video_active = {
-                let layers = show.media.stage_layers();
-                let active = !layers.is_empty();
-                stage_input = Some((show.ws.stages.clone(), layers));
-                active
-            };
-            #[cfg(not(feature = "video"))]
-            let video_active = false;
+            self.stages(&ctx, show);
 
             let hovering = ctx.input(|i| !i.raw.hovered_files.is_empty());
             if hovering {
@@ -2830,11 +2846,7 @@ impl App {
             }
 
             if show.engine.is_active() {
-                ctx.request_repaint_after(if video_active {
-                    Duration::from_millis(16)
-                } else {
-                    Duration::from_millis(33)
-                });
+                ctx.request_repaint_after(Duration::from_millis(33));
             } else {
                 ctx.request_repaint_after(Duration::from_millis(100));
             }
@@ -2843,19 +2855,6 @@ impl App {
                 ctx.send_viewport_cmd(egui::ViewportCommand::CancelClose);
                 self.discard_prompt.get_or_insert(Discarding::Quit);
                 ctx.request_repaint();
-            }
-        }
-        #[cfg(feature = "video")]
-        if let Some((stages, layers)) = stage_input {
-            let moved = self.stages(&ctx, stages, layers);
-            if !moved.is_empty() {
-                let mut show = self.show.lock();
-                for (id, corners) in moved {
-                    if let Some(s) = show.ws.stages.iter_mut().find(|s| s.id == id) {
-                        s.corners = corners;
-                    }
-                }
-                show.edited();
             }
         }
         self.run_deferred(&ctx);

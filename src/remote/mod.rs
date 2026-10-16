@@ -12,12 +12,21 @@
 //!   authenticated with ChaCha20-Poly1305, using separate keys per direction.
 //! * The main device gives each paired device a role (view / control / edit) and enforces it on
 //!   every message. Removing a device drops its connection at once.
-//! * Repeated failures from one address block it for a while.
+//! * Repeated failures from one address block it for a while; so do handshakes that don't finish
+//!   within [`secure::HANDSHAKE_TIME`]. One address holds at most a few connections at a time.
+//! * Devices that can't edit may only send small messages. Edits are checked by [`vet`] before
+//!   they are taken: no new media paths (a replica can't reach files the show doesn't already
+//!   use), finite numbers of sane size, unique cue ids. Stage outputs (displays) stay the main
+//!   device's choice. Waveform requests are worked through one at a time per connection.
+//! * Network settings in an edit (Network cue destinations, DMX outputs and inputs) are held
+//!   back until the main device's operator allows them ([`netguard`]).
 
 pub mod client;
 pub mod discovery;
+pub mod netguard;
 pub mod secure;
 pub mod server;
+pub mod vet;
 
 use crate::control::Command;
 use crate::engine::InstanceSnapshot;
@@ -162,6 +171,25 @@ pub fn config_dir() -> Option<PathBuf> {
         .map(|d| d.join("openq"))
 }
 
+/// Create the settings folder if it isn't there. A folder OpenQ makes (device tokens, show
+/// autosaves, logs, crash reports) is readable by this user only (Unix).
+pub fn create_config_dir(dir: &std::path::Path) -> std::io::Result<()> {
+    if dir.is_dir() {
+        return Ok(());
+    }
+    if let Some(parent) = dir.parent() {
+        std::fs::create_dir_all(parent)?;
+    }
+    #[allow(unused_mut)] // only Unix sets a mode
+    let mut b = std::fs::DirBuilder::new();
+    #[cfg(unix)]
+    std::os::unix::fs::DirBuilderExt::mode(&mut b, 0o700);
+    match b.create(dir) {
+        Err(e) if e.kind() == std::io::ErrorKind::AlreadyExists => Ok(()),
+        r => r,
+    }
+}
+
 impl RemoteConfig {
     fn path() -> Option<PathBuf> {
         config_dir().map(|d| d.join("remote.json"))
@@ -190,7 +218,7 @@ impl RemoteConfig {
         use std::io::Write;
         let path = Self::path().ok_or_else(|| anyhow::anyhow!("no config directory"))?;
         let dir = path.parent().expect("config path has a parent");
-        std::fs::create_dir_all(dir)?;
+        create_config_dir(dir)?;
         let tmp = path.with_extension("json.tmp");
         let mut opts = std::fs::OpenOptions::new();
         opts.write(true).create(true).truncate(true);

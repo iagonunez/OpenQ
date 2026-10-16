@@ -22,6 +22,12 @@ const HOLD_LIMIT: Duration = Duration::from_secs(5);
 /// Name of the light thread.
 pub const THREAD: &str = "openq-light";
 
+/// A release fade as given by OSC, a surface or a replica, made safe: not negative, at most an
+/// hour, and 0 for NaN.
+fn fade_time(secs: f64) -> f64 {
+    if secs.is_nan() { 0.0 } else { secs.clamp(0.0, 3600.0) }
+}
+
 /// A command for the light thread.
 pub enum LightCommand {
     /// A recompile started: hold GOs until its show arrives (keeps their order with the edit).
@@ -259,16 +265,19 @@ impl LightEngine {
 
     /// Fade a sequence out.
     pub fn release(&self, seq: SequenceId, fade: f64, at: Instant) {
-        self.send(LightCommand::Release { seq, fade, at });
+        self.send(LightCommand::Release { seq, fade: fade_time(fade), at });
     }
 
     /// Fade every sequence out.
     pub fn release_all(&self, fade: f64, at: Instant) {
-        self.send(LightCommand::ReleaseAll { fade, at });
+        self.send(LightCommand::ReleaseAll { fade: fade_time(fade), at });
     }
 
     /// Sequence master level.
     pub fn set_level(&mut self, seq: SequenceId, level: f32) {
+        if !level.is_finite() {
+            return;
+        }
         let level = level.clamp(0.0, 1.0);
         self.masters.levels.insert(seq, level);
         self.send(LightCommand::Level(seq, level));
@@ -276,6 +285,9 @@ impl LightEngine {
 
     /// Grand master.
     pub fn set_grand_master(&mut self, level: f32) {
+        if !level.is_finite() {
+            return;
+        }
         self.masters.grand_master = level.clamp(0.0, 1.0);
         self.send(LightCommand::GrandMaster(self.masters.grand_master));
     }
@@ -293,6 +305,9 @@ impl LightEngine {
 
     /// Tempo for effects that follow it.
     pub fn set_tempo(&mut self, bpm: f32) {
+        if !bpm.is_finite() {
+            return;
+        }
         self.masters.bpm = bpm.clamp(1.0, 999.0);
         self.send(LightCommand::Tempo(self.masters.bpm));
     }

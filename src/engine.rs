@@ -175,8 +175,17 @@ pub struct InstanceSnapshot {
     pub parent: Option<CueId>,
 }
 
+/// Longest time the engine schedules, seconds (about 30 years).
+const MAX_SECS: f64 = 1e9;
+
+/// `secs` as a duration that can't panic or overflow clock arithmetic: negative and NaN give 0,
+/// anything huge (from a damaged show file or a replica) is capped at about 30 years.
+pub fn duration(secs: f64) -> Duration {
+    Duration::from_secs_f64(if secs.is_nan() { 0.0 } else { secs.clamp(0.0, MAX_SECS) })
+}
+
 fn before(t: Instant, secs: f64) -> Instant {
-    t.checked_sub(Duration::from_secs_f64(secs.max(0.0))).unwrap_or(t)
+    t.checked_sub(duration(secs)).unwrap_or(t)
 }
 
 /// Seconds from `now` until `t` (negative if `t` is in the past).
@@ -185,7 +194,7 @@ fn secs_between(now: Instant, t: Instant) -> f64 {
 }
 
 fn after(t: Instant, secs: f64) -> Instant {
-    t + Duration::from_secs_f64(secs.max(0.0))
+    t.checked_add(duration(secs)).unwrap_or(t)
 }
 
 /// The cue playback state machine. Pure logic: all media work goes through a [`Backend`].
@@ -1006,6 +1015,19 @@ fn preload_set(ws: &Workspace, seeds: &[CueId]) -> Vec<CueId> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// Wild times (a damaged show file, a replica's edit) neither panic nor overflow the clock.
+    #[test]
+    fn wild_times_are_safe() {
+        let now = Instant::now();
+        for s in [f64::NAN, f64::INFINITY, f64::NEG_INFINITY, -5.0, 1e300, f64::MAX] {
+            let _ = (after(now, s), before(now, s), duration(s));
+        }
+        assert_eq!(duration(f64::NAN), Duration::ZERO);
+        assert_eq!(duration(-1.0), Duration::ZERO);
+        assert_eq!(duration(1e300), Duration::from_secs_f64(MAX_SECS));
+        assert!(after(now, 1e300) > now + Duration::from_secs(1 << 20));
+    }
     use crate::model::{ContinueMode, CueKind, FadeCue, KindTag};
 
     #[derive(Default)]

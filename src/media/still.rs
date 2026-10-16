@@ -42,18 +42,57 @@ fn svg_fonts() -> Arc<resvg::usvg::fontdb::Database> {
     .clone()
 }
 
+/// Rasterise SVG markup made by OpenQ itself (the mapping test pattern and pins) at `w`×`h`
+/// pixels. Returns premultiplied RGBA. The markup reaches no files: no linked pictures.
+pub fn render_svg_markup(svg: &str, w: u32, h: u32) -> anyhow::Result<Vec<u8>> {
+    use resvg::usvg;
+    let opt = usvg::Options {
+        fontdb: svg_fonts(),
+        image_href_resolver: usvg::ImageHrefResolver { resolve_data: Box::new(|_, _, _| None), resolve_string: Box::new(|_, _| None) },
+        ..Default::default()
+    };
+    let tree = usvg::Tree::from_str(svg, &opt).map_err(|e| anyhow!("bad SVG: {e}"))?;
+    let mut pixmap = resvg::tiny_skia::Pixmap::new(w.max(1), h.max(1)).context("picture too large")?;
+    let size = tree.size();
+    let t = resvg::tiny_skia::Transform::from_scale(w as f32 / size.width().max(1.0), h as f32 / size.height().max(1.0));
+    resvg::render(&tree, t, &mut pixmap.as_mut());
+    Ok(pixmap.take())
+}
+
+/// Largest SVG file read, and largest picture an SVG may link to.
+const MAX_SVG_FILE: u64 = 64 << 20;
+
+/// True for a regular file of at most `max` bytes (not a device such as `/dev/zero`, which would
+/// be read forever, nor a [network path](super::is_network_path)).
+fn small_file(path: &Path, max: u64) -> bool {
+    !super::is_network_path(path) && std::fs::metadata(path).is_ok_and(|m| m.is_file() && m.len() <= max)
+}
+
 fn parse_svg(path: &Path) -> anyhow::Result<resvg::usvg::Tree> {
+    use resvg::usvg;
+    if !small_file(path, MAX_SVG_FILE) {
+        anyhow::bail!("{} is not an SVG file of at most {} MB", path.display(), MAX_SVG_FILE >> 20);
+    }
     let data = std::fs::read(path).with_context(|| format!("cannot read {}", path.display()))?;
-    let mut opt = resvg::usvg::Options { resources_dir: path.parent().map(Path::to_path_buf), ..Default::default() };
+    // Linked pictures load like usvg's own resolver does, but only small regular files.
+    let resolve_file = usvg::ImageHrefResolver::default_string_resolver();
+    let image_href_resolver = usvg::ImageHrefResolver {
+        resolve_data: usvg::ImageHrefResolver::default_data_resolver(),
+        resolve_string: Box::new(move |href: &str, opts: &usvg::Options| {
+            small_file(&opts.get_abs_path(Path::new(href)), MAX_SVG_FILE).then(|| resolve_file(href, opts)).flatten()
+        }),
+    };
+    let mut opt = usvg::Options { resources_dir: path.parent().map(Path::to_path_buf), image_href_resolver, ..Default::default() };
     // Only pay for the system font scan when the drawing has text.
     if data.windows(5).any(|w| w == b"<text") || data.starts_with(&[0x1f, 0x8b]) {
         opt.fontdb = svg_fonts();
     }
-    resvg::usvg::Tree::from_data(&data, &opt).map_err(|e| anyhow!("cannot read SVG {}: {e}", path.display()))
+    usvg::Tree::from_data(&data, &opt).map_err(|e| anyhow!("cannot read SVG {}: {e}", path.display()))
 }
 
 /// Pixel size of an image (an SVG's own size, rounded).
 pub fn dimensions(path: &Path) -> anyhow::Result<(u32, u32)> {
+    super::check_local(path)?;
     if is_svg(path) {
         let s = parse_svg(path)?.size();
         return Ok((s.width().round().max(1.0) as u32, s.height().round().max(1.0) as u32));
@@ -65,6 +104,7 @@ pub fn dimensions(path: &Path) -> anyhow::Result<(u32, u32)> {
 /// to fit the GPU's largest texture ([`super::max_texture_side`]): a bigger bitmap is scaled down
 /// and keeps covering the same stage area (its density drops below 1).
 pub fn load(path: &Path, svg_scale: f32) -> anyhow::Result<Still> {
+    super::check_local(path)?;
     if !is_svg(path) {
         let img = image::open(path).with_context(|| format!("cannot read image {}", path.display()))?;
         let source_size = [img.width(), img.height()];
@@ -102,6 +142,7 @@ pub fn load(path: &Path, svg_scale: f32) -> anyhow::Result<Still> {
 
 /// A still scaled down so neither side exceeds `max_side` (previews).
 pub fn thumbnail(path: &Path, max_side: u32) -> anyhow::Result<Still> {
+    super::check_local(path)?;
     if is_svg(path) {
         let (w, h) = dimensions(path)?;
         let mut s = load(path, max_side as f32 / w.max(h) as f32)?;

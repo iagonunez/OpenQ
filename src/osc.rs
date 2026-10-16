@@ -16,6 +16,12 @@
 //!
 //! Any other address can be mapped in the show's control surface settings
 //! ([`crate::surface`]); learn mode takes the next address received.
+//!
+//! OSC has no login, so everything received is checked before it reaches the show
+//! ([`sanitize`]): plain addresses only (printable ASCII, no patterns), a few numeric or boolean
+//! arguments, and only the addresses above or mapped in the show (anything else is refused).
+//! Messages beyond [`MAX_RATE`] a second are dropped, and warnings about refused messages are
+//! rate-limited too, so a flood can neither hold the show nor fill the error log.
 
 use crate::show::SharedShow;
 use std::net::UdpSocket;
@@ -26,6 +32,16 @@ use std::time::{Duration, Instant};
 /// How long the listener blocks on the socket between checks of its stop flag (bounds how long
 /// dropping an [`OscServer`] waits).
 const POLL: Duration = Duration::from_millis(50);
+/// Longest address taken.
+pub const MAX_ADDRESS: usize = 128;
+/// Most arguments in one message.
+pub const MAX_ARGS: usize = 4;
+/// Messages handled per second at most (a fader sends tens); the rest are dropped.
+pub const MAX_RATE: u32 = 500;
+/// Messages taken from one packet (bundles included).
+const MAX_PER_PACKET: usize = 32;
+/// Warnings about refused messages written per minute at most.
+const MAX_WARNINGS: u32 = 20;
 
 /// A running OSC listener. Dropping it stops the thread and waits for it, so the port is free
 /// again (to re-enable or move the listener) as soon as the drop returns.
@@ -61,24 +77,40 @@ impl OscServer {
         let stop2 = stop.clone();
         let thread = std::thread::Builder::new().name("openq-osc".into()).spawn(move || {
             let mut buf = [0u8; rosc::decoder::MTU];
+            let mut rate = crate::remote::discovery::Budget::new(MAX_RATE);
+            let mut warnings = Warnings::default();
             while !stop2.load(Ordering::Acquire) {
                 let Ok((n, from)) = sock.recv_from(&mut buf) else { continue };
                 match rosc::decoder::decode_udp(&buf[..n]) {
                     Ok((_, packet)) => {
                         let mut msgs = Vec::new();
                         flatten(packet, &mut msgs);
+                        if msgs.len() > MAX_PER_PACKET {
+                            warnings.warn(|| format!("OSC packet from {from} with {} messages refused", msgs.len()));
+                            continue;
+                        }
                         for m in msgs {
+                            if !rate.take() {
+                                warnings.warn(|| format!("OSC from {from}: more than {MAX_RATE} messages a second, dropping"));
+                                continue;
+                            }
+                            // Address shown escaped: it comes from anyone on the network.
+                            let shown = m.addr.chars().take(MAX_ADDRESS).collect::<String>().escape_debug().to_string();
+                            if let Err(e) = sanitize(&m) {
+                                warnings.warn(|| format!("OSC \"{shown}\" from {from} refused: {e}"));
+                                continue;
+                            }
                             // A failure handling one message must not end the listener.
                             let res = crate::recovery::catch(|| handle_message(&show, &hub, &m).map_err(anyhow::Error::msg))
                                 .map_err(|e| format!("{e:#}"));
                             match res {
-                                Ok(()) => log::info!("OSC {} from {from}", m.addr),
-                                Err(e) => log::warn!("OSC {} from {from}: {e}", m.addr),
+                                Ok(()) => log::info!("OSC {shown} from {from}"),
+                                Err(e) => warnings.warn(|| format!("OSC {shown} from {from}: {e}")),
                             }
                         }
                         repaint();
                     }
-                    Err(e) => log::warn!("bad OSC packet from {from}: {e:?}"),
+                    Err(e) => warnings.warn(|| format!("bad OSC packet from {from}: {e:?}")),
                 }
             }
         })?;
@@ -94,17 +126,79 @@ fn flatten(p: rosc::OscPacket, out: &mut Vec<rosc::OscMessage>) {
     }
 }
 
-/// The first argument as a value (numbers and booleans).
+/// Warnings written at most [`MAX_WARNINGS`] a minute (they go to the error log file).
+struct Warnings {
+    window: Instant,
+    count: u32,
+}
+
+impl Default for Warnings {
+    fn default() -> Self {
+        Self { window: Instant::now(), count: 0 }
+    }
+}
+
+impl Warnings {
+    fn warn(&mut self, msg: impl FnOnce() -> String) {
+        if self.window.elapsed() >= Duration::from_secs(60) {
+            if self.count > MAX_WARNINGS {
+                log::warn!("OSC: {} more refused messages were not logged", self.count - MAX_WARNINGS);
+            }
+            self.window = Instant::now();
+            self.count = 0;
+        }
+        self.count += 1;
+        if self.count <= MAX_WARNINGS {
+            log::warn!("{}", msg());
+        } else if self.count == MAX_WARNINGS + 1 {
+            log::warn!("OSC: too many refused messages, the rest of this minute's aren't logged");
+        }
+    }
+}
+
+/// Check a received message before anything acts on it: a plain address (`/` then printable
+/// ASCII, at most [`MAX_ADDRESS`] long, no spaces, no empty parts, no OSC patterns such as `*`
+/// or `{a,b}`), and at most [`MAX_ARGS`] arguments that are finite numbers, booleans or nil.
+/// Whether the address means anything is up to [`handle_message`], which refuses unknown ones.
+pub fn sanitize(m: &rosc::OscMessage) -> Result<(), &'static str> {
+    use rosc::OscType as T;
+    let a = &m.addr;
+    if !a.starts_with('/') || a.len() < 2 || a.len() > MAX_ADDRESS {
+        return Err("bad address length or start");
+    }
+    if !a.bytes().all(|b| b.is_ascii_graphic() && !b"#*,?[]{}\\".contains(&b)) {
+        return Err("address has characters that aren't allowed");
+    }
+    if a.contains("//") || a.ends_with('/') {
+        return Err("address has an empty part");
+    }
+    if m.args.len() > MAX_ARGS {
+        return Err("too many arguments");
+    }
+    for arg in &m.args {
+        match arg {
+            T::Int(_) | T::Long(_) | T::Bool(_) | T::Nil => {}
+            T::Float(f) if f.is_finite() => {}
+            T::Double(d) if d.is_finite() => {}
+            T::Float(_) | T::Double(_) => return Err("argument is not a finite number"),
+            _ => return Err("only numbers and booleans are taken as arguments"),
+        }
+    }
+    Ok(())
+}
+
+/// The first argument as a value (numbers and booleans; NaN and infinities are dropped).
 fn value(m: &rosc::OscMessage) -> Option<f32> {
     use rosc::OscType as T;
-    match m.args.first()? {
+    let v = match m.args.first()? {
         T::Float(f) => Some(*f),
         T::Double(d) => Some(*d as f32),
         T::Int(i) => Some(*i as f32),
         T::Long(l) => Some(*l as f32),
         T::Bool(b) => Some(*b as u8 as f32),
         _ => None,
-    }
+    };
+    v.filter(|v| v.is_finite())
 }
 
 /// Apply one OSC message: learn mode first, then the fixed addresses, then the built-in
@@ -173,6 +267,32 @@ pub fn handle(show: &SharedShow, addr: &str) -> Result<(), String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// Only plain addresses with a few numeric arguments get through.
+    #[test]
+    fn messages_are_sanitized() {
+        use rosc::OscType as T;
+        let msg = |addr: &str, args: Vec<T>| rosc::OscMessage { addr: addr.into(), args };
+        for ok in [msg("/go", vec![]), msg("/cue/12.5/start", vec![]), msg("/light/executor/3/level", vec![T::Float(0.5)])] {
+            assert_eq!(sanitize(&ok), Ok(()), "{}", ok.addr);
+        }
+        for bad in [
+            msg("go", vec![]),
+            msg("/", vec![]),
+            msg("/cue/*/start", vec![]),
+            msg("/cue/{1,2}/start", vec![]),
+            msg("/go\n/stop", vec![]),
+            msg("/go now", vec![]),
+            msg("/cue//start", vec![]),
+            msg(&format!("/{}", "a".repeat(MAX_ADDRESS)), vec![]),
+            msg("/light/grandmaster", vec![T::Float(f32::NAN)]),
+            msg("/light/grandmaster", vec![T::String("1".into())]),
+            msg("/light/grandmaster", vec![T::Blob(vec![0; 100])]),
+            msg("/go", vec![T::Int(1); MAX_ARGS + 1]),
+        ] {
+            assert!(sanitize(&bad).is_err(), "{:?}", bad.addr);
+        }
+    }
 
     /// Built-in lighting addresses work without mappings; unknown ones are refused.
     #[test]

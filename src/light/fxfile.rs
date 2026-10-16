@@ -1,9 +1,10 @@
 //! Effect files (`.oqfx`): one effect as JSON, to share effects between shows and users.
 //!
-//! A file holds the effect's parameters and, for custom effects, the generated table and the
-//! script that made it. Files are plain data: reading one never runs its script (that only
-//! happens in the sandbox when someone presses Run). Everything read is checked and clamped by
-//! [`sanitize`], which also checks what scripts return.
+//! A file holds the effect's parameters and, for custom effects, the generated table: plain data,
+//! never code. The Python script that made a table stays in the show it was written in; it is
+//! left out when an effect is written to a file ([`write()`]) and dropped from anything read
+//! ([`read`]), older files included. Scripts only run in the sandbox, from the script editor.
+//! Everything read is checked and clamped by [`sanitize`], which also checks what scripts return.
 //!
 //! The effect library is the folder `<config>/effects` ([`EffectLibrary`]): effects saved there
 //! are offered in every show.
@@ -43,9 +44,9 @@ impl Default for EffectFile {
     }
 }
 
-/// The file for an effect.
+/// The file for an effect: its data without the script (and the script's settings).
 pub fn write(effect: &Effect, author: &str, description: &str) -> String {
-    let mut effect = effect.clone();
+    let mut effect = without_script(effect.clone());
     effect.id = 0;
     let f = EffectFile { openq_effect: FORMAT, author: author.into(), description: description.into(), effect };
     serde_json::to_string_pretty(&f).expect("effects serialize")
@@ -63,10 +64,17 @@ pub fn read(text: &str) -> anyhow::Result<EffectFile> {
     if f.openq_effect > FORMAT {
         bail!("made by a newer OpenQ (format {}); update OpenQ to read it", f.openq_effect);
     }
-    f.effect = sanitize(f.effect)?;
+    f.effect = without_script(sanitize(f.effect)?);
     f.author = clip(&f.author, 200);
     f.description = clip(&f.description, 4000);
     Ok(f)
+}
+
+/// An effect as data only: no script, and none of the script's settings (they only feed a run).
+pub fn without_script(mut e: Effect) -> Effect {
+    e.script = String::new();
+    e.params = Vec::new();
+    e
 }
 
 /// Check an effect from outside (a file or a script): the table must be valid, parameters are
@@ -208,8 +216,9 @@ mod tests {
     #[test]
     fn roundtrip() {
         let text = write(&custom(), "Me", "A two-step chase");
+        assert!(!text.contains("import openq"), "files hold no script");
         let f = read(&text).unwrap();
-        assert_eq!(f.effect, Effect { id: 0, ..custom() });
+        assert_eq!(f.effect, Effect { id: 0, script: String::new(), ..custom() });
         assert_eq!((f.author.as_str(), f.description.as_str()), ("Me", "A two-step chase"));
         let plain = Effect { shape: Shape::Square, ..Default::default() };
         assert_eq!(read(&write(&plain, "", "")).unwrap().effect.shape, Shape::Square, "waveform effects too");
@@ -245,6 +254,17 @@ mod tests {
         assert_eq!(snap.items.len(), 1);
         assert_eq!(snap.errors.len(), 1, "the damaged file is reported");
         let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    /// A file with a script (an older one, or made by hand) is read as data: the script is
+    /// dropped, never kept to run later.
+    #[test]
+    fn scripts_in_files_are_dropped() {
+        let mut f = EffectFile { openq_effect: FORMAT, author: String::new(), description: String::new(), effect: custom() };
+        f.effect.params = vec![super::super::effects::ScriptParam { name: "n".into(), min: 0.0, max: 1.0, value: 0.5, integer: false }];
+        let read = read(&serde_json::to_string(&f).unwrap()).unwrap();
+        assert!(read.effect.script.is_empty() && read.effect.params.is_empty());
+        assert_eq!(read.effect.table, custom().table, "the generated table stays");
     }
 
     #[test]
