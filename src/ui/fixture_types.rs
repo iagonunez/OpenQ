@@ -842,22 +842,32 @@ fn channel_table(ui: &mut Ui, e: &mut TypeEdit) {
         None => &mut m.channels,
         Some(i) => &mut m.heads[i].channels,
     };
-    const COLS: [f32; 7] = [64.0, 88.0, 150.0, 96.0, 96.0, 90.0, 52.0];
-    ui.horizontal(|ui| {
-        for (h, w) in [t("DMX"), t("Fine"), t("Attribute"), t("Default"), t("Highlight"), t("Ranges"), t("Break")].iter().zip(COLS) {
-            ui.add_sized([w, 18.0], egui::Label::new(theme::caption(h)));
-        }
-    });
+    // A grid: each column takes the width of its widest cell, so the rows stay lined up.
     let mut delete = None;
     let taken: Vec<Attribute> = chans.iter().map(|c| c.attribute).collect();
-    for (i, c) in chans.iter_mut().enumerate() {
-        ui.horizontal(|ui| {
+    // The attribute drop-downs all take the width of the longest name shown.
+    let attr_w = chans
+        .iter()
+        .map(|c| match c.attribute {
+            Attribute::Extra(_) if !c.name.is_empty() => c.name.clone(),
+            a => a.label().to_string(),
+        })
+        .map(|s| ui.painter().layout_no_wrap(s, egui::TextStyle::Button.resolve(ui.style()), theme::TEXT).size().x)
+        .fold(96.0_f32, f32::max)
+        + ui.spacing().icon_width
+        + ui.spacing().button_padding.x * 2.0
+        + ui.spacing().item_spacing.x;
+    egui::Grid::new("type_channels").num_columns(8).spacing([12.0, 4.0]).show(ui, |ui| {
+        for h in [t("DMX"), t("Fine"), t("Attribute"), t("Default"), t("Highlight"), t("Ranges"), t("Break")] {
+            ui.label(theme::caption(h));
+        }
+        ui.end_row();
+        for (i, c) in chans.iter_mut().enumerate() {
             // 1-based DMX slots in the UI.
             let mut slot = c.offset + 1;
-            ui.add_sized([COLS[0], 20.0], DragValue::new(&mut slot).range(1..=512));
+            ui.add(DragValue::new(&mut slot).range(1..=512));
             c.offset = slot - 1;
-            ui.allocate_ui(egui::vec2(COLS[1], 20.0), |ui| {
-                ui.set_min_width(COLS[1]);
+            ui.horizontal(|ui| {
                 let mut has = c.fine.is_some();
                 if ui.checkbox(&mut has, "").on_hover_text(t("16-bit: a fine byte")).changed() {
                     c.fine = has.then_some((c.offset + 1).min(511));
@@ -868,46 +878,44 @@ fn channel_table(ui: &mut Ui, e: &mut TypeEdit) {
                     *f = s - 1;
                 }
             });
-            ui.allocate_ui(egui::vec2(COLS[2], 20.0), |ui| {
-                ui.set_min_width(COLS[2]);
-                let shown = match c.attribute {
-                    Attribute::Extra(_) if !c.name.is_empty() => c.name.clone(),
-                    a => a.label().to_string(),
-                };
-                // Extra channels: the next number free in this unit (or the channel's own).
-                let extra = match c.attribute {
-                    Attribute::Extra(n) => Attribute::Extra(n),
-                    _ => (1..=255).map(Attribute::Extra).find(|a| !taken.contains(a)).unwrap_or(Attribute::Extra(255)),
-                };
-                egui::ComboBox::from_id_salt(("type_attr", i)).selected_text(shown).width(COLS[2] - 8.0).height(420.0).show_ui(ui, |ui| {
-                    ui.add(egui::TextEdit::singleline(&mut c.name).hint_text(t("Channel name")).desired_width(160.0));
-                    for f in Feature::ALL {
-                        ui.label(theme::caption(f.label()));
-                        for a in Attribute::ALL.into_iter().filter(|a| a.feature() == f) {
-                            ui.selectable_value(&mut c.attribute, a, a.label());
-                        }
-                        if f == Feature::Control {
-                            ui.selectable_value(&mut c.attribute, extra, extra.label()).on_hover_text(t("A further channel with no attribute of its own (named above)"));
-                        }
+            let shown = match c.attribute {
+                Attribute::Extra(_) if !c.name.is_empty() => c.name.clone(),
+                a => a.label().to_string(),
+            };
+            // Extra channels: the next number free in this unit (or the channel's own).
+            let extra = match c.attribute {
+                Attribute::Extra(n) => Attribute::Extra(n),
+                _ => (1..=255).map(Attribute::Extra).find(|a| !taken.contains(a)).unwrap_or(Attribute::Extra(255)),
+            };
+            egui::ComboBox::from_id_salt(("type_attr", i)).selected_text(shown).width(attr_w).height(420.0).show_ui(ui, |ui| {
+                ui.add(egui::TextEdit::singleline(&mut c.name).hint_text(t("Channel name")).desired_width(160.0));
+                for f in Feature::ALL {
+                    ui.label(theme::caption(f.label()));
+                    for a in Attribute::ALL.into_iter().filter(|a| a.feature() == f) {
+                        ui.selectable_value(&mut c.attribute, a, a.label());
                     }
-                });
+                    if f == Feature::Control {
+                        ui.selectable_value(&mut c.attribute, extra, extra.label()).on_hover_text(t("A further channel with no attribute of its own (named above)"));
+                    }
+                }
             });
-            optional_percent(ui, &mut c.default, COLS[3], t("Value with nothing controlling it (empty: the attribute's own)"));
-            optional_percent(ui, &mut c.highlight, COLS[4], t("Value while highlighted (empty: open/full)"));
+            optional_percent(ui, &mut c.default, t("Value with nothing controlling it (empty: the attribute's own)"));
+            optional_percent(ui, &mut c.highlight, t("Value while highlighted (empty: open/full)"));
             let n = c.ranges.len();
             let label = if n == 0 { t("none").to_string() } else { n.to_string() };
-            if ui.add_sized([COLS[5], 20.0], egui::Button::selectable(e.channel == Some(i), label)).clicked() {
+            if ui.add(egui::Button::selectable(e.channel == Some(i), label).min_size(egui::vec2(56.0, 0.0))).clicked() {
                 e.channel = if e.channel == Some(i) { None } else { Some(i) };
             }
             // 1-based in the UI, like GDTF.
             let mut brk = c.dmx_break + 1;
-            ui.add_sized([COLS[6], 20.0], DragValue::new(&mut brk).range(1..=8)).on_hover_text(t("DMX break (fixtures with several DMX inputs)"));
+            ui.add(DragValue::new(&mut brk).range(1..=8)).on_hover_text(t("DMX break (fixtures with several DMX inputs)"));
             c.dmx_break = brk - 1;
             if ui.small_button(icons::DELETE).on_hover_text(t("Delete channel")).clicked() {
                 delete = Some(i);
             }
-        });
-    }
+            ui.end_row();
+        }
+    });
     if let Some(i) = delete {
         chans.remove(i);
         e.channel = None;
@@ -919,9 +927,8 @@ fn channel_table(ui: &mut Ui, e: &mut TypeEdit) {
 }
 
 /// A percentage that can be left empty (a checkbox turns it on).
-fn optional_percent(ui: &mut Ui, v: &mut Option<f32>, width: f32, tip: &str) {
-    ui.allocate_ui(egui::vec2(width, 20.0), |ui| {
-        ui.set_min_width(width);
+fn optional_percent(ui: &mut Ui, v: &mut Option<f32>, tip: &str) {
+    ui.horizontal(|ui| {
         let mut on = v.is_some();
         if ui.checkbox(&mut on, "").on_hover_text(tip).changed() {
             *v = on.then_some(0.0);
@@ -947,32 +954,38 @@ fn range_editor(ui: &mut Ui, e: &mut TypeEdit) {
     };
     ui.label(theme::caption(&tr!("Ranges of {attr}", attr = c.attribute.label())));
     let mut delete = None;
-    for (i, r) in c.ranges.iter_mut().enumerate() {
-        ui.horizontal(|ui| {
+    // Text fields wide enough for the longest name/image (a text field in a grid would take last frame's column width).
+    let font = egui::TextStyle::Body.resolve(ui.style());
+    let width = |min: f32, texts: &mut dyn Iterator<Item = &String>| {
+        texts.map(|s| ui.painter().layout_no_wrap(s.clone(), font.clone(), theme::TEXT).size().x).fold(min, f32::max) + 2.0 * ui.spacing().button_padding.x + 4.0
+    };
+    let name_w = width(160.0, &mut c.ranges.iter().map(|r| &r.name));
+    let image_w = width(110.0, &mut c.ranges.iter().map(|r| &r.image));
+    egui::Grid::new("type_ranges").num_columns(8).min_col_width(0.0).spacing([8.0, 4.0]).show(ui, |ui| {
+        for (i, r) in c.ranges.iter_mut().enumerate() {
             ui.add(DragValue::new(&mut r.from).range(0..=255)).on_hover_text(t("First DMX value"));
             ui.label("–");
             ui.add(DragValue::new(&mut r.to).range(0..=255)).on_hover_text(t("Last DMX value"));
-            ui.add(egui::TextEdit::singleline(&mut r.name).hint_text(t("Name")).desired_width(180.0));
-            let mut has = r.color.is_some();
-            if ui.checkbox(&mut has, "").on_hover_text(t("Slot colour")).changed() {
-                r.color = has.then_some([255, 255, 255]);
-            }
-            match &mut r.color {
-                Some(rgb) => {
+            ui.add_sized([name_w, 20.0], egui::TextEdit::singleline(&mut r.name).hint_text(t("Name")));
+            ui.horizontal(|ui| {
+                let mut has = r.color.is_some();
+                if ui.checkbox(&mut has, "").on_hover_text(t("Slot colour")).changed() {
+                    r.color = has.then_some([255, 255, 255]);
+                }
+                if let Some(rgb) = &mut r.color {
                     let mut c = Color32::from_rgb(rgb[0], rgb[1], rgb[2]);
                     if ui.color_edit_button_srgba(&mut c).changed() {
                         *rgb = [c.r(), c.g(), c.b()];
                     }
                 }
-                // Keep the columns lined up.
-                None => ui.add_space(ui.spacing().interact_size.x + ui.spacing().item_spacing.x),
-            }
-            ui.add(egui::TextEdit::singleline(&mut r.image).hint_text(t("Image (gobo)")).desired_width(120.0));
+            });
+            ui.add_sized([image_w, 20.0], egui::TextEdit::singleline(&mut r.image).hint_text(t("Image (gobo)")));
             if ui.small_button(icons::DELETE).clicked() {
                 delete = Some(i);
             }
-        });
-    }
+            ui.end_row();
+        }
+    });
     if let Some(i) = delete {
         c.ranges.remove(i);
     }
