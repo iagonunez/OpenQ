@@ -120,12 +120,56 @@ pub fn write_atomic(path: &Path, bytes: &[u8]) -> anyhow::Result<()> {
     let mut tmp = path.as_os_str().to_owned();
     tmp.push(".tmp");
     let tmp = PathBuf::from(tmp);
-    let mut f = File::create(&tmp)?;
-    f.write_all(bytes)?;
-    f.sync_all()?;
-    drop(f);
-    std::fs::rename(&tmp, path)?;
+    if path.file_name().is_none() {
+        anyhow::bail!("{} is not a file name", path.display());
+    }
+    let write = || -> std::io::Result<()> {
+        let mut f = File::create(&tmp)?;
+        f.write_all(bytes)?;
+        f.sync_all()?;
+        drop(f);
+        std::fs::rename(&tmp, path)
+    };
+    // A failed write (disk full, a folder in the way...) leaves no temporary file behind.
+    write().inspect_err(|_| {
+        let _ = std::fs::remove_file(&tmp);
+    })?;
     Ok(())
+}
+
+/// A thread name made of `prefix` and a name from the show (a file or stage name): NUL bytes,
+/// which make spawning the thread panic, are dropped, and it is kept short.
+pub fn thread_name(prefix: &str, detail: &str) -> String {
+    let detail: String = detail.chars().filter(|c| *c != '\0').take(48).collect();
+    format!("{prefix}{detail}")
+}
+
+/// Read a whole file of at most `max` bytes. Anything else is an error instead of a hang or a
+/// memory blow-up: a FIFO (opening one blocks until someone writes), a device such as `/dev/zero`
+/// (endless), a folder, or a file that is too big (also one that grows while it is read).
+/// Symbolic links to regular files are followed.
+pub fn read_file(path: &Path, max: u64) -> std::io::Result<Vec<u8>> {
+    use std::io::{Error, ErrorKind, Read};
+    let meta = std::fs::metadata(path)?;
+    if !meta.is_file() {
+        return Err(Error::new(ErrorKind::InvalidInput, format!("{} is not a file", path.display())));
+    }
+    let limit = if max >= 1 << 20 { format!("{} MB", max >> 20) } else { format!("{max} bytes") };
+    let too_big = || Error::new(ErrorKind::InvalidData, format!("{} is larger than {limit}", path.display()));
+    if meta.len() > max {
+        return Err(too_big());
+    }
+    let mut data = Vec::with_capacity(meta.len() as usize);
+    File::open(path)?.take(max + 1).read_to_end(&mut data)?;
+    if data.len() as u64 > max {
+        return Err(too_big());
+    }
+    Ok(data)
+}
+
+/// [`read_file`] as UTF-8 text.
+pub fn read_text(path: &Path, max: u64) -> std::io::Result<String> {
+    String::from_utf8(read_file(path, max)?).map_err(|e| std::io::Error::new(std::io::ErrorKind::InvalidData, e))
 }
 
 /// This instance's autosave session. Dropping it releases the lock but keeps the copy: only
@@ -259,7 +303,9 @@ pub struct Orphan {
 impl Orphan {
     /// Read the copy.
     pub fn load(&self) -> anyhow::Result<Workspace> {
-        Ok(serde_json::from_str(&std::fs::read_to_string(&self.data)?)?)
+        let mut ws: Workspace = serde_json::from_slice(&read_file(&self.data, crate::model::Workspace::MAX_FILE)?)?;
+        ws.fix_duplicate_ids();
+        Ok(ws)
     }
 
     /// Delete the copy.
@@ -280,6 +326,11 @@ impl Orphan {
     }
 }
 
+/// A regular file (not a FIFO someone put there, whose opening would block).
+fn is_file(p: &Path) -> bool {
+    std::fs::metadata(p).is_ok_and(|m| m.is_file())
+}
+
 /// Autosaves in `dir` whose session no running OpenQ holds, newest first. `own` (this
 /// instance's session) is never listed.
 pub fn find_orphans_in(dir: &Path, own: Option<&Autosave>) -> Vec<Orphan> {
@@ -294,7 +345,7 @@ pub fn find_orphans_in(dir: &Path, own: Option<&Autosave>) -> Vec<Orphan> {
         }
         if ext == "lock" && !data.with_extension("openq").exists() {
             // A session that ended (or crashed) with nothing unsaved: just tidy up its lock.
-            if File::options().write(true).open(&data).ok().is_some_and(|f| f.try_lock().is_ok()) {
+            if is_file(&data) && File::options().write(true).open(&data).ok().is_some_and(|f| f.try_lock().is_ok()) {
                 let _ = std::fs::remove_file(&data);
             }
             continue;
@@ -304,13 +355,14 @@ pub fn find_orphans_in(dir: &Path, own: Option<&Autosave>) -> Vec<Orphan> {
         }
         // A live instance holds its lock file; if we can take it, nobody does.
         let lock = data.with_extension("lock");
-        let alive = File::options().write(true).open(&lock).ok().is_some_and(|f| f.try_lock().is_err());
+        let alive = is_file(&lock)
+            && File::options().write(true).open(&lock).ok().is_some_and(|f| f.try_lock().is_err());
         if alive {
             continue;
         }
-        let info = std::fs::read_to_string(data.with_extension("json"))
+        let info = read_file(&data.with_extension("json"), 64 << 10)
             .ok()
-            .and_then(|s| serde_json::from_str(&s).ok())
+            .and_then(|s| serde_json::from_slice(&s).ok())
             .unwrap_or_default();
         out.push(Orphan { data, info });
     }
@@ -403,6 +455,39 @@ mod tests {
         let r: anyhow::Result<()> = catch(|| panic!("boom"));
         assert!(format!("{:#}", r.unwrap_err()).contains("boom"));
         assert_eq!(catch(|| Ok(3)).unwrap(), 3);
+    }
+
+    #[test]
+    fn thread_names_from_the_show_are_safe() {
+        let name = thread_name("openq-dec-", "a\0b.wav");
+        assert_eq!(name, "openq-dec-ab.wav");
+        assert!(std::thread::Builder::new().name(thread_name("x-", &"\0".repeat(500))).spawn(|| {}).unwrap().join().is_ok());
+    }
+
+    #[test]
+    fn read_file_takes_only_small_regular_files() {
+        let dir = tmpdir("read");
+        std::fs::create_dir_all(&dir).unwrap();
+        let f = dir.join("a.json");
+        std::fs::write(&f, b"12345").unwrap();
+        assert_eq!(read_file(&f, 5).unwrap(), b"12345");
+        assert!(read_file(&f, 4).is_err(), "too big");
+        assert!(read_file(&dir, 1 << 20).is_err(), "a folder");
+        #[cfg(unix)]
+        {
+            assert!(read_file(Path::new("/dev/zero"), 1 << 20).is_err(), "a device");
+            let fifo = dir.join("pipe");
+            if std::process::Command::new("mkfifo").arg(&fifo).status().is_ok_and(|s| s.success()) {
+                assert!(read_file(&fifo, 1 << 20).is_err(), "a FIFO (would block)");
+            }
+        }
+        // A failed atomic write leaves no temporary file.
+        let blocked = dir.join("folder.openq");
+        std::fs::create_dir_all(blocked.join("x")).unwrap();
+        assert!(write_atomic(&blocked, b"x").is_err());
+        assert!(!dir.join("folder.openq.tmp").exists());
+        assert!(write_atomic(Path::new(""), b"x").is_err());
+        let _ = std::fs::remove_dir_all(&dir);
     }
 
     #[test]

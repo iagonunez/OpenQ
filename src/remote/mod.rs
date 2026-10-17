@@ -197,7 +197,7 @@ impl RemoteConfig {
 
     /// Load the config, creating (and saving) a fresh identity on first run.
     pub fn load() -> Self {
-        let loaded = Self::path().and_then(|p| std::fs::read_to_string(p).ok()).and_then(|s| match serde_json::from_str(&s) {
+        let loaded = Self::path().and_then(|p| crate::recovery::read_file(&p, 16 << 20).ok()).and_then(|s| match serde_json::from_slice(&s) {
             Ok(c) => Some(c),
             Err(e) => {
                 log::warn!("remote config unreadable, starting fresh: {e}");

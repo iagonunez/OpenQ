@@ -25,7 +25,7 @@ use crate::spatial::{AudioObject, ObjectAudio, Speaker};
 use crate::model::{
     AudioCue, CueId, Eq, FadeCurve, MAX_EQ_BANDS, MAX_OUT_CHANNELS, MAX_SRC_CHANNELS, VideoCue, db_to_gain, out_level_gain, routing_gains,
 };
-use anyhow::{Context, anyhow};
+use anyhow::{Context, anyhow, bail};
 use cpal::traits::{DeviceTrait, HostTrait, StreamTrait};
 use cpal::{FromSample, OutputCallbackInfo, SampleFormat, SizedSample, StreamConfig};
 use std::collections::{HashMap, VecDeque};
@@ -257,6 +257,15 @@ pub enum Endpoint {
         /// Output channels.
         channels: usize,
     },
+}
+
+/// Refuse a sample rate or channel count no sound card has (a broken driver can report 0 Hz,
+/// which would make every period infinitely long).
+fn check_format(rate: u32, channels: usize) -> anyhow::Result<()> {
+    if !(1000..=1_000_000).contains(&rate) || channels == 0 {
+        bail!("unusable audio format: {rate} Hz, {channels} channels");
+    }
+    Ok(())
 }
 
 /// State shared between a voice, its decoder thread and the control side.
@@ -983,6 +992,9 @@ impl AudioOutput {
 
     /// Open `endpoint` (see [`AudioOutput::open`] and [`AudioOutput::open_virtual`]).
     pub fn open_endpoint(endpoint: &Endpoint, capture: Option<rtrb::Producer<f32>>) -> anyhow::Result<Self> {
+        if let Endpoint::Virtual { rate, .. } = endpoint {
+            check_format(*rate, 1)?;
+        }
         let (cmd_tx, cmd_rx) = rtrb::RingBuffer::<Cmd>::new(2048);
         let (gb_tx, gb_rx) = rtrb::RingBuffer::<Garbage>::new(2048);
         let meters: Meters = Arc::new(Default::default());
@@ -1025,6 +1037,7 @@ impl AudioOutput {
                     let config: StreamConfig = supported.into();
                     let rate = config.sample_rate;
                     let channels = config.channels as usize;
+                    check_format(rate, channels)?;
                     let (mixer, clock) = make_mixer(rate, channels);
                     let stream = match format {
                         SampleFormat::F32 => build::<f32>(&device, config, mixer)?,

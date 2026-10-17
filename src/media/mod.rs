@@ -14,6 +14,7 @@ use crate::engine::{Backend, FadeRequest};
 #[cfg(feature = "video")]
 use crate::model::VideoCue;
 use crate::model::{Cue, CueId, CueKind, NetworkCue};
+use anyhow::Context;
 use parking_lot::Mutex;
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
@@ -51,14 +52,23 @@ fn windows_network_path(s: &str) -> bool {
     s.starts_with("\\\\")
 }
 
-/// Refuse a [network path](is_network_path): media are opened from local disks (or shares mapped
-/// to a drive letter) only.
+/// Refuse a [network path](is_network_path) and anything that isn't a regular file: media are
+/// opened from local disks (or shares mapped to a drive letter) only, and a show file can't point
+/// a reader at a FIFO (opening it blocks until someone writes), a device such as `/dev/zero`
+/// (read forever) or a folder. Symbolic links to regular files are fine. Worker threads only:
+/// this looks at the disk.
 pub fn check_local(path: &Path) -> anyhow::Result<()> {
     if is_network_path(path) {
         anyhow::bail!(
             "{} is on a network share: OpenQ doesn't open \\\\server paths (Windows would send your login to that server). Map the share to a drive letter.",
             path.display()
         );
+    }
+    let meta = std::fs::metadata(path).with_context(|| format!("cannot open {}", path.display()))?;
+    // Unit tests stand in a FIFO named `hung-drive*` for a network drive that stops answering.
+    let stand_in = cfg!(test) && path.file_name().is_some_and(|n| n.to_string_lossy().starts_with("hung-drive"));
+    if !meta.is_file() && !stand_in {
+        anyhow::bail!("{} is not a file", path.display());
     }
     Ok(())
 }
@@ -1356,7 +1366,7 @@ mod tests {
         use crate::engine::Backend;
         let dir = std::env::temp_dir().join(format!("openq-preload-{}", std::process::id()));
         std::fs::create_dir_all(&dir).unwrap();
-        let fifo = dir.join("stalled.wav");
+        let fifo = dir.join("hung-drive-stalled.wav");
         let _ = std::fs::remove_file(&fifo);
         assert!(std::process::Command::new("mkfifo").arg(&fifo).status().unwrap().success());
         let mut media = Media::new(Prober::new());
@@ -1376,7 +1386,7 @@ mod tests {
         use crate::engine::Backend;
         let dir = std::env::temp_dir().join(format!("openq-cold-go-{}", std::process::id()));
         std::fs::create_dir_all(&dir).unwrap();
-        let fifo = dir.join("stalled.wav");
+        let fifo = dir.join("hung-drive-stalled.wav");
         let _ = std::fs::remove_file(&fifo);
         assert!(std::process::Command::new("mkfifo").arg(&fifo).status().unwrap().success());
         let wav = dir.join("cold.wav");
@@ -1434,7 +1444,13 @@ mod tests {
     fn a_stalled_decoder_is_reported() {
         let dir = std::env::temp_dir().join(format!("openq-stall-{}", std::process::id()));
         std::fs::create_dir_all(&dir).unwrap();
+        // A FIFO nobody writes to blocks whoever opens it. A show can't use one (it isn't a
+        // file: refused at once), but here it stands in for a hung network drive.
         let fifo = dir.join("hung.wav");
+        let _ = std::fs::remove_file(&fifo);
+        assert!(std::process::Command::new("mkfifo").arg(&fifo).status().unwrap().success());
+        assert!(check_local(&fifo).is_err());
+        let fifo = dir.join("hung-drive.wav");
         let _ = std::fs::remove_file(&fifo);
         assert!(std::process::Command::new("mkfifo").arg(&fifo).status().unwrap().success());
         let mut a = audio::AudioOutput::open_virtual(48000, 2, None).unwrap();

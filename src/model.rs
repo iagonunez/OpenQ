@@ -2162,10 +2162,15 @@ impl Workspace {
     /// File extension of workspaces.
     pub const EXTENSION: &'static str = "openq";
 
-    /// Read a workspace, resolving relative media paths against the file's folder.
+    /// Largest show file read (a big rig's lighting design takes a few hundred MB).
+    pub const MAX_FILE: u64 = 1 << 30;
+
+    /// Read a workspace, resolving relative media paths against the file's folder. Only a regular
+    /// file of at most [`Workspace::MAX_FILE`] bytes (see [`crate::recovery::read_file`]).
     pub fn load(path: &Path) -> anyhow::Result<Self> {
-        let s = std::fs::read_to_string(path)?;
-        let mut ws: Workspace = serde_json::from_str(&s)?;
+        let s = crate::recovery::read_file(path, Self::MAX_FILE)?;
+        let mut ws: Workspace = serde_json::from_slice(&s)?;
+        ws.fix_duplicate_ids();
         if ws.stages.is_empty() {
             ws.stages.push(Stage::default());
         }
@@ -2180,6 +2185,32 @@ impl Workspace {
             }
         }
         Ok(ws)
+    }
+
+    /// Give a fresh id to every cue whose id an earlier cue already has (a damaged or hand-edited
+    /// file): the cue tree and the engine rely on ids being unique (a group holding a cue with its
+    /// own id would be its own parent). Returns how many were changed.
+    pub fn fix_duplicate_ids(&mut self) -> usize {
+        fn walk(cues: &mut [Cue], seen: &mut std::collections::HashSet<CueId>, fixed: &mut usize) {
+            for c in cues {
+                if !seen.insert(c.id) {
+                    c.id = CueId::new_v4();
+                    seen.insert(c.id);
+                    *fixed += 1;
+                }
+                if let Some(ch) = c.children_mut() {
+                    walk(ch, seen, fixed);
+                }
+            }
+        }
+        let (mut seen, mut fixed) = (std::collections::HashSet::new(), 0);
+        for list in self.cue_list.all_roots_mut() {
+            walk(list, &mut seen, &mut fixed);
+        }
+        if fixed > 0 {
+            log::warn!("{fixed} cues had the id of another cue; they got new ones");
+        }
+        fixed
     }
 
     /// Write a workspace, storing media paths relative to the file's folder.
@@ -2215,6 +2246,30 @@ fn for_each_media_path(list: &mut [Cue], f: &mut impl FnMut(&mut PathBuf)) {
 
 #[cfg(test)]
 mod tests {
+    /// A file with a cue id twice (here a group holding a cue with its own id) loads with fresh
+    /// ids, and moving the playhead past it ends.
+    #[test]
+    fn duplicate_cue_ids_are_fixed_on_load() {
+        use super::*;
+        let mut ws = Workspace::default();
+        let mut child = Cue::new(CueKind::Memo);
+        let mut group = Cue::new(CueKind::Group { mode: GroupMode::StartFirstAndEnter, children: vec![] });
+        child.id = group.id;
+        group.children_mut().unwrap().push(child);
+        ws.cue_list.cues = vec![group.clone(), group];
+        let dir = std::env::temp_dir().join(format!("openq-dup-ids-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let p = dir.join("dup.openq");
+        std::fs::write(&p, serde_json::to_vec(&ws).unwrap()).unwrap();
+        let back = Workspace::load(&p).unwrap();
+        let all = back.cue_list.iter_all();
+        let ids: std::collections::HashSet<CueId> = all.iter().map(|c| c.id).collect();
+        assert_eq!(ids.len(), all.len());
+        assert_eq!(all.len(), 4);
+        assert!(crate::engine::after_chain(&back, all[1].id).is_some());
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
     /// The drawn curve's presets match the built-in ones, so turning a preset into a Custom curve
     /// (by dragging a handle) doesn't jump; and it keeps a fade's end points.
     #[test]

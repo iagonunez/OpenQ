@@ -356,7 +356,7 @@ pub fn parse(line: &str) -> Result<Vec<Cmd>, String> {
             Some("go") => {
                 p.pos += 1;
                 if p.eat("cue") || p.is_number() && p.toks.get(p.pos + 1).is_some_and(|t| t == "/") {
-                    let Target::Cue(n, seq) = p.target()? else { unreachable!() };
+                    let Target::Cue(n, seq) = p.target()? else { return Err("go cue: expected a cue number".into()) };
                     out.push(Cmd::Go(seq, Some(n)));
                 } else {
                     let seq = if p.is_number() { Some(p.int()?) } else { None };
@@ -387,6 +387,12 @@ mod tests {
     use super::*;
     use Cmd::*;
     use SelOp::*;
+
+    #[test]
+    fn go_cue_needs_a_cue() {
+        assert!(parse("go cue preset 0").is_err());
+        assert!(parse("go cue group 2").is_err());
+    }
     use SelSet::*;
 
     #[test]

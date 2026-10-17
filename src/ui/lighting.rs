@@ -278,10 +278,7 @@ impl App {
         let mut added = Vec::new();
         for path in paths {
             let read = || -> anyhow::Result<Effect> {
-                if std::fs::metadata(&path)?.len() as usize > crate::light::fxfile::MAX_FILE {
-                    anyhow::bail!("the file is too large");
-                }
-                Ok(crate::light::fxfile::read(&std::fs::read_to_string(&path)?)?.effect)
+                Ok(crate::light::fxfile::read(&crate::recovery::read_text(&path, crate::light::fxfile::MAX_FILE as u64)?)?.effect)
             };
             match read() {
                 Ok(e) => added.push(e),

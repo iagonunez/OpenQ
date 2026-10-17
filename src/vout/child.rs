@@ -765,7 +765,7 @@ impl App {
         painter.update(|v| v.size = [config.width, config.height]);
         let (w, p, core) = (window.clone(), painter.clone(), self.core.clone());
         let id = stage.id;
-        std::thread::Builder::new().name(format!("openq-video-out-{}", stage.name)).spawn(move || {
+        std::thread::Builder::new().name(crate::recovery::thread_name("openq-video-out-", &stage.name)).spawn(move || {
             if let Err(e) = crate::recovery::catch(|| {
                 render_loop(id, w, surface, config, gpu, core, p);
                 Ok(())

@@ -119,6 +119,7 @@ pub fn waveform(path: &Path) -> anyhow::Result<Waveform> {
         };
         let frames = buf.frames();
         buf.copy_to_vecs_planar::<f32>(&mut planar);
+        clean_samples(&mut planar);
         for f in 0..frames {
             for ch in planar.iter() {
                 let v = ch[f];
@@ -211,7 +212,7 @@ pub fn spawn(path: PathBuf, params: DecodeParams, out_rate: u32, tx: rtrb::Produ
     let vamp = params.segments.iter().any(|s| s.plays.is_none());
     let channels = params.channels.max(1);
     let fill_limit = if vamp { (out_rate as usize * 3 / 10) * channels } else { usize::MAX };
-    let name = format!("openq-dec-{}", path.file_name().map(|f| f.to_string_lossy()).unwrap_or_default());
+    let name = crate::recovery::thread_name("openq-dec-", &path.file_name().map(|f| f.to_string_lossy()).unwrap_or_default());
     let sh = shared.clone();
     let res = std::thread::Builder::new().name(name).spawn(move || {
         let mut sink = Sink {
@@ -386,6 +387,7 @@ fn play_pass(path: &Path, start: f64, end: Option<f64>, rate: f64, out_rate: u32
             continue;
         }
         buf.copy_to_vecs_planar::<f32>(&mut planar);
+        clean_samples(&mut planar);
         let r = o.rate as f64;
         // Trim to [start, end).
         let lo = (((start - pkt_time) * r).round().max(0.0) as usize).min(frames);
@@ -437,6 +439,21 @@ impl Resample {
             out_total: 0,
             ratio,
         })
+    }
+}
+
+/// Loudest sample let through (+18 dBFS): a damaged float file can hold anything.
+const MAX_SAMPLE: f32 = 8.0;
+
+/// Make a decoded sample safe: NaN and infinities (a damaged float file) become silence, wild
+/// values are clamped. Neither may reach the resampler (its FFT fails on them) or the speakers.
+pub fn clean_sample(v: f32) -> f32 {
+    if v.is_finite() { v.clamp(-MAX_SAMPLE, MAX_SAMPLE) } else { 0.0 }
+}
+
+fn clean_samples(planar: &mut [Vec<f32>]) {
+    for v in planar.iter_mut().flat_map(|ch| ch.iter_mut()) {
+        *v = clean_sample(*v);
     }
 }
 
@@ -573,6 +590,14 @@ impl Sink {
 pub(crate) mod tests {
     use super::*;
     use crate::model::{FadeCurve, Segment};
+
+    #[test]
+    fn damaged_samples_are_made_safe() {
+        assert_eq!(clean_sample(f32::NAN), 0.0);
+        assert_eq!(clean_sample(f32::INFINITY), 0.0);
+        assert_eq!(clean_sample(1e30), MAX_SAMPLE);
+        assert_eq!(clean_sample(-0.5), -0.5);
+    }
 
     /// A mono 16-bit WAV of a full-scale square-ish signal (constant ±0.5).
     pub(crate) fn write_wav(path: &Path, rate: u32, secs: f32) {

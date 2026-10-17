@@ -604,7 +604,7 @@ impl DecodeJob {
         let bytes = &out.data(0)[..n * 4];
         let skip_samples = ((skip * tap.rate as f64) as usize * tap.channels).min(n);
         pending.extend(
-            bytes.chunks_exact(4).skip(skip_samples).map(|b| f32::from_le_bytes([b[0], b[1], b[2], b[3]])),
+            bytes.chunks_exact(4).skip(skip_samples).map(|b| super::decoder::clean_sample(f32::from_le_bytes([b[0], b[1], b[2], b[3]]))),
         );
         Ok(())
     }
@@ -1180,7 +1180,7 @@ impl Player {
                 feed: audio_feed.clone(),
                 audio_state: audio_state.clone(),
             };
-            let name = format!("openq-video-{}", params.path.file_name().map(|f| f.to_string_lossy()).unwrap_or_default());
+            let name = crate::recovery::thread_name("openq-video-", &params.path.file_name().map(|f| f.to_string_lossy()).unwrap_or_default());
             let thread = std::thread::Builder::new().name(name).spawn(move || job.run())?;
             Source::Movie(Movie { ctl, thread: Some(thread) })
         };
@@ -2009,7 +2009,7 @@ mod tests {
     fn a_stalled_movie_is_reported() {
         let dir = std::env::temp_dir().join(format!("openq-movie-stall-{}", std::process::id()));
         std::fs::create_dir_all(&dir).unwrap();
-        let fifo = dir.join("hung.mp4");
+        let fifo = dir.join("hung-drive.mp4");
         let _ = std::fs::remove_file(&fifo);
         assert!(std::process::Command::new("mkfifo").arg(&fifo).status().unwrap().success());
         let mut out = VideoOutput::new().unwrap();

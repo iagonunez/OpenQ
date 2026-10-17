@@ -93,7 +93,7 @@ pub fn init() -> bool {
         set_lang(l);
         return true;
     }
-    match config_file().and_then(|p| std::fs::read_to_string(p).ok()).and_then(|s| Lang::from_code(&s)) {
+    match config_file().and_then(|p| crate::recovery::read_text(&p, 1024).ok()).and_then(|s| Lang::from_code(&s)) {
         Some(l) => {
             set_lang(l);
             true

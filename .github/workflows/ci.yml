@@ -1,4 +1,4 @@
-# Unit, stress, soak, fuzz and crash-recovery tests (tests/stress.rs). OpenQ isn't published as
+# Unit, stress, soak, fuzz and crash-recovery tests (tests/stress.rs, tests/fuzz.rs). OpenQ isn't published as
 # binaries: users build it with oqman (https://github.com/iagonunez/oqman), which installs
 # the build dependencies and compiles a tagged version on their own computer. A `v*` tag marks a
 # version oqman offers, so tags run this; it can also be run by hand.
@@ -41,3 +41,5 @@ jobs:
         run: cargo test --release --locked --no-default-features
       - name: Stress tests
         run: CARGO_FLAGS="--locked --no-default-features" tools/stress.sh
+      - name: Fuzz tests
+        run: OPENQ_FUZZ_SECS=60 CARGO_FLAGS="--locked --no-default-features" tools/fuzz.sh

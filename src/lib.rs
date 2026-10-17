@@ -67,6 +67,10 @@
 //! See [`recovery`]: worker panics become per-cue errors, the engine thread recovers from its own
 //! panics, a failing or lost audio device is reopened, unsaved work is autosaved and offered back
 //! after a crash. Every warning and error lands in the [`errlog`] file. `tests/stress.rs` (run with `tools/stress.sh`) exercises all of it.
+//! Input from outside (show, media, fixture and config files, network messages, devices) is
+//! treated as hostile: files are read only when they are regular files of a bounded size
+//! ([`recovery::read_file`], [`media::check_local`]), and `tests/fuzz.rs` (`tools/fuzz.sh`)
+//! checks every way in with damaged and malicious data.
 //!
 //! # Example: drive a show without a UI
 //!

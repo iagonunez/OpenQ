@@ -61,7 +61,8 @@ impl Layout {
     fn of(l: &Lighting) -> Self {
         let (mut x0, mut x1, mut z0, mut z1) = (-2.0f32, 2.0f32, -2.0f32, 2.0f32);
         let fixtures = l.fixtures.iter().map(|f| [f.position[0], f.position[2]]);
-        for p in fixtures.chain(l.shapes.iter().flat_map(|s| [s.a, s.b])) {
+        // Positions out of any venue (a damaged or hostile show) are left out of the frame.
+        for p in fixtures.chain(l.shapes.iter().flat_map(|s| [s.a, s.b])).filter(|p| p.iter().all(|v| v.abs() <= MAX_EXTENT)) {
             x0 = x0.min(p[0]);
             x1 = x1.max(p[0]);
             z0 = z0.min(p[1]);
@@ -110,6 +111,18 @@ struct Frame {
     legend_col_w: f32,
 }
 
+/// Largest coordinate a plot frames, metres.
+const MAX_EXTENT: f32 = 100_000.0;
+
+/// Metres between grid lines: 1, or 10, 100... so a big plot has at most about 100 lines a side.
+fn grid_step(size: f32) -> f32 {
+    let mut step = 1.0;
+    while size / step > 100.0 && step < MAX_EXTENT {
+        step *= 10.0;
+    }
+    step
+}
+
 /// Paint the plot of `l`.
 fn draw(l: &Lighting, lay: &Layout, fr: &Frame, c: &mut dyn Canvas) {
     let (w, h) = (lay.size()[0] * fr.scale, lay.size()[1] * fr.scale);
@@ -121,12 +134,13 @@ fn draw(l: &Lighting, lay: &Layout, fr: &Frame, c: &mut dyn Canvas) {
     if !fr.subtitle.is_empty() {
         c.text([ox + w - 4.0 - text_width(&fr.subtitle, 11.0), oy - 20.0], 11.0, false, 85, Anchor::Start, &fr.subtitle);
     }
-    for i in 0..=(lay.size()[0] as i32) {
-        let x = ox + i as f32 * fr.scale;
+    let step = grid_step(lay.size()[0].max(lay.size()[1]));
+    for i in 0..=((lay.size()[0] / step) as i32) {
+        let x = ox + i as f32 * step * fr.scale;
         c.line([x, oy], [x, oy + h], 1.0, 221, false, false);
     }
-    for i in 0..=(lay.size()[1] as i32) {
-        let y = oy + i as f32 * fr.scale;
+    for i in 0..=((lay.size()[1] / step) as i32) {
+        let y = oy + i as f32 * step * fr.scale;
         c.line([ox, y], [ox + w, y], 1.0, 221, false, false);
     }
     // Labels are placed after everything else is drawn, so none lands on another (see `Labels`).
@@ -602,6 +616,17 @@ mod tests {
             f.position = [i as f32 - 3.0, 5.0, -2.0];
         }
         l
+    }
+
+    #[test]
+    fn far_away_positions_dont_hang_the_plot() {
+        let mut l = rig();
+        l.fixtures[0].position = [1e30, 0.0, -1e30];
+        l.fixtures[1].position = [f32::INFINITY, 0.0, f32::NAN];
+        l.shapes[0].b = [1e12, 3e9];
+        let t = std::time::Instant::now();
+        let s = svg(&l, "x");
+        assert!(t.elapsed() < std::time::Duration::from_secs(2) && s.len() < 1 << 20, "{:?}, {} bytes", t.elapsed(), s.len());
     }
 
     #[test]

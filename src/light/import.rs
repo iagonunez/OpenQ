@@ -70,11 +70,7 @@ pub fn import(bytes: &[u8], format: Format, folder: &str) -> anyhow::Result<Impo
 /// Read a fixture file from disk (size-capped).
 pub fn import_path(path: &std::path::Path) -> anyhow::Result<Imported> {
     let format = Format::of(path).ok_or_else(|| anyhow::anyhow!("unknown fixture file type"))?;
-    let len = std::fs::metadata(path)?.len();
-    if len > MAX_FILE {
-        anyhow::bail!("the file is too big ({} MB)", len >> 20);
-    }
-    let bytes = std::fs::read(path)?;
+    let bytes = crate::recovery::read_file(path, MAX_FILE)?;
     let folder = path.parent().and_then(|p| p.file_name()).map(|n| n.to_string_lossy().to_string()).unwrap_or_default();
     import(&bytes, format, &folder)
 }

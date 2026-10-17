@@ -146,11 +146,7 @@ impl super::folder::Stored for LibraryEffect {
                 continue;
             }
             let file = p.file_name().map(|n| n.to_string_lossy().to_string()).unwrap_or_default();
-            let r = std::fs::metadata(&p)
-                .map_err(anyhow::Error::from)
-                .and_then(|m| if m.len() as usize > MAX_FILE { Err(anyhow::anyhow!("too big")) } else { Ok(()) })
-                .and_then(|_| std::fs::read_to_string(&p).map_err(anyhow::Error::from))
-                .and_then(|s| read(&s));
+            let r = crate::recovery::read_text(&p, MAX_FILE as u64).map_err(anyhow::Error::from).and_then(|s| read(&s));
             match r {
                 Ok(contents) => items.push(LibraryEffect { file, contents }),
                 Err(e) => errors.push((file, format!("{e:#}"))),

@@ -72,15 +72,14 @@ fn svg(data: &[u8]) -> anyhow::Result<image::RgbaImage> {
     use resvg::usvg;
     // No files or fonts: a fixture file's SVG may only draw (embedded data images are fine).
     let opt = usvg::Options {
-        image_href_resolver: usvg::ImageHrefResolver { resolve_data: usvg::ImageHrefResolver::default_data_resolver(), resolve_string: Box::new(|_, _| None) },
+        image_href_resolver: usvg::ImageHrefResolver { resolve_data: crate::media::still::guarded_data_resolver(), resolve_string: Box::new(|_, _| None) },
         ..Default::default()
     };
-    let tree = usvg::Tree::from_data(data, &opt).context("unreadable SVG")?;
+    let tree = crate::media::still::parse_svg_data(data, &opt).context("unreadable SVG")?;
     let size = tree.size();
     let k = (2 * THUMB) as f32 / size.width().max(size.height()).max(1.0);
     let (w, h) = (((size.width() * k).ceil() as u32).max(1), ((size.height() * k).ceil() as u32).max(1));
-    let mut pixmap = resvg::tiny_skia::Pixmap::new(w, h).context("SVG too large")?;
-    resvg::render(&tree, resvg::tiny_skia::Transform::from_scale(k, k), &mut pixmap.as_mut());
+    let pixmap = crate::media::still::render_svg(&tree, k, w, h)?;
     // tiny-skia is premultiplied; image wants straight alpha.
     let mut rgba = Vec::with_capacity((w * h * 4) as usize);
     for p in pixmap.pixels() {

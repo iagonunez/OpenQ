@@ -233,10 +233,7 @@ pub fn cache_path() -> Option<PathBuf> {
 /// The cached catalogue, if any.
 pub fn load_cache() -> Option<Catalogue> {
     let path = cache_path()?;
-    if std::fs::metadata(&path).ok()?.len() > 4 * MAX_BODY {
-        return None;
-    }
-    serde_json::from_slice(&std::fs::read(path).ok()?).ok()
+    serde_json::from_slice(&crate::recovery::read_file(&path, 4 * MAX_BODY).ok()?).ok()
 }
 
 fn save_cache(c: &Catalogue) -> anyhow::Result<()> {

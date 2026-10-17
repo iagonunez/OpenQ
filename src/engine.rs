@@ -959,24 +959,36 @@ impl Engine {
 
 /// The cue the playhead moves to after firing `id`: skip everything `id` triggers through its
 /// continue chain, stepping out of groups at the end of their lists.
+/// A loop, with a step budget: in a damaged tree (two cues with one id) the walk could otherwise
+/// go round forever or overflow the stack.
 pub fn after_chain(ws: &Workspace, id: CueId) -> Option<CueId> {
     let list = &ws.cue_list;
+    let mut steps = 0usize;
     let mut cur = id;
     loop {
-        let c = list.find(cur)?;
-        if c.continue_mode != crate::model::ContinueMode::DoNotContinue
-            && let Some(n) = list.next_sibling(cur)
-        {
-            cur = n;
-            continue;
+        loop {
+            steps += 1;
+            if steps > MAX_CHAIN_STEPS {
+                return None;
+            }
+            let c = list.find(cur)?;
+            if c.continue_mode != crate::model::ContinueMode::DoNotContinue
+                && let Some(n) = list.next_sibling(cur)
+            {
+                cur = n;
+                continue;
+            }
+            break;
         }
-        break;
-    }
-    match list.next_sibling(cur) {
-        Some(n) => Some(n),
-        None => list.parent_of(cur).and_then(|p| after_chain(ws, p)),
+        match list.next_sibling(cur) {
+            Some(n) => return Some(n),
+            None => cur = list.parent_of(cur)?,
+        }
     }
 }
+
+/// Most cues [`after_chain`] walks through.
+const MAX_CHAIN_STEPS: usize = 1_000_000;
 
 /// Cues to keep preloaded, starting from `seeds` (the cue the next GO fires, and the cues
 /// running cues will continue into): each seed, the children it starts, the cue a Start cue

@@ -8,6 +8,7 @@ cargo run --release -- show.openq       # open a workspace
 cargo test                              # engine + model tests
 cargo run --release --example smoke     # headless end-to-end check of real audio/video (muted)
 tools/stress.sh                         # stress, soak, fuzz and crash-recovery suite (slow)
+tools/fuzz.sh                           # hostile input from every way in (slow; OPENQ_FUZZ_SECS per target)
 tools/ui_perf.sh show.openq [cue]       # frame times of the real window through a scripted session
 tools/demo_show.sh                      # big demo show for manual testing, opened in the app
 ```
@@ -41,6 +42,30 @@ it plays) and covers:
   decoder and the prober are recovered from.
 
 `OPENQ_STRESS_SCALE=<n>` multiplies the work for longer runs.
+
+**Fuzz tests** (`tests/fuzz.rs`, also `#[ignore]`d) throw damaged and deliberately malicious data at
+every way into OpenQ and require an error or a sane result, never a crash, a hang or runaway memory.
+Any panic counts, also one OpenQ catches on a worker thread; a call that doesn't answer in time
+counts as a hang. One target per way in:
+
+- `fuzz_show_files`: show files with valid JSON but hostile values (huge, negative and non-finite
+  numbers, duplicate ids, cues aimed at the wrong things, paths to devices, other users' files and
+  network shares, deep nesting) and broken bytes; what loads is saved, vetted and played;
+- `fuzz_media_files`: damaged audio, video, image and SVG files of 20-odd formats through every
+  reader, FIFOs, endless devices, huge sparse files, and SVGs that reach for other files, nest
+  without end or ask for filters that would take days;
+- `fuzz_lighting_files`, `fuzz_config_files`: effect/fixture files, zips, command lines, gobo images;
+  garbage (or a FIFO, or a folder) in every file of the config folder, and saving where it can't;
+- `fuzz_remote_messages`: hostile handshakes, every message an Edit-role replica can send over the
+  real encrypted link, every message a main device can send to a replica;
+- `fuzz_network_packets`, `fuzz_devices`: Art-Net, sACN, OSC, MIDI, MTC and LTC input; sound cards,
+  inputs, MIDI and serial ports and network outputs that don't exist or aren't what they claim.
+
+`tools/fuzz.sh` runs them (`OPENQ_FUZZ_SECS` per target, default 20; the CI workflow gives each a
+minute). Each run prints its seed (`OPENQ_FUZZ_SEED` repeats it); a failing input is saved under
+`target/tmp/fuzz-failures/` and `OPENQ_FUZZ_REPLAY=<file>` runs just that one. With the demo show in
+`target/demo-show` the show fuzzer also draws on every cue feature and real media, and with the
+`ffmpeg` program installed the media fuzzer starts from many more formats.
 
 User manual: **Help → User manual** (F1) in the app, or open `docs/manual/index.html` in a browser. API documentation: `cargo doc --no-deps --open`.
 

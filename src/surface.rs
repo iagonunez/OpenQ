@@ -191,7 +191,7 @@ fn port_file() -> Option<std::path::PathBuf> {
 /// The MIDI input port chosen on this computer for control surfaces (read from the config
 /// folder; call it once, not per frame).
 pub fn saved_midi_port() -> Option<String> {
-    let s = std::fs::read_to_string(port_file()?).ok()?;
+    let s = crate::recovery::read_text(&port_file()?, 4096).ok()?;
     let s = s.trim();
     (!s.is_empty()).then(|| s.to_string())
 }

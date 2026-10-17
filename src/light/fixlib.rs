@@ -192,11 +192,7 @@ pub fn load_dir(dir: &Path) -> (Vec<FixtureType>, Vec<(String, String)>) {
             continue;
         }
         let name = p.file_name().map(|n| n.to_string_lossy().to_string()).unwrap_or_default();
-        let r = std::fs::metadata(&p)
-            .map_err(anyhow::Error::from)
-            .and_then(|m| if m.len() > super::import::MAX_FILE { Err(anyhow::anyhow!("too big")) } else { Ok(()) })
-            .and_then(|_| std::fs::read_to_string(&p).map_err(anyhow::Error::from))
-            .and_then(|s| read(&s));
+        let r = crate::recovery::read_text(&p, super::import::MAX_FILE).map_err(anyhow::Error::from).and_then(|s| read(&s));
         match r {
             Ok(t) if types.iter().any(|x| x.id == t.id) => errors.push((name, format!("same id as another file ({})", t.id))),
             Ok(t) => types.push(t),
