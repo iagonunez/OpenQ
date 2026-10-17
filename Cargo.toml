@@ -1,6 +1,6 @@
 [package]
 name = "openq"
-version = "0.2.4"
+version = "0.3.0"
 license = "Apache-2.0"
 repository = "https://github.com/iagonunez/OpenQ"
 description = "Show-control and cue playback system"
@@ -62,7 +62,10 @@ objc2-foundation = "0.2"
 winresource = "0.1"
 
 [features]
-default = ["video", "pipewire", "scripting", "fixture-download"]
+default = ["video", "pipewire", "lighting"]
+# The lighting workspace (Lighting view, Light cues, playback window) with effect scripts and fixture
+# downloads. Without it OpenQ is cues only; lighting designs in a show are kept and still play.
+lighting = ["scripting", "fixture-download"]
 video = ["dep:ffmpeg-next"]
 # Linux: talk to PipeWire directly (every sink/source listed by name, no ALSA device busy errors).
 # Needs the libpipewire-0.3 headers; without it (or without a running PipeWire) ALSA is used.

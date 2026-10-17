@@ -47,7 +47,8 @@ OpenQ is built from source on your computer by **[oqman](https://github.com/iago
 an installer in the style of rustup. It installs Rust and the build dependencies if they're missing
 (on Windows and macOS an LGPL-only FFmpeg, on Linux your distribution's packages, asking first),
 builds the newest tagged version and installs the app with a menu entry. `oqman update` rebuilds
-when a new version is tagged; `oqman uninstall` removes it.
+when a new version is tagged; `oqman uninstall` removes it. `oqman install --no-lighting` installs
+the cues only, without the lighting workspace (`--lighting` adds it back).
 
 ### 🐧 Linux and 🍎 macOS
 

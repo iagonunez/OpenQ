@@ -17,6 +17,9 @@ use crate::show::Show;
 use egui::{Color32, DragValue, RichText, Ui};
 use std::collections::HashSet;
 
+/// Whether this build has the lighting workspace (cargo feature `lighting`).
+pub(crate) const ENABLED: bool = cfg!(feature = "lighting");
+
 /// Which half of the main window is shown.
 #[derive(Clone, Copy, PartialEq, Eq, Debug, Default)]
 pub(crate) enum View {

@@ -1209,6 +1209,11 @@ impl KindTag {
         KindTag::Light,
     ];
 
+    /// Whether this build offers the type (Light cues need the `lighting` feature).
+    pub fn enabled(self) -> bool {
+        self != KindTag::Light || cfg!(feature = "lighting")
+    }
+
     /// Name shown in the UI.
     pub fn label(self) -> &'static str {
         match self {

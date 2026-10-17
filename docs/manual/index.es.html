@@ -297,6 +297,10 @@ echo 'export PATH="$HOME/.local/bin:$PATH"' &gt;&gt; ~/.bashrc   # bash (zsh: ~/
   Para quitar OpenQ, ejecuta <code>oqman uninstall</code>; pregunta antes. Con <code>--purge</code> quita también el Rust, las
   dependencias y la caché de compilación de oqman. En Windows también puedes quitarlo desde <em>Configuración →
   Aplicaciones → Aplicaciones instaladas</em>. Tus espectáculos nunca se tocan.</p>
+  <p>Si solo necesitas cues, <code>oqman install --no-lighting</code> compila OpenQ sin el espacio de iluminación (sin
+  vista Iluminación, cues Light, scripts de efectos ni descargas de aparatos); la compilación es más pequeña y rápida. Los
+  espectáculos con un diseño de iluminación se siguen abriendo, lo conservan y reproducen sus cues Light.
+  <code>oqman install --lighting</code> lo vuelve a añadir.</p>
   <p>Para ejecutar una copia en la que estés trabajando desde el código fuente:</p>
 <pre><code>cargo run --release                  # empezar con un espectáculo vacío
 cargo run --release -- show.openq    # abrir un espectáculo guardado</code></pre>

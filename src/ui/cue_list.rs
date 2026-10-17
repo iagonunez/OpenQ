@@ -120,7 +120,7 @@ impl App {
                             ui.painter().rect_filled(r, 0.0, theme::BORDER);
                             ui.add_space(5.0);
                         }
-                        for tag in *group {
+                        for tag in group.iter().filter(|t| t.enabled()) {
                             let i = KindTag::ALL.iter().position(|t| t == tag).unwrap_or(99);
                             let key = if i < 10 { format!("  ·  Ctrl+{}", (i + 1) % 10) } else { String::new() };
                             if tile(ui, theme::kind_icon(*tag), tag.label())

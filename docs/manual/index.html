@@ -293,6 +293,9 @@ echo 'export PATH="$HOME/.local/bin:$PATH"' &gt;&gt; ~/.bashrc   # bash (zsh: ~/
   OpenQ, run <code>oqman uninstall</code>; it asks first. Add <code>--purge</code> to remove oqman's Rust, dependencies and
   build cache as well. On Windows you can also remove OpenQ from <em>Settings → Apps → Installed apps</em>. Your shows
   are never touched.</p>
+  <p>If you only need cues, <code>oqman install --no-lighting</code> builds OpenQ without the lighting workspace (no
+  Lighting view, Light cues, effect scripts or fixture downloads); the build is smaller and faster. Shows with a lighting
+  design still open, keep it and play their Light cues. <code>oqman install --lighting</code> adds it back.</p>
   <p>To run a copy you are working on from source instead:</p>
 <pre><code>cargo run --release                  # start with an empty show
 cargo run --release -- show.openq    # open a saved show</code></pre>

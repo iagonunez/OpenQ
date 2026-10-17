@@ -48,6 +48,11 @@ Video uses the FFmpeg libraries (the system's on Linux; on Windows and macOS oqm
 LGPL-only build inside the app), plus clang at build time, so anything FFmpeg can play works, with no codec plugins to
 install. Build without video with `--no-default-features`.
 
+**Lighting** is the cargo feature `lighting` (on by default; it turns on `scripting` and
+`fixture-download`). Without it OpenQ is cues only: no Cues/Lighting switch, playback window or Light
+cue type; lighting designs in a show still load, are saved back and play (`oqman install --no-lighting`
+builds that way).
+
 **Lighting effect scripts** run in CPython built for WebAssembly inside wasmtime (cargo feature
 `scripting`, on by default): no files besides a read-only standard library, no network or
 processes, capped memory and time. Users get the interpreter from oqman (`python/` next to the

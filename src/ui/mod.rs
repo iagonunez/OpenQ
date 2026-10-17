@@ -919,7 +919,7 @@ impl App {
                 if self.mode == Mode::Show {
                     ui.disable();
                 }
-                for (i, tag) in KindTag::ALL.iter().enumerate() {
+                for (i, tag) in KindTag::ALL.iter().enumerate().filter(|(_, t)| t.enabled()) {
                     let mut b = egui::Button::new(wi(
                         theme::kind_icon(*tag),
                         &tr!("New {kind} cue", kind = tag.label()),
@@ -2716,10 +2716,15 @@ impl App {
                     .show(ui, |ui| self.menu_bar(ui, show));
             }
             // Cues / Lighting switch above everything else; the GO / standby header only in the Cues view.
-            egui::Panel::top("view_tabs")
-                .frame(egui::Frame::new().fill(theme::BG_APP).inner_margin(egui::Margin { left: 10, right: 10, top: 6, bottom: 6 }))
-                .show_separator_line(false)
-                .show(ui, |ui| self.view_tabs(ui));
+            // Without the lighting feature there is only the Cues view.
+            if lighting::ENABLED {
+                egui::Panel::top("view_tabs")
+                    .frame(egui::Frame::new().fill(theme::BG_APP).inner_margin(egui::Margin { left: 10, right: 10, top: 6, bottom: 6 }))
+                    .show_separator_line(false)
+                    .show(ui, |ui| self.view_tabs(ui));
+            } else {
+                self.view = lighting::View::Cues;
+            }
             if self.view == lighting::View::Cues {
                 egui::Panel::top("header")
                     .frame(
@@ -2803,7 +2808,9 @@ impl App {
             self.geometry_preview(&ctx, show);
             self.remote_window(&ctx, show);
             self.network_requests_window(&ctx, show);
-            self.playback_window(&ctx, show);
+            if lighting::ENABLED {
+                self.playback_window(&ctx, show);
+            }
             self.about_window(&ctx);
             // One centred window at a time: the language first, then lost work.
             if self.ask_language {
