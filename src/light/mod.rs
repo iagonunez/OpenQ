@@ -21,7 +21,7 @@
 //! * [`dmxin`] — Art-Net/sACN input: merged into the output or captured into the programmer.
 //!
 //! OpenQ Light cues in the main cue list target a designed lighting cue and GO it; the design
-//! itself can only be edited in Edit mode. See `docs/lighting.md` for the plan.
+//! itself can only be edited in Edit mode.
 
 pub mod artnet;
 pub mod command;
