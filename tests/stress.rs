@@ -1177,7 +1177,7 @@ mod lighting {
                 }
                 _ => {
                     // A digit into a number: offsets, DMX values, counts.
-                    let d = [b'0', b'9', b'5', b'1'][rng.usize(..4)];
+                    let d = b"0951"[rng.usize(..4)];
                     if v[i].is_ascii_digit() {
                         v.insert(i, d);
                     }

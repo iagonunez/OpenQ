@@ -15,9 +15,20 @@
 //! UI to route them) and [`MidiSurface`] reads a MIDI input port on its own thread, reconnecting
 //! when the device comes back. The same port can carry MIDI clock: with
 //! [`SurfaceSettings::midi_clock`] on, [`MidiClock`] turns it into the effects tempo.
+//!
+//! Pages: with [`SurfaceSettings::page_size`] set, the surface's page (Page next/previous
+//! buttons; per computer, kept in the hub) shifts its executors by that many sequences, and
+//! picks the Playback page's button page its playback buttons reach.
+//! Soft takeover ([`SurfaceSettings::soft_takeover`]): a fader that doesn't match the level it
+//! controls (moved elsewhere, or a new page) does nothing until it reaches or crosses that level.
+//! Feedback: [`feedback`] is what each mapped control should show (fader levels for motor
+//! faders, button LEDs for running executors, playback buttons that are on, blackout, pages);
+//! [`SurfaceFeedback`] sends the changes to a MIDI output and to the OSC app that last sent
+//! (at [`SurfaceSettings::osc_feedback_port`]).
 
 use crate::control::{Command, LightControl};
 use crate::light::Lighting;
+use crate::light::model::{ButtonId, LightButton, SequenceId};
 use crate::light::engine::Masters;
 use crate::light::playback::SequenceStatus;
 use crate::show::SharedShow;
@@ -83,11 +94,18 @@ pub enum SurfaceAction {
     Go,
     /// Button: Stop all.
     Stop,
+    /// Button: playback button `n` (from 1) of the surface's page on the Playback page; toggles
+    /// it, or holds it on while pressed (a flash button).
+    PlaybackButton(u16),
+    /// Button: the surface's next page.
+    PageNext,
+    /// Button: the surface's previous page.
+    PagePrevious,
 }
 
 impl SurfaceAction {
     /// One of each kind (executor 1), in menu order.
-    pub const KINDS: [SurfaceAction; 10] = [
+    pub const KINDS: [SurfaceAction; 13] = [
         SurfaceAction::ExecutorLevel(1),
         SurfaceAction::ExecutorGo(1),
         SurfaceAction::ExecutorRelease(1),
@@ -98,6 +116,9 @@ impl SurfaceAction {
         SurfaceAction::TapTempo,
         SurfaceAction::Go,
         SurfaceAction::Stop,
+        SurfaceAction::PlaybackButton(1),
+        SurfaceAction::PageNext,
+        SurfaceAction::PagePrevious,
     ];
 
     /// Name of the kind, for menus.
@@ -114,6 +135,9 @@ impl SurfaceAction {
             SurfaceAction::TapTempo => t("Tap tempo"),
             SurfaceAction::Go => "GO",
             SurfaceAction::Stop => t("Stop all"),
+            SurfaceAction::PlaybackButton(_) => t("Playback button"),
+            SurfaceAction::PageNext => t("Next page"),
+            SurfaceAction::PagePrevious => t("Previous page"),
         }
     }
 
@@ -125,13 +149,22 @@ impl SurfaceAction {
         }
     }
 
-    /// The same kind on executor `n` (unchanged for other kinds).
-    pub fn with_executor(self, n: u16) -> Self {
+    /// The executor or playback button number it acts on.
+    pub fn number(self) -> Option<u16> {
+        match self {
+            SurfaceAction::PlaybackButton(n) => Some(n),
+            a => a.executor(),
+        }
+    }
+
+    /// The same kind on executor or playback button `n` (unchanged for other kinds).
+    pub fn with_number(self, n: u16) -> Self {
         match self {
             SurfaceAction::ExecutorLevel(_) => SurfaceAction::ExecutorLevel(n),
             SurfaceAction::ExecutorGo(_) => SurfaceAction::ExecutorGo(n),
             SurfaceAction::ExecutorRelease(_) => SurfaceAction::ExecutorRelease(n),
             SurfaceAction::ExecutorFlash(_) => SurfaceAction::ExecutorFlash(n),
+            SurfaceAction::PlaybackButton(_) => SurfaceAction::PlaybackButton(n),
             a => a,
         }
     }
@@ -164,12 +197,20 @@ pub struct SurfaceSettings {
     pub mappings: Vec<Mapping>,
     /// The effects tempo follows MIDI clock arriving on the surface's MIDI input.
     pub midi_clock: bool,
+    /// Executors per surface page: page 2 shifts executor faders and buttons by this many
+    /// sequences (0 = no pages for executors).
+    pub page_size: u16,
+    /// Faders pick up the level they control before they change it.
+    pub soft_takeover: bool,
+    /// OSC feedback goes to the address the last OSC control came from, at this port (0 = no
+    /// OSC feedback).
+    pub osc_feedback_port: u16,
 }
 
 impl SurfaceSettings {
     /// Nothing set up (left out of the show file).
     pub fn is_empty(&self) -> bool {
-        self.mappings.is_empty() && !self.midi_clock
+        *self == Self::default()
     }
 
     /// Mappings of `n` faders as executor levels on CC `first`.. and `n` buttons as executor GOs
@@ -184,21 +225,39 @@ impl SurfaceSettings {
     }
 }
 
-fn port_file() -> Option<std::path::PathBuf> {
-    crate::remote::config_dir().map(|d| d.join("midi-surface"))
+fn port_file(output: bool) -> Option<std::path::PathBuf> {
+    crate::remote::config_dir().map(|d| d.join(if output { "midi-surface-feedback" } else { "midi-surface" }))
 }
 
 /// The MIDI input port chosen on this computer for control surfaces (read from the config
 /// folder; call it once, not per frame).
 pub fn saved_midi_port() -> Option<String> {
-    let s = crate::recovery::read_text(&port_file()?, 4096).ok()?;
+    saved_port(false)
+}
+
+/// The MIDI output port chosen on this computer for surface feedback (LEDs, motor faders).
+pub fn saved_feedback_port() -> Option<String> {
+    saved_port(true)
+}
+
+fn saved_port(output: bool) -> Option<String> {
+    let s = crate::recovery::read_text(&port_file(output)?, 4096).ok()?;
     let s = s.trim();
     (!s.is_empty()).then(|| s.to_string())
 }
 
 /// Remember the MIDI input port for control surfaces on this computer (None = no MIDI surface).
 pub fn save_midi_port(port: Option<&str>) -> anyhow::Result<()> {
-    let path = port_file().ok_or_else(|| anyhow::anyhow!("no config folder"))?;
+    save_port(false, port)
+}
+
+/// Remember the MIDI output port for surface feedback on this computer (None = no feedback).
+pub fn save_feedback_port(port: Option<&str>) -> anyhow::Result<()> {
+    save_port(true, port)
+}
+
+fn save_port(output: bool, port: Option<&str>) -> anyhow::Result<()> {
+    let path = port_file(output).ok_or_else(|| anyhow::anyhow!("no config folder"))?;
     match port {
         Some(p) => {
             if let Some(dir) = path.parent() {
@@ -210,6 +269,23 @@ pub fn save_midi_port(port: Option<&str>) -> anyhow::Result<()> {
             Err(e) if e.kind() != std::io::ErrorKind::NotFound => Err(e.into()),
             _ => Ok(()),
         },
+    }
+}
+
+/// MIDI output ports by name.
+pub fn list_midi_outputs() -> Vec<String> {
+    let Ok(m) = midir::MidiOutput::new("OpenQ") else { return Vec::new() };
+    m.ports().iter().filter_map(|p| m.port_name(p).ok()).collect()
+}
+
+/// The MIDI message that shows `value` on a control: the same controller (value 0..=127) or
+/// note (on at 127 / off) it sends. None for OSC.
+pub fn midi_message(input: &SurfaceInput, value: f32) -> Option<[u8; 3]> {
+    let v = (value.clamp(0.0, 1.0) * 127.0).round() as u8;
+    match *input {
+        SurfaceInput::MidiCc { channel, number } => Some([0xb0 | (channel & 0x0f), number & 0x7f, v]),
+        SurfaceInput::MidiNote { channel, number } => Some([0x90 | (channel & 0x0f), number & 0x7f, if value >= 0.5 { 127 } else { 0 }]),
+        SurfaceInput::Osc(_) => None,
     }
 }
 
@@ -296,14 +372,34 @@ impl MidiClock {
     }
 }
 
+/// What a fader controls (soft takeover follows it).
+#[derive(Clone, Copy, PartialEq, Debug)]
+enum Target {
+    Sequence(SequenceId),
+    GrandMaster,
+}
+
+/// A fader within this of its level picks it up.
+const PICKUP: f32 = 0.03;
+/// A fader that picked up a level keeps it this long after its last move even if the level
+/// reads differently (a replica's mirrored levels lag behind its own moves).
+const HOLD: Duration = Duration::from_millis(500);
+
 /// What button handling remembers between inputs.
 #[derive(Default)]
 pub struct Feel {
     /// Last value of each input (presses are rising edges).
     values: HashMap<SurfaceInput, f32>,
-    /// Executor levels to go back to when a flash button is let go.
-    flashed: HashMap<u16, f32>,
+    /// Executor levels to go back to when a flash button is let go, by sequence.
+    flashed: HashMap<SequenceId, f32>,
+    /// Flash playback buttons held down: the input and the button it pressed (the page may
+    /// change while it is held).
+    held: HashMap<SurfaceInput, ButtonId>,
+    /// Faders that picked up their level: what, the value last sent and when.
+    caught: HashMap<SurfaceInput, (Target, f32, Instant)>,
     taps: Vec<Instant>,
+    /// The surface's page, from 0.
+    pub page: u16,
 }
 
 /// What the show looks like to [`resolve`].
@@ -316,34 +412,112 @@ pub struct View<'a> {
     pub status: &'a [SequenceStatus],
     /// Fade time of Release all.
     pub release_fade: f32,
+    /// Executors per page ([`SurfaceSettings::page_size`]).
+    pub page_size: u16,
+    /// Soft takeover on ([`SurfaceSettings::soft_takeover`]).
+    pub soft_takeover: bool,
 }
 
-/// The commands `action` gives for `value` (after `prev`, the input's previous value).
-fn act(action: SurfaceAction, value: f32, prev: f32, view: &View, feel: &mut Feel, now: Instant) -> Vec<Command> {
+impl View<'_> {
+    /// Number of surface pages: enough for every sequence and every button page.
+    pub fn pages(&self) -> u16 {
+        let seqs = match self.page_size {
+            0 => 1,
+            n => self.lighting.sequences.len().div_ceil(n as usize).max(1),
+        };
+        (seqs.max(self.lighting.button_page_count() as usize)).min(u16::MAX as usize) as u16
+    }
+
+    /// Sequence of executor `n` on page `page`.
+    pub fn executor(&self, n: u16, page: u16) -> Option<SequenceId> {
+        let i = (n as usize).checked_sub(1)? + page as usize * self.page_size as usize;
+        self.lighting.sequences.get(i).map(|s| s.id)
+    }
+
+    /// Playback button `n` on page `page`.
+    pub fn button(&self, n: u16, page: u16) -> Option<&LightButton> {
+        let page = page.min(self.lighting.button_page_count() - 1);
+        self.lighting.page_buttons(page).nth((n as usize).checked_sub(1)?)
+    }
+
+    /// A sequence is running (a cue is up).
+    fn on(&self, seq: SequenceId) -> bool {
+        self.status.iter().any(|x| x.id == seq && x.cue.is_some())
+    }
+}
+
+/// The commands `action` gives for `value` on `input` (after `prev`, the input's previous value,
+/// None the first time).
+#[allow(clippy::too_many_arguments)]
+fn act(action: SurfaceAction, input: &SurfaceInput, value: f32, prev: Option<f32>, view: &View, feel: &mut Feel, now: Instant) -> Vec<Command> {
     let value = value.clamp(0.0, 1.0);
-    let pressed = value >= 0.5 && prev < 0.5;
-    let released = value < 0.5 && prev >= 0.5;
-    let seq = |n: u16| view.lighting.sequences.get((n as usize).checked_sub(1)?).map(|s| s.id);
+    let was = prev.unwrap_or(0.0);
+    let pressed = value >= 0.5 && was < 0.5;
+    let released = value < 0.5 && was >= 0.5;
+    let page = feel.page.min(view.pages() - 1);
+    let seq = |n: u16| view.executor(n, page);
     let light = |c: LightControl| Command::Light(c);
+    // Soft takeover: a fader acts once it has met its level.
+    let mut fader = |target: Target, level: f32| -> bool {
+        if !view.soft_takeover {
+            return true;
+        }
+        let held = feel.caught.get(input).is_some_and(|(t, sent, at)| *t == target && ((level - sent).abs() < PICKUP || now.duration_since(*at) < HOLD));
+        let meets = (value - level).abs() <= PICKUP || prev.is_some_and(|p| (p - level) * (value - level) <= 0.0);
+        if held || meets {
+            feel.caught.insert(input.clone(), (target, value, now));
+            true
+        } else {
+            feel.caught.remove(input);
+            false
+        }
+    };
     match action {
-        SurfaceAction::ExecutorLevel(n) => seq(n).map(|s| light(LightControl::Level(s, value))).into_iter().collect(),
-        SurfaceAction::GrandMaster => vec![light(LightControl::GrandMaster(value))],
+        SurfaceAction::ExecutorLevel(n) => match seq(n) {
+            Some(s) if fader(Target::Sequence(s), view.masters.level(s)) => vec![light(LightControl::Level(s, value))],
+            _ => Vec::new(),
+        },
+        SurfaceAction::GrandMaster if fader(Target::GrandMaster, view.masters.grand_master) => vec![light(LightControl::GrandMaster(value))],
         SurfaceAction::ExecutorGo(n) if pressed => seq(n).map(|s| light(LightControl::Go(s, None))).into_iter().collect(),
         SurfaceAction::ExecutorRelease(n) if pressed => seq(n).map(|s| light(LightControl::Release(Some(s), 1.0))).into_iter().collect(),
         SurfaceAction::ExecutorFlash(n) => {
             let Some(s) = seq(n) else { return Vec::new() };
             if pressed {
-                feel.flashed.insert(n, view.masters.level(s));
+                feel.flashed.insert(s, view.masters.level(s));
                 let mut v = vec![light(LightControl::Level(s, 1.0))];
                 if !view.status.iter().any(|x| x.id == s && x.active) {
                     v.push(light(LightControl::Go(s, None)));
                 }
                 v
             } else if released {
-                feel.flashed.remove(&n).map(|l| light(LightControl::Level(s, l))).into_iter().collect()
+                feel.flashed.remove(&s).map(|l| light(LightControl::Level(s, l))).into_iter().collect()
             } else {
                 Vec::new()
             }
+        }
+        SurfaceAction::PlaybackButton(n) => {
+            if released && let Some(id) = feel.held.remove(input) {
+                return view.lighting.button(id).map(|b| light(LightControl::Release(Some(b.sequence_id()), b.fade as f32))).into_iter().collect();
+            }
+            let Some(b) = view.button(n, page).filter(|_| pressed) else { return Vec::new() };
+            let (seq, go) = (b.sequence_id(), light(LightControl::Go(b.sequence_id(), Some(b.cue_id()))));
+            if b.flash {
+                feel.held.insert(input.clone(), b.id);
+                vec![go]
+            } else if view.on(seq) {
+                vec![light(LightControl::Release(Some(seq), b.fade as f32))]
+            } else {
+                vec![go]
+            }
+        }
+        SurfaceAction::PageNext | SurfaceAction::PagePrevious if pressed => {
+            let next = if action == SurfaceAction::PageNext { page.saturating_add(1).min(view.pages() - 1) } else { page.saturating_sub(1) };
+            if next != page {
+                feel.page = next;
+                // Faders must pick up the new page's levels.
+                feel.caught.clear();
+            }
+            Vec::new()
         }
         SurfaceAction::Blackout if pressed => vec![light(LightControl::Blackout(!view.masters.blackout))],
         SurfaceAction::ReleaseAll if pressed => vec![light(LightControl::Release(None, view.release_fade))],
@@ -352,6 +526,34 @@ fn act(action: SurfaceAction, value: f32, prev: f32, view: &View, feel: &mut Fee
         SurfaceAction::Stop if pressed => vec![Command::Stop],
         _ => Vec::new(),
     }
+}
+
+/// What each mapped control should show, for feedback: fader levels (motor faders), 1/0 for
+/// buttons (LEDs: a running executor, a playback button that is on, blackout on, a page to go
+/// to). Controls of actions with no state (GO, Stop, tap...) are left out; a control mapped
+/// twice shows its first mapping.
+pub fn feedback(settings: &SurfaceSettings, view: &View, page: u16) -> Vec<(SurfaceInput, f32)> {
+    let page = page.min(view.pages() - 1);
+    let flag = |b: bool| if b { 1.0 } else { 0.0 };
+    let mut out: Vec<(SurfaceInput, f32)> = Vec::new();
+    for m in &settings.mappings {
+        if out.iter().any(|(i, _)| *i == m.input) {
+            continue;
+        }
+        let active = |n: u16| view.executor(n, page).is_some_and(|s| view.status.iter().any(|x| x.id == s && x.active));
+        let v = match m.action {
+            SurfaceAction::ExecutorLevel(n) => view.executor(n, page).map_or(0.0, |s| view.masters.level(s)),
+            SurfaceAction::GrandMaster => view.masters.grand_master,
+            SurfaceAction::ExecutorGo(n) | SurfaceAction::ExecutorRelease(n) | SurfaceAction::ExecutorFlash(n) => flag(active(n)),
+            SurfaceAction::PlaybackButton(n) => flag(view.button(n, page).is_some_and(|b| view.on(b.sequence_id()))),
+            SurfaceAction::Blackout => flag(view.masters.blackout),
+            SurfaceAction::PageNext => flag(page + 1 < view.pages()),
+            SurfaceAction::PagePrevious => flag(page > 0),
+            SurfaceAction::ReleaseAll | SurfaceAction::TapTempo | SurfaceAction::Go | SurfaceAction::Stop => continue,
+        };
+        out.push((m.input.clone(), v.clamp(0.0, 1.0)));
+    }
+    out
 }
 
 /// The commands for one input event: every mapping on `input`, plus `builtin` (an OSC address
@@ -372,10 +574,10 @@ pub fn resolve(
         Some(v) => (v, v),
         None => (1.0, 0.0),
     };
-    let prev = feel.values.get(input).copied().unwrap_or(0.0);
+    let prev = feel.values.get(input).copied();
     let mut out = Vec::new();
     for a in actions {
-        out.extend(act(a, value, prev, view, feel, now));
+        out.extend(act(a, input, value, prev, view, feel, now));
     }
     feel.values.insert(input.clone(), after);
     out
@@ -415,10 +617,20 @@ pub struct LastInput {
     pub at: Instant,
 }
 
+/// The [`View`] of a show.
+fn view<'a>(show: &'a crate::show::Show, masters: &'a Masters, status: &'a [SequenceStatus]) -> View<'a> {
+    let s = &show.ws.settings.surfaces;
+    View { lighting: &show.ws.lighting, masters, status, release_fade: show.ws.settings.panic_fade as f32, page_size: s.page_size, soft_takeover: s.soft_takeover }
+}
+
 #[derive(Default)]
 struct HubState {
     feel: Feel,
     last: Option<LastInput>,
+    /// When each control last moved (feedback leaves a fader alone while it is being moved).
+    touched: HashMap<SurfaceInput, Instant>,
+    /// Where the last OSC control message came from (OSC feedback goes there).
+    osc_peer: Option<std::net::IpAddr>,
     /// Learn mode: the next input is kept here instead of acting.
     learning: bool,
     learned: Option<SurfaceInput>,
@@ -456,7 +668,8 @@ impl SurfaceHub {
         }
         let masters = show.media.light.masters().clone();
         let status = show.media.light.status();
-        let view = View { lighting: &show.ws.lighting, masters: &masters, status: &status, release_fade: show.ws.settings.panic_fade as f32 };
+        let view = view(&show, &masters, &status);
+        st.touched.insert(input.clone(), now);
         let cmds = resolve(&show.ws.settings.surfaces, builtin, &view, &mut st.feel, &input, value, now);
         let used = !cmds.is_empty() || builtin.is_some() || show.ws.settings.surfaces.mappings.iter().any(|m| m.input == input);
         if show.replica {
@@ -523,6 +736,214 @@ impl SurfaceHub {
     /// Commands waiting to be routed by a replica's UI.
     pub fn take_pending(&self) -> Vec<Command> {
         std::mem::take(&mut self.state.lock().pending)
+    }
+
+    /// The surface's page (from 0).
+    pub fn page(&self) -> u16 {
+        self.state.lock().feel.page
+    }
+
+    /// Go to a page (from 0; kept within the show's pages when used).
+    pub fn set_page(&self, page: u16) {
+        let mut st = self.state.lock();
+        if st.feel.page != page {
+            st.feel.page = page;
+            st.feel.caught.clear();
+        }
+    }
+
+    /// An OSC message came from `ip` (OSC feedback goes to the latest sender).
+    pub fn osc_from(&self, ip: std::net::IpAddr) {
+        self.state.lock().osc_peer = Some(ip);
+    }
+
+    /// Feedback for the show's mapped controls ([`feedback`]) on the current page, the OSC peer,
+    /// and the controls moved within `recent` (left alone: a motor fader must not fight the hand).
+    pub fn feedback(&self, show: &crate::show::Show, recent: Duration) -> (Vec<(SurfaceInput, f32)>, Option<std::net::IpAddr>) {
+        let masters = show.media.light.masters().clone();
+        let status = show.media.light.status();
+        let v = view(show, &masters, &status);
+        let st = self.state.lock();
+        let now = Instant::now();
+        let mut out = feedback(&show.ws.settings.surfaces, &v, st.feel.page);
+        out.retain(|(i, _)| st.touched.get(i).is_none_or(|at| now.duration_since(*at) >= recent));
+        (out, st.osc_peer)
+    }
+}
+
+/// How often feedback is worked out and sent.
+const FEEDBACK_EVERY: Duration = Duration::from_millis(40);
+/// Feedback leaves a control alone this long after it moved.
+const TOUCH_HOLD: Duration = Duration::from_millis(300);
+
+/// Sends [`feedback`] to the controls: MIDI to an output port (looked for by name, reconnected
+/// when it comes back), OSC to the last OSC sender at [`SurfaceSettings::osc_feedback_port`].
+/// Only changes are sent (all again after a reconnect or a new OSC peer). Dropping it stops the
+/// thread.
+pub struct SurfaceFeedback {
+    /// MIDI output port.
+    pub port: Option<String>,
+    stop: Arc<AtomicBool>,
+    status: Arc<Mutex<MidiStatus>>,
+    thread: Option<std::thread::JoinHandle<()>>,
+}
+
+/// Values sent per control (MIDI controls by their 7-bit value, OSC by value).
+#[derive(Default)]
+pub struct FeedbackSent {
+    midi: HashMap<SurfaceInput, [u8; 3]>,
+    osc: HashMap<SurfaceInput, f32>,
+}
+
+impl FeedbackSent {
+    /// The MIDI messages and OSC values to send for `wanted` (what changed since the last call).
+    pub fn changes(&mut self, wanted: &[(SurfaceInput, f32)]) -> (Vec<[u8; 3]>, Vec<(String, f32)>) {
+        let (mut midi, mut osc) = (Vec::new(), Vec::new());
+        for (input, v) in wanted {
+            match input {
+                SurfaceInput::Osc(addr) => {
+                    if self.osc.get(input).is_none_or(|x| (x - v).abs() > 1e-3) {
+                        self.osc.insert(input.clone(), *v);
+                        osc.push((addr.clone(), *v));
+                    }
+                }
+                _ => {
+                    let Some(m) = midi_message(input, *v) else { continue };
+                    if self.midi.get(input) != Some(&m) {
+                        self.midi.insert(input.clone(), m);
+                        midi.push(m);
+                    }
+                }
+            }
+        }
+        (midi, osc)
+    }
+
+    /// Send everything again (MIDI: a reconnect; OSC: a new peer).
+    pub fn forget(&mut self, midi: bool, osc: bool) {
+        if midi {
+            self.midi.clear();
+        }
+        if osc {
+            self.osc.clear();
+        }
+    }
+}
+
+impl SurfaceFeedback {
+    /// Start sending feedback (MIDI to `port` if given; OSC when the show sets a port).
+    pub fn start(port: Option<String>, show: SharedShow, hub: SurfaceHub) -> Self {
+        let stop = Arc::new(AtomicBool::new(false));
+        let status = Arc::new(Mutex::new(MidiStatus::default()));
+        let (stop2, status2, name) = (stop.clone(), status.clone(), port.clone());
+        let thread = std::thread::Builder::new()
+            .name("openq-surface-feedback".into())
+            .spawn(move || {
+                let mut sent = FeedbackSent::default();
+                let mut conn: Option<midir::MidiOutputConnection> = None;
+                let mut tried: Option<Instant> = None;
+                let mut checked = Instant::now();
+                let sock = std::net::UdpSocket::bind(("0.0.0.0", 0)).ok();
+                let mut peer: Option<std::net::SocketAddr> = None;
+                while !stop2.load(Ordering::Acquire) {
+                    // MIDI output: connect, and notice a port that went away.
+                    if let Some(name) = &name {
+                        if conn.is_some() && checked.elapsed() >= crate::media::AUDIO_RETRY {
+                            checked = Instant::now();
+                            if !list_midi_outputs().contains(name) {
+                                log::warn!("surface feedback: MIDI output lost ({name}); reconnecting…");
+                                conn = None;
+                                *status2.lock() = MidiStatus { connected: None, error: Some(format!("MIDI output lost: {name}")) };
+                            }
+                        }
+                        if conn.is_none() && tried.is_none_or(|t| t.elapsed() >= crate::media::AUDIO_RETRY) {
+                            tried = Some(Instant::now());
+                            let r = (|| {
+                                let m = midir::MidiOutput::new("OpenQ").map_err(|e| e.to_string())?;
+                                let ports = m.ports();
+                                let p = ports.iter().find(|p| m.port_name(p).ok().as_deref() == Some(name.as_str())).ok_or_else(|| format!("MIDI output not found: {name}"))?.clone();
+                                m.connect(&p, "openq-feedback").map_err(|e| e.to_string())
+                            })();
+                            match r {
+                                Ok(c) => {
+                                    log::info!("surface feedback: MIDI output {name}");
+                                    conn = Some(c);
+                                    checked = Instant::now();
+                                    sent.forget(true, false);
+                                    *status2.lock() = MidiStatus { connected: Some(name.clone()), error: None };
+                                }
+                                Err(e) => {
+                                    let mut st = status2.lock();
+                                    if st.error.as_deref() != Some(e.as_str()) {
+                                        log::warn!("surface feedback: {e}");
+                                    }
+                                    *st = MidiStatus { connected: None, error: Some(e) };
+                                }
+                            }
+                        }
+                    }
+                    let r = crate::recovery::catch(|| {
+                        let (wanted, ip, port) = {
+                            let show = show.lock();
+                            if show.ws.settings.surfaces.mappings.is_empty() {
+                                return Ok(());
+                            }
+                            let (w, ip) = hub.feedback(&show, TOUCH_HOLD);
+                            (w, ip, show.ws.settings.surfaces.osc_feedback_port)
+                        };
+                        let to = ip.filter(|_| port > 0).map(|ip| std::net::SocketAddr::new(ip, port));
+                        if to != peer {
+                            peer = to;
+                            sent.forget(false, true);
+                        }
+                        let (midi, osc) = sent.changes(&wanted);
+                        if let Some(c) = &mut conn {
+                            for m in midi {
+                                if let Err(e) = c.send(&m) {
+                                    log::warn!("surface feedback: {e}");
+                                    break;
+                                }
+                            }
+                        }
+                        if let (Some(sock), Some(to)) = (&sock, peer) {
+                            for (addr, v) in osc {
+                                let msg = rosc::OscPacket::Message(rosc::OscMessage { addr, args: vec![rosc::OscType::Float(v)] });
+                                if let Ok(bytes) = rosc::encoder::encode(&msg) {
+                                    let _ = sock.send_to(&bytes, to);
+                                }
+                            }
+                        }
+                        Ok(())
+                    });
+                    if let Err(e) = r {
+                        log::warn!("surface feedback: {e:#}");
+                    }
+                    std::thread::park_timeout(FEEDBACK_EVERY);
+                }
+            })
+            .ok();
+        Self { port, stop, status, thread }
+    }
+
+    /// State of the MIDI output.
+    pub fn status(&self) -> MidiStatus {
+        self.status.lock().clone()
+    }
+}
+
+impl Drop for SurfaceFeedback {
+    fn drop(&mut self) {
+        self.stop.store(true, Ordering::Release);
+        if let Some(t) = self.thread.take() {
+            t.thread().unpark();
+            let deadline = Instant::now() + Duration::from_millis(200);
+            while !t.is_finished() && Instant::now() < deadline {
+                std::thread::sleep(Duration::from_millis(2));
+            }
+            if t.is_finished() {
+                let _ = t.join();
+            }
+        }
     }
 }
 
@@ -669,7 +1090,7 @@ mod tests {
 
     fn run(s: &SurfaceSettings, feel: &mut Feel, input: &SurfaceInput, v: Option<f32>, masters: &Masters, status: &[SequenceStatus]) -> Vec<Command> {
         let l = design();
-        let view = View { lighting: &l, masters, status, release_fade: 2.0 };
+        let view = View { lighting: &l, masters, status, release_fade: 2.0, page_size: s.page_size, soft_takeover: s.soft_takeover };
         resolve(s, None, &view, feel, input, v, Instant::now())
     }
 
@@ -822,4 +1243,134 @@ mod tests {
         }
         assert_eq!(tap(&mut taps, t0 + Duration::from_secs(10)), None, "a pause starts again");
     }
+
+    /// A design with sequences 1..=6 and buttons 1..=4 (1, 2 on page 0; 3 a flash on page 1; 4 on page 1).
+    fn paged() -> Lighting {
+        let mut l = Lighting::default();
+        for id in 1..=6 {
+            l.sequences.push(Sequence { id, ..Default::default() });
+        }
+        for id in 1..=4 {
+            l.buttons.push(LightButton { id, flash: id == 3, page: (id > 2) as u16, ..Default::default() });
+        }
+        l.button_pages = vec!["A".into(), "B".into()];
+        l
+    }
+
+    #[test]
+    fn pages_shift_executors_and_buttons() {
+        let l = paged();
+        let s = SurfaceSettings {
+            page_size: 4,
+            mappings: vec![
+                Mapping { input: SurfaceInput::MidiCc { channel: 0, number: 1 }, action: SurfaceAction::ExecutorLevel(2) },
+                Mapping { input: SurfaceInput::MidiNote { channel: 0, number: 1 }, action: SurfaceAction::PlaybackButton(1) },
+                Mapping { input: SurfaceInput::MidiNote { channel: 0, number: 2 }, action: SurfaceAction::PageNext },
+                Mapping { input: SurfaceInput::MidiNote { channel: 0, number: 3 }, action: SurfaceAction::PagePrevious },
+            ],
+            ..Default::default()
+        };
+        let (m, mut feel) = (Masters::default(), Feel::default());
+        let mut status = Vec::new();
+        let go = |feel: &mut Feel, input: SurfaceInput, v: f32, status: &[SequenceStatus]| {
+            let view = View { lighting: &l, masters: &m, status, release_fade: 1.0, page_size: s.page_size, soft_takeover: false };
+            resolve(&s, None, &view, feel, &input, Some(v), Instant::now())
+        };
+        let (fader, button, next, prev) = (SurfaceInput::MidiCc { channel: 0, number: 1 }, SurfaceInput::MidiNote { channel: 0, number: 1 }, SurfaceInput::MidiNote { channel: 0, number: 2 }, SurfaceInput::MidiNote { channel: 0, number: 3 });
+        assert!(matches!(go(&mut feel, fader.clone(), 0.5, &status)[..], [Command::Light(LightControl::Level(2, _))]));
+        // Playback button 1 on page 1 = button 1: a toggle; on → off.
+        let b1 = l.button(1).unwrap();
+        assert!(matches!(go(&mut feel, button.clone(), 1.0, &status)[..], [Command::Light(LightControl::Go(s, Some(_)))] if s == b1.sequence_id()));
+        go(&mut feel, button.clone(), 0.0, &status);
+        status.push(SequenceStatus { id: b1.sequence_id(), cue: Some(b1.cue_id()), active: true, level: 1.0 });
+        assert!(matches!(go(&mut feel, button.clone(), 1.0, &status)[..], [Command::Light(LightControl::Release(Some(_), _))]));
+        go(&mut feel, button.clone(), 0.0, &status);
+        // Next page: executor 2 → sequence 6, button 1 → button 3 (a flash: GO, then release on let go).
+        go(&mut feel, next.clone(), 1.0, &status);
+        go(&mut feel, next.clone(), 0.0, &status);
+        assert_eq!(feel.page, 1);
+        assert!(matches!(go(&mut feel, fader.clone(), 0.4, &status)[..], [Command::Light(LightControl::Level(6, _))]));
+        let b3 = l.button(3).unwrap();
+        assert!(matches!(go(&mut feel, button.clone(), 1.0, &status)[..], [Command::Light(LightControl::Go(s, _))] if s == b3.sequence_id()));
+        // Back to page 1 while held: the release still goes to button 3.
+        go(&mut feel, prev.clone(), 1.0, &status);
+        assert_eq!(feel.page, 0);
+        assert!(matches!(go(&mut feel, button.clone(), 0.0, &status)[..], [Command::Light(LightControl::Release(Some(s), _))] if s == b3.sequence_id()));
+        // Pages stop at the ends: two pages (6 sequences / 4, and two button pages).
+        for _ in 0..3 {
+            go(&mut feel, next.clone(), 1.0, &status);
+            go(&mut feel, next.clone(), 0.0, &status);
+        }
+        assert_eq!(feel.page, 1);
+    }
+
+    #[test]
+    fn soft_takeover_waits_for_the_level() {
+        let l = design();
+        let s = SurfaceSettings { mappings: SurfaceSettings::executor_bank(1, 0, 1, 36), soft_takeover: true, ..Default::default() };
+        let mut m = Masters::default();
+        m.levels.insert(7, 0.6);
+        let mut feel = Feel::default();
+        let cc = SurfaceInput::MidiCc { channel: 0, number: 1 };
+        let move_to = |feel: &mut Feel, m: &Masters, v: f32| {
+            let view = View { lighting: &l, masters: m, status: &[], release_fade: 1.0, page_size: 0, soft_takeover: true };
+            resolve(&s, None, &view, feel, &cc, Some(v), Instant::now())
+        };
+        assert!(move_to(&mut feel, &m, 0.0).is_empty(), "far from 60 %");
+        assert!(move_to(&mut feel, &m, 0.3).is_empty());
+        // Crossing the level picks it up.
+        assert_eq!(move_to(&mut feel, &m, 0.7).len(), 1);
+        m.levels.insert(7, 0.7);
+        assert_eq!(move_to(&mut feel, &m, 0.5).len(), 1, "caught: follows");
+        // The level changes elsewhere (the Playback page): the fader lets go until it meets it.
+        m.levels.insert(7, 0.1);
+        feel.caught.values_mut().for_each(|c| c.2 -= HOLD);
+        assert!(move_to(&mut feel, &m, 0.45).is_empty());
+        assert_eq!(move_to(&mut feel, &m, 0.12).len(), 1, "close enough");
+    }
+
+    #[test]
+    fn feedback_shows_levels_and_states() {
+        let l = paged();
+        let mut s = SurfaceSettings { page_size: 4, ..Default::default() };
+        let cc = |n| SurfaceInput::MidiCc { channel: 1, number: n };
+        let note = |n| SurfaceInput::MidiNote { channel: 1, number: n };
+        for (i, a) in [SurfaceAction::ExecutorLevel(1), SurfaceAction::GrandMaster].into_iter().enumerate() {
+            s.mappings.push(Mapping { input: cc(i as u8), action: a });
+        }
+        for (i, a) in [SurfaceAction::ExecutorGo(1), SurfaceAction::PlaybackButton(2), SurfaceAction::Blackout, SurfaceAction::PageNext, SurfaceAction::PagePrevious, SurfaceAction::Go].into_iter().enumerate() {
+            s.mappings.push(Mapping { input: note(i as u8), action: a });
+        }
+        s.mappings.push(Mapping { input: note(0), action: SurfaceAction::Stop });
+        let mut m = Masters { grand_master: 0.5, blackout: true, ..Default::default() };
+        m.levels.insert(1, 0.25);
+        let b2 = l.button(2).unwrap();
+        let status = [SequenceStatus { id: 1, cue: None, active: true, level: 0.25 }, SequenceStatus { id: b2.sequence_id(), cue: Some(b2.cue_id()), active: true, level: 1.0 }];
+        let view = View { lighting: &l, masters: &m, status: &status, release_fade: 1.0, page_size: 4, soft_takeover: false };
+        let fb = feedback(&s, &view, 0);
+        let get = |i: SurfaceInput| fb.iter().find(|(x, _)| *x == i).map(|(_, v)| *v);
+        assert_eq!(get(cc(0)), Some(0.25));
+        assert_eq!(get(cc(1)), Some(0.5));
+        assert_eq!(get(note(0)), Some(1.0), "executor 1 running; its second mapping ignored");
+        assert_eq!(get(note(1)), Some(1.0), "button 2 on");
+        assert_eq!(get(note(2)), Some(1.0), "blackout");
+        assert_eq!((get(note(3)), get(note(4))), (Some(1.0), Some(0.0)), "a next page, no previous");
+        assert_eq!(get(note(5)), None, "GO has no state");
+        let fb2 = feedback(&s, &view, 1);
+        assert_eq!(fb2.iter().find(|(x, _)| *x == cc(0)).unwrap().1, 1.0, "page 2: sequence 5 at full");
+        // Only changes are sent, as MIDI the controls understand.
+        let mut sent = FeedbackSent::default();
+        let (midi, osc) = sent.changes(&fb);
+        assert_eq!(midi.len(), 7);
+        assert!(osc.is_empty());
+        assert!(midi.contains(&[0xb1, 0, 32]) && midi.contains(&[0x91, 1, 127]) && midi.contains(&[0x91, 4, 0]));
+        assert!(sent.changes(&fb).0.is_empty());
+        assert_eq!(sent.changes(&fb2).0.len(), 5, "fader, executor LED, button LED, both page LEDs");
+        sent.forget(true, false);
+        assert_eq!(sent.changes(&fb2).0.len(), 7);
+        let (_, osc) = sent.changes(&[(SurfaceInput::Osc("/fader".into()), 0.5)]);
+        assert_eq!(osc, [("/fader".to_string(), 0.5)]);
+        assert_eq!(midi_message(&SurfaceInput::Osc("/x".into()), 1.0), None);
+    }
+
 }

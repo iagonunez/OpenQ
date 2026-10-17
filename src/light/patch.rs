@@ -217,12 +217,16 @@ pub struct LightingPatch {
     pub inputs: Option<Vec<InputConfig>>,
     /// Plot bars and rectangles.
     pub shapes: Option<ListPatch<u32, PlotShape>>,
+    /// Plot editor changes (whole).
+    pub plot: Option<super::model::PlotLayout>,
     /// Presets.
     pub presets: Option<ListPatch<super::model::PresetId, Preset>>,
     /// Effects pool.
     pub effects: Option<ListPatch<super::effects::EffectId, Effect>>,
     /// Playback buttons.
     pub buttons: Option<ListPatch<super::model::ButtonId, super::model::LightButton>>,
+    /// Names of the playback button pages (whole).
+    pub button_pages: Option<Vec<String>>,
     /// Size of the playback buttons.
     pub button_scale: Option<f32>,
     /// Stop all releases the lighting.
@@ -242,9 +246,11 @@ pub fn diff(old: &Lighting, new: &Lighting) -> Option<LightingPatch> {
         outputs: changed(old.outputs != new.outputs).map(|_| new.outputs.clone()),
         inputs: changed(old.inputs != new.inputs).map(|_| new.inputs.clone()),
         shapes: diff_list(&old.shapes, &new.shapes, |s| s.id),
+        plot: changed(old.plot != new.plot).map(|_| new.plot.clone()),
         presets: diff_list(&old.presets, &new.presets, |p| p.id),
         effects: diff_list(&old.effects, &new.effects, |e| e.id),
         buttons: diff_list(&old.buttons, &new.buttons, |b| b.id),
+        button_pages: changed(old.button_pages != new.button_pages).map(|_| new.button_pages.clone()),
         button_scale: changed(old.button_scale != new.button_scale).map(|_| new.button_scale),
         stop_all_releases: changed(old.stop_all_releases != new.stop_all_releases).map(|_| new.stop_all_releases),
         release_fade: changed(old.release_fade != new.release_fade).map(|_| new.release_fade),
@@ -273,6 +279,9 @@ pub fn apply(l: &mut Lighting, p: &LightingPatch) -> bool {
     if let Some(i) = &p.inputs {
         n.inputs = i.clone();
     }
+    if let Some(v) = &p.plot {
+        n.plot = v.clone();
+    }
     if let Some(v) = p.stop_all_releases {
         n.stop_all_releases = v;
     }
@@ -281,6 +290,9 @@ pub fn apply(l: &mut Lighting, p: &LightingPatch) -> bool {
     }
     if let Some(v) = p.button_scale {
         n.button_scale = v;
+    }
+    if let Some(v) = &p.button_pages {
+        n.button_pages = v.clone();
     }
     *l = n;
     true

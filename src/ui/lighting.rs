@@ -55,7 +55,7 @@ impl LightTab {
     pub(crate) fn from_name(name: &str) -> Self {
         match name {
             "programmer" | "colour" | "keypad" | "beam" | "slots" => LightTab::Programmer,
-            "patch" | "plan" | "types" | "ofl" => LightTab::Patch,
+            "patch" | "plan" | "plot" | "types" | "ofl" => LightTab::Patch,
             "effects" => LightTab::Effects,
             "sequences" => LightTab::Sequences,
             "playback" => LightTab::Playback,
@@ -177,6 +177,8 @@ pub(crate) struct LightUi {
     pub(crate) patch_view: PatchView,
     /// Fixture types view (library, editor).
     pub(crate) types: super::fixture_types::TypeUi,
+    /// MVR and USITT ASCII files being read.
+    pub(crate) design_imports: super::light_files::Imports,
     /// Arrange tool settings.
     arrange: ArrangeTool,
     /// Plan view: pixels per metre (0 = default) and pan in pixels.
@@ -186,6 +188,8 @@ pub(crate) struct LightUi {
     plan_tool: PlanTool,
     pub(crate) shape_sel: Option<u32>,
     plan_drag: Option<PlanDrag>,
+    /// Plot editor window.
+    pub(crate) plot: super::plot_editor::PlotUi,
     /// Where the Plan view drew each shape's label last frame (shape, screen rect): to drag them.
     plan_labels: Vec<(u32, egui::Rect)>,
     /// Formula being edited: (effect, text); written into the effect when run or left.
@@ -416,6 +420,10 @@ impl App {
             LightTab::Outputs => self.outputs_page(ui, show),
             LightTab::Monitor => self.monitor_page(ui, show),
         }
+        if self.light.plot.open {
+            let title = show.path.as_ref().and_then(|p| p.file_stem()).map(|s| s.to_string_lossy().into_owned()).unwrap_or_else(|| "OpenQ".into());
+            self.plot_editor(ui.ctx(), &mut show.ws.lighting, &title);
+        }
         if show.ws.lighting != before {
             show.edited();
         }
@@ -525,6 +533,11 @@ impl App {
                 self.light.types.ofl_open = true;
                 self.light.types.ofl_focus = true;
             }
+            if view != PatchView::Types
+                && ui.button(theme::with_icon(icons::UPLOAD_FILE, t("Import MVR…"))).on_hover_text(t("Add the fixtures, positions and trusses of an MVR file (from a visualiser, CAD or another desk)")).clicked()
+            {
+                self.deferred.push(super::Deferred::ImportMvr);
+            }
             if view != PatchView::Plan {
                 return;
             }
@@ -536,11 +549,11 @@ impl App {
                 self.deferred.push(super::Deferred::ExportPatch(false));
             }
             if ui
-                .add_enabled(!l.fixtures.is_empty(), egui::Button::new(theme::with_icon(icons::DOWNLOAD, t("Export plot…"))))
-                .on_hover_text(t("The plan as a PDF (A3, to scale) or SVG drawing"))
+                .add_enabled(!l.fixtures.is_empty(), egui::Button::new(theme::with_icon(icons::EDIT, t("Plot…"))))
+                .on_hover_text(t("Arrange the plan as a drawing (move items, change texts), then save it as a PDF (A3, to scale) or SVG"))
                 .clicked()
             {
-                self.deferred.push(super::Deferred::ExportPatch(true));
+                self.light.plot.open = true;
             }
         });
         if self.light.patch_view == PatchView::Types {
@@ -3395,6 +3408,12 @@ impl App {
                         let id = l.sequences.iter().map(|s| s.id).max().unwrap_or(0) + 1;
                         l.sequences.push(Sequence { id, ..Default::default() });
                         self.light.sequence = Some(id);
+                    }
+                    if ui.small_button(icons::UPLOAD_FILE).on_hover_text(t("Import a USITT ASCII file (cues, groups, submasters and patch from another desk)")).clicked() {
+                        self.deferred.push(super::Deferred::ImportUsitt);
+                    }
+                    if ui.small_button(icons::DOWNLOAD).on_hover_text(t("Export the design as a USITT ASCII file (intensities: patch, cues, groups, executors as submasters)")).clicked() {
+                        self.deferred.push(super::Deferred::ExportUsitt);
                     }
                 });
                 let mut delete = None;

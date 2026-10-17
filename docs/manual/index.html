@@ -761,7 +761,7 @@ cargo run --release -- show.openq    # open a saved show</code></pre>
   <p>OpenQ drives lighting over DMX. The <strong>lighting design</strong> (patch, groups, presets, effects and sequences of
   lighting cues) is kept apart from the cue list, in the <strong>Lighting</strong> workspace: switch between
   <span class="menu"><span class="ms" aria-hidden="true">&#xe90f;</span> Lighting</span> and <em>Cues</em> above the cue list.
-  The design can only be changed in Edit mode. In Show mode the Lighting workspace shows the executors and the DMX monitor.</p>
+  The design can only be changed in Edit mode. In Show mode the Lighting workspace shows the Playback page and the DMX monitor.</p>
   <h3>Light cues</h3>
   <p>A <strong>Light</strong> cue <span class="ms" aria-hidden="true">&#xe90f;</span> in the cue list plays the lighting design;
   it holds no levels of its own. On its Settings tab choose the <em>Action</em>: <em>GO lighting cue</em> fires a lighting
@@ -783,7 +783,9 @@ cargo run --release -- show.openq    # open a saved show</code></pre>
   add some (on the Sheet or the Plan), pick a fixture type and mode in <em>Add fixtures</em>, set how many, the
   first fixture number, the universe and the start address (<em>auto</em> takes the next free one), and click <em>Add</em>.
   Every cell of the sheet can be edited: name, type, mode, universe, address, position and rotation, and pan or tilt reversal.
-  Overlapping addresses and duplicate numbers are flagged above the sheet.</p>
+  Overlapping addresses and duplicate numbers are flagged above the sheet. A fixture with several DMX inputs (a
+  <em>break</em> per input, set in its fixture type) gets one address per break: click its slot count to set the universe
+  and address of the other breaks.</p>
   <figure>
     <img src="img/lighting-patch.webp" width="1100" height="462" alt="Patch sheet with eight RGB washes, two spots and a pixel bar, with address, position and rotation columns.">
     <figcaption>The patch sheet. Positions are in metres: x to the right, y up, z towards the audience.</figcaption>
@@ -809,14 +811,36 @@ cargo run --release -- show.openq    # open a saved show</code></pre>
   (<code>.oqfixture</code>) files. Imported types are copied into the show and saved in your fixture library, so they are there
   for the next show. <em>Fixture types</em> opens the editor: channels and their attributes, 16-bit fine channels, defaults,
   the value used by Highlight, and <strong>ranges</strong>: the named parts of a channel, such as the slots of a colour wheel or
-  a gobo wheel. GDTF files also bring the colours of the fixture's LEDs, which the colour picker uses.</p>
+  a gobo wheel. A range can have a colour and a picture (<em>Image (gobo)</em>), shown in the programmer's drop-down for that channel;
+  GDTF files bring the gobo pictures and the colours of the fixture's LEDs, which the colour picker uses.</p>
   <figure>
     <img src="img/fixture-types.webp" width="1100" height="778" alt="Fixture type editor for a moving spot, listing channels with attribute, fine channel, default and ranges.">
     <figcaption>The fixture type editor.</figcaption>
   </figure>
-  <p>On the Plan view, <em>Export MVR…</em> saves the patch with positions as an MVR file, which visualisers and other desks can import.
-  <em>Export plot…</em> saves the Plan view as a PDF (one A3 sheet, at the largest standard scale that fits, such as 1:50) or an SVG drawing — pick the type in the save dialog — with the bars and rectangles, fixture numbers, addresses
-  and a legend. Labels never cover each other: where fixtures are close together, their labels move apart.</p>
+  <p><strong>MVR files</strong> carry a rig between programs. <em>Import MVR…</em> (on the Sheet and the Plan) adds the fixtures
+  of a file from a visualiser, a CAD program or another desk, with their positions, addresses and trusses (as bars and
+  shapes on the plan). Fixture types are matched by name with the show and your fixture library; the others come from the
+  GDTF files inside the MVR. On the Plan view, <em>Export MVR…</em> saves the patch with positions and the GDTF file of every
+  type, so visualisers and other desks can import it.</p>
+  <h3>Plot</h3>
+  <p><em>Plot…</em> on the Plan view opens the plot editor: the printed page as it will look, with the bars and rectangles,
+  fixture symbols, numbers, addresses, a title and a legend. Labels never cover each other: where fixtures are close
+  together, their labels move apart.</p>
+  <ul>
+    <li>Drag any item to move it. Click selects (<kbd>Shift</kbd> adds, dragging on empty paper selects a band); the column on
+    the side changes the selected items' text, size and colour, hides them or puts them back.</li>
+    <li>With several items selected, the alignment buttons line up their edges or centres, or space three or more evenly.</li>
+    <li>Each fixture type gets a symbol guessed from its name (PAR, profile, fresnel, moving head, flood, strobe, effect…);
+    pick another one for the whole type in the legend, or for a single fixture.</li>
+    <li><em>Add text</em> puts a free note on the page.</li>
+    <li><em>Export…</em> saves it as a PDF (one A3 sheet, at the largest standard scale that fits, such as 1:50) or an SVG
+    drawing; pick the type in the save dialog.</li>
+  </ul>
+  <p>The changes are saved with the show, so the next export keeps them.</p>
+  <figure>
+    <img src="img/lighting-plot.webp" width="1100" height="733" alt="Plot editor: an A3 page with the stage, bars, fixture symbols and labels, a legend, and the side column for the selected items.">
+    <figcaption>The plot editor.</figcaption>
+  </figure>
 
   <h3><span class="ms" aria-hidden="true">&#xe429;</span> Programmer</h3>
   <p>Select fixtures on their tiles: a click adds a fixture to the selection (a second click takes it out), dragging across
@@ -873,7 +897,8 @@ cargo run --release -- show.openq    # open a saved show</code></pre>
   pan and tilt. <em>Speed</em> is in Hz, or per beat with <em>Follow tempo</em>. <em>Size</em> and <em>Base</em> set the swing;
   it runs around the cue's value or, with <em>Absolute</em>, around the base. <em>Phase spread</em> staggers the fixtures,
   <em>Groups</em> moves several fixtures together and <em>Wings</em> mirrors the pattern. The preview shows the result across
-  the fixtures.</p>
+  the fixtures. With <em>Size follows the sound</em> the effect grows with how loud OpenQ is playing: <em>Gain</em> sets how
+  much, <em>Floor</em> how much is left in silence, and the bar next to them shows the level now.</p>
   <figure>
     <img src="img/lighting-effects.webp" width="1100" height="660" alt="Effects page with a formula effect: settings, preview of red, green and blue across twelve fixtures, and the rainbow formula with its slider.">
     <figcaption>A formula effect: the formula makes the colour table, the preview shows it across the selected fixtures.</figcaption>
@@ -1033,13 +1058,32 @@ save_effect("wander.oqfx", "Wander", ["Pan", "Tilt"], STEPS, HEADS,
     before they come up, after the set delay.</li>
     <li><em>Load into programmer</em> brings a cue back for editing; <em>Update cue</em> on the Programmer page stores the changes.</li>
   </ul>
-  <h3>Executors</h3>
-  <p>The executor bar at the bottom of the Lighting workspace is there in both modes. It has the <strong>grand master</strong>,
-  <strong>blackout</strong>, the effects <strong>tempo</strong> (type it or tap it) and one executor per sequence: its current
-  and next cue, a level fader, <em>GO</em> and <em>Release</em>.</p>
-  <figure class="narrow">
-    <img src="img/lighting-executors.webp" width="927" height="197" alt="Executor bar: grand master at 100 percent, blackout, tempo 120 BPM and two sequence executors.">
-    <figcaption>Executors. In Show mode only GO and release work.</figcaption>
+  <p><strong>USITT ASCII</strong> files (<code>.asc</code>) bring cues from another desk: the
+  <span class="ms" aria-hidden="true">&#xe9fc;</span> button next to <em>Sequences</em> reads the patch, cues, groups and
+  submasters of a file, and <span class="ms" aria-hidden="true">&#xf090;</span> saves the design as one. The format holds
+  intensities only: colour, position and effects stay behind, and follow and link times are dropped.</p>
+  <h3 id="playback">Playback</h3>
+  <p>The <strong>Playback</strong> page is where the lighting is run, in both modes, laid out as large cards for a touch screen:</p>
+  <ul>
+    <li><strong>Masters</strong>: the <strong>grand master</strong>, <strong>blackout</strong> and the effects
+    <strong>tempo</strong> (type it or tap it).</li>
+    <li><strong>Sequences</strong>: one card per sequence, with its current and next cue, a level fader, <em>GO</em> and
+    <em>Release</em>.</li>
+    <li><strong>Executors</strong>: buttons that put a look on top of the sequences, such as the fog machine at 80&nbsp;%, a
+    strobe or a special. In Edit mode, <em>Add executor</em> makes one and the pencil edits it: its name and colour, a
+    <em>preset</em> on chosen <em>fixtures</em> (<em>Use selected</em> takes the programmer's selection, or pick a group),
+    and/or <em>Store the programmer</em> for the programmer's values and effects. It fades in and out over its
+    <em>Fade</em>; <em>Toggle</em> switches it on and off with each press, <em>Flash</em> keeps it on only while held.</li>
+  </ul>
+  <p>Executors sit on <strong>pages</strong>: the tabs above them, with <span class="ms" aria-hidden="true">&#xe145;</span>
+  for a new page; right-click a tab to rename or delete it. Executors on a page that isn't shown keep playing. In Edit mode,
+  drag an executor by its handle onto another one to reorder them, or onto a tab to move it to that page.
+  <em>Executor size</em> makes the cards bigger or smaller.</p>
+  <p><em>Open in a window</em> puts the Playback page in a window of its own; choose a <em>Display</em> to have it fill a
+  touch screen. Each computer remembers whether its window is open and where, so it comes back after a restart.</p>
+  <figure>
+    <img src="img/lighting-playback.webp" width="1100" height="402" alt="Playback page: grand master, blackout and tempo, sequence cards with GO and Release, and a page of executor buttons.">
+    <figcaption>The Playback page. In Show mode it plays only; executors are added and edited in Edit mode.</figcaption>
   </figure>
 
   <h3 id="surfaces"><span class="ms" aria-hidden="true">&#xe521;</span> Control surfaces</h3>
@@ -1050,8 +1094,20 @@ save_effect("wander.oqfx", "Wander", ["Pan", "Tilt"], STEPS, HEADS,
   by their place in the sequence list.</p>
   <ul>
     <li><strong>Faders</strong>: executor level, grand master.</li>
-    <li><strong>Buttons</strong>: executor GO, release and flash (full while held), blackout, release all, tap tempo, and the
-    cue list's GO and Stop all. A button acts once per press, whether it sends notes, CC 127/0 or OSC 1/0.</li>
+    <li><strong>Buttons</strong>: executor GO, release and flash (full while held), playback executors (the buttons of the
+    Playback page), next and previous page, blackout, release all, tap tempo, and the cue list's GO and Stop all. A button acts
+    once per press, whether it sends notes, CC 127/0 or OSC 1/0.</li>
+  </ul>
+  <ul>
+    <li><strong>Pages</strong>: with a page size of, say, 8, the controller's eight faders run sequences 1–8 on the first
+    page and 9–16 on the next; the page buttons step through them, and the Playback page shows the same page of executors.</li>
+    <li><strong>Soft takeover</strong>: a fader that doesn't match its level (it was moved on screen, or the page changed)
+    does nothing until it reaches the level, so nothing jumps.</li>
+    <li><strong>Feedback</strong>: choose a <em>MIDI feedback</em> output and button lights and motor faders follow the show.
+    For an OSC app, set <em>OSC feedback</em> to the UDP port it listens on: levels and lights are sent back to the app that last
+    sent a control.</li>
+    <li><strong>MIDI clock</strong>: with <em>Effects follow its tempo</em>, the effects tempo follows the clock on the MIDI
+    input (from a DJ program or a drum machine); the BPM it reads shows next to it.</li>
   </ul>
   <p>The mappings are saved with the show; the MIDI input belongs to the computer, so a remote device can use its own
   controller (its moves go to the main device). OSC mappings come in through the <a href="#osc">OSC listener</a>, which also

@@ -109,3 +109,15 @@ expand_less
 open_in_new
 touch_app
 smart_button
+align_horizontal_left
+align_horizontal_center
+align_horizontal_right
+align_vertical_top
+align_vertical_center
+align_vertical_bottom
+horizontal_distribute
+vertical_distribute
+format_color_text
+format_size
+chevron_left
+drag_indicator

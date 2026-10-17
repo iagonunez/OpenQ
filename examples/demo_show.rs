@@ -20,7 +20,7 @@ use openq::light::effects::{AudioReact, Effect, EffectRun, Shape};
 use openq::light::model::{
     LightButton, Look,
     cell_id, Attribute as A, ChannelDef, ChannelRange, DmxAddress, Feature, FeatureTime, Fixture, FixtureId, FixtureMode, FixtureType, Group,
-    Head, LightCue, Lighting, Physical, PlotShape, Preset, Sequence, ShapeKind, Value,
+    Head, LightCue, Lighting, Physical, PlotItem, PlotNote, PlotShape, PlotSymbol, Preset, Sequence, ShapeKind, Value,
 };
 use openq::model::{
     AudioCue, BlendMode, CameraCue, ContinueMode, Cue, CueColor, CueId, CueKind, CueList, EqBand, EqKind, FadeCue, FadeCurve, Geometry, GroupMode,
@@ -1527,6 +1527,9 @@ fn settings() -> openq::model::Settings {
         Mapping { input: SurfaceInput::MidiNote { channel: 0, number: 52 }, action: SurfaceAction::ExecutorRelease(1) },
         Mapping { input: SurfaceInput::Osc("/surface/go".into()), action: SurfaceAction::Go },
         Mapping { input: SurfaceInput::Osc("/surface/stop".into()), action: SurfaceAction::Stop },
+        Mapping { input: SurfaceInput::MidiNote { channel: 0, number: 53 }, action: SurfaceAction::PlaybackButton(1) },
+        Mapping { input: SurfaceInput::MidiNote { channel: 0, number: 54 }, action: SurfaceAction::PagePrevious },
+        Mapping { input: SurfaceInput::MidiNote { channel: 0, number: 55 }, action: SurfaceAction::PageNext },
     ]);
     openq::model::Settings {
         panic_fade: 2.0,
@@ -1535,7 +1538,7 @@ fn settings() -> openq::model::Settings {
         osc_enabled: true,
         osc_port: 53000,
         speakers,
-        surfaces: SurfaceSettings { mappings, midi_clock: true },
+        surfaces: SurfaceSettings { mappings, midi_clock: true, page_size: 5, soft_takeover: true, osc_feedback_port: 9000 },
         ..Default::default()
     }
 }
@@ -1664,6 +1667,15 @@ impl Rig {
             bar(10, "Ladder SR", [7.0, -3.0], [7.0, 3.0], 4.0),
             bar(11, "Auditorium", [-8.0, 14.0], [8.0, 14.0], 9.0),
         ];
+        // Plot editor: an added text and a re-worded audience line.
+        self.l.plot.notes.push(PlotNote { id: 1, at: [-5.5, 12.0], text: "FOH control\nrow M".into(), bold: true, colour: [160, 30, 30], ..Default::default() });
+        self.l.plot.edit_mut(&PlotItem::Audience).text = Some("AUDIENCE · 420 seats".into());
+        let foh = self.l.plot.edit_mut(&PlotItem::Shape(3));
+        foh.size = Some(14.0);
+        foh.colour = Some([30, 70, 160]);
+        // Plot symbols: the first FOH fixture drawn as a profile, the RGBAW+UV type as PARs.
+        self.l.plot.edit_mut(&PlotItem::Fixture(1)).symbol = Some(PlotSymbol::Profile);
+        self.l.plot.edit_mut(&PlotItem::LegendRow("Generic RGBAW+UV".into())).symbol = Some(PlotSymbol::Par);
         let shape = |s: &[PlotShape], name: &str| s.iter().find(|x| x.name == name).expect("shape").clone();
         let shapes = self.l.shapes.clone();
         let down = [0.0, 0.0, 0.0];
@@ -1859,8 +1871,9 @@ impl Rig {
                 ..Default::default()
             },
             LightButton { id: 4, name: "Cyc lavender".into(), color: [0x9a, 0x6a, 0xf0], preset: Some(P_LAVENDER), fixtures: group(&self.l, 3), fade: 1.5, ..Default::default() },
-            LightButton { id: 5, name: "Warm wash".into(), color: [0xf0, 0xa0, 0x50], preset: Some(P_WARM), fixtures: group(&self.l, 5), fade: 1.0, ..Default::default() },
+            LightButton { id: 5, name: "Warm wash".into(), color: [0xf0, 0xa0, 0x50], preset: Some(P_WARM), fixtures: group(&self.l, 5), fade: 1.0, page: 1, ..Default::default() },
         ];
+        self.l.button_pages = vec!["Atmos".into(), "Washes".into()];
     }
 
     fn effects(&mut self) {

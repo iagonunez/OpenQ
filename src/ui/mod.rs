@@ -13,12 +13,14 @@ mod fixture_types;
 mod icons;
 mod inspector;
 mod language;
+mod light_files;
 mod light_playback;
 mod lighting;
 mod manual;
 #[cfg(target_os = "macos")]
 mod native_menu;
 mod outputs;
+mod plot_editor;
 #[cfg(all(test, feature = "video"))]
 mod perf_tests;
 #[cfg(feature = "video")]
@@ -71,6 +73,12 @@ enum Deferred {
     ExportEffect(crate::light::effects::EffectId),
     /// Save the patch as an MVR file (false) or the plan as an SVG plot (true).
     ExportPatch(bool),
+    /// Add the fixtures and plot shapes of an MVR file to the patch.
+    ImportMvr,
+    /// Add the patch, cues, groups and submasters of a USITT ASCII file to the design.
+    ImportUsitt,
+    /// Save the design as a USITT ASCII file.
+    ExportUsitt,
     /// Close the window (asks about unsaved changes first).
     Quit,
 }
@@ -239,6 +247,10 @@ pub struct App {
     /// This computer's MIDI input for control surfaces, and its connection.
     midi_port: Option<String>,
     midi_surface: Option<crate::surface::MidiSurface>,
+    /// MIDI output for surface feedback on this computer (saved in the config folder).
+    feedback_port: Option<String>,
+    /// Sends feedback to the surfaces (while a MIDI output or an OSC feedback port is set).
+    surface_feedback: Option<crate::surface::SurfaceFeedback>,
     /// Where a control being learned goes.
     learn_into: Option<surfaces::LearnInto>,
     debug_t0: Option<Instant>,
@@ -318,6 +330,8 @@ impl App {
             surfaces: Default::default(),
             midi_port: crate::surface::saved_midi_port(),
             midi_surface: None,
+            feedback_port: crate::surface::saved_feedback_port(),
+            surface_feedback: None,
             learn_into: None,
             debug_t0: None,
             debug_run: Default::default(),
@@ -2190,6 +2204,9 @@ impl App {
                 Deferred::ImportEffects => self.import_effects(),
                 Deferred::ExportEffect(id) => self.export_effect(id),
                 Deferred::ExportPatch(plot) => self.export_patch(plot),
+                Deferred::ImportMvr => self.import_mvr(ctx),
+                Deferred::ImportUsitt => self.import_usitt(ctx),
+                Deferred::ExportUsitt => self.export_usitt(),
                 Deferred::New => {
                     if self.may_discard(Discarding::New) {
                         self.show
@@ -2292,7 +2309,7 @@ impl App {
     /// (`OPENQ_SCREENSHOT_ANIM_TIME` sets the Animation tab playhead);
     /// `OPENQ_SCREENSHOT_LIGHTING=<page>` opens the Lighting workspace on a page (`playback`: the
     /// Playback page with its sequence and button cards; `colour`: the
-    /// programmer's Colour encoders; `plan`: the patch's top view with four fixtures selected;
+    /// programmer's Colour encoders; `plan`: the patch's top view with four fixtures selected; `plot`: the plot editor with three fixtures selected;
     /// `types`: the fixture type editor on a type with ranges; `beam`: the Beam encoders with
     /// range drop-downs for every unit with a gobo; `slots`: the same with the gobo drop-down open; `ofl`: the Open Fixture Library window searching
     /// `OPENQ_SCREENSHOT_OFL`);
@@ -2357,8 +2374,13 @@ impl App {
                     let l = &show.ws.lighting;
                     self.light.effect = pick.filter(|id| l.effect(*id).is_some()).or_else(|| l.effects.first().map(|e| e.id));
                 }
-                if page == "plan" {
+                if page == "plan" || page == "plot" {
                     self.light.patch_view = lighting::PatchView::Plan;
+                    self.light.plot.open = page == "plot";
+                    if page == "plot" {
+                        // Three fixtures selected: the alignment tools and the shared size and colour.
+                        self.light.plot.sel = show.ws.lighting.fixtures.iter().take(3).map(|f| crate::light::model::PlotItem::Fixture(f.id)).collect();
+                    }
                     self.light.patch_sel = show.ws.lighting.fixtures.iter().take(4).map(|f| f.id).collect();
                     self.light.shape_sel = show.ws.lighting.shapes.first().map(|s| s.id);
                 }
@@ -2858,6 +2880,7 @@ impl App {
             self.sync_surfaces(&ctx, show);
             self.lighting_frame(show);
             self.poll_fixture_imports(show);
+            self.poll_design_imports(show);
 
             // The video output process draws the stage windows; tell it which to show.
             #[cfg(feature = "video")]

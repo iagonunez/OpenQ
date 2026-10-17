@@ -11,7 +11,7 @@
 //! * `fuzz_media_files`: damaged audio, video, image and SVG files through every reader (probe,
 //!   waveform, decoder, posters, stills, thumbnails), plus special files (FIFOs, `/dev/zero`,
 //!   directories, huge sparse files) and SVGs that reach for other files or blow up in size.
-//! * `fuzz_lighting_files`: effect files, fixture files, zips and command lines.
+//! * `fuzz_lighting_files`: effect files, fixture files, zips, command lines, MVR and USITT ASCII files.
 //! * `fuzz_config_files`: garbage in every file of the config folder (remote devices, language,
 //!   MIDI port, OFL catalogue, autosaves, libraries) and file system errors when saving.
 //! * `fuzz_remote_messages`: hostile handshakes, every message an Edit-role replica can send to the
@@ -989,7 +989,7 @@ fn fuzz_media_files() {
 #[test]
 #[ignore = "fuzz"]
 fn fuzz_lighting_files() {
-    use openq::light::{command, fixlib, fxfile, gobo, zipread};
+    use openq::light::{command, fixlib, fxfile, gobo, mvr, usitt, zipread};
     let mut f = Fuzz::new("fuzz_lighting_files");
     let dir = tmpdir("lighting");
     let l = seed_lighting();
@@ -997,6 +997,10 @@ fn fuzz_lighting_files() {
     let fx = fxfile::write(&effect, "fuzz", "a chase");
     let types: Vec<String> = l.fixture_types.iter().map(fixlib::write).collect();
     let zip = zipread::write(&[("description.xml", b"<GDTF/>"), ("wheels/gobo1.png", b"\x89PNG\r\n\x1a\n"), ("a/b/c.txt", &[7; 3000])]).unwrap();
+    // An MVR of the seed design (scene, GDTFs, meshes) and its scene text; a USITT ASCII file.
+    let mvr_zip = mvr::export(&l, "fuzz").unwrap();
+    let scene = mvr::scene(&l, "fuzz");
+    let ascii = usitt::write(&l, "fuzz").0;
     let words = ["fixture", "group", "thru", "+", "-", "at", "full", "out", "@", "record", "cue", "sequence", "preset", "effect", "gobo", "wheel", "star", "101.3", "1", "0", "99999999999", "-5", ".", "..", "/", "time", "delay", "go", "release", "clear", "update", "delete", "copy", "move", "label", "\"x\""];
     // Gobo images as fixture files carry them (PNG, and SVG in GDTF wheels).
     let mut gobos = vec![br#"<svg xmlns="http://www.w3.org/2000/svg" width="64" height="64"><circle cx="32" cy="32" r="20"/></svg>"#.to_vec()];
@@ -1009,7 +1013,7 @@ fn fuzz_lighting_files() {
     }
     let (mut ok, mut err) = (0, 0);
     while f.next() {
-        let r = f.rng.u8(..5);
+        let r = f.rng.u8(..7);
         let (input, ext): (Vec<u8>, &str) = match r {
             0 | 1 => {
                 let src = if r == 0 { fx.clone() } else { types[f.rng.usize(..types.len())].clone() };
@@ -1026,9 +1030,31 @@ fn fuzz_lighting_files() {
                 let line: Vec<String> = (0..f.rng.usize(..12)).map(|_| if f.rng.u8(..8) == 0 { hostile_string(&mut f.rng) } else { words[f.rng.usize(..words.len())].to_string() }).collect();
                 (line.join(if f.rng.bool() { " " } else { "" }).into_bytes(), "txt")
             }
-            _ => {
+            4 => {
                 let src = &gobos[f.rng.usize(..gobos.len())];
                 (if f.rng.u8(..8) == 0 { src.clone() } else { mutate_bytes(&mut f.rng, src) }, "png")
+            }
+            5 => {
+                // The whole zip, or a damaged scene in a sound zip (with the seed's other files).
+                if f.rng.bool() {
+                    (mutate_bytes(&mut f.rng, &mvr_zip), "mvr")
+                } else {
+                    let bad = mutate_bytes(&mut f.rng, scene.as_bytes());
+                    let mut entries: Vec<(String, Vec<u8>)> = vec![("GeneralSceneDescription.xml".into(), bad)];
+                    for n in zipread::names(&mvr_zip).unwrap().into_iter().filter(|n| n != "GeneralSceneDescription.xml") {
+                        let data = zipread::read(&mvr_zip, &n, 1 << 24).unwrap();
+                        entries.push((n, data));
+                    }
+                    let refs: Vec<(&str, &[u8])> = entries.iter().map(|(n, d)| (n.as_str(), d.as_slice())).collect();
+                    (zipread::write(&refs).unwrap(), "mvr")
+                }
+            }
+            _ => {
+                let mut b = mutate_bytes(&mut f.rng, ascii.as_bytes());
+                if f.rng.u8(..4) == 0 {
+                    b.extend(hostile_string(&mut f.rng).into_bytes());
+                }
+                (b, "asc")
             }
         };
         let i = input.clone();
@@ -1039,11 +1065,26 @@ fn fuzz_lighting_files() {
                 1 => fixlib::read(&text).is_ok(),
                 2 => zipread::names(&i).map(|names| names.iter().all(|n| zipread::read(&i, n, 1 << 20).is_ok())).is_ok(),
                 3 => command::parse(&text).is_ok(),
-                _ => {
+                4 => {
                     let thumb = gobo::thumbnail(&i);
                     let _ = gobo::decode(&text);
                     thumb.is_ok_and(|t| gobo::decode(&t).is_some())
                 }
+                // Read, merged into a design, brought into range: a design that still checks.
+                5 => mvr::import(&i, &[]).is_ok_and(|imp| {
+                    let mut l = Lighting::default();
+                    mvr::merge(&mut l, imp);
+                    openq::limits::lighting(&mut l);
+                    let _ = l.validate();
+                    true
+                }),
+                _ => usitt::read(&text).is_ok_and(|file| {
+                    let mut l = Lighting::default();
+                    usitt::merge(&mut l, &file, "fuzz");
+                    openq::limits::lighting(&mut l);
+                    let _ = l.validate();
+                    true
+                }),
             }
         });
         if fine { ok += 1 } else { err += 1 }

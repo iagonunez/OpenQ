@@ -81,6 +81,16 @@ pub const EQ_Q: (f32, f32) = (0.1, 18.0);
 pub const RATE: (f32, f32) = (0.25, 4.0);
 /// Farthest a fixture, a plot shape or a label sits from the plot's origin, metres.
 pub const MAX_DISTANCE: f32 = 200.0;
+/// Farthest the plot editor moves a title or the legend, page units (the SVG of a 400 m plot is 24 000 px wide).
+pub const MAX_PLOT_PAGE: f32 = 30_000.0;
+/// Plot editor: most changed items (three per fixture, the fixture limit is the cue count) and added texts.
+pub const MAX_PLOT_EDITS: usize = 4 * MAX_LIGHT_CUES;
+/// Plot editor: most added texts.
+pub const MAX_PLOT_NOTES: usize = 1_000;
+/// Plot editor: longest text, characters.
+pub const MAX_PLOT_TEXT: usize = 2_000;
+/// Plot editor: text size (added texts and resized items).
+pub const PLOT_TEXT_SIZE: (f32, f32) = (4.0, 200.0);
 /// Largest rotation, degrees (ten turns, for animated spins).
 pub const MAX_ROTATION: f32 = 3_600.0;
 /// Speakers and sound objects: the room view's extent (room units, the speakers sit at ±1).
@@ -123,6 +133,10 @@ pub const MAX_SPREAD: f32 = 1_440.0;
 pub const MAX_FIXTURE_ANGLE: f32 = 3_600.0;
 /// Size of the playback buttons.
 pub const BUTTON_SCALE: (f32, f32) = (0.25, 4.0);
+/// Playback button pages.
+pub const MAX_BUTTON_PAGES: usize = 100;
+/// Longest playback button page name, characters.
+pub const MAX_PAGE_NAME: usize = 64;
 
 /// `v` within `lo..=hi`; NaN becomes the value of the range nearest 0.
 pub fn f32_in(v: &mut f32, lo: f32, hi: f32) {
@@ -148,6 +162,36 @@ fn db(v: &mut f32) {
 
 fn unit(v: &mut f32) {
     f32_in(v, 0.0, 1.0);
+}
+
+/// Plot editor changes: offsets, texts, sizes and counts.
+fn plot(p: &mut crate::light::model::PlotLayout) {
+    let text = |t: &mut String| {
+        if t.len() > MAX_PLOT_TEXT {
+            *t = t.chars().take(MAX_PLOT_TEXT).collect();
+        }
+    };
+    p.edits.truncate(MAX_PLOT_EDITS);
+    for e in &mut p.edits {
+        let max = if e.item.on_page() { MAX_PLOT_PAGE } else { MAX_DISTANCE };
+        for v in &mut e.offset {
+            f32_in(v, -max, max);
+        }
+        if let Some(t) = &mut e.text {
+            text(t);
+        }
+        if let Some(v) = &mut e.size {
+            f32_in(v, PLOT_TEXT_SIZE.0, PLOT_TEXT_SIZE.1);
+        }
+    }
+    p.notes.truncate(MAX_PLOT_NOTES);
+    for n in &mut p.notes {
+        for v in &mut n.at {
+            f32_in(v, -MAX_DISTANCE, MAX_DISTANCE);
+        }
+        text(&mut n.text);
+        f32_in(&mut n.size, PLOT_TEXT_SIZE.0, PLOT_TEXT_SIZE.1);
+    }
 }
 
 /// Bring every value of `ws` into its plausible range (see the module docs). Counts (cues,
@@ -439,6 +483,7 @@ pub fn lighting(l: &mut Lighting) {
         }
         f32_in(&mut s.height, -MAX_DISTANCE, MAX_DISTANCE);
     }
+    plot(&mut l.plot);
     for seq in &mut l.sequences {
         fade(&mut seq.mib_delay);
         fade(&mut seq.mib_fade);
@@ -467,8 +512,16 @@ pub fn lighting(l: &mut Lighting) {
     for e in &mut l.effects {
         effect(e);
     }
+    l.button_pages.truncate(MAX_BUTTON_PAGES);
+    for p in &mut l.button_pages {
+        if p.chars().count() > MAX_PAGE_NAME {
+            *p = p.chars().take(MAX_PAGE_NAME).collect();
+        }
+    }
+    let pages = l.button_page_count();
     for b in &mut l.buttons {
         fade(&mut b.fade);
+        b.page = b.page.min(pages - 1);
     }
     f32_in(&mut l.button_scale, BUTTON_SCALE.0, BUTTON_SCALE.1);
     fade(&mut l.release_fade);

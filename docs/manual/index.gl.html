@@ -767,8 +767,8 @@ cargo run --release -- show.openq    # abrir un espectáculo gardado</code></pre
   <p>OpenQ controla a iluminación por DMX. O <strong>deseño de iluminación</strong> (patch, grupos, presets, efectos e
   secuencias de cues de iluminación) gárdase á parte da lista de cues, no espazo de <strong>Iluminación</strong>: cambia
   entre <span class="menu"><span class="ms" aria-hidden="true">&#xe90f;</span> Iluminación</span> e <em>Cues</em> enriba da
-  lista de cues. O deseño só se pode cambiar en modo edición. En modo función, o espazo de Iluminación amosa os executores e o
-  monitor DMX.</p>
+  lista de cues. O deseño só se pode cambiar en modo edición. En modo función, o espazo de Iluminación amosa a páxina
+  Reprodución e o monitor DMX.</p>
   <h3>Cues de luz</h3>
   <p>Unha cue de <strong>Luz</strong> <span class="ms" aria-hidden="true">&#xe90f;</span> da lista de cues reproduce o deseño
   de iluminación; non garda niveis propios. Na súa lapela Axustes escolle a <em>Acción</em>: <em>GO de cue de iluminación</em>
@@ -790,7 +790,9 @@ cargo run --release -- show.openq    # abrir un espectáculo gardado</code></pre
   aparatos. Para engadir (na Táboa ou na Planta), escolle un tipo de aparato e un modo en <em>Engadir aparatos</em>, indica
   cantos, o primeiro número de aparato, o universo e o enderezo inicial (<em>auto</em> colle o seguinte libre), e preme
   <em>Sumar</em>. Todas as celas da táboa pódense editar: nome, tipo, modo, universo, enderezo, posición e rotación, e a
-  inversión de panorama ou tilt. Os enderezos que se solapan e os números repetidos avísanse enriba da táboa.</p>
+  inversión de panorama ou tilt. Os enderezos que se solapan e os números repetidos avísanse enriba da táboa. Un aparato con varias entradas DMX (un
+  <em>break</em> por entrada, definido no seu tipo de aparato) ten un enderezo por break: preme o seu número de canles para
+  poñer o universo e o enderezo dos outros breaks.</p>
   <figure>
     <img src="img/gl/lighting-patch.webp" width="1100" height="462" alt="Táboa de patch con oito washes RGB, dous spots e unha barra de píxeles, con columnas de enderezo, posición e rotación.">
     <figcaption>A táboa de patch. As posicións van en metros: x cara á dereita, y cara arriba, z cara ao público.</figcaption>
@@ -816,15 +818,39 @@ cargo run --release -- show.openq    # abrir un espectáculo gardado</code></pre
   (<code>.oqfixture</code>). Os tipos importados cópianse no espectáculo e gárdanse na túa biblioteca de aparatos, así que
   estarán no seguinte espectáculo. <em>Tipos de aparato</em> abre o editor: canles e os seus atributos, canles finas de 16
   bits, valores por defecto, o valor que usa Resaltar e os <strong>rangos</strong>: as partes con nome dunha canle, como as
-  posicións dunha roda de cor ou de gobos. Os ficheiros GDTF traen tamén as cores dos LED do aparato, que usa o selector de
-  cor.</p>
+  posicións dunha roda de cor ou de gobos. Un rango pode ter unha cor e unha imaxe (<em>Imaxe (gobo)</em>), que se ven
+  no despregable desa canle no programador; os ficheiros GDTF traen as imaxes dos gobos e as cores dos LED do aparato, que usa
+  o selector de cor.</p>
   <figure>
     <img src="img/fixture-types.webp" width="1100" height="778" alt="Editor de tipos de aparato dun spot móbil, coas canles, o seu atributo, canle fina, valor por defecto e rangos.">
     <figcaption>O editor de tipos de aparato.</figcaption>
   </figure>
-  <p>Na vista Planta, <em>Exportar MVR…</em> garda o patch coas posicións nun ficheiro MVR, que poden importar visualizadores e outras mesas.
-  <em>Exportar plano…</em> garda a vista Planta como PDF (unha folla A3, á maior escala normalizada que caiba, como 1:50) ou como debuxo SVG —o tipo escóllese no diálogo de gardar— coas varas e rectángulos, números de aparato,
-  enderezos e lenda. As etiquetas nunca se tapan: onde os aparatos están xuntos, as súas etiquetas sepáranse.</p>
+  <p>Os <strong>ficheiros MVR</strong> levan unha implantación dun programa a outro. <em>Importar MVR…</em> (na Táboa e na
+  Planta) engade os aparatos dun ficheiro dun visualizador, un programa de CAD ou outra mesa, coas súas posicións, enderezos e
+  estruturas (como varas e formas na planta). Os tipos de aparato búscanse polo nome no espectáculo e na túa biblioteca de
+  aparatos; os demais saen dos ficheiros GDTF que leva o MVR. Na vista Planta, <em>Exportar MVR…</em> garda o patch coas
+  posicións e o ficheiro GDTF de cada tipo, para que visualizadores e outras mesas poidan importalo.</p>
+  <h3>Plano</h3>
+  <p><em>Plano…</em>, na vista Planta, abre o editor do plano: a páxina impresa tal como sairá, coas varas e rectángulos, os
+  símbolos dos aparatos, números, enderezos, un título e unha lenda. As etiquetas nunca se tapan: onde os aparatos están
+  xuntos, as súas etiquetas sepáranse.</p>
+  <ul>
+    <li>Arrastra calquera elemento para movelo. Un clic selecciona (<kbd>Maiús</kbd> engade, arrastrar sobre o papel baleiro
+    selecciona unha zona); a columna lateral cambia o texto, o tamaño e a cor dos elementos seleccionados, ocúltaos ou
+    devólveos ao seu sitio.</li>
+    <li>Con varios elementos seleccionados, os botóns de aliñamento igualan os seus bordos ou centros, ou reparten tres ou máis
+    por igual.</li>
+    <li>Cada tipo de aparato recibe un símbolo deducido do seu nome (PAR, recorte, fresnel, cabeza móbil, panorama, estrobo,
+    efecto…); escolle outro para todo o tipo na lenda, ou para un só aparato.</li>
+    <li><em>Engadir texto</em> pon unha nota libre na páxina.</li>
+    <li><em>Exportar…</em> gárdao como PDF (unha folla A3, á maior escala normalizada que caiba, como 1:50) ou como debuxo SVG;
+    o tipo escóllese no diálogo de gardar.</li>
+  </ul>
+  <p>Os cambios gárdanse co espectáculo, así que a seguinte exportación consérvaos.</p>
+  <figure>
+    <img src="img/gl/lighting-plot.webp" width="1100" height="733" alt="Editor do plano: unha páxina A3 co escenario, varas, símbolos de aparatos e etiquetas, unha lenda e a columna lateral dos elementos seleccionados.">
+    <figcaption>O editor do plano.</figcaption>
+  </figure>
 
   <h3><span class="ms" aria-hidden="true">&#xe429;</span> Programador</h3>
   <p>Selecciona aparatos nas súas fichas: un clic engade un aparato á selección (un segundo clic quítao), arrastrar por riba
@@ -880,7 +906,8 @@ cargo run --release -- show.openq    # abrir un espectáculo gardado</code></pre
   un círculo para panorama e tilt. A <em>Velocidade</em> vai en Hz, ou por pulso con <em>Seguir o tempo</em>. <em>Tamaño</em> e
   <em>Base</em> fixan a oscilación; vai arredor do valor da cue ou, con <em>Absoluto</em>, arredor da base. O <em>Desfase</em>
   escalona os aparatos, <em>Grupos</em> move varios aparatos xuntos e <em>Ás</em> reflicte o debuxo. A vista previa amosa o
-  resultado nos aparatos.</p>
+  resultado nos aparatos. Con <em>O tamaño segue o son</em> o efecto medra co volume ao que soa OpenQ: <em>Ganancia</em> di
+  canto, <em>Mínimo</em> canto queda en silencio, e a barra do lado amosa o nivel do momento.</p>
   <figure>
     <img src="img/lighting-effects.webp" width="1100" height="660" alt="Páxina Efectos cun efecto de fórmula: axustes, vista previa de vermello, verde e azul en doce aparatos, e a fórmula do arco da vella co seu deslizador.">
     <figcaption>Un efecto de fórmula: a fórmula crea a táboa de cores e a vista previa amósaa nos aparatos seleccionados.</figcaption>
@@ -1049,13 +1076,33 @@ save_effect("wander.oqfx", "Wander", ["Pan", "Tilt"], STEPS, HEADS,
     cue antes de acenderse, tras o delay indicado.</li>
     <li><em>Cargar no programador</em> recupera unha cue para editala; <em>Actualizar cue</em>, na páxina Programador, garda os cambios.</li>
   </ul>
-  <h3>Executores</h3>
-  <p>A barra de executores, abaixo no espazo de Iluminación, está nos dous modos. Ten o <strong>gran máster</strong>, o
-  <strong>blackout</strong>, o <strong>tempo</strong> dos efectos (escríbese ou márcase con Tap) e un executor por secuencia: a
-  súa cue actual e a seguinte, un fader de nivel, <em>GO</em> e <em>Liberación</em>.</p>
-  <figure class="narrow">
-    <img src="img/lighting-executors.webp" width="927" height="197" alt="Barra de executores: gran máster ao 100 por cen, blackout, tempo 120 BPM e dous executores de secuencia.">
-    <figcaption>Executores. En modo función só funcionan GO e a liberación.</figcaption>
+  <p>Os ficheiros <strong>USITT ASCII</strong> (<code>.asc</code>) traen cues doutra mesa: o botón
+  <span class="ms" aria-hidden="true">&#xe9fc;</span> xunto a <em>Secuencias</em> le o patch, as cues, os grupos e os submásteres dun
+  ficheiro, e <span class="ms" aria-hidden="true">&#xf090;</span> garda o deseño como un. O formato só leva intensidades: a cor, a posición e
+  os efectos quedan fóra, e os tempos de follow e link pérdense.</p>
+  <h3 id="playback">Reprodución</h3>
+  <p>A páxina <strong>Reprodución</strong> é desde onde se leva a iluminación, nos dous modos, con tarxetas grandes para unha
+  pantalla táctil:</p>
+  <ul>
+    <li><strong>Másteres</strong>: o <strong>gran máster</strong>, o <strong>blackout</strong> e o <strong>tempo</strong> dos
+    efectos (escríbese ou márcase con Tap).</li>
+    <li><strong>Secuencias</strong>: unha tarxeta por secuencia, coa súa cue actual e a seguinte, un fader de nivel, <em>GO</em> e
+    <em>Liberación</em>.</li>
+    <li><strong>Executores</strong>: botóns que poñen un estado enriba das secuencias, como a máquina de fume ao 80&nbsp;%, un
+    estrobo ou un especial. En modo edición, <em>Engadir executor</em> crea un e o lapis edítao: o seu nome e cor, un
+    <em>predefinido</em> sobre uns <em>aparatos</em> (<em>Usar seleccionados</em> toma a selección do programador, ou escolle un
+    grupo), e/ou <em>Gardar o programador</em> para os valores e efectos do programador. Entra e sae no seu <em>Fade</em>;
+    <em>Conmutar</em> acéndeo e apágao con cada pulsación, <em>Flash</em> mantéñeo aceso só mentres se preme.</li>
+  </ul>
+  <p>Os executores están en <strong>páxinas</strong>: as lapelas de enriba, con <span class="ms" aria-hidden="true">&#xe145;</span> para unha
+  páxina nova; un clic dereito nunha lapela renoméaa ou elimínaa. Os executores dunha páxina que non se ve seguen activos. En
+  modo edición, arrastra un executor pola súa asa sobre outro para reordenalos, ou sobre unha lapela para levalo a esa páxina.
+  <em>Tamaño dos executores</em> agranda ou achica as tarxetas.</p>
+  <p><em>Abrir nunha xanela</em> pon a páxina Reprodución nunha xanela propia; escolle unha <em>Pantalla</em> para que ocupe unha
+  pantalla táctil. Cada ordenador lembra se a súa xanela está aberta e onde, así que volve tras reiniciar.</p>
+  <figure>
+    <img src="img/gl/lighting-playback.webp" width="1100" height="402" alt="Páxina Reprodución: gran máster, blackout e tempo, tarxetas de secuencia con GO e Liberación, e unha páxina de botóns de executor.">
+    <figcaption>A páxina Reprodución. En modo función só reproduce; os executores engádense e edítanse en modo edición.</figcaption>
   </figure>
 
   <h3 id="surfaces"><span class="ms" aria-hidden="true">&#xe521;</span> Superficies de control</h3>
@@ -1066,8 +1113,21 @@ save_effect("wander.oqfx", "Wander", ["Pan", "Tilt"], STEPS, HEADS,
   numéranse polo seu lugar na lista de secuencias.</p>
   <ul>
     <li><strong>Faders</strong>: nivel de executor, gran máster.</li>
-    <li><strong>Botóns</strong>: GO, liberar e flash de executor (a tope mentres se mantén), blackout, liberar todo, tap tempo, e
-    o GO e Parar todo da lista de cues. Un botón actúa unha vez por pulsación, mande notas, CC 127/0 ou OSC 1/0.</li>
+    <li><strong>Botóns</strong>: GO, liberar e flash de executor (a tope mentres se mantén), executores de reprodución (os botóns
+    da páxina Reprodución), páxina seguinte e anterior, blackout, liberar todo, tap tempo, e o GO e Parar todo da lista de cues.
+    Un botón actúa unha vez por pulsación, mande notas, CC 127/0 ou OSC 1/0.</li>
+  </ul>
+  <ul>
+    <li><strong>Páxinas</strong>: cun tamaño de páxina de, por exemplo, 8, os oito faders do controlador levan as secuencias
+    1–8 na primeira páxina e as 9–16 na seguinte; os botóns de páxina pasan dunha a outra, e a páxina Reprodución amosa a mesma
+    páxina de executores.</li>
+    <li><strong>Recollida suave</strong>: un fader que non coincide co seu nivel (moveuse na pantalla, ou cambiou a páxina) non
+    fai nada ata alcanzalo, así que nada salta.</li>
+    <li><strong>Retorno</strong>: escolle unha saída en <em>Retorno MIDI</em> e as luces dos botóns e os faders motorizados
+    seguen o espectáculo. Para unha app OSC, pon en <em>Retorno OSC</em> o porto UDP no que escoita: os niveis e as luces
+    envíanse á app que mandou o último control.</li>
+    <li><strong>MIDI clock</strong>: con <em>Os efectos seguen o seu tempo</em>, o tempo dos efectos segue o reloxo da entrada
+    MIDI (dun programa de DJ ou unha caixa de ritmos); ao lado vense os BPM que le.</li>
   </ul>
   <p>As asignacións gárdanse co espectáculo; a entrada MIDI é do ordenador, así que un dispositivo remoto pode usar o seu propio
   controlador (os seus movementos van ao dispositivo principal). As asignacións OSC chegan polo

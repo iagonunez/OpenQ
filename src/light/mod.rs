@@ -9,7 +9,8 @@
 //!   fixtures from its website.
 //! * [`command`] — the desk-style command line parser.
 //! * [`effects`] — effect waveforms run across fixtures (pool, runs in cues, evaluation).
-//! * [`mvr`] — MVR export of the patch with positions (for visualisers).
+//! * [`mvr`] — MVR import and export of the patch with positions (visualisers, other desks).
+//! * [`usitt`] — USITT ASCII import and export (patch, cues, groups and submasters; intensity only).
 //! * [`plot`] — light plot (top view) as SVG or PDF.
 //! * [`place`] — fixture placement layouts (line, arc, grid) for the patch's Arrange tool.
 //! * [`patch`] — design deltas ([`patch::LightingPatch`]) sent between remote devices.
@@ -47,6 +48,7 @@ pub mod place;
 pub mod plot;
 pub mod playback;
 pub mod sacn;
+pub mod usitt;
 pub mod formula;
 pub mod fxfile;
 pub mod zipread;

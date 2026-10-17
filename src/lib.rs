@@ -37,7 +37,8 @@
 //! * [`spatial`] — object audio: speakers in a room, objects placed by distance-based panning.
 //! * [`light`] — the lighting design (patch, groups, lighting cue sequences with tracking), kept
 //!   apart from the live show; Light cues target its cues.
-//! * [`surface`] — MIDI/OSC control surfaces mapped onto executors, masters and GO (learn mode).
+//! * [`surface`] — MIDI/OSC control surfaces mapped onto executors, playback buttons, masters and GO
+//!   (learn mode, pages, soft takeover, feedback to LEDs and motor faders).
 //! * [`osc`] — OSC input. [`remote`] — paired remote devices (encrypted, authenticated).
 //! * [`displays`] — system monitors for stage outputs. [`ui`] — the egui application.
 //! * `vout` (feature `video`) — video output in its own process (`openq --video-output`): stage

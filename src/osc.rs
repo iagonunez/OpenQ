@@ -100,6 +100,7 @@ impl OscServer {
                                 warnings.warn(|| format!("OSC \"{shown}\" from {from} refused: {e}"));
                                 continue;
                             }
+                            hub.osc_from(from.ip());
                             // A failure handling one message must not end the listener.
                             let res = crate::recovery::catch(|| handle_message(&show, &hub, &m).map_err(anyhow::Error::msg))
                                 .map_err(|e| format!("{e:#}"));

@@ -6,6 +6,11 @@
 //! display. Every action goes through [`App::control`], so a replica drives the main device and
 //! nothing here needs the programmer: buttons play as hidden sequences
 //! ([`crate::light::model::LightButton`]).
+//!
+//! Buttons sit on pages ([`Lighting::button_pages`]; buttons on a page not shown keep playing) and
+//! are put in order by dragging their handle in Edit mode (onto another button, or onto a page
+//! tab). Whether the window is open and its display are kept per computer
+//! (`<config>/playback-window`), so a touch screen comes back by itself.
 
 use super::lighting::{level_bar, to_c32};
 use super::{App, icons, theme};
@@ -28,12 +33,90 @@ pub(crate) struct PlaybackUi {
     pub(crate) window: bool,
     /// Display the window is fullscreen on (None = an ordinary window).
     pub(crate) display: Option<String>,
+    /// `window` and `display` as read from or last written to this computer's config.
+    saved: Option<WindowPlace>,
+    /// Button page shown.
+    page: u16,
+    /// Page whose name is being edited.
+    renaming: Option<u16>,
     /// Monitor index the window was last placed on (None until it opened).
     placed: Option<Option<usize>>,
     /// Button whose editor is open.
     edit: Option<ButtonId>,
     /// Flash buttons held down: (the card's widget id, button).
     held: Vec<(egui::Id, ButtonId)>,
+}
+
+/// Where the Playback window goes on this computer.
+#[derive(serde::Serialize, serde::Deserialize, Clone, PartialEq, Default, Debug)]
+#[serde(default)]
+struct WindowPlace {
+    open: bool,
+    display: Option<String>,
+}
+
+fn place_file() -> Option<std::path::PathBuf> {
+    crate::remote::config_dir().map(|d| d.join("playback-window"))
+}
+
+impl PlaybackUi {
+    /// Read this computer's window place the first time, write it when it changed.
+    fn keep_place(&mut self) {
+        let now = WindowPlace { open: self.window, display: self.display.clone() };
+        match &self.saved {
+            None => {
+                let read = place_file().and_then(|p| crate::recovery::read_text(&p, 4096).ok()).and_then(|t| serde_json::from_str::<WindowPlace>(&t).ok()).unwrap_or_default();
+                self.window = read.open;
+                self.display = read.display.clone();
+                self.saved = Some(read);
+            }
+            Some(saved) if *saved != now => {
+                if let Some(path) = place_file() {
+                    let write = || -> anyhow::Result<()> {
+                        if let Some(dir) = path.parent() {
+                            std::fs::create_dir_all(dir)?;
+                        }
+                        crate::recovery::write_atomic(&path, serde_json::to_string(&now)?.as_bytes())
+                    };
+                    if let Err(e) = write() {
+                        log::warn!("playback window: can't save its place: {e:#}");
+                    }
+                }
+                self.saved = Some(now);
+            }
+            Some(_) => {}
+        }
+    }
+}
+
+/// Put button `id` where button `onto` is (taking its page); the buttons between move up or down.
+fn move_button(l: &mut Lighting, id: ButtonId, onto: ButtonId) {
+    let (Some(from), Some(to)) = (l.buttons.iter().position(|b| b.id == id), l.buttons.iter().position(|b| b.id == onto)) else { return };
+    if from == to {
+        return;
+    }
+    let mut b = l.buttons.remove(from);
+    b.page = l.buttons[if to > from { to - 1 } else { to }].page;
+    l.buttons.insert(to, b);
+}
+
+/// Delete button page `k`: its buttons go to the page before (or the next one), later pages move down.
+fn delete_page(l: &mut Lighting, k: u16) {
+    if (k as usize) >= l.button_pages.len() {
+        return;
+    }
+    l.button_pages.remove(k as usize);
+    for b in &mut l.buttons {
+        if b.page > k || (b.page == k && k > 0) {
+            b.page -= 1;
+        }
+    }
+    if l.button_pages.len() <= 1 {
+        l.button_pages.clear();
+        for b in &mut l.buttons {
+            b.page = 0;
+        }
+    }
 }
 
 fn viewport_id() -> ViewportId {
@@ -49,6 +132,7 @@ fn grid(avail: f32, min: f32) -> (usize, f32) {
 impl App {
     /// The Playback page: window/display controls, then the grid.
     pub(super) fn playback_page(&mut self, ui: &mut Ui, show: &mut Show) {
+        self.light.playback.keep_place();
         ui.horizontal_wrapped(|ui| {
             let open = self.light.playback.window;
             let label = if open { t("Close the playback window") } else { t("Open in a window") };
@@ -113,6 +197,7 @@ impl App {
     /// The Playback window (fullscreen on its display if one is chosen). Playback only: buttons
     /// are edited on the Playback page.
     pub(super) fn playback_window(&mut self, ctx: &egui::Context, show: &mut Show) {
+        self.light.playback.keep_place();
         if !self.light.playback.window {
             self.light.playback.placed = None;
             return;
@@ -196,22 +281,80 @@ impl App {
         ui.add_space(8.0);
         ui.label(theme::caption(t("Executors")));
         ui.add_space(2.0);
+        let mut page_edit: Option<PageEdit> = None;
+        let pages = l.button_page_count();
+        let page = self.light.playback.page.min(pages - 1);
+        self.light.playback.page = page;
+        if pages > 1 || edit {
+            ui.horizontal_wrapped(|ui| {
+                ui.spacing_mut().item_spacing.x = 4.0;
+                for k in 0..pages {
+                    let name = l.button_pages.get(k as usize).filter(|n| !n.trim().is_empty()).cloned().unwrap_or_else(|| tr!("Page {n}", n = (k + 1).to_string()));
+                    if edit && self.light.playback.renaming == Some(k) {
+                        let mut text = l.button_pages.get(k as usize).cloned().unwrap_or_default();
+                        let r = ui.add(egui::TextEdit::singleline(&mut text).desired_width(120.0));
+                        r.request_focus();
+                        if r.changed() {
+                            page_edit = Some(PageEdit::Rename(k, text));
+                        }
+                        if r.lost_focus() {
+                            self.light.playback.renaming = None;
+                        }
+                        continue;
+                    }
+                    let r = ui.add(egui::Button::selectable(page == k, RichText::new(name).font(theme::semibold(13.0))).min_size(egui::vec2(64.0, 30.0)));
+                    if r.clicked() {
+                        self.light.playback.page = k;
+                    }
+                    if edit {
+                        // A button dropped on a tab moves to that page (at its end).
+                        if r.dnd_hover_payload::<ButtonId>().is_some() {
+                            ui.painter().rect_stroke(r.rect, 6.0, egui::Stroke::new(2.0, theme::ACCENT), egui::StrokeKind::Outside);
+                        }
+                        if let Some(id) = r.dnd_release_payload::<ButtonId>() {
+                            page_edit = Some(PageEdit::MoveTo(*id, k));
+                        }
+                        if r.double_clicked() {
+                            self.light.playback.renaming = Some(k);
+                        }
+                        r.context_menu(|ui| {
+                            if ui.button(theme::with_icon(icons::EDIT, t("Rename page"))).clicked() {
+                                self.light.playback.renaming = Some(k);
+                                ui.close();
+                            }
+                            if ui.add_enabled(pages > 1, egui::Button::new(theme::with_icon(icons::DELETE, t("Delete page")))).on_hover_text(t("Its executors go to the page before")).clicked() {
+                                page_edit = Some(PageEdit::Delete(k));
+                                ui.close();
+                            }
+                        });
+                    }
+                }
+                if edit && (pages as usize) < crate::limits::MAX_BUTTON_PAGES && ui.add(egui::Button::new(icons::ADD).min_size(egui::vec2(30.0, 30.0))).on_hover_text(t("New page")).clicked() {
+                    page_edit = Some(PageEdit::Add);
+                }
+            });
+            ui.add_space(6.0);
+        }
         if l.buttons.is_empty() && !edit {
             ui.label(RichText::new(t("Add executors on the Playback page in Edit mode.")).color(theme::TEXT_DIM));
         }
         let scale = button_scale(l);
         let (cols, w) = grid(avail, BUTTON_CARD.x * scale);
         let mut add = false;
-        let n = l.buttons.len() + edit as usize;
+        let shown: Vec<&LightButton> = l.page_buttons(page).collect();
+        let n = shown.len() + edit as usize;
+        let mut dropped: Option<(ButtonId, ButtonId)> = None;
         let mut i = 0;
         while i < n {
             ui.horizontal(|ui| {
                 ui.spacing_mut().item_spacing.x = GAP;
                 for k in i..(i + cols).min(n) {
-                    match l.buttons.get(k) {
+                    match shown.get(k) {
                         Some(b) => {
                             let on = status.iter().find(|x| x.id == b.sequence_id()).is_some_and(|x| x.cue.is_some());
-                            self.button_card(ui, l, b, on, w, edit, &mut cmds);
+                            if let Some(from) = self.button_card(ui, l, b, on, w, edit, &mut cmds) {
+                                dropped = Some((from, b.id));
+                            }
                         }
                         None => add = add_card(ui, w, scale),
                     }
@@ -231,8 +374,45 @@ impl App {
         if add && edit {
             let l = &mut show.ws.lighting;
             let id = l.buttons.iter().map(|b| b.id).max().unwrap_or(0) + 1;
-            l.buttons.push(LightButton { id, name: tr!("Executor {n}", n = id.to_string()), ..Default::default() });
+            l.buttons.push(LightButton { id, name: tr!("Executor {n}", n = id.to_string()), page, ..Default::default() });
             self.light.playback.edit = Some(id);
+            show.edited();
+        }
+        if edit && (dropped.is_some() || page_edit.is_some()) {
+            let l = &mut show.ws.lighting;
+            if let Some((from, onto)) = dropped
+                && from != onto
+            {
+                move_button(l, from, onto);
+            }
+            match page_edit {
+                Some(PageEdit::Add) => {
+                    if l.button_pages.is_empty() {
+                        l.button_pages.push(tr!("Page {n}", n = "1"));
+                    }
+                    l.button_pages.push(tr!("Page {n}", n = (l.button_pages.len() + 1).to_string()));
+                    self.light.playback.page = l.button_pages.len() as u16 - 1;
+                }
+                Some(PageEdit::Rename(k, text)) => {
+                    if l.button_pages.is_empty() {
+                        l.button_pages.push(String::new());
+                    }
+                    if let Some(p) = l.button_pages.get_mut(k as usize) {
+                        *p = text.chars().take(crate::limits::MAX_PAGE_NAME).collect();
+                    }
+                }
+                Some(PageEdit::Delete(k)) => delete_page(l, k),
+                Some(PageEdit::MoveTo(id, k)) => {
+                    // To the end of that page.
+                    if let Some(from) = l.buttons.iter().position(|b| b.id == id) {
+                        let mut b = l.buttons.remove(from);
+                        b.page = k;
+                        let at = l.buttons.iter().rposition(|x| x.page == k).map_or(l.buttons.len(), |i| i + 1);
+                        l.buttons.insert(at, b);
+                    }
+                }
+                None => {}
+            }
             show.edited();
         }
         if edit {
@@ -245,9 +425,10 @@ impl App {
         }
     }
 
-    /// One playback button: click toggles it (a flash button is on while held).
+    /// One playback button: click toggles it (a flash button is on while held). In Edit mode it
+    /// has a drag handle; returns the button dropped onto it.
     #[allow(clippy::too_many_arguments)]
-    fn button_card(&mut self, ui: &mut Ui, l: &Lighting, b: &LightButton, on: bool, w: f32, edit: bool, cmds: &mut Vec<LightControl>) {
+    fn button_card(&mut self, ui: &mut Ui, l: &Lighting, b: &LightButton, on: bool, w: f32, edit: bool, cmds: &mut Vec<LightControl>) -> Option<ButtonId> {
         let k = button_scale(l);
         let (rect, r) = ui.allocate_exact_size(egui::vec2(w, BUTTON_CARD.y * k), egui::Sense::click_and_drag());
         let colour = Color32::from_rgb(b.color[0], b.color[1], b.color[2]);
@@ -259,7 +440,9 @@ impl App {
         let fg = if on { Color32::WHITE } else { theme::TEXT };
         let clip = p.with_clip_rect(inner);
         let name = if b.name.is_empty() { b.id.to_string() } else { b.name.clone() };
-        clip.text(inner.left_top(), egui::Align2::LEFT_TOP, name, theme::semibold(16.0 * k), fg);
+        // In Edit mode the name stops before the drag handle and the pencil.
+        let name_clip = if edit { p.with_clip_rect(inner.with_max_x(inner.max.x.min(rect.right() - 60.0))) } else { clip.clone() };
+        name_clip.text(inner.left_top(), egui::Align2::LEFT_TOP, name, theme::semibold(16.0 * k), fg);
         let what = match (b.preset.and_then(|id| l.preset(id)), b.fixtures.len(), b.values.len()) {
             (Some(pr), n, _) => {
                 let preset = if pr.name.is_empty() { pr.id.to_string() } else { pr.name.clone() };
@@ -297,7 +480,16 @@ impl App {
                     self.light.playback.edit = Some(b.id);
                 }
             });
+            let handle = egui::Rect::from_min_size(egui::pos2(rect.right() - 56.0, rect.top() + 6.0), egui::vec2(24.0, 24.0));
+            let hr = ui.interact(handle, r.id.with("drag"), egui::Sense::drag()).on_hover_cursor(egui::CursorIcon::Grab);
+            p.text(handle.center(), egui::Align2::CENTER_CENTER, icons::DRAG_INDICATOR, theme::icon_font(16.0), if hr.hovered() || hr.dragged() { Color32::WHITE } else { theme::TEXT_DIM });
+            hr.on_hover_text(t("Drag onto another executor or a page to move it")).dnd_set_drag_payload(b.id);
+            if r.dnd_hover_payload::<ButtonId>().is_some_and(|id| *id != b.id) {
+                p.rect_stroke(rect.expand(3.0), 12.0, egui::Stroke::new(2.0, theme::ACCENT), egui::StrokeKind::Outside);
+            }
+            return r.dnd_release_payload::<ButtonId>().map(|id| *id).filter(|id| *id != b.id);
         }
+        None
     }
 
     /// Settings of the button being edited: name, colour, preset and fixtures, stored values.
@@ -465,6 +657,15 @@ fn sequence_card(ui: &mut Ui, l: &Lighting, id: u32, st: Option<&SequenceStatus>
         });
 }
 
+/// A change to the button pages asked for this frame.
+enum PageEdit {
+    Add,
+    Rename(u16, String),
+    Delete(u16),
+    /// A button dropped on a page tab.
+    MoveTo(ButtonId, u16),
+}
+
 /// Card size factor of the executors (a damaged show file can't make them vanish or explode).
 fn button_scale(l: &Lighting) -> f32 {
     if l.button_scale.is_finite() { l.button_scale.clamp(0.6, 2.5) } else { 1.0 }
@@ -483,6 +684,40 @@ fn add_card(ui: &mut Ui, w: f32, scale: f32) -> bool {
 
 #[cfg(test)]
 mod tests {
+    use crate::light::model::{LightButton, Lighting};
+
+    fn buttons(pages: &[u16]) -> Lighting {
+        let mut l = Lighting::default();
+        for (i, p) in pages.iter().enumerate() {
+            l.buttons.push(LightButton { id: i as u32 + 1, page: *p, ..Default::default() });
+        }
+        l.button_pages = vec!["A".into(), "B".into(), "C".into()];
+        l
+    }
+
+    fn order(l: &Lighting) -> Vec<(u32, u16)> {
+        l.buttons.iter().map(|b| (b.id, b.page)).collect()
+    }
+
+    #[test]
+    fn buttons_move_and_pages_go() {
+        let mut l = buttons(&[0, 0, 0, 1]);
+        super::move_button(&mut l, 1, 3);
+        assert_eq!(order(&l), [(2, 0), (3, 0), (1, 0), (4, 1)], "forward: into its place");
+        super::move_button(&mut l, 1, 2);
+        assert_eq!(order(&l), [(1, 0), (2, 0), (3, 0), (4, 1)], "back");
+        super::move_button(&mut l, 4, 2);
+        assert_eq!(order(&l), [(1, 0), (4, 0), (2, 0), (3, 0)], "onto another page's button: takes its page");
+        let mut l = buttons(&[0, 1, 2, 2]);
+        super::delete_page(&mut l, 1);
+        assert_eq!(order(&l), [(1, 0), (2, 0), (3, 1), (4, 1)]);
+        assert_eq!(l.button_pages, ["A", "C"]);
+        super::delete_page(&mut l, 0);
+        assert!(l.button_pages.is_empty(), "one page left: no pages");
+        assert!(l.buttons.iter().all(|b| b.page == 0));
+        assert_eq!(l.page_buttons(0).count(), 4);
+    }
+
     #[test]
     fn grid_fills_the_row() {
         let (cols, w) = super::grid(1000.0, 150.0);

@@ -1,4 +1,4 @@
-//! Lists of input devices (audio inputs, cameras, MIDI ports) for the inspector and settings.
+//! Lists of input devices (audio inputs, cameras, MIDI ports; MIDI outputs for surface feedback) for the inspector and settings.
 //! Asking the system can take a moment (cameras especially), so lists load on a background
 //! thread the first time they're needed, and again on Refresh.
 
@@ -15,6 +15,8 @@ pub struct Devices {
     pub cameras: Vec<(String, String)>,
     /// MIDI input ports (MTC in).
     pub midi_in: Vec<String>,
+    /// MIDI output ports (surface feedback).
+    pub midi_out: Vec<String>,
     /// The lists have been read at least once.
     pub loaded: bool,
     /// A refresh is running.
@@ -46,7 +48,8 @@ pub fn refresh(d: &SharedDevices, ctx: &egui::Context) {
             #[cfg(not(feature = "video"))]
             let cameras = Vec::new();
             let midi_in = crate::media::tcio::list_midi_inputs();
-            *d.lock() = Devices { audio_in, cameras, midi_in, loaded: true, loading: false };
+            let midi_out = crate::surface::list_midi_outputs();
+            *d.lock() = Devices { audio_in, cameras, midi_in, midi_out, loaded: true, loading: false };
             ctx.request_repaint();
         })
         .ok();

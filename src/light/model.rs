@@ -975,6 +975,9 @@ pub struct LightButton {
     pub fade: f64,
     /// On only while held down (otherwise each press toggles it).
     pub flash: bool,
+    /// Page of the Playback page it is on (index into [`Lighting::button_pages`]).
+    #[serde(skip_serializing_if = "is_zero")]
+    pub page: u16,
 }
 
 impl Default for LightButton {
@@ -989,6 +992,7 @@ impl Default for LightButton {
             effects: Vec::new(),
             fade: 0.0,
             flash: false,
+            page: 0,
         }
     }
 }
@@ -1301,6 +1305,210 @@ impl PlotShape {
     }
 }
 
+/// Something on the light plot that the plot editor can move, re-word or hide.
+#[derive(Serialize, Deserialize, Clone, PartialEq, Eq, Hash, Debug, Default)]
+#[serde(tag = "item", content = "id", rename_all = "snake_case")]
+pub enum PlotItem {
+    /// The title (the show's name).
+    #[default]
+    Title,
+    /// The line at the top right (scale, fixture count).
+    Subtitle,
+    /// "AUDIENCE" at the bottom of the grid.
+    Audience,
+    /// The legend as a block (moves only).
+    Legend,
+    /// One legend row, by fixture type name (text, hiding and the type's symbol; it moves with the legend).
+    LegendRow(String),
+    /// A fixture's symbol, with its number as text; its labels move with it.
+    Fixture(FixtureId),
+    /// The patch label above a fixture.
+    Patch(FixtureId),
+    /// The distance label below a fixture.
+    Distance(FixtureId),
+    /// A bar's or rectangle's name (moved through [`PlotShape::label`], like in the Plan view).
+    Shape(u32),
+    /// An added text ([`PlotNote`]: it keeps its own place and text, so it has no [`PlotEdit`]).
+    Note(u32),
+}
+
+impl PlotItem {
+    /// Moved in page units (points on the PDF, pixels in the SVG) rather than metres.
+    pub fn on_page(&self) -> bool {
+        matches!(self, PlotItem::Title | PlotItem::Subtitle | PlotItem::Legend | PlotItem::LegendRow(_))
+    }
+}
+
+/// A fixture's symbol on the light plot (drawn facing its heading, the lens towards the front).
+#[derive(Serialize, Deserialize, Clone, Copy, PartialEq, Eq, Hash, Debug)]
+#[serde(rename_all = "snake_case")]
+pub enum PlotSymbol {
+    /// A circle with a heading mark: moving heads.
+    Circle,
+    /// A rectangle with a lens line: the generic lantern.
+    Rectangle,
+    /// A long body and a tapered lens barrel: profile spots (ellipsoidals).
+    Profile,
+    /// A short body with a lens lip at the front: fresnels and PCs.
+    Fresnel,
+    /// A round-ended can: PARs.
+    Par,
+    /// A box widening to the front: floods and cyc lights.
+    Flood,
+    /// A wide, flat box with a flash line: strobes and blinders.
+    Strobe,
+    /// A long thin bar across the heading: LED battens and pixel bars.
+    Batten,
+    /// A triangle: smoke, haze and other effects.
+    Effect,
+}
+
+impl PlotSymbol {
+    /// Every symbol, in the order the plot editor offers them.
+    pub const ALL: [PlotSymbol; 9] = [
+        PlotSymbol::Circle,
+        PlotSymbol::Rectangle,
+        PlotSymbol::Profile,
+        PlotSymbol::Fresnel,
+        PlotSymbol::Par,
+        PlotSymbol::Flood,
+        PlotSymbol::Strobe,
+        PlotSymbol::Batten,
+        PlotSymbol::Effect,
+    ];
+
+    /// The symbol a fixture type gets unless the user picks one: a circle for moving heads, else
+    /// a guess from its name (profile, fresnel, PAR, flood/cyc, strobe/blinder, batten/bar, fog/haze),
+    /// else the rectangle.
+    pub fn guess(name: &str, moving: bool) -> Self {
+        if moving {
+            return PlotSymbol::Circle;
+        }
+        let n = name.to_lowercase();
+        let has = |words: &[&str]| words.iter().any(|w| n.contains(w));
+        if has(&["profile", "ellipsoidal", "leko", "source four", "zoom spot"]) {
+            PlotSymbol::Profile
+        } else if has(&["fresnel", "pebble", " pc", "plano"]) {
+            PlotSymbol::Fresnel
+        } else if has(&["par"]) && !has(&["parameter"]) {
+            PlotSymbol::Par
+        } else if has(&["flood", "cyc", "wash light", "asymmetric"]) {
+            PlotSymbol::Flood
+        } else if has(&["strobe", "blinder", "molefay", "audience light"]) {
+            PlotSymbol::Strobe
+        } else if has(&["batten", "bar", "strip", "pixel line", "tube"]) {
+            PlotSymbol::Batten
+        } else if has(&["fog", "haze", "smoke", "hazer", "fogger", "effect"]) {
+            PlotSymbol::Effect
+        } else {
+            PlotSymbol::Rectangle
+        }
+    }
+}
+
+/// The plot editor's change to one [`PlotItem`].
+#[derive(Serialize, Deserialize, Clone, PartialEq, Debug, Default)]
+#[serde(default)]
+pub struct PlotEdit {
+    /// Which item.
+    pub item: PlotItem,
+    /// Moved from its usual place: metres (x, z) on the grid, page units for
+    /// [`PlotItem::on_page`] items. A moved label is no longer moved out of the others' way.
+    pub offset: [f32; 2],
+    /// Text drawn instead of the usual one.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub text: Option<String>,
+    /// Left off the plot.
+    pub hidden: bool,
+    /// Text size instead of the usual one: points at the SVG scale for items on the grid (smaller
+    /// on a small-scale PDF, like the labels), page units for [`PlotItem::on_page`] items.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub size: Option<f32>,
+    /// Text colour (sRGB) instead of the usual grey.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub colour: Option<[u8; 3]>,
+    /// Symbol of a [`PlotItem::Fixture`], or of every fixture of a type for its
+    /// [`PlotItem::LegendRow`] (a fixture's own choice wins); None = [`PlotSymbol::guess`].
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub symbol: Option<PlotSymbol>,
+}
+
+impl PlotEdit {
+    /// Changes nothing.
+    pub fn is_noop(&self) -> bool {
+        self.offset == [0.0, 0.0] && self.text.is_none() && !self.hidden && self.size.is_none() && self.colour.is_none() && self.symbol.is_none()
+    }
+}
+
+/// A free text added to the plot.
+#[derive(Serialize, Deserialize, Clone, PartialEq, Debug)]
+#[serde(default)]
+pub struct PlotNote {
+    /// Note number.
+    pub id: u32,
+    /// Baseline start of the first line, metres (x, z) as fixture positions.
+    pub at: [f32; 2],
+    /// Text (several lines allowed).
+    pub text: String,
+    /// Text size at the SVG scale (smaller on a small-scale PDF, like the labels).
+    pub size: f32,
+    /// Bold.
+    pub bold: bool,
+    /// Text colour (sRGB).
+    pub colour: [u8; 3],
+}
+
+impl Default for PlotNote {
+    fn default() -> Self {
+        Self { id: 0, at: [0.0, 0.0], text: String::new(), size: 14.0, bold: false, colour: [0, 0, 0] }
+    }
+}
+
+/// How the plot editor changed the light plot (`light::plot` draws it with these).
+#[derive(Serialize, Deserialize, Clone, PartialEq, Debug, Default)]
+#[serde(default)]
+pub struct PlotLayout {
+    /// One per changed item.
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub edits: Vec<PlotEdit>,
+    /// Added texts.
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub notes: Vec<PlotNote>,
+}
+
+impl PlotLayout {
+    /// Nothing changed.
+    pub fn is_empty(&self) -> bool {
+        self.edits.is_empty() && self.notes.is_empty()
+    }
+
+    /// The change to `item`, if any.
+    pub fn edit(&self, item: &PlotItem) -> Option<&PlotEdit> {
+        self.edits.iter().find(|e| &e.item == item)
+    }
+
+    /// The change to `item`, added when missing (call [`PlotLayout::tidy`] afterwards).
+    pub fn edit_mut(&mut self, item: &PlotItem) -> &mut PlotEdit {
+        match self.edits.iter().position(|e| &e.item == item) {
+            Some(i) => &mut self.edits[i],
+            None => {
+                self.edits.push(PlotEdit { item: item.clone(), ..Default::default() });
+                self.edits.last_mut().expect("just pushed")
+            }
+        }
+    }
+
+    /// Drop changes that change nothing.
+    pub fn tidy(&mut self) {
+        self.edits.retain(|e| !e.is_noop());
+    }
+
+    /// A note by number.
+    pub fn note_mut(&mut self, id: u32) -> Option<&mut PlotNote> {
+        self.notes.iter_mut().find(|n| n.id == id)
+    }
+}
+
 /// The lighting design of a show.
 #[derive(Serialize, Deserialize, Clone, PartialEq, Debug)]
 #[serde(default)]
@@ -1321,6 +1529,9 @@ pub struct Lighting {
     /// Bars and rectangles drawn on the plot.
     #[serde(skip_serializing_if = "Vec::is_empty")]
     pub shapes: Vec<PlotShape>,
+    /// Plot editor changes (moved, re-worded or hidden items, added texts).
+    #[serde(skip_serializing_if = "PlotLayout::is_empty")]
+    pub plot: PlotLayout,
     /// Presets (palettes).
     pub presets: Vec<Preset>,
     /// Effects pool.
@@ -1328,6 +1539,10 @@ pub struct Lighting {
     /// Playback buttons (Playback window).
     #[serde(skip_serializing_if = "Vec::is_empty")]
     pub buttons: Vec<LightButton>,
+    /// Names of the playback buttons' pages (empty: one page). Buttons on other pages keep
+    /// playing; a page only chooses which buttons are shown (and which a control surface reaches).
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub button_pages: Vec<String>,
     /// Size of the playback buttons' cards on the Playback page and window (1 = normal).
     pub button_scale: f32,
     /// OpenQ's Stop all (and Stop cues without a target) also fade the lighting out.
@@ -1373,9 +1588,11 @@ impl Default for Lighting {
             outputs: Vec::new(),
             inputs: Vec::new(),
             shapes: Vec::new(),
+            plot: PlotLayout::default(),
             presets: Vec::new(),
             effects: Vec::new(),
             buttons: Vec::new(),
+            button_pages: Vec::new(),
             button_scale: 1.0,
             stop_all_releases: false,
             release_fade: 1.0,
@@ -1391,6 +1608,7 @@ impl Lighting {
             && self.outputs.is_empty()
             && self.inputs.is_empty()
             && self.shapes.is_empty()
+            && self.plot.is_empty()
             && self.presets.is_empty()
             && self.effects.is_empty()
             && self.buttons.is_empty()
@@ -1512,6 +1730,18 @@ impl Lighting {
     /// A playback button by number.
     pub fn button(&self, id: ButtonId) -> Option<&LightButton> {
         self.buttons.iter().find(|b| b.id == id)
+    }
+
+    /// Number of playback button pages (at least 1).
+    pub fn button_page_count(&self) -> u16 {
+        self.button_pages.len().clamp(1, u16::MAX as usize) as u16
+    }
+
+    /// The playback buttons on page `page`, in order. With one page, every button (whatever
+    /// its stored page: a page deleted while buttons were on it).
+    pub fn page_buttons(&self, page: u16) -> impl Iterator<Item = &LightButton> {
+        let all = self.button_pages.len() <= 1;
+        self.buttons.iter().filter(move |b| all || b.page.min(self.button_page_count() - 1) == page)
     }
 
     /// A preset by number.
