@@ -85,19 +85,6 @@ pub fn sanitize(mut e: Effect) -> anyhow::Result<Effect> {
     if e.script.len() > MAX_SCRIPT {
         bail!("the script is longer than {} KB", MAX_SCRIPT >> 10);
     }
-    let finite = |v: f32, d: f32| if v.is_finite() { v } else { d };
-    e.speed = finite(e.speed, 0.5).clamp(0.01, 50.0);
-    e.size = finite(e.size, 1.0).clamp(0.0, 1.0);
-    e.base = finite(e.base, 0.0).clamp(0.0, 1.0);
-    e.duty = finite(e.duty, 0.5).clamp(0.0, 1.0);
-    e.spread = finite(e.spread, 0.0).clamp(0.0, 1440.0);
-    e.groups = e.groups.clamp(1, 64);
-    e.wings = e.wings.clamp(1, 16);
-    e.params = super::effects::sanitize_params(std::mem::take(&mut e.params));
-    if let Some(a) = &mut e.audio {
-        a.gain = finite(a.gain, 1.0).clamp(0.0, 100.0);
-        a.floor = finite(a.floor, 0.0).clamp(0.0, 1.0);
-    }
     match (&e.table, e.shape) {
         (Some(t), Shape::Custom) => {
             t.validate().map_err(|m| anyhow::anyhow!("invalid effect table: {m}"))?;
@@ -107,6 +94,8 @@ pub fn sanitize(mut e: Effect) -> anyhow::Result<Effect> {
         (Some(_), _) => e.table = None,
         (None, _) => {}
     }
+    // Then values into range (a table that got here is valid, so it stays).
+    crate::limits::effect(&mut e);
     Ok(e)
 }
 

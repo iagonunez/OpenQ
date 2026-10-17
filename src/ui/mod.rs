@@ -404,7 +404,20 @@ impl App {
 
     // ------------------------------------------------------------------ editing
 
-    fn add_cue(&mut self, show: &mut Show, tag: KindTag) -> CueId {
+    /// True if `n` more cues fit in the show ([`crate::limits::MAX_CUES`]); tells the user if not.
+    fn room_for_cues(&mut self, show: &Show, n: usize) -> bool {
+        let max = crate::limits::MAX_CUES;
+        if crate::limits::cue_count(&show.ws) + n <= max {
+            return true;
+        }
+        self.notify(tr!("A show holds at most {max} cues", max = max.to_string()));
+        false
+    }
+
+    fn add_cue(&mut self, show: &mut Show, tag: KindTag) -> Option<CueId> {
+        if !self.room_for_cues(show, 1) {
+            return None;
+        }
         let mut cue = Cue::new(tag.default_kind());
         cue.number = show.ws.cue_list.next_number();
         // Control cues target the currently selected cue.
@@ -421,7 +434,7 @@ impl App {
         show.ws.cue_list.insert_after(sel, cue);
         show.edited();
         self.select(show, Some(id));
-        id
+        Some(id)
     }
 
     fn add_media_cue(&mut self, show: &mut Show, path: PathBuf) -> Option<CueId> {
@@ -439,6 +452,9 @@ impl App {
             self.notify(tr!("Unsupported file: {path}", path = path.display()));
             return None;
         };
+        if !self.room_for_cues(show, 1) {
+            return None;
+        }
         let mut cue = Cue::new(kind);
         cue.number = show.ws.cue_list.next_number();
         let id = cue.id;
@@ -477,6 +493,10 @@ impl App {
     }
 
     fn duplicate_selected(&mut self, show: &mut Show) {
+        let n = self.selection.iter().filter_map(|id| show.ws.cue_list.find(*id)).map(crate::limits::tree_size).sum();
+        if !self.room_for_cues(show, n) {
+            return;
+        }
         let mut last = None;
         for id in self.selection.clone() {
             if let Some(c) = show.ws.cue_list.find(id) {
@@ -511,6 +531,9 @@ impl App {
             })
             .collect();
         members.sort();
+        if !self.room_for_cues(show, 1) {
+            return;
+        }
         let at = members[0].0;
         let mut group = Cue::new(CueKind::Group {
             mode: GroupMode::StartAll,
@@ -2020,8 +2043,10 @@ impl App {
             self.stage_open.remove(&id);
             self.mapping_edit.remove(&id);
         }
+        let full = show.ws.stages.len() >= crate::limits::MAX_STAGES;
         if ui
-            .button(theme::with_icon(icons::ADD, t("Add stage")))
+            .add_enabled(!full, egui::Button::new(theme::with_icon(icons::ADD, t("Add stage"))))
+            .on_disabled_hover_text(tr!("A show holds at most {max} stages", max = crate::limits::MAX_STAGES.to_string()))
             .clicked()
         {
             let st = Stage::new(&tr!("Stage {n}", n = show.ws.stages.len() + 1));

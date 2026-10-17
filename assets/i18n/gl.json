@@ -1279,5 +1279,8 @@
  "Out of this fixture's range: the nearest colour it can make": "Fóra do rango deste aparato: a cor máis próxima que pode dar",
  "Preset from programmer ({what}): stores the selected fixtures' programmer values; right-click a preset to overwrite or delete it": "Preset desde o programador ({what}): garda os valores do programador dos aparatos seleccionados; clic dereito nun preset para sobrescribilo ou borralo",
  "Put the label back in its place": "Devolver a etiqueta ao seu sitio",
- "Select fixtures, then make a group of them with +.": "Selecciona aparatos e fai un grupo con eles con +."
+ "Select fixtures, then make a group of them with +.": "Selecciona aparatos e fai un grupo con eles con +.",
+ "A show holds at most {max} cues": "Un espectáculo admite como máximo {max} cues",
+ "A show holds at most {max} stages": "Un espectáculo admite como máximo {max} escenarios",
+ "A lighting design holds at most {max} cues": "Un deseño de iluminación admite como máximo {max} cues"
 }

@@ -9,7 +9,7 @@ use egui::{Color32, DragValue, Pos2, Rect, RichText, Sense, Stroke, Ui, vec2};
 use crate::i18n::t;
 
 /// Room coordinates shown from the centre to the edge of the view (room walls are at 1).
-const VIEW: f32 = 1.25;
+const VIEW: f32 = crate::limits::ROOM;
 /// Object colours, by channel.
 const COLOURS: [Color32; 8] = [
     theme::BLUE,

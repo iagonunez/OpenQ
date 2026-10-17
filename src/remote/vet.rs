@@ -6,7 +6,8 @@
 //!   NaN, but a huge literal turns into infinity in an `f32` field, and wild times would
 //!   overflow clock arithmetic;
 //! * cue ids are unique;
-//! * stage canvases stay within [`MAX_STAGE_SIDE`];
+//! * stage canvases stay within [`MAX_STAGE_SIDE`]; cues and stages within their counts
+//!   ([`crate::limits::check_counts`]);
 //! * media paths must already be in the show: replicas can't import media (the files live on the
 //!   main device), so a path a replica brings in can only be an attempt to read something else.
 
@@ -44,6 +45,7 @@ pub const MAX_STAGE_SIDE: u32 = 16384;
 /// Check a whole workspace from a replica against the current one.
 pub fn workspace(current: &Workspace, new: &Workspace) -> Result<(), String> {
     numbers(new)?;
+    crate::limits::check_counts(new)?;
     if new.stages.iter().any(|s| s.width.max(s.height) > MAX_STAGE_SIDE) {
         return Err(format!("Stages can be at most {MAX_STAGE_SIDE} pixels wide and high"));
     }

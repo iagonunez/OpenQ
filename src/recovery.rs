@@ -304,7 +304,9 @@ impl Orphan {
     /// Read the copy.
     pub fn load(&self) -> anyhow::Result<Workspace> {
         let mut ws: Workspace = serde_json::from_slice(&read_file(&self.data, crate::model::Workspace::MAX_FILE)?)?;
+        crate::limits::check_counts(&ws).map_err(anyhow::Error::msg)?;
         ws.fix_duplicate_ids();
+        crate::limits::workspace(&mut ws);
         Ok(ws)
     }
 

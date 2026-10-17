@@ -19,7 +19,7 @@ pub fn fmt_time(secs: f64) -> String {
     }
 }
 
-/// Parse "ss", "ss.s", "m:ss.s" or "h:m:ss.s".
+/// Parse "ss", "ss.s", "m:ss.s" or "h:m:ss.s", at most [`crate::limits::MAX_TIME`].
 pub fn parse_time(s: &str) -> Option<f64> {
     let s = s.trim();
     if s.is_empty() {
@@ -30,7 +30,7 @@ pub fn parse_time(s: &str) -> Option<f64> {
         let v: f64 = part.trim().parse().ok()?;
         total = total * 60.0 + v;
     }
-    Some(total.max(0.0))
+    total.is_finite().then(|| total.clamp(0.0, crate::limits::MAX_TIME))
 }
 
 /// Drag/typed time editor in seconds.
@@ -38,7 +38,7 @@ pub fn time_edit(ui: &mut Ui, value: &mut f64) -> Response {
     ui.add(
         DragValue::new(value)
             .speed(0.05)
-            .range(0.0..=86_400.0)
+            .range(0.0..=crate::limits::MAX_TIME)
             .custom_formatter(|v, _| fmt_time(v))
             .custom_parser(parse_time),
     )
@@ -46,14 +46,14 @@ pub fn time_edit(ui: &mut Ui, value: &mut f64) -> Response {
 
 pub fn db_edit(ui: &mut Ui, value: &mut f32) -> Response {
     ui.add(
-        egui::Slider::new(value, crate::model::MIN_DB..=12.0)
+        egui::Slider::new(value, crate::model::MIN_DB..=crate::limits::MAX_DB)
             .suffix(" dB")
             .custom_formatter(|v, _| if v <= crate::model::MIN_DB as f64 { "-inf".into() } else { format!("{v:.1}") }),
     )
 }
 
 /// Top of a fader's travel, in dB.
-pub const FADER_MAX_DB: f32 = 12.0;
+pub const FADER_MAX_DB: f32 = crate::limits::MAX_DB;
 
 /// Position (0 = bottom, 1 = top) of a level on a fader. Like a console fader law, the upper
 /// three quarters of the travel cover -20..+12 dB and the bottom quarter -60..-20 dB.
@@ -249,6 +249,8 @@ mod tests {
         assert_eq!(parse_time("90"), Some(90.0));
         assert_eq!(parse_time("1:02:05"), Some(3725.0));
         assert_eq!(parse_time("x"), None);
+        assert_eq!(parse_time("1e300"), Some(crate::limits::MAX_TIME));
+        assert_eq!(parse_time("inf"), None);
     }
 
     #[test]

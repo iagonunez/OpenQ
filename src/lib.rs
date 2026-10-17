@@ -69,8 +69,9 @@
 //! after a crash. Every warning and error lands in the [`errlog`] file. `tests/stress.rs` (run with `tools/stress.sh`) exercises all of it.
 //! Input from outside (show, media, fixture and config files, network messages, devices) is
 //! treated as hostile: files are read only when they are regular files of a bounded size
-//! ([`recovery::read_file`], [`media::check_local`]), and `tests/fuzz.rs` (`tools/fuzz.sh`)
-//! checks every way in with damaged and malicious data.
+//! ([`recovery::read_file`], [`media::check_local`]), every value is brought into a plausible
+//! range ([`limits`]: no fixture 10¹² m away, no fade of a thousand years), and `tests/fuzz.rs`
+//! (`tools/fuzz.sh`) checks every way in with damaged and malicious data.
 //!
 //! # Example: drive a show without a UI
 //!
@@ -93,6 +94,7 @@
 
 #[macro_use]
 pub mod i18n;
+pub mod limits;
 pub mod animation;
 pub mod audio_fx;
 pub mod bench;

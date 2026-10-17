@@ -299,6 +299,9 @@ impl App {
                 ServerMsg::Welcome { .. } => {}
                 ServerMsg::Workspace { mut ws, title, keep_lighting } => {
                     r.title = title;
+                    // The copy kept as "synced" is the clamped one too, so clamping isn't taken
+                    // for a local edit and sent back.
+                    crate::limits::workspace(&mut ws);
                     if keep_lighting {
                         match &r.synced {
                             Some(synced) => ws.lighting = synced.lighting.clone(),
@@ -314,7 +317,8 @@ impl App {
                         new_ws = true;
                     }
                 }
-                ServerMsg::Cues(patch) => {
+                ServerMsg::Cues(mut patch) => {
+                    patch.iter_mut().for_each(crate::limits::cue);
                     let applied = match &mut r.synced {
                         Some(synced) => crate::remote::apply_cue_patch(synced, &patch),
                         None => false,
@@ -336,6 +340,11 @@ impl App {
                         {
                             show.ws.lighting = synced.lighting.clone();
                         }
+                        // Both copies alike, as for a whole workspace.
+                        if let Some(synced) = &mut r.synced {
+                            crate::limits::lighting(&mut synced.lighting);
+                        }
+                        crate::limits::lighting(&mut show.ws.lighting);
                         show.sync_lighting();
                     } else {
                         link.send(ClientMsg::Resync);

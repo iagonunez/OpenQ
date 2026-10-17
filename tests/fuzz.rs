@@ -647,6 +647,12 @@ fn exercise_show(f: &Fuzz, show: &SharedShow, path: &Path, bytes: &[u8], rng_see
     let p = path.to_path_buf();
     let loaded = f.guard("loading", Duration::from_secs(5), bytes, "openq", move || Workspace::load(&p).map_err(|e| format!("{e:#}")));
     let Ok(mut ws) = loaded else { return false };
+    // Every value came in within its plausible range (`limits`): clamping again changes nothing.
+    let mut again = ws.clone();
+    openq::limits::workspace(&mut again);
+    if again != ws {
+        f.fail(bytes, "openq", "a loaded show still holds values out of range");
+    }
     keep_local(&mut ws);
     let (show, path) = (show.clone(), path.to_path_buf());
     f.guard("saving and playing", Duration::from_secs(30), bytes, "openq", move || {
@@ -1337,6 +1343,13 @@ fn fuzz_remote_messages() {
     link.send(ClientMsg::Command(Command::SetPlayhead(target)));
     wait_for("main device obeys after the fuzz", 10.0, || show.lock().engine.playhead == target);
     assert!(show.lock().recovered.is_none(), "the main device's engine recovered from a panic");
+    {
+        // Whatever the replica sent, the show holds only plausible values.
+        let s = show.lock();
+        let mut again = s.ws.clone();
+        openq::limits::workspace(&mut again);
+        assert!(again == s.ws, "values out of range got into the main device's show");
+    }
     eprintln!("{sent} hostile messages from an editing replica");
 
     // 3. Everything a main device can send to a replica.

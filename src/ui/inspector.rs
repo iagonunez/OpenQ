@@ -965,7 +965,7 @@ fn routing_editor(ui: &mut Ui, routing: &mut Option<Vec<Vec<f32>>>, src: usize, 
                 for g in row.iter_mut() {
                     ui.add(
                         DragValue::new(g)
-                            .range(MIN_DB..=12.0)
+                            .range(MIN_DB..=crate::limits::MAX_DB)
                             .speed(0.25)
                             .custom_formatter(|v, _| if v <= MIN_DB as f64 { "-∞".into() } else { format!("{v:.1}") }),
                     )

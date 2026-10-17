@@ -672,7 +672,8 @@ impl App {
             ui.add(egui::TextEdit::singleline(&mut s.name).hint_text(t("Name")).desired_width(90.0));
             let xz = |ui: &mut Ui, v: &mut [f32; 2]| {
                 for c in v.iter_mut() {
-                    ui.add(DragValue::new(c).speed(0.05).max_decimals(2).suffix(" m"));
+                    let m = crate::limits::MAX_DISTANCE;
+                    ui.add(DragValue::new(c).range(-m..=m).speed(0.05).max_decimals(2).suffix(" m"));
                 }
             };
             ui.label(t("From"));
@@ -702,7 +703,7 @@ impl App {
             ids.sort_unstable();
             for (id, p) in ids.iter().zip(bar.hang(ids.len())) {
                 if let Some(f) = l.fixtures.iter_mut().find(|f| f.id == *id) {
-                    f.position = p;
+                    f.position = in_venue(p);
                 }
             }
         }
@@ -719,9 +720,10 @@ impl App {
             return;
         }
         let a = &mut self.light.arrange;
+        let m = crate::limits::MAX_DISTANCE;
         let xyz = |ui: &mut Ui, v: &mut [f32; 3]| {
             for c in v.iter_mut() {
-                ui.add(DragValue::new(c).speed(0.05).max_decimals(2).suffix(" m"));
+                ui.add(DragValue::new(c).range(-m..=m).speed(0.05).max_decimals(2).suffix(" m"));
             }
         };
         let mut apply = false;
@@ -751,7 +753,7 @@ impl App {
                     ui.add(DragValue::new(&mut a.cols).range(1..=512));
                     ui.label(t("Spacing"));
                     for c in a.spacing.iter_mut() {
-                        ui.add(DragValue::new(c).speed(0.05).max_decimals(2).suffix(" m"));
+                        ui.add(DragValue::new(c).range(-m..=m).speed(0.05).max_decimals(2).suffix(" m"));
                     }
                 }
                 _ => {
@@ -769,7 +771,7 @@ impl App {
             let pos = crate::light::place::positions(self.light.arrange.layout(), ids.len());
             for (id, p) in ids.iter().zip(pos) {
                 if let Some(f) = l.fixtures.iter_mut().find(|f| f.id == *id) {
-                    f.position = p;
+                    f.position = in_venue(p);
                 }
             }
         }
@@ -916,7 +918,10 @@ impl App {
                             let each = (w - 8.0) / 3.0;
                             let top = ui.max_rect().left_top();
                             for (i, x) in v.iter_mut().enumerate() {
-                                let d = if rotation { DragValue::new(x).range(-360.0..=360.0).speed(1.0).max_decimals(1) } else { DragValue::new(x).speed(0.05).max_decimals(2) };
+                                let d = if rotation { DragValue::new(x).range(-360.0..=360.0).speed(1.0).max_decimals(1) } else {
+                                    let m = crate::limits::MAX_DISTANCE;
+                                    DragValue::new(x).range(-m..=m).speed(0.05).max_decimals(2)
+                                };
                                 ui.put(egui::Rect::from_min_size(top + egui::vec2(i as f32 * (each + 4.0), 0.0), egui::vec2(each, h)), d);
                             }
                         });
@@ -1404,9 +1409,16 @@ pub(crate) enum PlanDrag {
     Label { id: u32, from: egui::Pos2, start: [f32; 2] },
 }
 
-/// Plan positions snap to 5 cm.
+/// Plan positions snap to 5 cm and stay within [`crate::limits::MAX_DISTANCE`] of the origin.
 fn snap(v: f32) -> f32 {
-    (v * 20.0).round() / 20.0
+    let m = crate::limits::MAX_DISTANCE;
+    ((v * 20.0).round() / 20.0).clamp(-m, m)
+}
+
+/// A position (x, height, z) within [`crate::limits::MAX_DISTANCE`] of the origin.
+fn in_venue(p: [f32; 3]) -> [f32; 3] {
+    let m = crate::limits::MAX_DISTANCE;
+    p.map(|v| v.clamp(-m, m))
 }
 
 /// The handles of a shape and where they are (x, z).
@@ -2812,6 +2824,12 @@ impl App {
             }
             self.light.cue = Some(c.id);
         } else {
+            let max = crate::limits::MAX_LIGHT_CUES;
+            if crate::limits::light_cue_count(l) >= max {
+                self.notify(tr!("A lighting design holds at most {max} cues", max = max.to_string()));
+                return;
+            }
+            let s = l.sequences.iter_mut().find(|s| s.id == seq).expect("sequence");
             let c = LightCue { number, values, effects, name: name.unwrap_or_default(), ..Default::default() };
             self.light.cue = Some(c.id);
             let at = s.cues.iter().position(|x| number_key(&x.number) > number_key(&c.number)).unwrap_or(s.cues.len());

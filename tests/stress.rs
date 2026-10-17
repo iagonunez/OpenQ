@@ -663,7 +663,8 @@ fn stress_workspace_files() {
     }
     // A big show.
     let mut ws = Workspace::default();
-    for i in 0..20_000 * scale() {
+    // (At most as many as a show may hold.)
+    for i in 0..(20_000 * scale()).min(openq::limits::MAX_CUES) {
         let mut c = Cue::new(KindTag::Wait.default_kind());
         c.number = i.to_string();
         ws.cue_list.cues.push(c);

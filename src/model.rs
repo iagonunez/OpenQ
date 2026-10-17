@@ -2166,11 +2166,15 @@ impl Workspace {
     pub const MAX_FILE: u64 = 1 << 30;
 
     /// Read a workspace, resolving relative media paths against the file's folder. Only a regular
-    /// file of at most [`Workspace::MAX_FILE`] bytes (see [`crate::recovery::read_file`]).
+    /// file of at most [`Workspace::MAX_FILE`] bytes (see [`crate::recovery::read_file`]) and at
+    /// most [`crate::limits::MAX_CUES`] cues; values are brought into their plausible ranges
+    /// ([`crate::limits`]).
     pub fn load(path: &Path) -> anyhow::Result<Self> {
         let s = crate::recovery::read_file(path, Self::MAX_FILE)?;
         let mut ws: Workspace = serde_json::from_slice(&s)?;
+        crate::limits::check_counts(&ws).map_err(anyhow::Error::msg)?;
         ws.fix_duplicate_ids();
+        crate::limits::workspace(&mut ws);
         if ws.stages.is_empty() {
             ws.stages.push(Stage::default());
         }

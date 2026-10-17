@@ -218,8 +218,10 @@ impl Show {
     }
 
     /// Take a workspace edited on a remote device. Machine-specific settings (audio device,
-    /// OSC) stay as they are here.
+    /// OSC) stay as they are here; values are brought into their plausible ranges
+    /// ([`crate::limits`]).
     pub fn apply_remote_edit(&mut self, mut ws: Workspace) {
+        crate::limits::workspace(&mut ws);
         let mine = &self.ws.settings;
         ws.settings.audio_device = mine.audio_device.clone();
         ws.settings.osc_enabled = mine.osc_enabled;
@@ -244,9 +246,20 @@ impl Show {
     /// Take an edit made on a remote device as changes to this workspace
     /// ([`crate::remote::workspace_patch`]). False (nothing changed) if they don't fit.
     pub fn apply_remote_patch(&mut self, cues: &[crate::model::Cue], lighting: Option<&crate::light::patch::LightingPatch>) -> bool {
+        // (A copy of the design costs little: its big parts are shared.)
+        let before = lighting.map(|_| self.ws.lighting.clone());
         if !crate::remote::apply_workspace_patch(&mut self.ws, cues, lighting) {
             return false;
         }
+        // Cue patches only change cues; a lighting patch may add cues beyond the count.
+        if let Some(before) = before
+            && crate::limits::check_counts(&self.ws).is_err()
+        {
+            self.ws.lighting = before;
+            return false;
+        }
+        // Unchanged parts of the design keep their allocations (see `limits::lighting`).
+        crate::limits::workspace(&mut self.ws);
         if self.engine.playhead.is_some_and(|p| self.ws.cue_list.find(p).is_none()) {
             self.engine.set_playhead(None);
         }

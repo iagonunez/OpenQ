@@ -7,8 +7,8 @@ use crate::model::{Eq, EqBand, EqKind, MAX_EQ_BANDS};
 use egui::{Align2, Color32, ComboBox, DragValue, FontId, Id, Rect, Sense, Stroke, Ui, pos2, vec2};
 use crate::i18n::t;
 
-const F_MIN: f32 = 20.0;
-const F_MAX: f32 = 20_000.0;
+const F_MIN: f32 = crate::limits::EQ_FREQ.0;
+const F_MAX: f32 = crate::limits::EQ_FREQ.1;
 const DB_RANGE: f32 = 18.0;
 /// Display rate for the response plot.
 const RATE: f32 = 48_000.0;

@@ -116,8 +116,6 @@ pub fn sanitize(mut t: FixtureType) -> anyhow::Result<FixtureType> {
         if c.dmx_break >= 8 {
             anyhow::bail!("a channel is on DMX break {} (8 at most)", c.dmx_break + 1);
         }
-        c.default = c.default.filter(|v| v.is_finite()).map(|v| v.clamp(0.0, 1.0));
-        c.highlight = c.highlight.filter(|v| v.is_finite()).map(|v| v.clamp(0.0, 1.0));
         for r in &mut c.ranges {
             clip(&mut r.name);
             r.name = r.name.trim().to_string();
@@ -152,12 +150,7 @@ pub fn sanitize(mut t: FixtureType) -> anyhow::Result<FixtureType> {
     for m in &mut t.modes {
         check_mode(m)?;
     }
-    let p = &mut t.physical;
-    for v in [&mut p.pan_range, &mut p.tilt_range, &mut p.beam_min, &mut p.beam_max] {
-        *v = if v.is_finite() { v.clamp(0.0, 3600.0) } else { 0.0 };
-    }
-    p.emitters.retain(|e| e.is_valid() && e.attribute.is_emitter());
-    p.emitters.truncate(16);
+    crate::limits::fixture_type(&mut t);
     Ok(t)
 }
 

@@ -140,9 +140,10 @@ fn value_edit(ui: &mut Ui, p: AnimProp, v: &mut [f32; 4]) -> bool {
     let mut dv = DragValue::new(&mut shown).speed(speed).suffix(suffix).max_decimals(2);
     dv = match p {
         AnimProp::Opacity => dv.range(0.0..=100.0),
-        AnimProp::ScaleX | AnimProp::ScaleY => dv.range(0.0..=10_000.0),
+        AnimProp::ScaleX | AnimProp::ScaleY => dv.range(0.0..=crate::limits::MAX_ANIM_SCALE * k),
         AnimProp::CropLeft | AnimProp::CropTop | AnimProp::CropRight | AnimProp::CropBottom => dv.range(-100.0..=100.0),
-        _ => dv,
+        AnimProp::Rotation => dv.range(-crate::limits::MAX_ROTATION..=crate::limits::MAX_ROTATION),
+        _ => dv.range(-crate::limits::MAX_OFFSET * k..=crate::limits::MAX_OFFSET * k),
     };
     let changed = ui.add(dv).changed();
     if changed {
