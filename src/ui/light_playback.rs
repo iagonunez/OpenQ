@@ -3,22 +3,31 @@
 //!
 //! Shown as the Playback page of the Lighting workspace (both modes; buttons are added and edited
 //! there in Edit mode) and, on request, in a window of its own that can go fullscreen on a chosen
-//! display. Every action goes through [`App::control`], so a replica drives the main device and
-//! nothing here needs the programmer: buttons play as hidden sequences
+//! display. Every action goes through [`App::control`] (the window: through a [`Route`] taken from
+//! it), so a replica drives the main device and nothing here needs the programmer: buttons play as hidden sequences
 //! ([`crate::light::model::LightButton`]).
 //!
 //! Buttons sit on pages ([`Lighting::button_pages`]; buttons on a page not shown keep playing) and
 //! are put in order by dragging their handle in Edit mode (onto another button, or onto a page
 //! tab). Whether the window is open and its display are kept per computer
 //! (`<config>/playback-window`), so a touch screen comes back by itself.
+//!
+//! The window is a deferred viewport: it is laid out and painted in frames of its own (locking the
+//! show itself), so the main window never draws it or waits for its vsync. As an immediate viewport
+//! every main-window frame painted and presented both windows, which made the main window lag.
 
-use super::lighting::{level_bar, to_c32};
+use super::lighting::{level_bar, masters_controls, to_c32};
 use super::{App, icons, theme};
 use crate::control::{Command, LightControl};
 use crate::i18n::t;
 use crate::light::model::{ButtonId, LightButton, Lighting};
 use crate::light::playback::SequenceStatus;
-use crate::show::Show;
+use crate::remote::ClientMsg;
+use crate::show::{SharedShow, Show};
+use parking_lot::Mutex;
+use std::sync::Arc;
+use std::sync::mpsc::Sender;
+use std::time::Instant;
 use egui::{Color32, DragValue, RichText, Ui, ViewportBuilder, ViewportCommand, ViewportId};
 
 /// Card sizes: the smallest a card gets (cards stretch so a row fills the width).
@@ -45,6 +54,65 @@ pub(crate) struct PlaybackUi {
     edit: Option<ButtonId>,
     /// Flash buttons held down: (the card's widget id, button).
     held: Vec<(egui::Id, ButtonId)>,
+    /// What the Playback window keeps, shared with its viewport.
+    shared: Arc<Mutex<WindowState>>,
+}
+
+/// The Playback window's own state (its page and held buttons are its own, apart from the page's).
+#[derive(Default)]
+struct WindowState {
+    page: u16,
+    held: Vec<(egui::Id, ButtonId)>,
+    taps: Vec<Instant>,
+    /// Where its commands go, renewed by every main-window frame.
+    route: Route,
+    /// The window was asked to close: the main window's next frame stops showing it.
+    closed: bool,
+    /// Errors for the main window's status bar.
+    notes: Vec<String>,
+}
+
+/// Where transport commands made outside the main window's frames go (as [`App::control`] would
+/// send them).
+#[derive(Clone, Default)]
+pub(super) enum Route {
+    /// Applied to this computer's show.
+    #[default]
+    Local,
+    /// Sent to the main device (None: not connected, dropped).
+    Main(Option<Sender<ClientMsg>>),
+    /// A replica without the Control role.
+    ViewOnly,
+}
+
+impl Route {
+    /// Apply or send `cmd`.
+    fn send(&self, show: &mut Show, cmd: Command) -> Result<(), String> {
+        match self {
+            Route::Local => crate::control::apply(show, cmd, Instant::now()),
+            Route::Main(tx) => {
+                if let Some(tx) = tx {
+                    let _ = tx.send(ClientMsg::Command(cmd));
+                }
+                Ok(())
+            }
+            Route::ViewOnly => Err(t("This device is view-only").to_string()),
+        }
+    }
+}
+
+/// What the executors grid remembers between frames, and the tap times of its Tap button.
+struct Pad<'a> {
+    page: &'a mut u16,
+    held: &'a mut Vec<(egui::Id, ButtonId)>,
+    taps: &'a mut Vec<Instant>,
+}
+
+/// Edit mode of the grid (the Playback page): the page tab being renamed, and the button whose
+/// editor is open.
+struct Editing<'a> {
+    renaming: &'a mut Option<u16>,
+    open: &'a mut Option<ButtonId>,
 }
 
 /// Where the Playback window goes on this computer.
@@ -198,6 +266,28 @@ impl App {
     /// are edited on the Playback page.
     pub(super) fn playback_window(&mut self, ctx: &egui::Context, show: &mut Show) {
         self.light.playback.keep_place();
+        let shared = self.light.playback.shared.clone();
+        {
+            let mut st = shared.lock();
+            for e in st.notes.drain(..) {
+                self.notify(e);
+            }
+            if std::mem::take(&mut st.closed) {
+                self.light.playback.window = false;
+            }
+            if !self.light.playback.window {
+                // Flash buttons held in a window that is gone are let go of.
+                for (_, b) in std::mem::take(&mut st.held) {
+                    if let Some(b) = show.ws.lighting.button(b) {
+                        let release = LightControl::Release(Some(b.sequence_id()), b.fade as f32);
+                        if let Err(e) = st.route.send(show, Command::Light(release)) {
+                            self.notify(e);
+                        }
+                    }
+                }
+            }
+            st.route = self.route();
+        }
         if !self.light.playback.window {
             self.light.playback.placed = None;
             return;
@@ -216,16 +306,13 @@ impl App {
         if let Some(i) = monitor {
             builder = builder.with_monitor(i);
         }
-        let mut close = false;
-        let mut toggle_fs = false;
-        ctx.clone().show_viewport_immediate(viewport_id(), builder, |ui, _| {
-            egui::CentralPanel::default().frame(egui::Frame::new().fill(theme::BG_APP).inner_margin(egui::Margin::same(14))).show(ui, |ui| {
-                egui::ScrollArea::vertical().id_salt("playback_window").auto_shrink(false).show(ui, |ui| self.playback_grid(ui, show, false));
-            });
-            let ctx = ui.ctx().clone();
-            toggle_fs = ctx.input(|i| i.key_pressed(egui::Key::F11));
-            close = ctx.input(|i| i.viewport().close_requested());
-        });
+        if ctx.embed_viewports() {
+            // Drawn inside this frame (no native windows): the show is already locked here.
+            ctx.clone().show_viewport_immediate(viewport_id(), builder, |ui, _| window_ui(ui, show, &mut shared.lock()));
+        } else {
+            let show = self.show.clone();
+            ctx.show_viewport_deferred(viewport_id(), builder, move |ui, _| window_frame(ui, &show, &shared));
+        }
         // Follow display changes on an open window (a new window starts on its display).
         let p = &mut self.light.playback;
         if p.placed != Some(monitor) {
@@ -238,183 +325,15 @@ impl App {
             }
             p.placed = Some(monitor);
         }
-        if toggle_fs {
-            let fs = ctx.input_for(viewport_id(), |i| i.viewport().fullscreen.unwrap_or(false));
-            ctx.send_viewport_cmd_to(viewport_id(), ViewportCommand::Fullscreen(!fs));
-        }
-        if close {
-            p.window = false;
-            p.placed = None;
-            p.held.clear();
-        }
     }
 
-    /// Every executor, as cards: the masters (grand master, blackout, tempo) on top, then the
-    /// sequences, then the playback buttons ("executors" in the UI). `edit`: executors can be
-    /// added and edited.
+    /// The Playback page's [`executors`]; `edit`: executors can be added and edited.
     pub(super) fn playback_grid(&mut self, ui: &mut Ui, show: &mut Show, edit: bool) {
-        ui.ctx().request_repaint_after(std::time::Duration::from_millis(100));
-        ui.label(theme::caption(t("Masters")));
-        ui.add_space(2.0);
-        ui.horizontal_wrapped(|ui| self.masters_strip(ui, show, true));
-        ui.add_space(12.0);
-        let status = show.media.light.status();
-        let masters = show.media.light.masters().clone();
+        let p = &mut self.light.playback;
+        let pad = Pad { page: &mut p.page, held: &mut p.held, taps: &mut self.light.taps };
+        let editing = edit.then_some(Editing { renaming: &mut p.renaming, open: &mut p.edit });
         let mut cmds = Vec::new();
-        let l = &show.ws.lighting;
-        let avail = ui.available_width();
-        ui.label(theme::caption(t("Sequences")));
-        ui.add_space(2.0);
-        if l.sequences.is_empty() {
-            ui.label(RichText::new(t("Sequences appear here as executors.")).color(theme::TEXT_DIM));
-        }
-        let (cols, w) = grid(avail, SEQUENCE_CARD.x);
-        for row in l.sequences.chunks(cols) {
-            ui.horizontal(|ui| {
-                ui.spacing_mut().item_spacing.x = GAP;
-                for seq in row {
-                    sequence_card(ui, l, seq.id, status.iter().find(|x| x.id == seq.id), masters.level(seq.id), w, &mut cmds);
-                }
-            });
-            ui.add_space(GAP - ui.spacing().item_spacing.y);
-        }
-        ui.add_space(8.0);
-        ui.label(theme::caption(t("Executors")));
-        ui.add_space(2.0);
-        let mut page_edit: Option<PageEdit> = None;
-        let pages = l.button_page_count();
-        let page = self.light.playback.page.min(pages - 1);
-        self.light.playback.page = page;
-        if pages > 1 || edit {
-            ui.horizontal_wrapped(|ui| {
-                ui.spacing_mut().item_spacing.x = 4.0;
-                for k in 0..pages {
-                    let name = l.button_pages.get(k as usize).filter(|n| !n.trim().is_empty()).cloned().unwrap_or_else(|| tr!("Page {n}", n = (k + 1).to_string()));
-                    if edit && self.light.playback.renaming == Some(k) {
-                        let mut text = l.button_pages.get(k as usize).cloned().unwrap_or_default();
-                        let r = ui.add(egui::TextEdit::singleline(&mut text).desired_width(120.0));
-                        r.request_focus();
-                        if r.changed() {
-                            page_edit = Some(PageEdit::Rename(k, text));
-                        }
-                        if r.lost_focus() {
-                            self.light.playback.renaming = None;
-                        }
-                        continue;
-                    }
-                    let r = ui.add(egui::Button::selectable(page == k, RichText::new(name).font(theme::semibold(13.0))).min_size(egui::vec2(64.0, 30.0)));
-                    if r.clicked() {
-                        self.light.playback.page = k;
-                    }
-                    if edit {
-                        // A button dropped on a tab moves to that page (at its end).
-                        if r.dnd_hover_payload::<ButtonId>().is_some() {
-                            ui.painter().rect_stroke(r.rect, 6.0, egui::Stroke::new(2.0, theme::ACCENT), egui::StrokeKind::Outside);
-                        }
-                        if let Some(id) = r.dnd_release_payload::<ButtonId>() {
-                            page_edit = Some(PageEdit::MoveTo(*id, k));
-                        }
-                        if r.double_clicked() {
-                            self.light.playback.renaming = Some(k);
-                        }
-                        r.context_menu(|ui| {
-                            if ui.button(theme::with_icon(icons::EDIT, t("Rename page"))).clicked() {
-                                self.light.playback.renaming = Some(k);
-                                ui.close();
-                            }
-                            if ui.add_enabled(pages > 1, egui::Button::new(theme::with_icon(icons::DELETE, t("Delete page")))).on_hover_text(t("Its executors go to the page before")).clicked() {
-                                page_edit = Some(PageEdit::Delete(k));
-                                ui.close();
-                            }
-                        });
-                    }
-                }
-                if edit && (pages as usize) < crate::limits::MAX_BUTTON_PAGES && ui.add(egui::Button::new(icons::ADD).min_size(egui::vec2(30.0, 30.0))).on_hover_text(t("New page")).clicked() {
-                    page_edit = Some(PageEdit::Add);
-                }
-            });
-            ui.add_space(6.0);
-        }
-        if l.buttons.is_empty() && !edit {
-            ui.label(RichText::new(t("Add executors on the Playback page in Edit mode.")).color(theme::TEXT_DIM));
-        }
-        let scale = button_scale(l);
-        let (cols, w) = grid(avail, BUTTON_CARD.x * scale);
-        let mut add = false;
-        let shown: Vec<&LightButton> = l.page_buttons(page).collect();
-        let n = shown.len() + edit as usize;
-        let mut dropped: Option<(ButtonId, ButtonId)> = None;
-        let mut i = 0;
-        while i < n {
-            ui.horizontal(|ui| {
-                ui.spacing_mut().item_spacing.x = GAP;
-                for k in i..(i + cols).min(n) {
-                    match shown.get(k) {
-                        Some(b) => {
-                            let on = status.iter().find(|x| x.id == b.sequence_id()).is_some_and(|x| x.cue.is_some());
-                            if let Some(from) = self.button_card(ui, l, b, on, w, edit, &mut cmds) {
-                                dropped = Some((from, b.id));
-                            }
-                        }
-                        None => add = add_card(ui, w, scale),
-                    }
-                }
-            });
-            ui.add_space(GAP - ui.spacing().item_spacing.y);
-            i += cols;
-        }
-        // Flash buttons let go of (or no longer drawn: the window closed) are released.
-        self.light.playback.held.retain(|(id, b)| {
-            let down = ui.ctx().read_response(*id).is_some_and(|r| r.is_pointer_button_down_on());
-            if !down && let Some(b) = l.button(*b) {
-                cmds.push(LightControl::Release(Some(b.sequence_id()), b.fade as f32));
-            }
-            down
-        });
-        if add && edit {
-            let l = &mut show.ws.lighting;
-            let id = l.buttons.iter().map(|b| b.id).max().unwrap_or(0) + 1;
-            l.buttons.push(LightButton { id, name: tr!("Executor {n}", n = id.to_string()), page, ..Default::default() });
-            self.light.playback.edit = Some(id);
-            show.edited();
-        }
-        if edit && (dropped.is_some() || page_edit.is_some()) {
-            let l = &mut show.ws.lighting;
-            if let Some((from, onto)) = dropped
-                && from != onto
-            {
-                move_button(l, from, onto);
-            }
-            match page_edit {
-                Some(PageEdit::Add) => {
-                    if l.button_pages.is_empty() {
-                        l.button_pages.push(tr!("Page {n}", n = "1"));
-                    }
-                    l.button_pages.push(tr!("Page {n}", n = (l.button_pages.len() + 1).to_string()));
-                    self.light.playback.page = l.button_pages.len() as u16 - 1;
-                }
-                Some(PageEdit::Rename(k, text)) => {
-                    if l.button_pages.is_empty() {
-                        l.button_pages.push(String::new());
-                    }
-                    if let Some(p) = l.button_pages.get_mut(k as usize) {
-                        *p = text.chars().take(crate::limits::MAX_PAGE_NAME).collect();
-                    }
-                }
-                Some(PageEdit::Delete(k)) => delete_page(l, k),
-                Some(PageEdit::MoveTo(id, k)) => {
-                    // To the end of that page.
-                    if let Some(from) = l.buttons.iter().position(|b| b.id == id) {
-                        let mut b = l.buttons.remove(from);
-                        b.page = k;
-                        let at = l.buttons.iter().rposition(|x| x.page == k).map_or(l.buttons.len(), |i| i + 1);
-                        l.buttons.insert(at, b);
-                    }
-                }
-                None => {}
-            }
-            show.edited();
-        }
+        executors(ui, show, pad, editing, &mut cmds);
         if edit {
             self.button_editor(ui.ctx(), show);
         } else {
@@ -423,73 +342,6 @@ impl App {
         for c in cmds {
             self.control(show, Command::Light(c));
         }
-    }
-
-    /// One playback button: click toggles it (a flash button is on while held). In Edit mode it
-    /// has a drag handle; returns the button dropped onto it.
-    #[allow(clippy::too_many_arguments)]
-    fn button_card(&mut self, ui: &mut Ui, l: &Lighting, b: &LightButton, on: bool, w: f32, edit: bool, cmds: &mut Vec<LightControl>) -> Option<ButtonId> {
-        let k = button_scale(l);
-        let (rect, r) = ui.allocate_exact_size(egui::vec2(w, BUTTON_CARD.y * k), egui::Sense::click_and_drag());
-        let colour = Color32::from_rgb(b.color[0], b.color[1], b.color[2]);
-        let p = ui.painter();
-        let fill = if on { colour.gamma_multiply(0.85) } else if r.hovered() { theme::BG_HOVER } else { theme::BG_RAISED };
-        p.rect_filled(rect, 10.0, fill);
-        p.rect_stroke(rect, 10.0, egui::Stroke::new(if on { 2.0 } else { 1.5 }, if on { Color32::WHITE } else { colour }), egui::StrokeKind::Inside);
-        let inner = rect.shrink2(egui::vec2(12.0, 10.0) * k);
-        let fg = if on { Color32::WHITE } else { theme::TEXT };
-        let clip = p.with_clip_rect(inner);
-        let name = if b.name.is_empty() { b.id.to_string() } else { b.name.clone() };
-        // In Edit mode the name stops before the drag handle and the pencil.
-        let name_clip = if edit { p.with_clip_rect(inner.with_max_x(inner.max.x.min(rect.right() - 60.0))) } else { clip.clone() };
-        name_clip.text(inner.left_top(), egui::Align2::LEFT_TOP, name, theme::semibold(16.0 * k), fg);
-        let what = match (b.preset.and_then(|id| l.preset(id)), b.fixtures.len(), b.values.len()) {
-            (Some(pr), n, _) => {
-                let preset = if pr.name.is_empty() { pr.id.to_string() } else { pr.name.clone() };
-                tr!("{preset} · {n} fixtures", preset = preset, n = n.to_string())
-            }
-            (None, _, 0) if b.effects.is_empty() => t("Empty").to_string(),
-            (None, _, n) => tr!("{n} fixtures", n = n.to_string()),
-        };
-        clip.text(inner.left_top() + egui::vec2(0.0, 24.0 * k), egui::Align2::LEFT_TOP, what, egui::FontId::proportional(12.0 * k), if on { Color32::WHITE } else { theme::TEXT_DIM });
-        let mode = if b.flash { t("Flash") } else { t("Toggle") };
-        p.text(inner.left_bottom(), egui::Align2::LEFT_BOTTOM, mode, theme::semibold(10.5 * k), if on { Color32::WHITE } else { theme::TEXT_FAINT });
-        if on {
-            p.text(inner.right_bottom(), egui::Align2::RIGHT_BOTTOM, t("ON"), theme::semibold(13.0 * k), Color32::WHITE);
-        }
-        let seq = b.sequence_id();
-        let go = LightControl::Go(seq, Some(b.cue_id()));
-        let held = self.light.playback.held.iter().any(|(id, _)| *id == r.id);
-        if b.flash {
-            if r.is_pointer_button_down_on() && !held {
-                self.light.playback.held.push((r.id, b.id));
-                cmds.push(go);
-            }
-        } else if r.clicked() {
-            cmds.push(if on { LightControl::Release(Some(seq), b.fade as f32) } else { go });
-        }
-        if edit {
-            let pencil = egui::Rect::from_min_size(egui::pos2(rect.right() - 30.0, rect.top() + 6.0), egui::vec2(24.0, 24.0));
-            let pr = ui.interact(pencil, r.id.with("edit"), egui::Sense::click());
-            p.text(pencil.center(), egui::Align2::CENTER_CENTER, icons::EDIT, theme::icon_font(16.0), if pr.hovered() { Color32::WHITE } else { theme::TEXT_DIM });
-            if pr.on_hover_text(t("Edit the executor")).clicked() {
-                self.light.playback.edit = Some(b.id);
-            }
-            r.context_menu(|ui| {
-                if ui.button(theme::with_icon(icons::EDIT, t("Edit the executor"))).clicked() {
-                    self.light.playback.edit = Some(b.id);
-                }
-            });
-            let handle = egui::Rect::from_min_size(egui::pos2(rect.right() - 56.0, rect.top() + 6.0), egui::vec2(24.0, 24.0));
-            let hr = ui.interact(handle, r.id.with("drag"), egui::Sense::drag()).on_hover_cursor(egui::CursorIcon::Grab);
-            p.text(handle.center(), egui::Align2::CENTER_CENTER, icons::DRAG_INDICATOR, theme::icon_font(16.0), if hr.hovered() || hr.dragged() { Color32::WHITE } else { theme::TEXT_DIM });
-            hr.on_hover_text(t("Drag onto another executor or a page to move it")).dnd_set_drag_payload(b.id);
-            if r.dnd_hover_payload::<ButtonId>().is_some_and(|id| *id != b.id) {
-                p.rect_stroke(rect.expand(3.0), 12.0, egui::Stroke::new(2.0, theme::ACCENT), egui::StrokeKind::Outside);
-            }
-            return r.dnd_release_payload::<ButtonId>().map(|id| *id).filter(|id| *id != b.id);
-        }
-        None
     }
 
     /// Settings of the button being edited: name, colour, preset and fixtures, stored values.
@@ -610,6 +462,284 @@ impl App {
             self.light.playback.edit = None;
         }
     }
+}
+
+/// One frame of the Playback window: the grid, F11 for fullscreen, closing. Locks the show for the
+/// layout only (painting happens after).
+fn window_frame(ui: &mut Ui, show: &SharedShow, shared: &Mutex<WindowState>) {
+    let mut guard = show.lock();
+    window_ui(ui, &mut guard, &mut shared.lock());
+}
+
+fn window_ui(ui: &mut Ui, show: &mut Show, st: &mut WindowState) {
+    let mut cmds = Vec::new();
+    egui::CentralPanel::default().frame(egui::Frame::new().fill(theme::BG_APP).inner_margin(egui::Margin::same(14))).show(ui, |ui| {
+        egui::ScrollArea::vertical().id_salt("playback_window").auto_shrink(false).show(ui, |ui| {
+            executors(ui, show, Pad { page: &mut st.page, held: &mut st.held, taps: &mut st.taps }, None, &mut cmds);
+        });
+    });
+    for c in cmds {
+        if let Err(e) = st.route.send(show, Command::Light(c)) {
+            st.notes.push(e);
+        }
+    }
+    let ctx = ui.ctx().clone();
+    if !st.notes.is_empty() {
+        ctx.request_repaint_of(ViewportId::ROOT);
+    }
+    if ctx.input(|i| i.key_pressed(egui::Key::F11)) {
+        let fs = ctx.input(|i| i.viewport().fullscreen.unwrap_or(false));
+        ctx.send_viewport_cmd(ViewportCommand::Fullscreen(!fs));
+    }
+    if ctx.input(|i| i.viewport().close_requested()) {
+        st.closed = true;
+        ctx.request_repaint_of(ViewportId::ROOT);
+    }
+}
+
+/// Every executor, as cards: the masters (grand master, blackout, tempo) on top, then the
+/// sequences, then the playback buttons ("executors" in the UI). `edit`: executors can be added
+/// and edited (button and page edits are made to the show here). Commands go to `cmds`.
+fn executors(ui: &mut Ui, show: &mut Show, pad: Pad, mut edit: Option<Editing>, cmds: &mut Vec<LightControl>) {
+    ui.ctx().request_repaint_after(std::time::Duration::from_millis(100));
+    ui.label(theme::caption(t("Masters")));
+    ui.add_space(2.0);
+    ui.horizontal_wrapped(|ui| masters_controls(ui, show, pad.taps, true, cmds));
+    ui.add_space(12.0);
+    let status = show.media.light.status();
+    let masters = show.media.light.masters().clone();
+    let l = &show.ws.lighting;
+    let avail = ui.available_width();
+    ui.label(theme::caption(t("Sequences")));
+    ui.add_space(2.0);
+    if l.sequences.is_empty() {
+        ui.label(RichText::new(t("Sequences appear here as executors.")).color(theme::TEXT_DIM));
+    }
+    let (cols, w) = grid(avail, SEQUENCE_CARD.x);
+    for row in l.sequences.chunks(cols) {
+        ui.horizontal(|ui| {
+            ui.spacing_mut().item_spacing.x = GAP;
+            for seq in row {
+                sequence_card(ui, l, seq.id, status.iter().find(|x| x.id == seq.id), masters.level(seq.id), w, cmds);
+            }
+        });
+        ui.add_space(GAP - ui.spacing().item_spacing.y);
+    }
+    ui.add_space(8.0);
+    ui.label(theme::caption(t("Executors")));
+    ui.add_space(2.0);
+    let editing = edit.is_some();
+    let renaming = edit.as_ref().and_then(|e| *e.renaming);
+    let mut rename: Option<Option<u16>> = None;
+    let mut open: Option<ButtonId> = None;
+    let mut page_edit: Option<PageEdit> = None;
+    let pages = l.button_page_count();
+    let page = (*pad.page).min(pages - 1);
+    *pad.page = page;
+    if pages > 1 || editing {
+        ui.horizontal_wrapped(|ui| {
+            ui.spacing_mut().item_spacing.x = 4.0;
+            for k in 0..pages {
+                let name = l.button_pages.get(k as usize).filter(|n| !n.trim().is_empty()).cloned().unwrap_or_else(|| tr!("Page {n}", n = (k + 1).to_string()));
+                if editing && renaming == Some(k) {
+                    let mut text = l.button_pages.get(k as usize).cloned().unwrap_or_default();
+                    let r = ui.add(egui::TextEdit::singleline(&mut text).desired_width(120.0));
+                    r.request_focus();
+                    if r.changed() {
+                        page_edit = Some(PageEdit::Rename(k, text));
+                    }
+                    if r.lost_focus() {
+                        rename = Some(None);
+                    }
+                    continue;
+                }
+                let r = ui.add(egui::Button::selectable(page == k, RichText::new(name).font(theme::semibold(13.0))).min_size(egui::vec2(64.0, 30.0)));
+                if r.clicked() {
+                    *pad.page = k;
+                }
+                if editing {
+                    // A button dropped on a tab moves to that page (at its end).
+                    if r.dnd_hover_payload::<ButtonId>().is_some() {
+                        ui.painter().rect_stroke(r.rect, 6.0, egui::Stroke::new(2.0, theme::ACCENT), egui::StrokeKind::Outside);
+                    }
+                    if let Some(id) = r.dnd_release_payload::<ButtonId>() {
+                        page_edit = Some(PageEdit::MoveTo(*id, k));
+                    }
+                    if r.double_clicked() {
+                        rename = Some(Some(k));
+                    }
+                    r.context_menu(|ui| {
+                        if ui.button(theme::with_icon(icons::EDIT, t("Rename page"))).clicked() {
+                            rename = Some(Some(k));
+                            ui.close();
+                        }
+                        if ui.add_enabled(pages > 1, egui::Button::new(theme::with_icon(icons::DELETE, t("Delete page")))).on_hover_text(t("Its executors go to the page before")).clicked() {
+                            page_edit = Some(PageEdit::Delete(k));
+                            ui.close();
+                        }
+                    });
+                }
+            }
+            if editing && (pages as usize) < crate::limits::MAX_BUTTON_PAGES && ui.add(egui::Button::new(icons::ADD).min_size(egui::vec2(30.0, 30.0))).on_hover_text(t("New page")).clicked() {
+                page_edit = Some(PageEdit::Add);
+            }
+        });
+        ui.add_space(6.0);
+    }
+    if l.buttons.is_empty() && !editing {
+        ui.label(RichText::new(t("Add executors on the Playback page in Edit mode.")).color(theme::TEXT_DIM));
+    }
+    let scale = button_scale(l);
+    let (cols, w) = grid(avail, BUTTON_CARD.x * scale);
+    let mut add = false;
+    let shown: Vec<&LightButton> = l.page_buttons(page).collect();
+    let n = shown.len() + editing as usize;
+    let mut dropped: Option<(ButtonId, ButtonId)> = None;
+    let mut i = 0;
+    while i < n {
+        ui.horizontal(|ui| {
+            ui.spacing_mut().item_spacing.x = GAP;
+            for k in i..(i + cols).min(n) {
+                match shown.get(k) {
+                    Some(b) => {
+                        let on = status.iter().find(|x| x.id == b.sequence_id()).is_some_and(|x| x.cue.is_some());
+                        if let Some(from) = button_card(ui, l, b, on, w, editing, pad.held, &mut open, cmds) {
+                            dropped = Some((from, b.id));
+                        }
+                    }
+                    None => add = add_card(ui, w, scale),
+                }
+            }
+        });
+        ui.add_space(GAP - ui.spacing().item_spacing.y);
+        i += cols;
+    }
+    // Flash buttons let go of (or no longer drawn: another page) are released.
+    pad.held.retain(|(id, b)| {
+        let down = ui.ctx().read_response(*id).is_some_and(|r| r.is_pointer_button_down_on());
+        if !down && let Some(b) = l.button(*b) {
+            cmds.push(LightControl::Release(Some(b.sequence_id()), b.fade as f32));
+        }
+        down
+    });
+    let Some(e) = edit.as_mut() else { return };
+    if let Some(r) = rename {
+        *e.renaming = r;
+    }
+    if let Some(id) = open {
+        *e.open = Some(id);
+    }
+    if add {
+        let l = &mut show.ws.lighting;
+        let id = l.buttons.iter().map(|b| b.id).max().unwrap_or(0) + 1;
+        l.buttons.push(LightButton { id, name: tr!("Executor {n}", n = id.to_string()), page, ..Default::default() });
+        *e.open = Some(id);
+        show.edited();
+    }
+    if dropped.is_some() || page_edit.is_some() {
+        let l = &mut show.ws.lighting;
+        if let Some((from, onto)) = dropped
+            && from != onto
+        {
+            move_button(l, from, onto);
+        }
+        match page_edit {
+            Some(PageEdit::Add) => {
+                if l.button_pages.is_empty() {
+                    l.button_pages.push(tr!("Page {n}", n = "1"));
+                }
+                l.button_pages.push(tr!("Page {n}", n = (l.button_pages.len() + 1).to_string()));
+                *pad.page = l.button_pages.len() as u16 - 1;
+            }
+            Some(PageEdit::Rename(k, text)) => {
+                if l.button_pages.is_empty() {
+                    l.button_pages.push(String::new());
+                }
+                if let Some(p) = l.button_pages.get_mut(k as usize) {
+                    *p = text.chars().take(crate::limits::MAX_PAGE_NAME).collect();
+                }
+            }
+            Some(PageEdit::Delete(k)) => delete_page(l, k),
+            Some(PageEdit::MoveTo(id, k)) => {
+                // To the end of that page.
+                if let Some(from) = l.buttons.iter().position(|b| b.id == id) {
+                    let mut b = l.buttons.remove(from);
+                    b.page = k;
+                    let at = l.buttons.iter().rposition(|x| x.page == k).map_or(l.buttons.len(), |i| i + 1);
+                    l.buttons.insert(at, b);
+                }
+            }
+            None => {}
+        }
+        show.edited();
+    }
+}
+
+/// One playback button: click toggles it (a flash button is on while held). In Edit mode it
+/// has a drag handle and a pencil (sets `open`); returns the button dropped onto it.
+#[allow(clippy::too_many_arguments)]
+fn button_card(ui: &mut Ui, l: &Lighting, b: &LightButton, on: bool, w: f32, edit: bool, held: &mut Vec<(egui::Id, ButtonId)>, open: &mut Option<ButtonId>, cmds: &mut Vec<LightControl>) -> Option<ButtonId> {
+    let k = button_scale(l);
+    let (rect, r) = ui.allocate_exact_size(egui::vec2(w, BUTTON_CARD.y * k), egui::Sense::click_and_drag());
+    let colour = Color32::from_rgb(b.color[0], b.color[1], b.color[2]);
+    let p = ui.painter();
+    let fill = if on { colour.gamma_multiply(0.85) } else if r.hovered() { theme::BG_HOVER } else { theme::BG_RAISED };
+    p.rect_filled(rect, 10.0, fill);
+    p.rect_stroke(rect, 10.0, egui::Stroke::new(if on { 2.0 } else { 1.5 }, if on { Color32::WHITE } else { colour }), egui::StrokeKind::Inside);
+    let inner = rect.shrink2(egui::vec2(12.0, 10.0) * k);
+    let fg = if on { Color32::WHITE } else { theme::TEXT };
+    let clip = p.with_clip_rect(inner);
+    let name = if b.name.is_empty() { b.id.to_string() } else { b.name.clone() };
+    // In Edit mode the name stops before the drag handle and the pencil.
+    let name_clip = if edit { p.with_clip_rect(inner.with_max_x(inner.max.x.min(rect.right() - 60.0))) } else { clip.clone() };
+    name_clip.text(inner.left_top(), egui::Align2::LEFT_TOP, name, theme::semibold(16.0 * k), fg);
+    let what = match (b.preset.and_then(|id| l.preset(id)), b.fixtures.len(), b.values.len()) {
+        (Some(pr), n, _) => {
+            let preset = if pr.name.is_empty() { pr.id.to_string() } else { pr.name.clone() };
+            tr!("{preset} · {n} fixtures", preset = preset, n = n.to_string())
+        }
+        (None, _, 0) if b.effects.is_empty() => t("Empty").to_string(),
+        (None, _, n) => tr!("{n} fixtures", n = n.to_string()),
+    };
+    clip.text(inner.left_top() + egui::vec2(0.0, 24.0 * k), egui::Align2::LEFT_TOP, what, egui::FontId::proportional(12.0 * k), if on { Color32::WHITE } else { theme::TEXT_DIM });
+    let mode = if b.flash { t("Flash") } else { t("Toggle") };
+    p.text(inner.left_bottom(), egui::Align2::LEFT_BOTTOM, mode, theme::semibold(10.5 * k), if on { Color32::WHITE } else { theme::TEXT_FAINT });
+    if on {
+        p.text(inner.right_bottom(), egui::Align2::RIGHT_BOTTOM, t("ON"), theme::semibold(13.0 * k), Color32::WHITE);
+    }
+    let seq = b.sequence_id();
+    let go = LightControl::Go(seq, Some(b.cue_id()));
+    let is_held = held.iter().any(|(id, _)| *id == r.id);
+    if b.flash {
+        if r.is_pointer_button_down_on() && !is_held {
+            held.push((r.id, b.id));
+            cmds.push(go);
+        }
+    } else if r.clicked() {
+        cmds.push(if on { LightControl::Release(Some(seq), b.fade as f32) } else { go });
+    }
+    if edit {
+        let pencil = egui::Rect::from_min_size(egui::pos2(rect.right() - 30.0, rect.top() + 6.0), egui::vec2(24.0, 24.0));
+        let pr = ui.interact(pencil, r.id.with("edit"), egui::Sense::click());
+        p.text(pencil.center(), egui::Align2::CENTER_CENTER, icons::EDIT, theme::icon_font(16.0), if pr.hovered() { Color32::WHITE } else { theme::TEXT_DIM });
+        if pr.on_hover_text(t("Edit the executor")).clicked() {
+            *open = Some(b.id);
+        }
+        r.context_menu(|ui| {
+            if ui.button(theme::with_icon(icons::EDIT, t("Edit the executor"))).clicked() {
+                *open = Some(b.id);
+            }
+        });
+        let handle = egui::Rect::from_min_size(egui::pos2(rect.right() - 56.0, rect.top() + 6.0), egui::vec2(24.0, 24.0));
+        let hr = ui.interact(handle, r.id.with("drag"), egui::Sense::drag()).on_hover_cursor(egui::CursorIcon::Grab);
+        p.text(handle.center(), egui::Align2::CENTER_CENTER, icons::DRAG_INDICATOR, theme::icon_font(16.0), if hr.hovered() || hr.dragged() { Color32::WHITE } else { theme::TEXT_DIM });
+        hr.on_hover_text(t("Drag onto another executor or a page to move it")).dnd_set_drag_payload(b.id);
+        if r.dnd_hover_payload::<ButtonId>().is_some_and(|id| *id != b.id) {
+            p.rect_stroke(rect.expand(3.0), 12.0, egui::Stroke::new(2.0, theme::ACCENT), egui::StrokeKind::Outside);
+        }
+        return r.dnd_release_payload::<ButtonId>().map(|id| *id).filter(|id| *id != b.id);
+    }
+    None
 }
 
 /// One sequence as a card: current and next cue, level, GO and Release.

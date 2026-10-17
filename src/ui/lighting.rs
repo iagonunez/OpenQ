@@ -127,7 +127,7 @@ pub(crate) struct LightUi {
     /// Effect shown in the editor.
     pub(crate) effect: Option<EffectId>,
     /// Tap tempo: recent taps.
-    taps: Vec<std::time::Instant>,
+    pub(super) taps: Vec<std::time::Instant>,
     /// Command line text, history and the result of the last command.
     cmd_line: String,
     cmd_history: Vec<String>,
@@ -3626,46 +3626,52 @@ impl App {
 }
 
 
+/// The controls of [`App::masters_strip`]; the commands they make go to `cmds` (also used by
+/// the Playback window, which draws outside the main window's frames).
+pub(super) fn masters_controls(ui: &mut Ui, show: &Show, taps: &mut Vec<std::time::Instant>, big: bool, cmds: &mut Vec<crate::control::LightControl>) {
+    use crate::control::LightControl;
+    ui.ctx().request_repaint_after(std::time::Duration::from_millis(100));
+    let masters = show.media.light.masters().clone();
+    let h = if big { 40.0 } else { 26.0 };
+    ui.label(theme::caption(t("Grand master")));
+    let mut gm = masters.grand_master;
+    let bar = ui.allocate_ui(egui::vec2(if big { 220.0 } else { 120.0 }, h), |ui| {
+        ui.set_width(if big { 220.0 } else { 120.0 });
+        level_bar_sized(ui, &mut gm, theme::AMBER, h)
+    });
+    if bar.inner.changed() {
+        cmds.push(LightControl::GrandMaster(gm));
+    }
+    let (fill, fg) = if masters.blackout { (theme::RED, Color32::WHITE) } else { (theme::BG_RAISED, theme::TEXT) };
+    if ui
+        .add(egui::Button::new(RichText::new(t("Blackout")).color(fg)).fill(fill).min_size(egui::vec2(if big { 110.0 } else { 0.0 }, h)))
+        .on_hover_text(t("Intensity to zero (the grand master stays where it is)"))
+        .clicked()
+    {
+        cmds.push(LightControl::Blackout(!masters.blackout));
+    }
+    ui.add_space(6.0);
+    ui.label(theme::caption(t("Tempo")));
+    let mut bpm = masters.bpm;
+    if ui.add_sized([if big { 90.0 } else { 74.0 }, h], DragValue::new(&mut bpm).range(20.0..=300.0).speed(0.5).max_decimals(1).suffix(" BPM")).changed() {
+        cmds.push(LightControl::Tempo(bpm));
+    }
+    if ui.add(egui::Button::new(t("Tap")).min_size(egui::vec2(if big { 80.0 } else { 0.0 }, h))).on_hover_text(t("Tap on the beat")).clicked()
+        && let Some(bpm) = crate::surface::tap(taps, std::time::Instant::now())
+    {
+        cmds.push(LightControl::Tempo(bpm));
+    }
+}
+
 impl App {
     /// Grand master, blackout and the effects tempo (with Tap) on one line: at the top of the
-    /// Playback page and window (`big`: touch sizes), and a copy on the command line row. Works in both modes; actions go through
+    /// Playback page (`big`: touch sizes), and a copy on the command line row. Works in both modes; actions go through
     /// [`App::control`] so a replica drives the main device.
     pub(super) fn masters_strip(&mut self, ui: &mut Ui, show: &mut Show, big: bool) {
-        use crate::control::{Command, LightControl};
-        ui.ctx().request_repaint_after(std::time::Duration::from_millis(100));
-        let masters = show.media.light.masters().clone();
         let mut cmds = Vec::new();
-        let h = if big { 40.0 } else { 26.0 };
-        ui.label(theme::caption(t("Grand master")));
-        let mut gm = masters.grand_master;
-        let bar = ui.allocate_ui(egui::vec2(if big { 220.0 } else { 120.0 }, h), |ui| {
-            ui.set_width(if big { 220.0 } else { 120.0 });
-            level_bar_sized(ui, &mut gm, theme::AMBER, h)
-        });
-        if bar.inner.changed() {
-            cmds.push(LightControl::GrandMaster(gm));
-        }
-        let (fill, fg) = if masters.blackout { (theme::RED, Color32::WHITE) } else { (theme::BG_RAISED, theme::TEXT) };
-        if ui
-            .add(egui::Button::new(RichText::new(t("Blackout")).color(fg)).fill(fill).min_size(egui::vec2(if big { 110.0 } else { 0.0 }, h)))
-            .on_hover_text(t("Intensity to zero (the grand master stays where it is)"))
-            .clicked()
-        {
-            cmds.push(LightControl::Blackout(!masters.blackout));
-        }
-        ui.add_space(6.0);
-        ui.label(theme::caption(t("Tempo")));
-        let mut bpm = masters.bpm;
-        if ui.add_sized([if big { 90.0 } else { 74.0 }, h], DragValue::new(&mut bpm).range(20.0..=300.0).speed(0.5).max_decimals(1).suffix(" BPM")).changed() {
-            cmds.push(LightControl::Tempo(bpm));
-        }
-        if ui.add(egui::Button::new(t("Tap")).min_size(egui::vec2(if big { 80.0 } else { 0.0 }, h))).on_hover_text(t("Tap on the beat")).clicked()
-            && let Some(bpm) = crate::surface::tap(&mut self.light.taps, std::time::Instant::now())
-        {
-            cmds.push(LightControl::Tempo(bpm));
-        }
+        masters_controls(ui, show, &mut self.light.taps, big, &mut cmds);
         for c in cmds {
-            self.control(show, Command::Light(c));
+            self.control(show, crate::control::Command::Light(c));
         }
     }
 

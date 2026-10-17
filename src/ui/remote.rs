@@ -161,6 +161,17 @@ impl App {
         }
     }
 
+    /// Where [`App::control`] sends commands now, for commands made outside the main window's
+    /// frames (the Playback window).
+    pub(super) fn route(&self) -> super::light_playback::Route {
+        use super::light_playback::Route;
+        match &self.remote.replica {
+            None => Route::Local,
+            Some(r) if !r.role.can_control() => Route::ViewOnly,
+            Some(_) => Route::Main(self.remote.link.as_ref().map(Link::sender)),
+        }
+    }
+
     /// Edits are allowed here (locally, or on a replica with the Edit role).
     pub(super) fn can_edit_show(&self) -> bool {
         self.remote.role().is_none_or(Role::can_edit)
