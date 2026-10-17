@@ -783,12 +783,13 @@ cargo run --release -- show.openq    # abrir un espectáculo guardado</code></pr
   de iluminación o una liberación siguen desde ahí. Las cues Fade no actúan sobre cues de luz.</p>
 
   <h3><span class="ms" aria-hidden="true">&#xefe6;</span> Patch</h3>
-  <p>La página Patch lista los aparatos. Para añadir, elige un tipo de aparato y un modo en <em>Añadir aparatos</em>, indica
+  <p>La página Patch tiene tres vistas: <em>Tabla</em>, <em>Planta</em> y <em>Tipos de aparato</em>. La tabla lista los
+  aparatos. Para añadir (en la Tabla o la Planta), elige un tipo de aparato y un modo en <em>Añadir aparatos</em>, indica
   cuántos, el primer número de aparato, el universo y la dirección inicial (<em>auto</em> toma la siguiente libre), y pulsa
   <em>Sumar</em>. Todas las celdas de la tabla se pueden editar: nombre, tipo, modo, universo, dirección, posición y rotación, y
   la inversión de panorama o tilt. Las direcciones que se solapan y los números repetidos se avisan encima de la tabla.</p>
   <figure>
-    <img src="img/lighting-patch.webp" width="1100" height="574" alt="Tabla de patch con ocho washes RGB, dos spots y una barra de píxeles, con columnas de dirección, posición y rotación.">
+    <img src="img/es/lighting-patch.webp" width="1100" height="462" alt="Tabla de patch con ocho washes RGB, dos spots y una barra de píxeles, con columnas de dirección, posición y rotación.">
     <figcaption>La tabla de patch. Las posiciones van en metros: x hacia la derecha, y hacia arriba, z hacia el público.</figcaption>
   </figure>
   <p>Los aparatos de varias celdas, como las barras LED, se controlan también celda a celda: la celda 3 del aparato 101 es
@@ -796,7 +797,7 @@ cargo run --release -- show.openq    # abrir un espectáculo guardado</code></pr
   arrastra para mover la selección, arrastra en un hueco para desplazar la vista y usa la rueda para acercar. Con aparatos
   seleccionados, <em>Colocar</em> los reparte en línea, en arco o en cuadrícula.</p>
   <figure>
-    <img src="img/lighting-plan.webp" width="1100" height="275" alt="Vista desde arriba del montaje: el borde del escenario con una tarima, dos varas LX1 y LX2 y los aparatos; LX1 está seleccionada con sus tiradores.">
+    <img src="img/es/lighting-plan.webp" width="1100" height="389" alt="Vista desde arriba del montaje: el borde del escenario con una tarima, dos varas LX1 y LX2 y los aparatos; LX1 está seleccionada con sus tiradores.">
     <figcaption>La vista Planta con el escenario, una tarima y dos varas. La marca de cada aparato indica hacia dónde mira.</figcaption>
   </figure>
   <p>Para que la planta se parezca al teatro real, dibuja en ella: elige <em>Vara</em> o <em>Rectángulo</em> junto a
@@ -804,39 +805,49 @@ cargo run --release -- show.openq    # abrir un espectáculo guardado</code></pr
   escenario, tarimas o escenografía. Haz clic en una vara, o en el borde de un rectángulo, para seleccionarlo: arrástralo para
   moverlo, arrastra sus tiradores blancos para cambiar sus extremos o esquinas, y ajusta su nombre, coordenadas exactas y altura
   en la fila de arriba. <kbd>Supr</kbd> sobre la planta lo borra. Con aparatos y una vara seleccionados, <em>Colgar</em> reparte
-  los aparatos a lo largo de la vara, a su altura.</p>
+  los aparatos a lo largo de la vara, a su altura. Arrastra la etiqueta de una vara o un rectángulo para apartarla; el plano
+  la pone ahí también, y <span class="ms" aria-hidden="true">&#xe042;</span> en la fila de arriba la devuelve a su sitio.</p>
   <h3>Tipos de aparato</h3>
-  <p>OpenQ trae tipos genéricos (dimmer, RGB, RGBW, CMY, cabezas móviles, estrobo, humo). <em>Importar aparato…</em> lee
-  archivos de Open Fixture Library (<code>.json</code>), GDTF (<code>.gdtf</code>), QLC+ (<code>.qxf</code>) y OpenQ
+  <p>OpenQ trae tipos genéricos (dimmer, RGB, RGBW, CMY, cabezas móviles, estrobo, humo). <em>Importar aparato…</em> (en la
+  Tabla y la Planta) lee archivos de Open Fixture Library (<code>.json</code>), GDTF (<code>.gdtf</code>), QLC+ (<code>.qxf</code>) y OpenQ
   (<code>.oqfixture</code>). Los tipos importados se copian en el espectáculo y se guardan en tu biblioteca de aparatos, así
   que estarán en el siguiente espectáculo. <em>Tipos de aparato</em> abre el editor: canales y sus atributos, canales finos de
   16 bits, valores por defecto, el valor que usa Resaltar y los <strong>rangos</strong>: las partes con nombre de un canal, como
-  las posiciones de una rueda de color o de gobos.</p>
+  las posiciones de una rueda de color o de gobos. Los archivos GDTF traen también los colores de los LED del aparato, que usa
+  el selector de color.</p>
   <figure>
     <img src="img/fixture-types.webp" width="1100" height="778" alt="Editor de tipos de aparato de un spot móvil, con los canales, su atributo, canal fino, valor por defecto y rangos.">
     <figcaption>El editor de tipos de aparato.</figcaption>
   </figure>
-  <p><em>Exportar MVR…</em> guarda el patch con las posiciones en un archivo MVR, que pueden importar visualizadores y otras
+  <p>En la vista Planta, <em>Exportar MVR…</em> guarda el patch con las posiciones en un archivo MVR, que pueden importar visualizadores y otras
   mesas. <em>Exportar plano…</em> guarda la vista Planta como PDF (una hoja A3, a la mayor escala normalizada que quepa, como 1:50) o como dibujo SVG —el tipo se elige en el diálogo de guardar— con las varas y rectángulos, números de aparato,
-  direcciones y leyenda.</p>
+  direcciones y leyenda. Las etiquetas nunca se tapan: donde los aparatos están juntos, sus etiquetas se separan.</p>
 
   <h3><span class="ms" aria-hidden="true">&#xe429;</span> Programador</h3>
-  <p>Selecciona aparatos haciendo clic en sus fichas (<kbd>Ctrl</kbd> o <kbd>Mayús</kbd> añaden), con un grupo o desde la línea
-  de órdenes. El panel de la derecha ajusta sus valores, con una página por familia: <em>Intensidad</em>, <em>Color</em> (con
-  selector de color), <em>Posición</em> (arrastra en el recuadro para apuntar), <em>Haz</em> y <em>Control</em>. Arrastra una
+  <p>Selecciona aparatos en sus fichas: un clic añade un aparato a la selección (un segundo clic lo quita), arrastrar por
+  encima de varias fichas las añade todas, y un clic derecho selecciona solo ese aparato. Los grupos y la línea de órdenes
+  también seleccionan. El panel de la derecha ajusta sus valores, con una página por familia: <em>Intensidad</em>,
+  <em>Color</em>, <em>Posición</em> (arrastra en el recuadro para apuntar), <em>Haz</em> y <em>Control</em>. Arrastra una
   barra para fijar un valor, o usa la rueda encima para pasos del 1&nbsp;%. Los canales con rangos tienen un botón por rango,
   por ejemplo uno por gobo.</p>
+  <p>El selector de color muestra todos los colores visibles e ilumina los que puede dar el aparato seleccionado: la forma
+  entre los colores de sus LED. Los de fuera se ven apagados, y un clic ahí toma el color más cercano que puede dar. Cada
+  aparato mezcla el color con sus propios LED. Los colores de los LED vienen del tipo de aparato (los archivos GDTF los
+  traen); sin ellos OpenQ usa colores de LED típicos, y lo indica bajo el selector.</p>
   <figure>
-    <img src="img/lighting-programmer.webp" width="1100" height="778" alt="Página Programador: grupos, presets y efectos, fichas de aparatos con cuatro washes seleccionados, y la página de color con su selector.">
+    <img src="img/es/lighting-programmer.webp" width="1100" height="791" alt="Página Programador: grupos, presets y efectos como tarjetas en la columna de la izquierda, fichas de aparatos con ocho washes seleccionados, y la página de color con el rango de color de los washes.">
     <figcaption>El programador. Los aparatos con valores en el programador llevan un punto naranja.</figcaption>
   </figure>
   <p>Los valores del programador mandan sobre la reproducción mientras están puestos, y son lo que guarda <em>Grabar cue</em>.
   <em>Vaciar programador</em> devuelve el control a la reproducción.</p>
   <ul>
-    <li><strong>Grupos</strong>: <em>Grupo con la selección</em> guarda la selección; con clic derecho en un grupo se sobrescribe o se borra.</li>
-    <li><strong>Presets</strong>: <em>Preset desde el programador</em> guarda los valores de los aparatos seleccionados (todos los
-    atributos o una familia). Al hacer clic en un preset se aplica. Las cues guardan un enlace al preset, así que al cambiarlo
-    cambian todas las cues que lo usan.</li>
+    <li>La columna de la izquierda tiene los <strong>grupos</strong>, <strong>presets</strong> y <strong>efectos</strong> como
+    tarjetas. Los botones de arriba muestran solo los presets y efectos de una familia (intensidad, color, posición, haz, control).</li>
+    <li><strong>Grupos</strong>: <span class="ms" aria-hidden="true">&#xe145;</span> guarda la selección como grupo; haz clic en un grupo para seleccionarlo
+    (<kbd>Ctrl</kbd> añade); con clic derecho se sobrescribe o se borra.</li>
+    <li><strong>Presets</strong>: <span class="ms" aria-hidden="true">&#xe145;</span> guarda los valores de los aparatos seleccionados como preset: todos los
+    atributos, o solo la familia que muestra el filtro. Al hacer clic en un preset se aplica. Las cues guardan un enlace al
+    preset, así que al cambiarlo cambian todas las cues que lo usan.</li>
     <li><strong>Abanico</strong> reparte un valor por la selección, por ejemplo de 0 a 100&nbsp;%, también desde el centro hacia fuera.</li>
     <li><strong>Ciego</strong> permite programar sin cambiar la salida. <strong>Resaltar</strong> pone los aparatos
     seleccionados en blanco abierto y a tope (no se graba); la flecha los recorre uno a uno.</li>
@@ -845,7 +856,7 @@ cargo run --release -- show.openq    # abrir un espectáculo guardado</code></pr
   </ul>
   <h3>Línea de órdenes y teclado</h3>
   <p>La línea de órdenes, encima de las páginas, acepta órdenes al estilo de una mesa (en inglés); <em>Teclado</em> abre teclas
-  en pantalla para una pantalla táctil. Las palabras se pueden abreviar a dos letras (<code>th</code>, <code>gr</code>, <code>rec</code>).</p>
+  en pantalla para una pantalla táctil (<em>Borrar línea</em> vacía la línea de órdenes). Las palabras se pueden abreviar a dos letras (<code>th</code>, <code>gr</code>, <code>rec</code>).</p>
   <div class="table-wrap"><table>
     <thead><tr><th>Orden</th><th>Hace</th></tr></thead>
     <tbody>
@@ -890,7 +901,9 @@ cargo run --release -- show.openq    # abrir un espectáculo guardado</code></pr
   <ul>
     <li><strong>Tiempos por familia</strong> da al color, la posición o el haz su propio fade y delay.</li>
     <li><strong>Solo esta cue</strong>: sus cambios no se arrastran; la cue siguiente vuelve a lo que había antes.</li>
-    <li><strong>Bloquear</strong> guarda en la cue todos los valores que arrastra, así que editar cues anteriores ya no la cambia.</li>
+    <li><strong>Bloquear</strong> guarda en la cue todos los valores que arrastra, así que editar cues anteriores ya no la cambia. Una cue
+    bloqueada muestra un candado en la lista y el botón dice <em>Bloqueado</em>; púlsalo otra vez para que esos valores vuelvan
+    a arrastrarse.</li>
     <li><strong>Mover en negro</strong> (por secuencia): los aparatos apagados toman la posición, el color y el haz de su
     siguiente cue antes de encenderse, tras el delay indicado.</li>
     <li><em>Cargar en el programador</em> recupera una cue para editarla; <em>Actualizar cue</em>, en la página Programador, guarda los cambios.</li>

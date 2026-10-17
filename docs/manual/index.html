@@ -776,56 +776,69 @@ cargo run --release -- show.openq    # open a saved show</code></pre>
   Release takes it on from there. Fade cues don't act on Light cues.</p>
 
   <h3><span class="ms" aria-hidden="true">&#xefe6;</span> Patch</h3>
-  <p>The Patch page lists the fixtures. To add some, pick a fixture type and mode in <em>Add fixtures</em>, set how many, the
+  <p>The Patch page has three views: <em>Sheet</em>, <em>Plan</em> and <em>Fixture types</em>. The sheet lists the fixtures. To
+  add some (on the Sheet or the Plan), pick a fixture type and mode in <em>Add fixtures</em>, set how many, the
   first fixture number, the universe and the start address (<em>auto</em> takes the next free one), and click <em>Add</em>.
   Every cell of the sheet can be edited: name, type, mode, universe, address, position and rotation, and pan or tilt reversal.
   Overlapping addresses and duplicate numbers are flagged above the sheet.</p>
   <figure>
-    <img src="img/lighting-patch.webp" width="1100" height="574" alt="Patch sheet with eight RGB washes, two spots and a pixel bar, with address, position and rotation columns.">
+    <img src="img/lighting-patch.webp" width="1100" height="462" alt="Patch sheet with eight RGB washes, two spots and a pixel bar, with address, position and rotation columns.">
     <figcaption>The patch sheet. Positions are in metres: x to the right, y up, z towards the audience.</figcaption>
   </figure>
   <p>Fixtures with several cells, such as LED bars, are controlled cell by cell too: cell 3 of fixture 101 is <code>101.3</code>.
   <em>Plan</em> shows the rig from above. Click to select (<kbd>Ctrl</kbd> adds), drag to move the selection, drag empty space to
   pan and scroll to zoom. With fixtures selected, <em>Arrange</em> spreads them along a line, an arc or a grid.</p>
   <figure>
-    <img src="img/lighting-plan.webp" width="1100" height="275" alt="Top view of the rig: a stage outline with a riser, two lighting bars LX1 and LX2, and fixtures; LX1 is selected with its handles.">
+    <img src="img/lighting-plan.webp" width="1100" height="389" alt="Top view of the rig: a stage outline with a riser, two lighting bars LX1 and LX2, and fixtures; LX1 is selected with its handles.">
     <figcaption>The Plan view with the stage, a riser and two bars. The tick on each fixture shows which way it faces.</figcaption>
   </figure>
   <p>To make the plan look like the real venue, draw on it: choose <em>Bar</em> or <em>Rectangle</em> next to <em>Draw</em>
   and drag on the plan. Bars are pipes, trusses or booms, with a trim height; rectangles are the stage, risers or set pieces.
   Click a bar, or the outline of a rectangle, to select it: drag it to move it, drag its white handles to change its ends or
   corners, and set its name, exact coordinates and height in the row above. <kbd>Delete</kbd> over the plan removes it.
-  With fixtures and a bar selected, <em>Hang</em> spreads the fixtures evenly along the bar at its height.</p>
+  With fixtures and a bar selected, <em>Hang</em> spreads the fixtures evenly along the bar at its height. Drag the label of a
+  bar or a rectangle to move it out of the way; the plot puts it there too, and
+  <span class="ms" aria-hidden="true">&#xe042;</span> in the row above puts it back.</p>
   <h3>Fixture types</h3>
-  <p>OpenQ comes with generic types (dimmer, RGB, RGBW, CMY, moving heads, strobe, fog). <em>Import fixture…</em> reads
+  <p>OpenQ comes with generic types (dimmer, RGB, RGBW, CMY, moving heads, strobe, fog). <em>Import fixture…</em> (on the
+  Sheet and the Plan) reads
   Open Fixture Library (<code>.json</code>), GDTF (<code>.gdtf</code>), QLC+ (<code>.qxf</code>) and OpenQ
   (<code>.oqfixture</code>) files. Imported types are copied into the show and saved in your fixture library, so they are there
   for the next show. <em>Fixture types</em> opens the editor: channels and their attributes, 16-bit fine channels, defaults,
   the value used by Highlight, and <strong>ranges</strong>: the named parts of a channel, such as the slots of a colour wheel or
-  a gobo wheel.</p>
+  a gobo wheel. GDTF files also bring the colours of the fixture's LEDs, which the colour picker uses.</p>
   <figure>
     <img src="img/fixture-types.webp" width="1100" height="778" alt="Fixture type editor for a moving spot, listing channels with attribute, fine channel, default and ranges.">
     <figcaption>The fixture type editor.</figcaption>
   </figure>
-  <p><em>Export MVR…</em> saves the patch with positions as an MVR file, which visualisers and other desks can import.
+  <p>On the Plan view, <em>Export MVR…</em> saves the patch with positions as an MVR file, which visualisers and other desks can import.
   <em>Export plot…</em> saves the Plan view as a PDF (one A3 sheet, at the largest standard scale that fits, such as 1:50) or an SVG drawing — pick the type in the save dialog — with the bars and rectangles, fixture numbers, addresses
-  and a legend.</p>
+  and a legend. Labels never cover each other: where fixtures are close together, their labels move apart.</p>
 
   <h3><span class="ms" aria-hidden="true">&#xe429;</span> Programmer</h3>
-  <p>Select fixtures by clicking their tiles (<kbd>Ctrl</kbd> or <kbd>Shift</kbd> adds), with a group, or from the command
-  line. The panel on the right sets their values, one page per feature: <em>Intensity</em>, <em>Colour</em> (with a colour
-  picker), <em>Position</em> (drag the pad to aim), <em>Beam</em> and <em>Control</em>. Drag a bar to set a value, or scroll over
-  it for 1&nbsp;% steps. Channels with ranges have a button per range, such as each gobo.</p>
+  <p>Select fixtures on their tiles: a click adds a fixture to the selection (a second click takes it out), dragging across
+  tiles adds all of them, and a right-click selects only that fixture. Groups and the command line select too. The panel on the
+  right sets their values, one page per feature: <em>Intensity</em>, <em>Colour</em>, <em>Position</em> (drag the pad to aim),
+  <em>Beam</em> and <em>Control</em>. Drag a bar to set a value, or scroll over it for 1&nbsp;% steps. Channels with ranges have
+  a button per range, such as each gobo.</p>
+  <p>The colour picker shows every colour you can see, and brightens the ones the selected fixture can make: the shape between
+  its LED colours. Colours outside it are dimmed, and a click there takes the nearest colour it can make. Each fixture mixes
+  the colour with its own LEDs. The LED colours come from the fixture type (GDTF files have them); without them OpenQ uses
+  typical LED colours, and says so under the picker.</p>
   <figure>
-    <img src="img/lighting-programmer.webp" width="1100" height="778" alt="Programmer page: groups, presets and effects pools, fixture tiles with four selected washes, and the colour page with a colour picker.">
+    <img src="img/lighting-programmer.webp" width="1100" height="791" alt="Programmer page: groups, presets and effects as cards in the left column, fixture tiles with eight washes selected, and the colour page with the colour range of the washes.">
     <figcaption>The programmer. Fixtures with values in the programmer show an orange dot.</figcaption>
   </figure>
   <p>Programmer values override the playback while they are set, and they are what <em>Record cue</em> stores. <em>Clear
   programmer</em> lets playback take over again.</p>
   <ul>
-    <li><strong>Groups</strong>: <em>Group from selection</em> stores the selection; right-click a group to overwrite or delete it.</li>
-    <li><strong>Presets</strong>: <em>Preset from programmer</em> stores the selected fixtures' values (all attributes, or one
-    feature). Clicking a preset applies it. Cues keep a link to the preset, so changing the preset changes every cue that uses it.</li>
+    <li>The column on the left holds the <strong>groups</strong>, <strong>presets</strong> and <strong>effects</strong> as cards.
+    The buttons at its top show only the presets and effects of one feature (intensity, colour, position, beam, control).</li>
+    <li><strong>Groups</strong>: <span class="ms" aria-hidden="true">&#xe145;</span> stores the selection as a group; click a
+    group to select it (<kbd>Ctrl</kbd> adds); right-click it to overwrite or delete it.</li>
+    <li><strong>Presets</strong>: <span class="ms" aria-hidden="true">&#xe145;</span> stores the selected fixtures' values as a
+    preset: all attributes, or only the feature the filter shows. Clicking a preset applies it. Cues keep a link to the preset,
+    so changing the preset changes every cue that uses it.</li>
     <li><strong>Spread</strong> sets a value fanned across the selection, for example from 0 to 100&nbsp;%, optionally from the centre out.</li>
     <li><strong>Blind</strong> programs without changing the output. <strong>Highlight</strong> puts the selected fixtures at
     open white and full (not recorded); the arrow steps through them one by one.</li>
@@ -833,7 +846,8 @@ cargo run --release -- show.openq    # open a saved show</code></pre>
     so a look built on another desk can be recorded here.</li>
   </ul>
   <h3>Command line and keypad</h3>
-  <p>The command line above the pages takes desk-style commands; <em>Keypad</em> opens on-screen keys for a touch screen.
+  <p>The command line above the pages takes desk-style commands; <em>Keypad</em> opens on-screen keys for a touch screen
+  (<em>Clear line</em> empties the command line).
   Keywords can be shortened to two letters (<code>th</code>, <code>gr</code>, <code>rec</code>).</p>
   <div class="table-wrap"><table>
     <thead><tr><th>Command</th><th>Does</th></tr></thead>
@@ -878,7 +892,8 @@ cargo run --release -- show.openq    # open a saved show</code></pre>
   <ul>
     <li><strong>Timing per feature</strong> gives colour, position or beam their own fade and delay.</li>
     <li><strong>Cue only</strong>: the cue's changes don't track; the next cue goes back to what was there before.</li>
-    <li><strong>Block</strong> stores every tracked value in the cue, so edits to earlier cues no longer change it.</li>
+    <li><strong>Block</strong> stores every tracked value in the cue, so edits to earlier cues no longer change it. A blocked
+    cue shows a lock in the list and the button reads <em>Blocked</em>; press it again to let those values track again.</li>
     <li><strong>Move in black</strong> (per sequence): fixtures that are dark take their next cue's position, colour and beam
     before they come up, after the set delay.</li>
     <li><em>Load into programmer</em> brings a cue back for editing; <em>Update cue</em> on the Programmer page stores the changes.</li>
