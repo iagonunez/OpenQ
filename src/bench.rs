@@ -792,7 +792,7 @@ fn video(m: &mut Vec<Metric>, quick: bool) {
         match crate::media::video::conversion_times(w, h, fmt, n) {
             Ok(mut v) => {
                 let budget = if h > 1080 { "" } else { " (budget at 60 fps: 16.7 ms)" };
-                push(m, &format!("video.convert_{name}"), ms(quantile(&mut v[2..], 0.5)), "ms", &format!("{w}x{h} decode-thread conversion to RGBA + publish{budget}"));
+                push(m, &format!("video.convert_{name}"), ms(quantile(&mut v[2..], 0.5)), "ms", &format!("{w}x{h} decode-thread frame preparation + publish (YUV goes to the GPU as planes, no conversion){budget}"));
             }
             Err(e) => eprintln!("bench: video conversion unavailable: {e:#}"),
         }

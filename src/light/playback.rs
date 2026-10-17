@@ -225,17 +225,19 @@ impl LightShow {
     pub fn compile_from(l: &Lighting, prev: Option<(&Lighting, &LightShow)>) -> Self {
         let mut show = LightShow::default();
         let mut seen = HashSet::new();
+        let mut valid = Vec::new();
         for f in &l.fixtures {
             let Some(mode) = l.mode_of(f) else { continue };
             if f.id > MAX_FIXTURE_ID || !seen.insert(f.id) {
                 continue;
             }
-            // Each DMX break is output where it is patched (most modes have one).
-            let breaks = mode.breaks();
-            let valid_break = |b: u8| {
-                let at = f.address_of(b);
-                at.address > 0 && (1..=MAX_UNIVERSE).contains(&at.universe) && at.address as u32 + mode.footprint_of(b) as u32 - 1 <= UNIVERSE_SIZE as u32
-            };
+            // Each DMX break is output where it is patched (most modes have one). Checked once per
+            // fixture: the footprint walks every channel of the mode, and a pixel bar has many cells.
+            valid.clear();
+            valid.extend((0..mode.breaks()).filter(|b| {
+                let at = f.address_of(*b);
+                at.address > 0 && (1..=MAX_UNIVERSE).contains(&at.universe) && at.address as u32 + mode.footprint_of(*b) as u32 - 1 <= UNIVERSE_SIZE as u32
+            }));
             // The fixture (master channels), then each cell as a unit of its own.
             let cells = mode.heads.len().min(MAX_CELLS as usize) as u32;
             for cell in std::iter::once(None).chain((1..=cells).map(Some)) {
@@ -248,7 +250,7 @@ impl LightShow {
                 }
                 let has_dimmer = chans.iter().any(|c| c.attribute == Attribute::Dimmer);
                 let dimmer = if has_dimmer { None } else { show.index.get(&(id, Attribute::Dimmer)).copied() };
-                for b in (0..breaks).filter(|b| valid_break(*b)) {
+                for &b in &valid {
                     let channels: Vec<(ChannelDef, u32)> = chans.iter().filter(|c| c.dmx_break == b).map(|c| (c.clone(), show.index[&(id, c.attribute)])).collect();
                     if channels.is_empty() {
                         continue;
@@ -264,7 +266,7 @@ impl LightShow {
                     });
                 }
             }
-            for b in (0..breaks).filter(|b| valid_break(*b)) {
+            for &b in &valid {
                 show.universes.push(f.address_of(b).universe);
             }
         }
@@ -496,6 +498,8 @@ struct SeqState {
     level: f32,
     /// Sorted by slot.
     tracks: Vec<Track>,
+    /// Some track is a release (the tick's release pass skips sequences without one).
+    releasing: bool,
     /// Effects of this cue index are running, fading in from (start, duration).
     effects: Option<FxState>,
     /// Earlier cues' effects still fading out, oldest first.
@@ -531,7 +535,7 @@ impl SeqState {
 
 impl Default for SeqState {
     fn default() -> Self {
-        Self { cue: None, level: 1.0, tracks: Vec::new(), effects: None, old_effects: [None; OLD_EFFECTS] }
+        Self { cue: None, level: 1.0, tracks: Vec::new(), releasing: false, effects: None, old_effects: [None; OLD_EFFECTS] }
     }
 }
 
@@ -635,6 +639,7 @@ impl Playback {
                 })
                 .collect();
             n.tracks.sort_by_key(|t| t.slot);
+            n.releasing = n.tracks.iter().any(|t| t.release);
         }
         self.seqs = seqs;
         let mut programmer = vec![None; self.show.slots.len()];
@@ -687,6 +692,7 @@ impl Playback {
         let st = &mut self.seqs[si];
         std::mem::swap(&mut st.tracks, &mut self.scratch);
         st.tracks.clear();
+        st.releasing = false;
         let (old, new) = (&self.scratch, &self.state);
         let (mut i, mut j) = (0, 0);
         while i < old.len() || j < new.len() {
@@ -734,6 +740,7 @@ impl Playback {
                 None => Timing { delay: compiled.delay, fade: compiled.fade, down: compiled.down_fade },
             };
             let dur = if htp && to < from { timing.down } else { timing.fade };
+            st.releasing |= release;
             st.tracks.push(Track { slot, from, to, start: t + timing.delay, dur, stamp, release });
         }
         if let Some(f) = st.effects {
@@ -762,6 +769,7 @@ impl Playback {
                 ..*tr
             };
         }
+        st.releasing = !st.tracks.is_empty();
         if let Some(f) = st.effects.take() {
             st.fade_out(FxState { start: t, dur: fade.max(0.0), ..f });
         }
@@ -859,7 +867,7 @@ impl Playback {
         }
         // A released LTP slot fades from where it was to what is underneath: the value of a
         // sequence that changed it earlier, or home (no jump when the release ends).
-        for st in &mut self.seqs {
+        for st in self.seqs.iter_mut().filter(|st| st.releasing) {
             for tr in &st.tracks {
                 let i = tr.slot as usize;
                 if tr.release && !show.slots[i].attr.is_htp() && tr.stamp >= self.best[i] {
@@ -868,6 +876,7 @@ impl Playback {
                 }
             }
             st.tracks.retain(|tr| !(tr.release && tr.done(t)));
+            st.releasing = st.tracks.iter().any(|tr| tr.release);
         }
         self.base.copy_from_slice(&self.values);
         // Effects of each sequence: the current cue's fade in (unless the previous cue ran them
