@@ -388,7 +388,9 @@ pub fn import_xml(text: &str) -> anyhow::Result<Imported> {
                     let off = offs.get(&c.def.dmx_break).copied().unwrap_or(1);
                     let shift = |o: u16| (o as i64 + off - 1).clamp(0, 511) as u16;
                     let def = ChannelDef { offset: shift(c.def.offset), fine: c.def.fine.map(shift), ..c.def.clone() };
-                    let i = add_head(&mut heads, rname.clone());
+                    // Export adds " [mode]" to cell names another mode uses.
+                    let suffix = format!(" [{mname}]");
+                    let i = add_head(&mut heads, rname.strip_suffix(suffix.as_str()).unwrap_or(rname).to_string());
                     place(&mut heads[i].channels, def, &what, &mut notes);
                 }
             } else if repeated(&c.geometry) {
@@ -504,6 +506,87 @@ fn xml_esc(s: &str) -> String {
     o
 }
 
+/// A cell as exported: its reference's name, its template geometry, its place (x, y metres) and
+/// the DMX offset of its reference on each break it uses (0-based break, 1-based offset).
+struct CellOut {
+    name: String,
+    template: String,
+    /// It gives light (a dimmer or colour channel of its own): its template has a beam.
+    beam: bool,
+    at: [f32; 2],
+    breaks: Vec<(u8, u32)>,
+}
+
+/// How a mode's geometry is exported: the name suffix of its tree ("" = the shared plain tree),
+/// whether it has a main beam (unless cells make the light and the shared channels shape
+/// nothing), and its cells.
+struct Layout {
+    suffix: String,
+    main_beam: bool,
+    cells: Vec<CellOut>,
+}
+
+/// Geometry layout of every mode (see [`export`]). Names are unique in the type: a cell name
+/// another mode already uses gets " [mode]" added ([`import`] takes it off again).
+fn cell_layouts(t: &FixtureType) -> Vec<Layout> {
+    use std::collections::HashSet;
+    let mut taken: HashSet<String> = ["Body", "Yoke", "Head", "Beam"].iter().map(|s| s.to_string()).collect();
+    let unique = |want: String, taken: &mut HashSet<String>| {
+        let mut name = want.clone();
+        let mut n = 2;
+        while !taken.insert(name.clone()) {
+            name = format!("{want} {n}");
+            n += 1;
+        }
+        name
+    };
+    // Shapes the light of a main beam (not only the cells').
+    let shapes = |a: Attribute| {
+        use Attribute::*;
+        a.is_emitter() || matches!(a, ColorWheel | ColorWheel2 | Gobo | Gobo2 | Prism | Prism2 | Iris | Focus | Cyan | Magenta | Yellow)
+    };
+    let mut out = Vec::new();
+    for (mi, m) in t.modes.iter().enumerate() {
+        if m.heads.is_empty() {
+            out.push(Layout { suffix: String::new(), main_beam: true, cells: Vec::new() });
+            continue;
+        }
+        let root = unique(format!("Body [{}]", m.name), &mut taken);
+        let suffix = root.trim_start_matches("Body").to_string();
+        for part in ["Yoke", "Head", "Beam"] {
+            taken.insert(format!("{part}{suffix}"));
+        }
+        let lights = |h: &crate::light::model::Head| h.channels.iter().any(|c| c.attribute.is_emitter() || c.attribute == Attribute::Dimmer);
+        let main_beam = !m.heads.iter().any(lights) || m.channels.iter().any(|c| shapes(c.attribute));
+        let n = m.heads.len();
+        let mut cells = Vec::new();
+        for (hi, h) in m.heads.iter().enumerate() {
+            let base = if h.name.trim().is_empty() { format!("Cell {}", hi + 1) } else { h.name.trim().to_string() };
+            let name = if taken.contains(&base) { unique(format!("{base} [{}]", m.name), &mut taken) } else { unique(base, &mut taken) };
+            let template = unique(format!("Cell {}.{}", mi + 1, hi + 1), &mut taken);
+            // Round the lens with a main beam, else in a line, 10 cm apart.
+            let at = if main_beam && n >= 3 {
+                let a = hi as f32 / n as f32 * std::f32::consts::TAU;
+                [0.12 * a.cos(), 0.12 * a.sin()]
+            } else {
+                [(hi as f32 - (n as f32 - 1.0) / 2.0) * 0.1, 0.0]
+            };
+            let mut breaks: Vec<(u8, u32)> = Vec::new();
+            for c in &h.channels {
+                let first = c.offset.min(c.fine.unwrap_or(u16::MAX)) as u32 + 1;
+                match breaks.iter_mut().find(|b| b.0 == c.dmx_break) {
+                    Some(b) => b.1 = b.1.min(first),
+                    None => breaks.push((c.dmx_break, first)),
+                }
+            }
+            breaks.sort();
+            cells.push(CellOut { name, template, beam: lights(h), at: at.map(|v| (v * 1e4).round() / 1e4), breaks });
+        }
+        out.push(Layout { suffix, main_beam, cells });
+    }
+    out
+}
+
 /// A DMX value in the channel's resolution ("128/1", "32768/2").
 fn dmx_text(v: f32, fine: bool) -> String {
     let v = v.clamp(0.0, 1.0);
@@ -513,8 +596,9 @@ fn dmx_text(v: f32, fine: bool) -> String {
 /// A fixture type as a GDTF file (the zip), for MVR exports: attributes, modes with their
 /// channels (fine channels, breaks, defaults, highlights), named ranges as channel sets, wheels
 /// for ranges with a colour or a picture (pictures from [`FixtureType::images`] in `wheels/`),
-/// emitters, pan/tilt ranges and the beam angle. Cells become geometries of their own, which
-/// [`import`] reads back as cells when they repeat each other's channels. No 3D models.
+/// emitters, pan/tilt ranges and the beam angle. Modes without cells share one geometry tree;
+/// a mode with cells has its own, each cell a placed `GeometryReference` to a template holding
+/// its beam ([`import`] reads them back as the same cells). No 3D models.
 pub fn export(t: &FixtureType) -> anyhow::Result<Vec<u8>> {
     let e = xml_esc;
     let uuid = {
@@ -528,7 +612,7 @@ pub fn export(t: &FixtureType) -> anyhow::Result<Vec<u8>> {
     let short: String = t.name.chars().take(16).collect();
     let mut x = String::from("<?xml version=\"1.0\" encoding=\"UTF-8\" standalone=\"no\" ?>\n<GDTF DataVersion=\"1.2\">\n");
     x.push_str(&format!(
-        "  <FixtureType Name=\"{}\" ShortName=\"{}\" LongName=\"{}\" Manufacturer=\"{}\" Description=\"Exported by OpenQ\" FixtureTypeID=\"{uuid}\" Thumbnail=\"\" RefFT=\"\">\n",
+        "  <FixtureType Name=\"{}\" ShortName=\"{}\" LongName=\"{}\" Manufacturer=\"{}\" Description=\"Exported by OpenQ (one geometry tree per mode)\" FixtureTypeID=\"{uuid}\" Thumbnail=\"\" RefFT=\"\">\n",
         e(&t.name),
         e(&short),
         e(&t.name),
@@ -597,50 +681,72 @@ pub fn export(t: &FixtureType) -> anyhow::Result<Vec<u8>> {
         x.push_str("      </Emitters>\n    </PhysicalDescriptions>\n");
     }
     x.push_str("    <Models/>\n");
-    // Geometry: body, yoke and head for moving fixtures, one beam per cell.
-    let mut cell_names: Vec<String> = Vec::new();
-    for h in t.modes.iter().flat_map(|m| &m.heads) {
-        let base = if h.name.trim().is_empty() { "Cell".to_string() } else { h.name.trim().to_string() };
-        if !cell_names.contains(&base) && !["Body", "Yoke", "Head", "Beam"].contains(&base.as_str()) {
-            cell_names.push(base);
+    // Geometry: the modes without cells share Body (Yoke, Head) and Beam; a mode with cells gets a
+    // tree of its own, named "Body [mode]"…, where each cell is a GeometryReference (named after
+    // the cell, placed along a line, or round the lens when the mode has a main beam) to a
+    // template geometry of its own holding the cell's beam. Its main beam is left out when the
+    // cells make all the light.
+    let layouts = cell_layouts(t);
+    let beam = |indent: &str, name: &str| format!("{indent}<Beam Name=\"{}\" BeamAngle=\"{}\" FieldAngle=\"{}\"/>\n", e(name), p.beam_max, p.beam_max);
+    x.push_str("    <Geometries>\n");
+    let mut written: Vec<&str> = Vec::new();
+    for l in &layouts {
+        if written.contains(&l.suffix.as_str()) {
+            continue;
         }
-    }
-    let beams = |indent: &str| {
-        let mut s = format!("{indent}<Beam Name=\"Beam\" BeamAngle=\"{}\" FieldAngle=\"{}\"/>\n", p.beam_max, p.beam_max);
-        for c in &cell_names {
-            s.push_str(&format!("{indent}<Beam Name=\"{}\" BeamAngle=\"{}\"/>\n", e(c), p.beam_max));
+        written.push(&l.suffix);
+        let s = &l.suffix;
+        let mut inner = String::new();
+        let indent = if p.moving { "            " } else { "        " };
+        if l.main_beam {
+            inner.push_str(&beam(indent, &format!("Beam{s}")));
         }
-        s
-    };
-    x.push_str("    <Geometries>\n      <Geometry Name=\"Body\">\n");
-    if p.moving {
-        x.push_str(&format!("        <Axis Name=\"Yoke\">\n          <Axis Name=\"Head\">\n{}          </Axis>\n        </Axis>\n", beams("            ")));
-    } else {
-        x.push_str(&beams("        "));
+        for c in &l.cells {
+            let breaks: String = c.breaks.iter().map(|(b, off)| format!("<Break DMXBreak=\"{}\" DMXOffset=\"{off}\"/>", b + 1)).collect();
+            inner.push_str(&format!(
+                "{indent}<GeometryReference Name=\"{}\" Geometry=\"{}\" Position=\"{{1,0,0,{}}}{{0,1,0,{}}}{{0,0,1,0}}{{0,0,0,1}}\">{breaks}</GeometryReference>\n",
+                e(&c.name),
+                e(&c.template),
+                c.at[0],
+                c.at[1]
+            ));
+        }
+        x.push_str(&format!("      <Geometry Name=\"Body{}\">\n", e(s)));
+        if p.moving {
+            x.push_str(&format!("        <Axis Name=\"Yoke{}\">\n          <Axis Name=\"Head{}\">\n{inner}          </Axis>\n        </Axis>\n", e(s), e(s)));
+        } else {
+            x.push_str(&inner);
+        }
+        x.push_str("      </Geometry>\n");
     }
-    x.push_str("      </Geometry>\n    </Geometries>\n    <DMXModes>\n");
-    let main_geometry = |a: Attribute| match a {
-        Attribute::Pan if p.moving => "Yoke",
-        _ if p.moving => "Head",
-        _ => "Body",
-    };
+    for c in layouts.iter().flat_map(|l| &l.cells) {
+        let b = if c.beam { beam("        ", &format!("{} Beam", c.template)) } else { String::new() };
+        x.push_str(&format!("      <Geometry Name=\"{}\">\n{b}      </Geometry>\n", e(&c.template)));
+    }
+    x.push_str("    </Geometries>\n    <DMXModes>\n");
     for (mi, m) in t.modes.iter().enumerate() {
-        x.push_str(&format!("      <DMXMode Name=\"{}\" Geometry=\"Body\">\n        <DMXChannels>\n", e(&m.name)));
-        let units = std::iter::once((None, &m.channels)).chain(m.heads.iter().map(|h| (Some(h), &h.channels)));
+        let l = &layouts[mi];
+        let s = l.suffix.as_str();
+        let main_geometry = |a: Attribute| match a {
+            Attribute::Pan if p.moving => format!("Yoke{s}"),
+            _ if p.moving => format!("Head{s}"),
+            _ => format!("Body{s}"),
+        };
+        x.push_str(&format!("      <DMXMode Name=\"{}\" Geometry=\"Body{}\">\n        <DMXChannels>\n", e(&m.name), e(s)));
+        let units = std::iter::once((None, &m.channels)).chain(m.heads.iter().enumerate().map(|(hi, h)| (Some(hi), &h.channels)));
         for (ui, (head, chans)) in units.enumerate() {
-            let geometry = match head {
-                Some(h) => {
-                    let n = h.name.trim();
-                    if n.is_empty() { "Cell".to_string() } else { n.to_string() }
-                }
-                None => String::new(),
-            };
+            let cell = head.and_then(|hi| l.cells.get(hi));
             for c in chans {
                 let (gname, _) = gdtf_attribute(c.attribute);
-                let geo = if geometry.is_empty() || !cell_names.contains(&geometry) { main_geometry(c.attribute).to_string() } else { geometry.clone() };
+                // A cell's channels sit on its template, at offsets from its reference's.
+                let (geo, base) = match cell {
+                    Some(cell) => (cell.template.clone(), cell.breaks.iter().find(|b| b.0 == c.dmx_break).map_or(1, |b| b.1)),
+                    None => (main_geometry(c.attribute), 1),
+                };
+                let rel = |o: u16| o as u32 + 2 - base;
                 let offset = match c.fine {
-                    Some(f) => format!("{},{}", c.offset + 1, f + 1),
-                    None => format!("{}", c.offset + 1),
+                    Some(f) => format!("{},{}", rel(c.offset), rel(f)),
+                    None => format!("{}", rel(c.offset)),
                 };
                 let fine = c.fine.is_some();
                 let highlight = c.highlight.map_or("None".to_string(), |h| dmx_text(h, fine));
@@ -868,6 +974,65 @@ mod tests {
         assert!(import_xml("<!DOCTYPE x [<!ENTITY a \"b\">]><GDTF/>").is_err(), "no DTDs");
     }
 
+    /// Each mode with cells gets its own geometry tree: cells are placed references (names kept
+    /// across modes), a main beam only where the shared channels shape one, and cells with
+    /// different channels or on a second DMX break read back as the same cells.
+    #[test]
+    fn modes_with_cells_export_their_own_trees() {
+        use crate::light::model::{FixtureMode, Head};
+        let ch = |attribute, dmx_break, offset| ChannelDef { attribute, dmx_break, offset, ..Default::default() };
+        let cell = |name: &str, chans: Vec<ChannelDef>| Head { name: name.into(), channels: chans };
+        let rgb = |at: u16| vec![ch(Attribute::Red, 0, at), ch(Attribute::Green, 0, at + 1), ch(Attribute::Blue, 0, at + 2)];
+        let t = FixtureType {
+            id: "test/cells".into(),
+            manufacturer: "Acme".into(),
+            name: "Cells".into(),
+            modes: vec![
+                FixtureMode { name: "Pixels".into(), channels: vec![ch(Attribute::Dimmer, 0, 0)], heads: vec![cell("1", rgb(1)), cell("2", rgb(4))], slots: 7 },
+                FixtureMode { name: "Plain".into(), channels: vec![ch(Attribute::Dimmer, 0, 0), ch(Attribute::Red, 0, 1)], heads: vec![], slots: 2 },
+                FixtureMode {
+                    name: "Gobo + ring".into(),
+                    channels: vec![ch(Attribute::Dimmer, 0, 0), ch(Attribute::Gobo, 0, 1)],
+                    heads: (0..3).map(|i| cell(&(i + 1).to_string(), vec![ch(Attribute::Red, 1, i * 2), ch(Attribute::Green, 1, i * 2 + 1)])).collect(),
+                    slots: 2,
+                },
+                FixtureMode {
+                    name: "Direct".into(),
+                    channels: vec![ch(Attribute::Dimmer, 0, 0)],
+                    heads: vec![cell("Red", vec![ch(Attribute::Red, 0, 1)]), cell("Lime", vec![ch(Attribute::Lime, 0, 2)])],
+                    slots: 3,
+                },
+            ],
+            ..Default::default()
+        };
+        let zip = export(&t).unwrap();
+        let xml = String::from_utf8(super::super::zipread::read(&zip, "description.xml", MAX_XML).unwrap()).unwrap();
+        // Main beams: the plain tree and the gobo mode's; the pixel modes' light is their cells'.
+        assert!(xml.contains("<Beam Name=\"Beam\""));
+        assert!(xml.contains("<Beam Name=\"Beam [Gobo + ring]\""));
+        assert!(!xml.contains("<Beam Name=\"Beam [Pixels]\"") && !xml.contains("<Beam Name=\"Beam [Direct]\""));
+        assert!(xml.contains("<GeometryReference Name=\"1 [Gobo + ring]\""), "a cell name taken by another mode");
+        assert!(xml.contains("<Break DMXBreak=\"2\" DMXOffset=\"3\"/>"), "ring cell 2 on the second break");
+        assert!(xml.contains("Position=\"{1,0,0,-0.05}{0,1,0,0}"), "pixels in a line, 10 cm apart");
+        // A cell that only holds a control channel gives no light: the main beam stays.
+        let mut strobe = t.clone();
+        strobe.modes = vec![FixtureMode { name: "4ch".into(), channels: vec![ch(Attribute::Dimmer, 0, 0)], heads: vec![cell("Effects", vec![ch(Attribute::Shutter, 0, 3)])], slots: 4 }];
+        let xml2 = String::from_utf8(super::super::zipread::read(&export(&strobe).unwrap(), "description.xml", MAX_XML).unwrap()).unwrap();
+        assert!(xml2.contains("<Beam Name=\"Beam [4ch]\"") && !xml2.contains("Cell 1.1 Beam"), "{xml2}");
+        let back = import(&zip).unwrap();
+        assert!(back.notes.is_empty(), "{:?}", back.notes);
+        for (m, n) in t.modes.iter().zip(&back.fixture.modes) {
+            assert_eq!(m.name, n.name);
+            let names = |m: &FixtureMode| m.heads.iter().map(|h| h.name.clone()).collect::<Vec<_>>();
+            assert_eq!(names(m), names(n), "{}", m.name);
+            let key = |c: &ChannelDef| (c.attribute, c.dmx_break, c.offset);
+            for (h, k) in m.heads.iter().zip(&n.heads) {
+                assert_eq!(h.channels.iter().map(key).collect::<Vec<_>>(), k.channels.iter().map(key).collect::<Vec<_>>(), "{} / {}", m.name, h.name);
+            }
+            assert_eq!(m.channels.iter().map(key).collect::<Vec<_>>(), n.channels.iter().map(key).collect::<Vec<_>>(), "{}", m.name);
+        }
+    }
+
     /// A type written as GDTF reads back with the same channels, ranges, cells and pictures.
     #[test]
     fn export_reads_back() {
@@ -893,6 +1058,7 @@ mod tests {
                 z.sort_by(|x, y| format!("{x:?}").cmp(&format!("{y:?}")));
                 assert_eq!(a, z, "{} / {}", t.name, m.name);
                 assert_eq!(m.heads.len(), n.heads.len(), "{} cells", t.name);
+                assert_eq!(m.heads.iter().map(|h| &h.name).collect::<Vec<_>>(), n.heads.iter().map(|h| &h.name).collect::<Vec<_>>(), "{} cell names", t.name);
                 for (h, k) in m.heads.iter().zip(&n.heads) {
                     assert_eq!(h.channels.iter().map(key).collect::<Vec<_>>(), k.channels.iter().map(key).collect::<Vec<_>>());
                 }

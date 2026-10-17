@@ -450,8 +450,8 @@ pub fn import(json: &str, manufacturer: &str) -> anyhow::Result<Imported> {
     let num = |k: &str| focus.and_then(|f| f.get(k)).and_then(Value::as_f64).map(|x| x as f32);
     let d = Physical::default();
     let physical = Physical {
-        pan_range: num("panMax").unwrap_or(d.pan_range),
-        tilt_range: num("tiltMax").unwrap_or(d.tilt_range),
+        pan_range: num("panMax").or_else(|| capability_angle(&v, "Pan")).unwrap_or(d.pan_range),
+        tilt_range: num("tiltMax").or_else(|| capability_angle(&v, "Tilt")).unwrap_or(d.tilt_range),
         beam_min: deg(0).unwrap_or(d.beam_min),
         beam_max: deg(1).or(deg(0)).unwrap_or(d.beam_max),
         moving: moving || modes.iter().any(|m| m.channel(Attribute::Pan).is_some() && m.channel(Attribute::Tilt).is_some()),
@@ -460,6 +460,21 @@ pub fn import(json: &str, manufacturer: &str) -> anyhow::Result<Imported> {
     let id = type_id("ofl", &manufacturer, name);
     let images = embedded_images(wheels, &mut notes);
     Ok(Imported { fixture: super::fixlib::sanitize(FixtureType { id, manufacturer, name: name.to_string(), modes, physical, images })?, notes })
+}
+
+/// The angle a `Pan`/`Tilt` capability covers (`angleStart`/`angleEnd` in degrees), for files
+/// that give it there instead of in `physical.focus`. The widest one, if several.
+fn capability_angle(v: &Value, kind: &str) -> Option<f32> {
+    let deg = |c: &Value, k: &str| c.get(k)?.as_str()?.trim().strip_suffix("deg")?.trim().parse::<f32>().ok();
+    ["availableChannels", "templateChannels"]
+        .iter()
+        .filter_map(|k| v.get(*k)?.as_object())
+        .flat_map(|m| m.values())
+        .flat_map(|ch| ch.get("capability").into_iter().chain(ch.get("capabilities").and_then(Value::as_array).into_iter().flatten()))
+        .filter(|c| c.get("type").and_then(Value::as_str) == Some(kind))
+        .filter_map(|c| Some((deg(c, "angleEnd")? - deg(c, "angleStart")?).abs()))
+        .filter(|a| a.is_finite() && *a > 0.0)
+        .reduce(f32::max)
 }
 
 #[cfg(test)]
@@ -505,6 +520,12 @@ mod tests {
         assert!(f.physical.moving);
         assert_eq!((f.physical.tilt_range, f.physical.beam_min, f.physical.beam_max), (265.0, 14.0, 30.0));
         assert_eq!(m.channel(Attribute::Control).unwrap().offset, 8, "maintenance channels are Control");
+        // Without physical.focus the ranges come from the Pan/Tilt capabilities' angles.
+        let bare = SPOT.replace(r#", "focus": { "type": "Head", "panMax": 540, "tiltMax": 265 }"#, "").replace(r#""type": "Pan", "angleStart": "0deg", "angleEnd": "540deg""#, r#""type": "Pan", "angleStart": "-270deg", "angleEnd": "180deg""#);
+        assert_ne!(bare, SPOT);
+        let p = import(&bare, "Acme").unwrap().fixture.physical;
+        assert_eq!(p.pan_range, 450.0);
+        assert_eq!(p.tilt_range, Physical::default().tilt_range, "no tilt angle in the file");
     }
 
     const WHEELS: &str = r##"{
