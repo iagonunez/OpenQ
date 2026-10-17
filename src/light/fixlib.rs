@@ -18,8 +18,8 @@ use std::path::{Path, PathBuf};
 pub const EXTENSION: &str = "oqfixture";
 const FORMAT: &str = "openq-fixture";
 const VERSION: u32 = 1;
-/// Most modes a type can have.
-pub const MAX_MODES: usize = 64;
+/// Most modes a type can have (Astera's GDTF tubes ship 165).
+pub const MAX_MODES: usize = 256;
 /// Most named ranges per channel.
 pub const MAX_RANGES: usize = 256;
 /// Longest name kept (characters).

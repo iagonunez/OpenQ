@@ -263,7 +263,9 @@ pub fn scene(l: &Lighting, scope: &str) -> String {
         x.push_str(&format!("          <Fixture name=\"{}\" uuid=\"{}\">\n", esc(&name), stable_uuid(scope, &format!("fixture {}", f.id))));
         x.push_str(&format!("            <Matrix>{}</Matrix>\n", matrix(f)));
         x.push_str(&format!("            <GDTFSpec>{}</GDTFSpec>\n", esc(&spec)));
-        x.push_str(&format!("            <GDTFMode>{}</GDTFMode>\n", esc(&f.mode)));
+        // The mode as the exported GDTF names it ("Standard [Lamp]" → "Standard (Lamp)").
+        let mode = ty.and_then(|t| Some(super::gdtf::mode_names(t).swap_remove(t.modes.iter().position(|m| m.name == f.mode)?))).unwrap_or_else(|| f.mode.clone());
+        x.push_str(&format!("            <GDTFMode>{}</GDTFMode>\n", esc(&mode)));
         x.push_str(&format!("            <FixtureID>{}</FixtureID>\n            <FixtureIDNumeric>{}</FixtureIDNumeric>\n", f.id, f.id));
         x.push_str("            <UnitNumber>0</UnitNumber>\n");
         // One address per patched DMX break.
@@ -291,7 +293,8 @@ pub fn scene(l: &Lighting, scope: &str) -> String {
             x.push_str(&format!("          <{tag} name=\"{}\" uuid=\"{}\">\n", esc(&name), stable_uuid(scope, &format!("shape {}", s.id))));
             x.push_str(&format!("            <Matrix>{m}</Matrix>\n"));
             x.push_str(&format!("            <Geometries>\n              <Geometry3D fileName=\"{}\"/>\n            </Geometries>\n", shape_file(s)));
-            x.push_str(&format!("          </{tag}>\n"));
+            // MVR 1.6 requires a FixtureID on every truss and scene object (empty: not addressed by one).
+            x.push_str(&format!("            <FixtureID></FixtureID>\n          </{tag}>\n"));
         }
         x.push_str("        </ChildList>\n      </Layer>\n");
     }
@@ -538,9 +541,13 @@ pub fn import(zip: &[u8], known: &[&FixtureType]) -> anyhow::Result<Imported> {
             }
         };
         let want = child_text(n, "GDTFMode").unwrap_or_default();
-        let mode = match ty.mode(&want) {
-            Some(m) if m.name == want => m.name.clone(),
-            _ => {
+        // The type's own mode name, or the one an OpenQ export gave it (a library type's "Standard [Lamp]"
+        // is "Standard (Lamp)" in the file).
+        let exported = super::gdtf::mode_names(ty);
+        let found = ty.modes.iter().find(|m| m.name == want).or_else(|| ty.modes.iter().zip(&exported).find(|(_, e)| **e == want).map(|(m, _)| m));
+        let mode = match found {
+            Some(m) => m.name.clone(),
+            None => {
                 no_mode += (ty.id != dimmer.id) as usize;
                 ty.modes.first().map(|m| m.name.clone()).unwrap_or_default()
             }
@@ -678,6 +685,25 @@ mod tests {
     }
 
     #[test]
+    fn modes_named_like_the_exported_gdtf() {
+        let mut l = library::bench_rig(1, 1, 1);
+        let ty = l.fixtures[0].fixture_type.clone();
+        let mode = l.fixtures[0].mode.clone();
+        let t = l.fixture_types.iter_mut().find(|t| t.id == ty).unwrap();
+        t.modes.iter_mut().find(|m| m.name == mode).unwrap().name = "Standard [Lamp, 16.bit]".into();
+        for f in l.fixtures.iter_mut().filter(|f| f.fixture_type == ty) {
+            f.mode = "Standard [Lamp, 16.bit]".into();
+        }
+        let x = scene(&l, "Show");
+        assert!(x.contains("<GDTFMode>Standard (Lamp_ 16_bit)</GDTFMode>"), "{x}");
+        // Read back with the show's own type, its mode is found by the exported name.
+        let t = l.fixture_type(&ty).unwrap().clone();
+        let back = import(&export(&l, "Show").unwrap(), &[&t]).unwrap();
+        let f = back.fixtures.iter().find(|f| f.fixture_type == ty).unwrap();
+        assert_eq!(f.mode, "Standard [Lamp, 16.bit]");
+    }
+
+    #[test]
     fn shapes_become_truss_and_scene_objects() {
         let mut l = library::bench_rig(1, 1, 1);
         // A bar 4 m long across the stage at 6 m, 2 m upstage (OpenQ z = −2); a 2 × 1 m riser.
@@ -687,6 +713,7 @@ mod tests {
         assert!(x.contains("<Truss name=\"LX1\""), "{x}");
         assert!(x.contains("<Matrix>{1,0,0}{0,1,0}{0,0,1}{0,2000,6000}</Matrix>"), "{x}");
         assert!(x.contains("<SceneObject name=\"Rectangle 2\""));
+        assert_eq!(x.matches("<FixtureID></FixtureID>").count(), 2, "the schema wants one per shape");
         assert!(x.contains("{1000,-500,0}"), "riser centre");
         assert!(x.contains("fileName=\"shape-2.glb\""));
         // A bar along OpenQ z turns 90° about MVR z.
