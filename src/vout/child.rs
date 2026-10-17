@@ -169,7 +169,7 @@ struct Wake;
 /// Run the video output process. Returns the exit code.
 pub fn main() -> i32 {
     // Only stderr: stdout carries the protocol.
-    let _ = env_logger::Builder::from_env(env_logger::Env::default().default_filter_or("openq=info")).target(env_logger::Target::Stderr).try_init();
+    let _ = crate::errlog::stderr_logger("openq=info").target(env_logger::Target::Stderr).try_init();
     crate::i18n::init();
     let (out_tx, out_rx) = mpsc::channel::<FromVideo>();
     let writer = std::thread::Builder::new()

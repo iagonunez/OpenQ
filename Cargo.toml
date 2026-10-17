@@ -12,7 +12,8 @@ anyhow = "1.0.104"
 cpal = "0.18.2"
 eframe = "0.35.0"
 egui = "0.35"
-env_logger = "0.11.11"
+# No colours, regex filters or timestamp crate: `errlog::stderr_logger` writes the time itself.
+env_logger = { version = "0.11.11", default-features = false }
 fastrand = "2.5.0"
 ffmpeg-next = { version = "9", optional = true }
 base64 = "0.23"
@@ -30,7 +31,8 @@ parking_lot = "0.12.5"
 # Waits for wgpu device requests in the video output process.
 pollster = "0.4"
 rfd = "0.17.2"
-rosc = "0.11.4"
+# Without "std" (only converts OSC times to SystemTime; pulled in the `time` crate).
+rosc = { version = "0.11.4", default-features = false }
 rtrb = "0.4.0"
 # Fixture import: GDTF (zip + XML) and QLC+ (XML).
 roxmltree = "0.21.1"
@@ -39,7 +41,8 @@ rubato = "5.0.1"
 serde = { version = "1.0.229", features = ["derive", "rc"] }
 serde_json = { version = "1.0.152", features = ["float_roundtrip"] }
 socket2 = "0.6"
-serialport = "4.10.1"
+# Without libudev: Linux ports are listed from /sys/class/tty (only names are used).
+serialport = { version = "4.10.1", default-features = false }
 symphonia = { version = "0.6.1", features = ["all"] }
 uuid = { version = "1.28.0", features = ["v4", "serde"] }
 cosmic-text = "0.19.0"

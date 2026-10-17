@@ -127,11 +127,18 @@ impl log::Log for Logger {
     }
 }
 
+/// Stderr logger with `default_filter` (overridden by `RUST_LOG`); lines start with the UTC time.
+pub(crate) fn stderr_logger(default_filter: &str) -> env_logger::Builder {
+    let mut b = env_logger::Builder::from_env(env_logger::Env::default().default_filter_or(default_filter));
+    b.format(|f, r| writeln!(f, "[{} {:<5} {}] {}", timestamp(SystemTime::now()), r.level(), r.target(), r.args()));
+    b
+}
+
 /// Install the global logger: stderr with `default_filter` (overridden by `RUST_LOG`), plus the
 /// error log file. Returns the file's path, or `None` when it could not be opened (logging then
 /// goes to stderr only).
 pub fn init(default_filter: &str) -> Option<PathBuf> {
-    let stderr = env_logger::Builder::from_env(env_logger::Env::default().default_filter_or(default_filter)).build();
+    let stderr = stderr_logger(default_filter).build();
     let file = log_dir().map(|d| ErrorLog::open_in(&d)).transpose().unwrap_or_else(|e| {
         eprintln!("error log unavailable: {e}");
         None
