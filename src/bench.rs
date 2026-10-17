@@ -221,7 +221,7 @@ fn light_cells(m: &mut Vec<Metric>, quick: bool, reps: usize) {
     push(m, &format!("light.frame_cells_{n}.p99"), quantile(&mut v, 0.99).as_secs_f64() * 1e6, "us", &note);
 }
 
-/// The frame with a generated colour table (what effect scripts make: red/green/blue, 64 steps,
+/// The frame with a generated colour table (what effect formulas make: red/green/blue, 64 steps,
 /// 8 pattern rows) running on every fixture.
 #[inline(never)]
 fn light_table(m: &mut Vec<Metric>, mut design: crate::light::Lighting, reps: usize, note: &str) {

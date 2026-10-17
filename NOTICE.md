@@ -52,16 +52,6 @@ Notable cases:
 - Some crates offer several licenses (for example "Apache-2.0 OR GPL-2.0" for `self_cell`, and
   "MIT OR GPL-3.0" for `unescaper`). OpenQ uses them under their permissive option.
 
-- **Wasmtime** (the sandbox effect scripts run in, Bytecode Alliance) is under
-  Apache-2.0 WITH LLVM-exception.
-
-## Python for effect scripts (installed next to the app, not compiled in)
-
-oqman installs CPython compiled to WebAssembly (`python.wasm` and part of its standard library,
-from <https://github.com/brettcannon/cpython-wasi-build>) in a `python` folder next to OpenQ, with
-its license in `Licenses/python`. CPython is under the Python Software Foundation License. OpenQ
-only runs it inside its Wasmtime sandbox, for lighting effect scripts.
-
 ## System libraries (not included, used from the computer)
 
 - **FFmpeg** (video; libavformat, libavcodec, libavutil, libswscale, libswresample) is loaded

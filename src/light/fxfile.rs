@@ -1,10 +1,10 @@
 //! Effect files (`.oqfx`): one effect as JSON, to share effects between shows and users.
 //!
-//! A file holds the effect's parameters and, for custom effects, the generated table: plain data,
-//! never code. The Python script that made a table stays in the show it was written in; it is
-//! left out when an effect is written to a file ([`write()`]) and dropped from anything read
-//! ([`read`]), older files included. Scripts only run in the sandbox, from the script editor.
-//! Everything read is checked and clamped by [`sanitize`], which also checks what scripts return.
+//! A file holds the effect's parameters and, for custom effects, the table with the formula that
+//! made it and its sliders: plain data, never code (formulas are arithmetic, see
+//! [`super::formula`]). A Python script kept from OpenQ 0.3 is left out when an effect is written
+//! ([`write()`]) and dropped from anything read ([`read`]). Everything read is checked and clamped
+//! by [`sanitize`].
 //!
 //! The effect library is the folder `<config>/effects` ([`EffectLibrary`]): effects saved there
 //! are offered in every show.
@@ -20,7 +20,7 @@ pub const EXTENSION: &str = "oqfx";
 pub const FORMAT: u32 = 1;
 /// Largest file read.
 pub const MAX_FILE: usize = 32 << 20;
-/// Longest script kept.
+/// Longest Python script (OpenQ 0.3) a file may carry; it is dropped anyway.
 pub const MAX_SCRIPT: usize = 256 << 10;
 
 /// The contents of an effect file.
@@ -44,7 +44,7 @@ impl Default for EffectFile {
     }
 }
 
-/// The file for an effect: its data without the script (and the script's settings).
+/// The file for an effect: its data, without a Python script.
 pub fn write(effect: &Effect, author: &str, description: &str) -> String {
     let mut effect = without_script(effect.clone());
     effect.id = 0;
@@ -70,20 +70,22 @@ pub fn read(text: &str) -> anyhow::Result<EffectFile> {
     Ok(f)
 }
 
-/// An effect as data only: no script, and none of the script's settings (they only feed a run).
+/// An effect without the Python script of OpenQ 0.3 (formulas and their sliders stay).
 pub fn without_script(mut e: Effect) -> Effect {
     e.script = String::new();
-    e.params = Vec::new();
     e
 }
 
-/// Check an effect from outside (a file or a script): the table must be valid, parameters are
+/// Check an effect from outside (a file): the table must be valid, parameters are
 /// clamped to what the editor allows, texts are shortened. The number is reset to 0.
 pub fn sanitize(mut e: Effect) -> anyhow::Result<Effect> {
     e.id = 0;
     e.name = clip(&e.name, 200);
     if e.script.len() > MAX_SCRIPT {
         bail!("the script is longer than {} KB", MAX_SCRIPT >> 10);
+    }
+    if e.formula.len() > super::formula::MAX_SOURCE {
+        bail!("the formula is longer than {} KB", super::formula::MAX_SOURCE >> 10);
     }
     match (&e.table, e.shape) {
         (Some(t), Shape::Custom) => {
@@ -194,6 +196,8 @@ mod tests {
             shape: Shape::Custom,
             table: Some(std::sync::Arc::new(EffectTable { attributes: vec![Attribute::Dimmer], steps: 2, width: 2, smooth: false, values: vec![1.0, 0.0, 0.0, 1.0] })),
             script: "import openq\n".into(),
+            formula: "effect \"Chase\" steps 2 width 2\ndimmer = if(step == row, 1, 0)".into(),
+            params: vec![super::super::effects::EffectParam { name: "n".into(), min: 0.0, max: 1.0, value: 0.5, integer: false }],
             ..Default::default()
         }
     }
@@ -201,7 +205,8 @@ mod tests {
     #[test]
     fn roundtrip() {
         let text = write(&custom(), "Me", "A two-step chase");
-        assert!(!text.contains("import openq"), "files hold no script");
+        assert!(!text.contains("import openq"), "files hold no Python script");
+        assert!(text.contains("dimmer = if"), "formulas are data");
         let f = read(&text).unwrap();
         assert_eq!(f.effect, Effect { id: 0, script: String::new(), ..custom() });
         assert_eq!((f.author.as_str(), f.description.as_str()), ("Me", "A two-step chase"));
@@ -241,15 +246,22 @@ mod tests {
         let _ = std::fs::remove_dir_all(&dir);
     }
 
-    /// A file with a script (an older one, or made by hand) is read as data: the script is
-    /// dropped, never kept to run later.
+    /// A file with a Python script (OpenQ 0.3, or made by hand) is read as data: the script is
+    /// dropped; the formula, its sliders and the table stay.
     #[test]
     fn scripts_in_files_are_dropped() {
-        let mut f = EffectFile { openq_effect: FORMAT, author: String::new(), description: String::new(), effect: custom() };
-        f.effect.params = vec![super::super::effects::ScriptParam { name: "n".into(), min: 0.0, max: 1.0, value: 0.5, integer: false }];
+        let f = EffectFile { openq_effect: FORMAT, author: String::new(), description: String::new(), effect: custom() };
         let read = read(&serde_json::to_string(&f).unwrap()).unwrap();
-        assert!(read.effect.script.is_empty() && read.effect.params.is_empty());
+        assert!(read.effect.script.is_empty());
+        assert_eq!((&read.effect.formula, &read.effect.params), (&custom().formula, &custom().params));
         assert_eq!(read.effect.table, custom().table, "the generated table stays");
+        let long = Effect { formula: "#".repeat(super::super::formula::MAX_SOURCE + 1), ..custom() };
+        assert!(read_effect_err(long).contains("formula is longer"));
+    }
+
+    fn read_effect_err(e: Effect) -> String {
+        let f = EffectFile { openq_effect: FORMAT, author: String::new(), description: String::new(), effect: e };
+        read(&serde_json::to_string(&f).unwrap()).unwrap_err().to_string()
     }
 
     #[test]

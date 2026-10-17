@@ -315,7 +315,6 @@ table as "what we would tour with".</p>
 <tr><td>Compiling a lighting design (2000 fixtures × 300 cues)</td><td class="n">≈ 185 ms</td><td class="n">off the hot path</td><td>Runs on a worker after an edit; a slow CPU only delays when an edit reaches the output.</td></tr>
 <tr><td>Memory of the running app (empty show / lighting demo)</td><td class="n">≈ 200 MB</td><td class="n">—</td><td>Plus media: decoded video frames, stills and text planes grow with the show.</td></tr>
 <tr><td>Idle CPU with the window open</td><td class="n">≈ 1 % of one core</td><td class="n">—</td><td>The UI repaints only when something changes.</td></tr>
-<tr><td>Python effect script sandbox</td><td class="n">≤ 256 MB, first load ≈ 1 s</td><td class="n">design time only</td><td>Never runs during playback; a slow CPU only makes "Run" slower.</td></tr>
 </table></div>
 
 
@@ -326,7 +325,7 @@ table as "what we would tour with".</p>
 <td>64-bit, 2 cores / 4 threads at ~2.5 GHz (e.g. Intel Core i3-8100, Ryzen 3 3200G, Apple M1)</td>
 <td>4 cores at ~3 GHz for 1080p (e.g. Core i5-8400, Ryzen 5 2600, Apple M1); every extra movie playing at once uses another core</td>
 <td>Same as audio + video: the light thread adds well under 1 % of one core</td></tr>
-<tr><td>Memory</td><td>4 GB</td><td>8 GB</td><td>8 GB (the effect-script sandbox may take 256 MB while it runs)</td></tr>
+<tr><td>Memory</td><td>4 GB</td><td>8 GB</td><td>8 GB</td></tr>
 <tr><td>Graphics</td><td>None beyond the operator screen</td><td>Integrated GPU with Vulkan, Metal or DirectX 12 (e.g. Intel UHD 620, AMD Vega 8, Apple M1); 1080p stage output</td><td>Same as audio + video (no visualiser inside OpenQ)</td></tr>
 <tr><td>Storage</td><td>Any drive</td><td>SATA SSD; movies on the local drive</td><td>Same</td></tr>
 <tr><td>Operator display</td><td colspan="2">1366 × 768</td><td>1366 × 768 (the patch and programmer are cramped)</td></tr>
@@ -348,11 +347,11 @@ table as "what we would tour with".</p>
 <tr><td>Operator display</td><td>1920 × 1080</td><td>1920 × 1080 + one output per stage</td><td>1920 × 1080 or larger; a touch screen suits the executor bar and keypad</td></tr>
 <tr><td>Audio interface</td><td>Multichannel USB/Thunderbolt interface (class compliant) at 48 kHz</td><td>Same</td><td>Same</td></tr>
 <tr><td>Network / DMX</td><td>Wired Ethernet if you use remote devices (Wi-Fi works, discovery may not cross VLANs)</td><td>Same</td><td>A dedicated gigabit port and switch for the lighting network (Art-Net/sACN) apart from the control/Wi-Fi network; a USB DMX interface as a backup output</td></tr>
-<tr><td>Operating system</td><td colspan="3">Same as the minimum; the effect-script interpreter (installed by oqman) runs on all three</td></tr>
+<tr><td>Operating system</td><td colspan="3">Same as the minimum</td></tr>
 </table></div>
 <p class="loc">Rule of thumb: video drives the hardware (number and resolution of movies playing at once, number of
 stage outputs). Lighting does not change the CPU or GPU you need; it adds a network port (or a USB DMX
-interface) and, if you write effect scripts, a little memory while they run.</p>
+interface).</p>
 </main>
 </body>
 </html>

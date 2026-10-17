@@ -298,7 +298,7 @@ echo 'export PATH="$HOME/.local/bin:$PATH"' &gt;&gt; ~/.bashrc   # bash (zsh: ~/
   dependencias y la caché de compilación de oqman. En Windows también puedes quitarlo desde <em>Configuración →
   Aplicaciones → Aplicaciones instaladas</em>. Tus espectáculos nunca se tocan.</p>
   <p>Si solo necesitas cues, <code>oqman install --no-lighting</code> compila OpenQ sin el espacio de iluminación (sin
-  vista Iluminación, cues Light, scripts de efectos ni descargas de aparatos); la compilación es más pequeña y rápida. Los
+  vista Iluminación, cues Light ni descargas de aparatos); la compilación es más pequeña y rápida. Los
   espectáculos con un diseño de iluminación se siguen abriendo, lo conservan y reproducen sus cues Light.
   <code>oqman install --lighting</code> lo vuelve a añadir.</p>
   <p>Para ejecutar una copia en la que estés trabajando desde el código fuente:</p>
@@ -884,15 +884,154 @@ cargo run --release -- show.openq    # abrir un espectáculo guardado</code></pr
   base. El <em>Desfase</em> escalona los aparatos, <em>Grupos</em> mueve varios aparatos juntos y <em>Alas</em> refleja el
   dibujo. La vista previa muestra el resultado en los aparatos.</p>
   <figure>
-    <img src="img/lighting-effects.webp" width="1100" height="778" alt="Página Efectos con un efecto de arcoíris personalizado: ajustes, vista previa de rojo, verde y azul en ocho aparatos, y su script de Python.">
-    <figcaption>Un efecto de script: el script crea la tabla de colores y la vista previa la muestra en ocho aparatos.</figcaption>
+    <img src="img/lighting-effects.webp" width="1100" height="660" alt="Página Efectos con un efecto de fórmula: ajustes, vista previa de rojo, verde y azul en doce aparatos, y la fórmula del arcoíris con su deslizador.">
+    <figcaption>Un efecto de fórmula: la fórmula crea la tabla de colores y la vista previa la muestra en los aparatos seleccionados.</figcaption>
   </figure>
   <p>Lanza un efecto desde el programador (los efectos o <code>effect 2</code>) y grábalo en una cue. Sigue funcionando en las
   cues siguientes hasta que una cue lo pare.</p>
-  <p>Los <strong>efectos de script</strong> se escriben en Python con el módulo <code>openq</code>, para dibujos que las formas
-  de onda no pueden hacer. Los scripts solo crean efectos: se ejecutan aislados, sin acceso a archivos, a la red ni a otros
-  programas, y nunca durante la función; lo que se reproduce es el efecto que crearon. El Python que necesitan lo instala oqman.
-  Los efectos se comparten como archivos <code>.oqfx</code> (<em>Exportar archivo de efecto…</em> y el botón de importar de la lista).</p>
+  <p>Los efectos se comparten como archivos <code>.oqfx</code>: <em>Exportar archivo de efecto…</em> escribe uno y el botón
+  <span class="ms" aria-hidden="true">&#xe9fc;</span> de la lista de efectos los importa. <em>Guardar en la biblioteca</em> pone
+  un efecto en tu biblioteca de efectos, que todos los espectáculos ofrecen en <em>Biblioteca</em>.</p>
+
+  <h4 id="formulas">Efectos de fórmula</h4>
+  <p>Para dibujos que las formas de onda no pueden hacer, escribe una <strong>fórmula</strong>. Pulsa
+  <span class="ms" aria-hidden="true">&#xe86f;</span> (<em>Nuevo efecto con fórmula</em>) en la lista de efectos, edita la
+  fórmula en la tarjeta <em>Fórmula</em> y pulsa <em>Ejecutar</em> (o Ctrl+Intro). OpenQ convierte la fórmula en una tabla:
+  para cada fila del patrón y cada paso de un ciclo, fija los atributos que nombras. El primer aparato reproduce la fila 0, el
+  siguiente la fila 1 y así sucesivamente, volviendo a empezar tras la última fila. La velocidad, el tamaño, el desfase y los
+  demás ajustes se siguen aplicando encima. Una fórmula es solo aritmética: no puede abrir archivos ni repetir bucles, y nunca
+  se ejecuta durante la función; solo se reproduce la tabla que creó.</p>
+<pre><code># Un arcoíris que recorre ocho aparatos, con un deslizador para la saturación.
+param sat 1 0..1
+effect "Rainbow run" steps 64 width 8 smooth
+red, green, blue = hsv(t + row / width, sat)</code></pre>
+  <p>Una instrucción por línea; <code>#</code> empieza un comentario y las mayúsculas dan igual. Las palabras de la fórmula
+  están en inglés.</p>
+  <div class="table-wrap"><table>
+    <thead><tr><th>Línea</th><th>Qué hace</th></tr></thead>
+    <tbody>
+      <tr><td><code>param sat 1 0..1</code></td><td>Un deslizador en la tarjeta Fórmula: nombre, valor inicial y rango (0 a 1
+      si no se indica). Añade <code>int</code> para números enteros. Los deslizadores van antes del primer efecto; al moverlos
+      la fórmula se calcula de nuevo.</td></tr>
+      <tr><td><code>effect "Nombre" steps 64 width 8 smooth</code></td><td>Empieza un efecto: muestras por ciclo (1 a 4096),
+      filas del patrón (1 a 512) y <code>smooth</code> para fundir entre muestras (quítalo para persecuciones que saltan). Una
+      fórmula puede crear varios efectos: el primero es el que editas, los demás se añaden a la lista.</td></tr>
+      <tr><td><code>let k = sine(t)</code></td><td>Guarda un valor para las líneas de debajo.</td></tr>
+      <tr><td><code>red, green, blue = …</code></td><td>Fija atributos, cada uno una vez por efecto: <code>dimmer</code>,
+      <code>red</code>, <code>pan</code>, <code>tilt</code>, <code>zoom</code>, <code>gobo_rotation</code>, <code>extra3</code>…
+      Los niveles van de 0 a 1 (lo que se sale se recorta).</td></tr>
+    </tbody>
+  </table></div>
+  <p>Los valores son números: <code>t</code> va de 0 a 1 a lo largo del ciclo, <code>step</code> cuenta los pasos (desde 0),
+  <code>row</code> es la fila del patrón, <code>steps</code> y <code>width</code> son los tamaños del efecto, y además los
+  deslizadores y los nombres de <code>let</code>. Usa <code>+ - * / % ^</code>, paréntesis, comparaciones
+  (<code>&lt; &lt;= == != &gt;= &gt;</code>, que dan 1 o 0) y <code>and</code>, <code>or</code>, <code>not</code>.</p>
+  <div class="table-wrap"><table>
+    <thead><tr><th>Función</th><th>Resultado</th></tr></thead>
+    <tbody>
+      <tr><td><code>sine(x)</code>, <code>triangle(x)</code>,<br><code>saw(x)</code>, <code>ramp_down(x)</code></td><td>Las formas
+      de onda, de 0 a 1 en un ciclo (<code>x</code> en ciclos, normalmente <code>t</code>).</td></tr>
+      <tr><td><code>square(x, duty)</code></td><td>1 durante la primera parte <code>duty</code> del ciclo (la mitad si no se
+      indica) y luego 0.</td></tr>
+      <tr><td><code>wave(x)</code></td><td>Una onda senoidal de −1 a 1, <code>x</code> en ciclos; <code>wave(x + 0.25)</code> es
+      el coseno.</td></tr>
+      <tr><td><code>hsv(tono, saturación, valor)</code></td><td>Rojo, verde y azul de un color (tono en vueltas de la rueda de
+      color). Da tres valores, así que llena tres atributos: <code>red, green, blue = hsv(t)</code>.</td></tr>
+      <tr><td><code>pick(i, a, b, c…)</code></td><td>El valor número <code>i</code> de la lista, desde 0 (vuelve a empezar al
+      final).</td></tr>
+      <tr><td><code>if(condición, a, b)</code></td><td><code>a</code> cuando la condición no es 0; si no, <code>b</code>.</td></tr>
+      <tr><td><code>noise(n, seed)</code></td><td>Un número aleatorio fijo de 0 a 1 para el número entero <code>n</code> (y
+      <code>seed</code>): siempre el mismo.</td></tr>
+      <tr><td><code>min(a, b…)</code>, <code>max(a, b…)</code></td><td>El valor más pequeño o el más grande.</td></tr>
+      <tr><td><code>clamp(x, bajo, alto)</code></td><td><code>x</code> dentro de <code>bajo</code> y <code>alto</code> (0 y 1 si no se indican).</td></tr>
+      <tr><td><code>lerp(a, b, k)</code></td><td>De <code>a</code> (<code>k</code> = 0) a <code>b</code> (<code>k</code> = 1).</td></tr>
+      <tr><td><code>smoothstep(x)</code></td><td>De 0 a 1 con inicio y final suaves.</td></tr>
+      <tr><td><code>abs</code>, <code>floor</code>, <code>round</code>, <code>frac</code></td><td>Sin signo, redondeado hacia
+      abajo, redondeado, la parte decimal.</td></tr>
+    </tbody>
+  </table></div>
+<pre><code># Aparatos alternos, que se intercambian en cada mitad del ciclo.
+effect "Odd / even" steps 2 width 2
+dimmer = if(step == row, 1, 0)
+
+# Cabezas vecinas que se mueven en sentidos opuestos (Modo: Alrededor del valor de la cue).
+effect "Scissors" steps 64 width 2 smooth
+pan = 0.5 + pick(row, 0.5, -0.5) * wave(t)</code></pre>
+  <p>Un error aparece bajo el editor con su línea y columna, y el efecto conserva su última tabla. Los espectáculos de OpenQ 0.3
+  con efectos de script de Python los siguen reproduciendo; el script antiguo se muestra bajo la tarjeta Fórmula para
+  reescribirlo como fórmula, o en Python como se explica abajo.</p>
+
+  <h4 id="python-effects">Efectos hechos en Python</h4>
+  <p>Algunos dibujos necesitan un programa de verdad: un valor que depende del paso anterior (un paseo aleatorio, un dibujo que
+  crece), bucles o datos de otro sitio. Escríbelos en Python en tu ordenador y guárdalos como archivo de efecto. OpenQ lo importa
+  como cualquier otro archivo <code>.oqfx</code>, como datos: dentro de OpenQ no se ejecuta nada. Sirve cualquier Python 3, sin
+  módulos extra.</p>
+  <ol>
+    <li>Guarda esto como <code>wander.py</code>. Hace que cuatro cabezas móviles deambulen al azar y vuelvan a donde empezaron:
+<pre><code>import json
+import random
+
+
+def save_effect(path, name, attributes, steps, width, level,
+                smooth=True, **settings):
+    """Write an OpenQ effect file (.oqfx).
+
+    level(row, step) returns one level (0 to 1) per attribute.
+    """
+    n = len(attributes)
+    values = [0.0] * (n * steps * width)
+    for row in range(width):
+        for step in range(steps):
+            for col, v in enumerate(level(row, step)):
+                at = (row * n + col) * steps + step
+                values[at] = min(1.0, max(0.0, float(v)))
+    table = {"attributes": attributes, "steps": steps,
+             "width": width, "smooth": smooth, "values": values}
+    effect = {"name": name, "shape": "Custom",
+              "attribute": attributes[0], "table": table}
+    effect.update(settings)
+    with open(path, "w", encoding="utf-8") as f:
+        json.dump({"openq_effect": 1, "effect": effect}, f)
+
+
+def walk(steps, seed):
+    """A random walk that ends where it started (no jump)."""
+    rnd = random.Random(seed)
+    x, points = 0.5, []
+    for _ in range(steps):
+        x = min(1.0, max(0.0, x + rnd.uniform(-0.06, 0.06)))
+        points.append(x)
+    drift = points[-1] - points[0]
+    return [p - drift * k / steps for k, p in enumerate(points)]
+
+
+STEPS, HEADS = 128, 4
+pan = [walk(STEPS, seed=row) for row in range(HEADS)]
+tilt = [walk(STEPS, seed=100 + row) for row in range(HEADS)]
+save_effect("wander.oqfx", "Wander", ["Pan", "Tilt"], STEPS, HEADS,
+            lambda row, step: (pan[row][step], tilt[row][step]),
+            speed=0.05, relative=True, size=0.5, spread=0)</code></pre></li>
+    <li>Ejecútalo: <code>python3 wander.py</code> (<code>py wander.py</code> en Windows). Escribe <code>wander.oqfx</code> en
+    la misma carpeta.</li>
+    <li>En OpenQ, ve a <span class="menu">Iluminación → Efectos</span>, pulsa <span class="ms" aria-hidden="true">&#xe9fc;</span>
+    (<em>Importar archivos de efecto</em>) y elige el archivo. El efecto se añade a la lista; lánzalo en cuatro cabezas.</li>
+  </ol>
+  <p><code>save_effect</code> es la parte que hay que conservar para tus propios efectos:</p>
+  <ul>
+    <li><strong>attributes</strong>: los nombres que guarda OpenQ, en inglés y con mayúsculas: <code>Dimmer</code>,
+    <code>Red</code>, <code>Green</code>, <code>Blue</code>, <code>White</code>, <code>Pan</code>, <code>Tilt</code>,
+    <code>Zoom</code>, <code>Iris</code>, <code>GoboRotation</code>, <code>Extra3</code>…</li>
+    <li><strong>steps</strong>: muestras por ciclo (1 a 4096); <strong>width</strong>: filas del patrón (1 a 512). Como mucho
+    16 atributos y un millón de valores.</li>
+    <li><strong>level(row, step)</strong>: devuelve un nivel de 0 a 1 por atributo, en el mismo orden.</li>
+    <li><strong>smooth</strong>: fundir entre muestras (<code>False</code> mantiene cada una, para persecuciones).</li>
+    <li>El resto son los ajustes del efecto, todos opcionales: <code>speed</code> (Hz), <code>sync</code> (seguir el tempo),
+    <code>size</code> y <code>base</code> (0 a 1), <code>relative</code> (<code>True</code> = alrededor del valor de la cue),
+    <code>spread</code> (grados), <code>groups</code>, <code>wings</code>. Todos se pueden cambiar después en OpenQ.</li>
+  </ul>
+  <div class="note tip"><span class="label">Consejo</span><p>El último paso de un ciclo enlaza directamente con el primero.
+  Haz que coincidan, como hace <code>walk</code>, o el efecto dará un salto en cada ciclo. OpenQ comprueba cada archivo que
+  importa y rechaza los que tienen tamaños o valores incorrectos.</p></div>
 
   <h3><span class="ms" aria-hidden="true">&#xe1c4;</span> Secuencias</h3>
   <p>Una secuencia es una pila de cues. Las cues de iluminación son <strong>de seguimiento</strong> (tracking): una cue solo

@@ -60,6 +60,19 @@ Still open:
   - Related: the Playback window is still an immediate viewport (it slows to the main window's rate when that one is
     hidden). Stage video moved to its own process (done 2026-10-17, see "Video output process").
 
+## Lighting effects without Python (done; follow-ups)
+- Done: custom effects come from effect formulas (`light::formula`): one expression per attribute
+  over the cycle position and pattern row, a fixed list of functions, sliders from `param` lines,
+  several effects per formula, playback settings kept outside it. OpenQ works them out itself (no
+  interpreter or sandbox, no loops, cost capped). Replaced the Python scripts and the `scripting`
+  feature (wasmtime, ~84 crates, the interpreter oqman installed).
+- Formulas can't set the pattern width or step count from a slider (both are fixed in the
+  `effect` line), nor carry state between steps.
+- Done: the user manual ("Effects made in Python", en/es/gl) shows how to write effects in plain
+  Python 3 on your own computer and save them as `.oqfx` files, which OpenQ imports as data.
+- Possible: a small importable Python module (instead of the copy-paste `save_effect`), and an
+  "Open in a text editor"/reload loop for it.
+
 ## Video output process (done: `openq --video-output`, own wgpu renderer, YUV in the shader; follow-ups)
 - Live pictures in the geometry preview (small frames from the video process); it shows posters now.
 - Keep fades in progress (and exact loop positions) when a restarted video process brings layers back.

@@ -73,17 +73,13 @@ Video uses the FFmpeg libraries (the system's on Linux; on Windows and macOS oqm
 LGPL-only build inside the app), plus clang at build time, so anything FFmpeg can play works, with no codec plugins to
 install. Build without video with `--no-default-features`.
 
-**Lighting** is the cargo feature `lighting` (on by default; it turns on `scripting` and
-`fixture-download`). Without it OpenQ is cues only: no Cues/Lighting switch, playback window or Light
+**Lighting** is the cargo feature `lighting` (on by default; it turns on `fixture-download`). Without it OpenQ is cues only: no Cues/Lighting switch, playback window or Light
 cue type; lighting designs in a show still load, are saved back and play (`oqman install --no-lighting`
 builds that way).
 
-**Lighting effect scripts** run in CPython built for WebAssembly inside wasmtime (cargo feature
-`scripting`, on by default): no files besides a read-only standard library, no network or
-processes, capped memory and time. Users get the interpreter from oqman (`python/` next to the
-app); for development run `python3 -I tools/fetch_python_wasi.py`, which puts it in
-`target/python-wasi` (debug builds look there; `OPENQ_PYTHON_WASI=<dir>` points anywhere). Tests
-that need it pass with a note when it's missing.
+**Lighting effect formulas** (`light::formula`) are a small arithmetic language OpenQ works out into
+effect tables itself: no interpreter or sandbox, no loops, and a cost cap checked before a formula runs.
+They are data, kept in shows and `.oqfx` files.
 
 **Fixture downloads** from the Open Fixture Library website use ureq with rustls (cargo feature
 `fixture-download`, on by default; ring needs a C compiler for the target, so the cross-compile checks

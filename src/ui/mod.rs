@@ -2352,7 +2352,7 @@ impl App {
                 }
                 self.light.keypad = page == "keypad";
                 if page == "effects" {
-                    // `OPENQ_SCREENSHOT_EFFECT=<number>` picks the effect (e.g. a script effect).
+                    // `OPENQ_SCREENSHOT_EFFECT=<number>` picks the effect (e.g. a formula effect).
                     let pick = std::env::var("OPENQ_SCREENSHOT_EFFECT").ok().and_then(|n| n.parse::<u32>().ok());
                     let l = &show.ws.lighting;
                     self.light.effect = pick.filter(|id| l.effect(*id).is_some()).or_else(|| l.effects.first().map(|e| e.id));

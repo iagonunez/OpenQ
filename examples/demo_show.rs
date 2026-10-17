@@ -5,7 +5,7 @@
 //! slices with devamps, object audio, animation, several cue lists with a timecode list, stages
 //! with a spanned and edge-blended surface, control surfaces, and a lighting design with custom
 //! fixture types (named ranges, gobo pictures, cells, a second DMX break), presets, effects of
-//! every shape (a scripted one, an audio-reactive one, a tempo-synced one), tracking, cue-only
+//! every shape (a formula one, an audio-reactive one, a tempo-synced one), tracking, cue-only
 //! cues, a blocked cue, feature timing, move in black, DMX outputs and an input.
 //!
 //! `tools/demo_show.sh` downloads the media and runs this as `demo_show <dir>`: it reads
@@ -16,7 +16,7 @@ use openq::animation::{AnimProp, Animation, Ease, Key, Repeat, Track};
 use openq::effects::{AudioEffect, AudioFxKind, VideoEffect, VideoFxKind};
 use openq::light::dmx::{OutputConfig, OutputProtocol, UniverseRoute};
 use openq::light::dmxin::{InputConfig, InputProtocol, MergeMode};
-use openq::light::effects::{AudioReact, Effect, EffectRun, EffectTable, ScriptParam, Shape};
+use openq::light::effects::{AudioReact, Effect, EffectRun, Shape};
 use openq::light::model::{
     LightButton, Look,
     cell_id, Attribute as A, ChannelDef, ChannelRange, DmxAddress, Feature, FeatureTime, Fixture, FixtureId, FixtureMode, FixtureType, Group,
@@ -2489,59 +2489,26 @@ fn gobo_svg(name: &str) -> String {
     format!(r#"<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 100 100"><circle cx="50" cy="50" r="48" fill="black"/><g fill="white">{shapes}</g></svg>"#)
 }
 
-/// The scripted rainbow: its table is generated here exactly as the script would, so it plays
-/// even where the Python sandbox isn't installed (running the script again regenerates it).
+/// The rainbow formula, worked out here as the Effects page would.
 fn rainbow() -> Effect {
-    const SCRIPT: &str = r#"import openq
-
-# A rainbow that runs along the pixel battens: every pattern row is a step further round the
-# colour wheel. "Bands" sets how many rows the pattern has, "Saturation" how pastel it is.
-bands = openq.param("Bands", 8, 2, 16, integer=True)
-sat = openq.param("Saturation", 1.0, 0.0, 1.0)
-fx = openq.effect("Rainbow", attributes=["red", "green", "blue"], steps=64, width=bands)
-fx.fill(lambda t, row, width: openq.hsv(t + row / width, sat))
-fx.speed = 0.25
+    const FORMULA: &str = r#"# A rainbow that runs along the pixel battens: every pattern row is a step further round the
+# colour wheel. "sat" sets how pastel it is.
+param sat 1 0..1
+effect "Rainbow" steps 64 width 8 smooth
+red, green, blue = hsv(t + row / width, sat)
 "#;
-    let (steps, width) = (64u32, 8u32);
-    let mut values = vec![0.0; (steps * width * 3) as usize];
-    for row in 0..width {
-        for step in 0..steps {
-            let rgb = hsv(step as f32 / steps as f32 + row as f32 / width as f32, 1.0, 1.0);
-            for (col, v) in rgb.iter().enumerate() {
-                values[((row as usize * 3 + col) * steps as usize) + step as usize] = *v;
-            }
-        }
-    }
-    let table = EffectTable { attributes: vec![A::Red, A::Green, A::Blue], steps, width, smooth: true, values };
-    table.validate().expect("rainbow table");
+    let out = openq::light::formula::evaluate(FORMULA, &[]).expect("rainbow formula");
+    let table = out.effects[0].1.clone();
     Effect {
         id: FX_RAINBOW,
-        name: "Rainbow (script)".into(),
+        name: "Rainbow (formula)".into(),
         attribute: A::Red,
         shape: Shape::Custom,
         speed: 0.25,
         table: Some(std::sync::Arc::new(table)),
-        params: vec![
-            ScriptParam { name: "Bands".into(), min: 2.0, max: 16.0, value: 8.0, integer: true },
-            ScriptParam { name: "Saturation".into(), min: 0.0, max: 1.0, value: 1.0, integer: false },
-        ],
-        script: SCRIPT.into(),
+        params: out.params,
+        formula: FORMULA.into(),
         ..Default::default()
-    }
-}
-
-fn hsv(h: f32, s: f32, v: f32) -> [f32; 3] {
-    let h = h.rem_euclid(1.0) * 6.0;
-    let i = h.floor();
-    let f = h - i;
-    let (p, q, t) = (v * (1.0 - s), v * (1.0 - s * f), v * (1.0 - s * (1.0 - f)));
-    match i as u32 % 6 {
-        0 => [v, t, p],
-        1 => [q, v, p],
-        2 => [p, v, t],
-        3 => [p, q, v],
-        4 => [t, p, v],
-        _ => [v, p, q],
     }
 }
 

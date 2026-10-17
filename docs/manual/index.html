@@ -294,7 +294,7 @@ echo 'export PATH="$HOME/.local/bin:$PATH"' &gt;&gt; ~/.bashrc   # bash (zsh: ~/
   build cache as well. On Windows you can also remove OpenQ from <em>Settings → Apps → Installed apps</em>. Your shows
   are never touched.</p>
   <p>If you only need cues, <code>oqman install --no-lighting</code> builds OpenQ without the lighting workspace (no
-  Lighting view, Light cues, effect scripts or fixture downloads); the build is smaller and faster. Shows with a lighting
+  Lighting view, Light cues or fixture downloads); the build is smaller and faster. Shows with a lighting
   design still open, keep it and play their Light cues. <code>oqman install --lighting</code> adds it back.</p>
   <p>To run a copy you are working on from source instead:</p>
 <pre><code>cargo run --release                  # start with an empty show
@@ -302,7 +302,7 @@ cargo run --release -- show.openq    # open a saved show</code></pre>
   <p>This manual is built into OpenQ: choose <span class="menu">Help → User manual</span> or press <kbd>F1</kbd>
   to open it in your web browser, in the language of the interface. It works without an internet connection and always matches your version of OpenQ.</p>
   <h3>Your first show</h3>
-  <ol class="steps">
+  <ol>
     <li>Drag audio or video files from your file manager onto the window. Each file becomes a cue.
     You can also use <span class="menu">File → Import media files…</span>.</li>
     <li>Add other cues from the toolbar above the cue list, or press <kbd>Ctrl</kbd>+<kbd>1</kbd>…<kbd>0</kbd>.</li>
@@ -875,15 +875,147 @@ cargo run --release -- show.openq    # open a saved show</code></pre>
   <em>Groups</em> moves several fixtures together and <em>Wings</em> mirrors the pattern. The preview shows the result across
   the fixtures.</p>
   <figure>
-    <img src="img/lighting-effects.webp" width="1100" height="778" alt="Effects page with a custom rainbow effect: settings, preview of red, green and blue across eight fixtures, and its Python script.">
-    <figcaption>A script effect: the script made the colour table, the preview shows it across eight fixtures.</figcaption>
+    <img src="img/lighting-effects.webp" width="1100" height="660" alt="Effects page with a formula effect: settings, preview of red, green and blue across twelve fixtures, and the rainbow formula with its slider.">
+    <figcaption>A formula effect: the formula makes the colour table, the preview shows it across the selected fixtures.</figcaption>
   </figure>
   <p>Run an effect from the programmer (the effects pool, or <code>effect 2</code>), then record it into a cue. It keeps running
   through the following cues until a cue stops it.</p>
-  <p><strong>Script effects</strong> are written in Python with the <code>openq</code> module, for patterns the waveforms
-  can't make. Scripts only make effects: they run in a sandbox with no access to files, the network or other programs, and
-  they never run during the show, only the effect they made does. The Python they need is installed by oqman. Effects can be
-  shared as <code>.oqfx</code> files (<em>Export effect file…</em>, and the import button on the pool).</p>
+  <p>Effects can be shared as <code>.oqfx</code> files: <em>Export effect file…</em> writes one, the
+  <span class="ms" aria-hidden="true">&#xe9fc;</span> button on the effects pool imports them. <em>Save to library</em> puts an
+  effect in your effect library, which every show offers under <em>Library</em>.</p>
+
+  <h4 id="formulas">Formula effects</h4>
+  <p>For patterns the waveforms can't make, write a <strong>formula</strong>. Press
+  <span class="ms" aria-hidden="true">&#xe86f;</span> (<em>New formula effect</em>) on the effects pool, edit the formula on the
+  <em>Formula</em> card and press <em>Run</em> (or Ctrl+Enter). OpenQ works the formula out into a table: for every pattern row
+  and every step of one cycle, it sets the attributes you name. The first fixture plays row 0, the next one row 1 and so on,
+  starting again after the last row. Speed, size, phase spread and the other settings still apply on top. A formula is only
+  arithmetic: it can't open files or loop, and it never runs during the show; only the table it made plays.</p>
+<pre><code># A rainbow running across eight fixtures, with a slider for the saturation.
+param sat 1 0..1
+effect "Rainbow run" steps 64 width 8 smooth
+red, green, blue = hsv(t + row / width, sat)</code></pre>
+  <p>One instruction per line; <code>#</code> starts a comment and capitals don't matter.</p>
+  <div class="table-wrap"><table>
+    <thead><tr><th>Line</th><th>What it does</th></tr></thead>
+    <tbody>
+      <tr><td><code>param sat 1 0..1</code></td><td>A slider on the Formula card: name, starting value, range (0 to 1 if left
+      out). Add <code>int</code> for whole numbers. Sliders go before the first effect; moving one works the formula out again.</td></tr>
+      <tr><td><code>effect "Name" steps 64 width 8 smooth</code></td><td>Starts an effect: samples per cycle (1 to 4096),
+      pattern rows (1 to 512), and <code>smooth</code> to blend between samples (leave it out for chases that snap). A formula
+      can make several effects: the first one is the effect you are editing, the others are added to the pool.</td></tr>
+      <tr><td><code>let k = sine(t)</code></td><td>Keeps a value for the lines below it.</td></tr>
+      <tr><td><code>red, green, blue = …</code></td><td>Sets attributes, each once per effect: <code>dimmer</code>,
+      <code>red</code>, <code>pan</code>, <code>tilt</code>, <code>zoom</code>, <code>gobo_rotation</code>, <code>extra3</code>…
+      Levels go from 0 to 1 (anything outside is clipped).</td></tr>
+    </tbody>
+  </table></div>
+  <p>Values are numbers: <code>t</code> goes from 0 to 1 over the cycle, <code>step</code> counts the steps (from 0),
+  <code>row</code> is the pattern row, <code>steps</code> and <code>width</code> are the effect's sizes, and the sliders and
+  <code>let</code> names. Use <code>+ - * / % ^</code>, brackets, comparisons (<code>&lt; &lt;= == != &gt;= &gt;</code>, which give 1
+  or 0) and <code>and</code>, <code>or</code>, <code>not</code>.</p>
+  <div class="table-wrap"><table>
+    <thead><tr><th>Function</th><th>Result</th></tr></thead>
+    <tbody>
+      <tr><td><code>sine(x)</code>, <code>triangle(x)</code>,<br><code>saw(x)</code>, <code>ramp_down(x)</code></td><td>The waveforms,
+      0 to 1 over one cycle (<code>x</code> in cycles, usually <code>t</code>).</td></tr>
+      <tr><td><code>square(x, duty)</code></td><td>1 for the first <code>duty</code> of the cycle (half if left out), then 0.</td></tr>
+      <tr><td><code>wave(x)</code></td><td>A sine wave from −1 to 1, <code>x</code> in cycles; <code>wave(x + 0.25)</code> is the cosine.</td></tr>
+      <tr><td><code>hsv(hue, saturation, value)</code></td><td>Red, green and blue for a colour (hue in turns of the colour
+      wheel). Gives three values, so it fills three attributes: <code>red, green, blue = hsv(t)</code>.</td></tr>
+      <tr><td><code>pick(i, a, b, c…)</code></td><td>Value number <code>i</code> of the list, from 0 (it wraps round).</td></tr>
+      <tr><td><code>if(condition, a, b)</code></td><td><code>a</code> when the condition isn't 0, else <code>b</code>.</td></tr>
+      <tr><td><code>noise(n, seed)</code></td><td>A fixed random number from 0 to 1 for the whole number <code>n</code> (and
+      <code>seed</code>): the same every time.</td></tr>
+      <tr><td><code>min(a, b…)</code>, <code>max(a, b…)</code></td><td>The smallest or largest value.</td></tr>
+      <tr><td><code>clamp(x, low, high)</code></td><td><code>x</code> kept between <code>low</code> and <code>high</code> (0 and 1 if left out).</td></tr>
+      <tr><td><code>lerp(a, b, k)</code></td><td>From <code>a</code> (<code>k</code> = 0) to <code>b</code> (<code>k</code> = 1).</td></tr>
+      <tr><td><code>smoothstep(x)</code></td><td>0 to 1 with an eased start and end.</td></tr>
+      <tr><td><code>abs</code>, <code>floor</code>, <code>round</code>, <code>frac</code></td><td>Without sign, rounded down,
+      rounded, the part after the point.</td></tr>
+    </tbody>
+  </table></div>
+<pre><code># Every other fixture, swapping on each half of the cycle.
+effect "Odd / even" steps 2 width 2
+dimmer = if(step == row, 1, 0)
+
+# Neighbouring heads swing opposite ways (Mode: Around the cue's value).
+effect "Scissors" steps 64 width 2 smooth
+pan = 0.5 + pick(row, 0.5, -0.5) * wave(t)</code></pre>
+  <p>A mistake shows under the editor with its line and column, and the effect keeps its last table. Shows from OpenQ 0.3
+  with Python script effects still play them; the old script is shown under the Formula card so it can be rewritten as a
+  formula, or in Python as below.</p>
+
+  <h4 id="python-effects">Effects made in Python</h4>
+  <p>Some patterns need a real program: a value that depends on the step before (a random walk, a pattern that grows),
+  loops, or data from elsewhere. Write those in Python on your computer and save them as an effect file. OpenQ imports it
+  like any other <code>.oqfx</code> file, as plain data: nothing runs inside OpenQ. Any Python 3 works, with no extra modules.</p>
+  <ol>
+    <li>Save this as <code>wander.py</code>. It makes four moving heads wander at random and come back to where they started:
+<pre><code>import json
+import random
+
+
+def save_effect(path, name, attributes, steps, width, level,
+                smooth=True, **settings):
+    """Write an OpenQ effect file (.oqfx).
+
+    level(row, step) returns one level (0 to 1) per attribute.
+    """
+    n = len(attributes)
+    values = [0.0] * (n * steps * width)
+    for row in range(width):
+        for step in range(steps):
+            for col, v in enumerate(level(row, step)):
+                at = (row * n + col) * steps + step
+                values[at] = min(1.0, max(0.0, float(v)))
+    table = {"attributes": attributes, "steps": steps,
+             "width": width, "smooth": smooth, "values": values}
+    effect = {"name": name, "shape": "Custom",
+              "attribute": attributes[0], "table": table}
+    effect.update(settings)
+    with open(path, "w", encoding="utf-8") as f:
+        json.dump({"openq_effect": 1, "effect": effect}, f)
+
+
+def walk(steps, seed):
+    """A random walk that ends where it started (no jump)."""
+    rnd = random.Random(seed)
+    x, points = 0.5, []
+    for _ in range(steps):
+        x = min(1.0, max(0.0, x + rnd.uniform(-0.06, 0.06)))
+        points.append(x)
+    drift = points[-1] - points[0]
+    return [p - drift * k / steps for k, p in enumerate(points)]
+
+
+STEPS, HEADS = 128, 4
+pan = [walk(STEPS, seed=row) for row in range(HEADS)]
+tilt = [walk(STEPS, seed=100 + row) for row in range(HEADS)]
+save_effect("wander.oqfx", "Wander", ["Pan", "Tilt"], STEPS, HEADS,
+            lambda row, step: (pan[row][step], tilt[row][step]),
+            speed=0.05, relative=True, size=0.5, spread=0)</code></pre></li>
+    <li>Run it: <code>python3 wander.py</code> (<code>py wander.py</code> on Windows). It writes <code>wander.oqfx</code> in
+    the same folder.</li>
+    <li>In OpenQ, go to <span class="menu">Lighting → Effects</span>, press <span class="ms" aria-hidden="true">&#xe9fc;</span>
+    (<em>Import effect files</em>) and pick the file. The effect joins the pool; run it on four heads.</li>
+  </ol>
+  <p><code>save_effect</code> is the part to keep for your own effects:</p>
+  <ul>
+    <li><strong>attributes</strong>: the names OpenQ stores, with capitals: <code>Dimmer</code>, <code>Red</code>,
+    <code>Green</code>, <code>Blue</code>, <code>White</code>, <code>Pan</code>, <code>Tilt</code>, <code>Zoom</code>,
+    <code>Iris</code>, <code>GoboRotation</code>, <code>Extra3</code>…</li>
+    <li><strong>steps</strong>: samples per cycle (1 to 4096); <strong>width</strong>: pattern rows (1 to 512). At most
+    16 attributes and a million values.</li>
+    <li><strong>level(row, step)</strong>: returns one level from 0 to 1 per attribute, in the same order.</li>
+    <li><strong>smooth</strong>: blend between samples (<code>False</code> holds each one, for chases).</li>
+    <li>The rest are the effect's settings, all optional: <code>speed</code> (Hz), <code>sync</code> (follow the tempo),
+    <code>size</code> and <code>base</code> (0 to 1), <code>relative</code> (<code>True</code> = around the cue's value),
+    <code>spread</code> (degrees), <code>groups</code>, <code>wings</code>. They can all be changed in OpenQ afterwards.</li>
+  </ul>
+  <div class="note tip"><span class="label">Tip</span><p>The last step of a cycle runs straight into the first. Make them meet,
+  as <code>walk</code> does, or the effect jumps once a cycle. OpenQ checks every file it imports and refuses one with wrong
+  sizes or values.</p></div>
 
   <h3><span class="ms" aria-hidden="true">&#xe1c4;</span> Sequences</h3>
   <p>A sequence is a cue stack. Lighting cues <strong>track</strong>: a cue stores only what changes, and everything else
@@ -961,7 +1093,7 @@ cargo run --release -- show.openq    # open a saved show</code></pre>
   or a tablet at the tech table. The computer running the show is the <strong>main device</strong>, and it does all the playback.
   The other device shows its cue list, playhead, running cues and meters, and sends GO and other commands to it.</p>
   <h3>Pairing a device</h3>
-  <ol class="steps">
+  <ol>
     <li>On the main device, open <span class="menu">Remote → Share this OpenQ</span>, tick
     <em>Let paired devices connect</em>, and click <em>Pair a new device…</em>. A code such as <code>C9XR-E9HJ</code> appears.</li>
     <li>On the other device, open <span class="menu">Remote → Connect to another OpenQ</span>, click <em>Search</em> and choose the

@@ -11,7 +11,7 @@ use crate::light::model::{
     fixture_label, Attribute, Feature, FixtureId, FixtureType, Group, LightCue, LightCueId, Lighting, Look, PatchIssue, PlotShape, Preset, PresetId, ShapeKind, Sequence, SequenceId, Value,
 };
 use crate::light::effects::{Effect, EffectId, EffectRun, EffectTable, Shape};
-use crate::light::script::{Python, Request, ScriptRun};
+use crate::light::formula;
 use crate::light::Fixture;
 use crate::show::Show;
 use egui::{Color32, DragValue, RichText, Ui};
@@ -186,14 +186,12 @@ pub(crate) struct LightUi {
     plan_drag: Option<PlanDrag>,
     /// Where the Plan view drew each shape's label last frame (shape, screen rect): to drag them.
     plan_labels: Vec<(u32, egui::Rect)>,
-    /// Effect scripts: the sandbox host (started when an effect script is first shown).
-    python: Option<Python>,
-    /// Script being edited: (effect, text); written into the effect when run or left.
-    script_buf: Option<(EffectId, String)>,
-    /// Script running for an effect (true: a new effect, which takes the script's settings too).
-    script_run: Option<(EffectId, ScriptRun, bool)>,
-    /// Last run of an effect's script: (effect, what it printed, error).
-    script_out: Option<(EffectId, String, Option<String>)>,
+    /// Formula being edited: (effect, text); written into the effect when run or left.
+    formula_buf: Option<(EffectId, String)>,
+    /// Formula being worked out for an effect (true: a new effect, which takes the formula's name).
+    formula_run: Option<(EffectId, formula::Run, bool)>,
+    /// Last run of an effect's formula: (effect, error).
+    formula_out: Option<(EffectId, Option<String>)>,
     /// The effect library (opened the first time the Effects page is shown) and its contents.
     fx_lib: Option<crate::light::fxfile::EffectLibrary>,
     fx_snap: std::sync::Arc<crate::light::folder::Snapshot<crate::light::fxfile::LibraryEffect>>,
@@ -1713,98 +1711,68 @@ fn plan_view(ui: &mut Ui, light: &mut LightUi, l: &mut Lighting, issues: &[Patch
     }
 }
 
-/// Run `code` for effect `e` in the sandbox (the code is stored in the effect first).
-fn start_script(light: &mut LightUi, e: &mut Effect, code: String, fresh: bool) {
-    e.script = code.clone();
-    light.script_buf = Some((e.id, code.clone()));
-    let python = light.python.get_or_insert_with(Python::default);
-    let name = if e.name.is_empty() { format!("effect {}", e.id) } else { e.name.clone() };
-    let params = e.params.iter().map(|p| (p.name.clone(), p.value)).collect();
-    light.script_run = Some((e.id, python.run(Request { params, ..Request::new(&name, &code) }), fresh));
-    light.script_out = None;
+/// Work `code` out for effect `e` on the formula thread (the code is stored in the effect first).
+fn start_formula(light: &mut LightUi, e: &mut Effect, code: String, fresh: bool) {
+    e.formula = code.clone();
+    light.formula_buf = Some((e.id, code.clone()));
+    light.formula_run = Some((e.id, formula::Run::start(code, e.params.clone()), fresh));
+    light.formula_out = None;
 }
 
-/// Take a finished script run into the design: the first effect it made replaces the table of
-/// the effect it belongs to (a new effect also takes its name and settings), further effects
-/// are added to the pool.
-fn poll_script(light: &mut LightUi, l: &mut Lighting) {
-    let Some((id, run, fresh)) = &light.script_run else { return };
-    let Some(f) = run.poll() else { return };
+/// Take a finished formula into the design: its first effect replaces the table and sliders of
+/// the effect it belongs to (a new effect also takes its name), further effects are added to the
+/// pool. Playback settings (speed, size, spread…) stay the effect's own.
+fn poll_formula(light: &mut LightUi, l: &mut Lighting) {
+    let Some((id, run, fresh)) = &light.formula_run else { return };
+    let Some(result) = run.poll() else { return };
     let (id, fresh) = (*id, *fresh);
-    light.script_run = None;
-    let err = match f.result {
-        Ok(made) if made.is_empty() => Some(t("The script made no effects: openq.effect(…) creates one.").to_string()),
-        Ok(made) => {
-            let mut made = made.into_iter();
-            if let (Some(first), Some(e)) = (made.next(), l.effects.iter_mut().find(|e| e.id == id)) {
-                if fresh {
-                    *e = Effect { id, ..first };
-                } else {
-                    e.shape = Shape::Custom;
-                    e.attribute = first.attribute;
-                    e.table = first.table;
-                    e.params = first.params;
-                    if e.name.is_empty() {
-                        e.name = first.name;
-                    }
+    light.formula_run = None;
+    let err = match result {
+        Ok(out) => {
+            let mut made = out.effects.into_iter();
+            if let (Some((name, table)), Some(e)) = (made.next(), l.effects.iter_mut().find(|e| e.id == id)) {
+                e.shape = Shape::Custom;
+                e.attribute = table.attributes[0];
+                e.table = Some(table.into());
+                e.params = out.params;
+                if fresh || e.name.is_empty() {
+                    e.name = name;
                 }
             }
-            for extra in made {
+            for (name, table) in made {
                 let nid = l.effects.iter().map(|e| e.id).max().unwrap_or(0) + 1;
-                l.effects.push(Effect { id: nid, ..extra });
+                l.effects.push(Effect { id: nid, name, shape: Shape::Custom, attribute: table.attributes[0], table: Some(table.into()), ..Default::default() });
             }
             None
         }
         Err(e) => Some(e.to_string()),
     };
-    light.script_out = Some((id, f.output, err));
+    light.formula_out = Some((id, err));
 }
 
-/// The script of a custom effect: editor, Run/Stop and what the last run printed.
-fn script_card(ui: &mut Ui, light: &mut LightUi, e: &mut Effect) {
-    ui.horizontal(|ui| {
-        theme::card_header(ui, icons::CODE, t("Script"));
-    });
-    ui.label(RichText::new(t("Python, run in a sandbox: no files, network or other programs.")).small().color(theme::TEXT_DIM));
+/// The formula of a custom effect: sliders, editor, Run and the result of the last run.
+fn formula_card(ui: &mut Ui, light: &mut LightUi, e: &mut Effect) {
+    theme::card_header(ui, icons::CODE, t("Formula"));
+    ui.label(RichText::new(t("One line per attribute, worked out over one cycle for each pattern row. The User manual lists what you can write.")).small().color(theme::TEXT_DIM));
     ui.add_space(4.0);
-    // Starting the host now loads (and the first time compiles) the interpreter in the background.
-    let python = light.python.get_or_insert_with(|| {
-        let p = Python::default();
-        p.prepare();
-        p
-    });
-    match python.status() {
-        crate::light::script::Status::Missing => {
-            ui.label(RichText::new(theme::with_icon(icons::WARNING, &crate::light::script::ScriptError::NotInstalled.to_string())).color(theme::AMBER));
-        }
-        crate::light::script::Status::Broken => {
-            ui.label(RichText::new(theme::with_icon(icons::WARNING, t("Python for effect scripts is installed but doesn't load; see the error log."))).color(theme::AMBER));
-        }
-        _ => {}
+    if light.formula_buf.as_ref().is_none_or(|(id, _)| *id != e.id) {
+        light.formula_buf = Some((e.id, e.formula.clone()));
     }
-    if light.script_buf.as_ref().is_none_or(|(id, _)| *id != e.id) {
-        light.script_buf = Some((e.id, e.script.clone()));
-    }
-    let running = light.script_run.as_ref().is_some_and(|r| r.0 == e.id);
+    let running = light.formula_run.as_ref().is_some_and(|r| r.0 == e.id);
     let mut run = false;
     ui.horizontal(|ui| {
         if running {
             ui.spinner();
-            if ui.button(theme::with_icon(icons::STOP, t("Stop"))).clicked()
-                && let Some((_, r, _)) = &light.script_run
-            {
-                r.cancel();
-            }
         } else {
             run = ui.button(theme::with_icon(icons::PLAY_ARROW, t("Run"))).on_hover_text(t("Ctrl+Enter in the editor")).clicked();
         }
     });
-    // The script's settings: a change runs it again (once the slider is let go).
+    // The formula's sliders: a change works it out again (once the slider is let go).
     let mut rerun = false;
     if !e.params.is_empty() {
-        egui::Grid::new(("script_params", e.id)).num_columns(2).spacing([12.0, 4.0]).show(ui, |ui| {
+        egui::Grid::new(("formula_params", e.id)).num_columns(2).spacing([12.0, 4.0]).show(ui, |ui| {
             for p in &mut e.params {
-                ui.label(&p.name);
+                ui.label(p.name.replace('_', " "));
                 let mut s = egui::Slider::new(&mut p.value, p.min..=p.max).clamping(egui::SliderClamping::Always);
                 if p.integer {
                     s = s.integer();
@@ -1818,8 +1786,8 @@ fn script_card(ui: &mut Ui, light: &mut LightUi, e: &mut Effect) {
     if rerun && !running {
         run = true;
     }
-    let (_, buf) = light.script_buf.as_mut().expect("set");
-    // Python syntax colours (the layout job is rebuilt per frame only while the editor is drawn).
+    let (_, buf) = light.formula_buf.as_mut().expect("set");
+    // Syntax colours (the layout job is rebuilt per frame only while the editor is drawn).
     let mut layouter = |ui: &Ui, text: &dyn egui::TextBuffer, wrap: f32| {
         ui.fonts_mut(|f| f.layout_job(super::code::highlight(text.as_str(), theme::mono(13.0), wrap)))
     };
@@ -1829,7 +1797,7 @@ fn script_card(ui: &mut Ui, light: &mut LightUi, e: &mut Effect) {
                 .code_editor()
                 .frame(egui::Frame::NONE)
                 .font(theme::mono(13.0))
-                .desired_rows(20)
+                .desired_rows(12)
                 .desired_width(ui.available_width())
                 .lock_focus(true)
                 .layouter(&mut layouter),
@@ -1838,21 +1806,32 @@ fn script_card(ui: &mut Ui, light: &mut LightUi, e: &mut Effect) {
     if r.has_focus() && ui.input(|i| i.modifiers.command && i.key_pressed(egui::Key::Enter)) {
         run = !running;
     }
-    if r.lost_focus() && *buf != e.script {
-        e.script = buf.clone();
+    if r.lost_focus() && *buf != e.formula {
+        e.formula = buf.clone();
     }
     if run {
         let code = buf.clone();
-        start_script(light, e, code, false);
+        start_formula(light, e, code, false);
     }
-    if let Some((_, output, err)) = light.script_out.as_ref().filter(|o| o.0 == e.id) {
-        if !output.is_empty() {
-            ui.add(egui::Label::new(RichText::new(output.trim_end()).font(theme::mono(12.0)).color(theme::TEXT_DIM)).wrap());
-        }
+    if let Some((_, err)) = light.formula_out.as_ref().filter(|o| o.0 == e.id) {
         match err {
             Some(err) => ui.label(RichText::new(theme::with_icon(icons::ERROR, err)).color(theme::RED)),
             None => ui.label(RichText::new(theme::with_icon(icons::CHECK_CIRCLE, t("Effect generated."))).color(theme::GREEN)),
         };
+    }
+    // A Python script from OpenQ 0.3: shown so it can be rewritten as a formula, never run.
+    if !e.script.is_empty() {
+        ui.add_space(6.0);
+        let mut remove = false;
+        egui::CollapsingHeader::new(t("Python script from an older version (no longer run)")).id_salt(("old_script", e.id)).show(ui, |ui| {
+            ui.label(RichText::new(t("Rewrite it as a formula above; the table it made still plays.")).small().color(theme::TEXT_DIM));
+            let mut text = e.script.as_str();
+            ui.add(egui::TextEdit::multiline(&mut text).code_editor().font(theme::mono(12.0)).desired_width(ui.available_width()).desired_rows(6));
+            remove = ui.button(theme::with_icon(icons::DELETE, t("Remove the old script"))).clicked();
+        });
+        if remove {
+            e.script.clear();
+        }
     }
 }
 
@@ -2214,7 +2193,7 @@ impl App {
     /// The effects pool and the editor of the chosen effect, with a live preview.
     fn effects_page(&mut self, ui: &mut Ui, l: &mut Lighting) {
         ui.ctx().request_repaint_after(std::time::Duration::from_millis(33));
-        poll_script(&mut self.light, l);
+        poll_formula(&mut self.light, l);
         let lib = self.light.fx_lib.get_or_insert_with(Default::default).clone();
         if let Some(s) = lib.snapshot_if_newer(self.light.fx_snap.generation) {
             self.light.fx_snap = s;
@@ -2253,13 +2232,13 @@ impl App {
                         l.effects.push(Effect { id, ..Default::default() });
                         self.light.effect = Some(id);
                     }
-                    if ui.small_button(icons::CODE).on_hover_text(t("New script effect")).clicked() {
+                    if ui.small_button(icons::CODE).on_hover_text(t("New formula effect")).clicked() {
                         let id = l.effects.iter().map(|e| e.id).max().unwrap_or(0) + 1;
                         let placeholder = EffectTable { attributes: vec![Attribute::Dimmer], steps: 1, width: 1, smooth: false, values: vec![0.0] };
                         l.effects.push(Effect { id, shape: Shape::Custom, table: Some(placeholder.into()), ..Default::default() });
                         self.light.effect = Some(id);
                         let e = l.effects.last_mut().expect("pushed");
-                        start_script(&mut self.light, e, crate::light::script::EXAMPLE.to_string(), true);
+                        start_formula(&mut self.light, e, formula::EXAMPLE.to_string(), true);
                     }
                     if ui.small_button(icons::UPLOAD_FILE).on_hover_text(t("Import effect files")).clicked() {
                         self.deferred.push(super::Deferred::ImportEffects);
@@ -2309,7 +2288,7 @@ impl App {
                     return;
                 };
                 // Settings and, to their right, the preview (under them on a narrow window); the
-                // script of a script effect in a card across the bottom.
+                // formula of a custom effect in a card across the bottom.
                 let total = ui.available_width();
                 let side = total >= 800.0;
                 let settings_w = if side { 440.0 } else { total };
@@ -2388,7 +2367,7 @@ impl App {
                     ui.add_space(10.0);
                     theme::card_frame().show(ui, |ui| {
                         ui.set_width(total - 26.0 - 12.0);
-                        script_card(ui, &mut self.light, e);
+                        formula_card(ui, &mut self.light, e);
                     });
                 }
             }));
@@ -4178,30 +4157,32 @@ fn add_fixtures(l: &mut Lighting, ty: &FixtureType, form: &mut AddForm) -> u32 {
 mod tests {
     use super::*;
 
-    /// A script run lands in the effect it belongs to; extra effects join the pool.
+    /// A formula's first effect lands in the effect it belongs to; extra effects join the pool.
     #[test]
-    fn script_results_apply_to_the_effect() {
-        let Some(rt) = crate::light::script::find_runtime().filter(|_| cfg!(feature = "scripting")) else {
-            eprintln!("no sandboxed Python: skipped");
-            return;
-        };
-        let mut light = LightUi { python: Some(Python::new(Some(rt))), ..Default::default() };
+    fn formula_results_apply_to_the_effect() {
+        let mut light = LightUi::default();
         let mut l = Lighting::default();
         l.effects.push(Effect { id: 4, name: "Mine".into(), speed: 2.0, ..Default::default() });
-        let code = "import openq\nopenq.effect('A', 'dimmer', steps=2).fill(lambda t, r, w: t)\nopenq.effect('B', 'red', steps=3).speed = 3";
-        start_script(&mut light, &mut l.effects[0], code.into(), false);
-        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(30);
-        while light.script_run.is_some() && std::time::Instant::now() < deadline {
-            poll_script(&mut light, &mut l);
-            std::thread::sleep(std::time::Duration::from_millis(5));
+        let code = "param depth 0.5\neffect \"A\" steps 2 width 1\ndimmer = t * depth * 2\neffect \"B\" steps 3 width 1\nred = 1";
+        start_formula(&mut light, &mut l.effects[0], code.into(), false);
+        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(10);
+        while light.formula_run.is_some() && std::time::Instant::now() < deadline {
+            poll_formula(&mut light, &mut l);
+            std::thread::sleep(std::time::Duration::from_millis(2));
         }
-        let (id, _, err) = light.script_out.clone().unwrap();
-        assert_eq!((id, err), (4, None));
+        assert_eq!(light.formula_out.clone().unwrap(), (4, None));
         let e = &l.effects[0];
         assert_eq!((e.name.as_str(), e.speed, e.shape), ("Mine", 2.0, Shape::Custom), "an existing effect keeps its name and settings");
         assert_eq!(e.table.as_ref().unwrap().values, [0.0, 0.5]);
-        assert_eq!(e.script, code);
-        assert_eq!((l.effects[1].id, l.effects[1].name.as_str(), l.effects[1].speed), (5, "B", 3.0));
+        assert_eq!((e.formula.as_str(), e.params.len()), (code, 1));
+        assert_eq!((l.effects[1].id, l.effects[1].name.as_str(), l.effects[1].attribute), (5, "B", Attribute::Red));
+        // A mistake is reported and leaves the table alone.
+        start_formula(&mut light, &mut l.effects[0], "effect \"A\" steps 2 width 1\ndimmer = nope".into(), false);
+        while light.formula_run.is_some() {
+            poll_formula(&mut light, &mut l);
+        }
+        assert!(light.formula_out.clone().unwrap().1.unwrap().contains("nope"));
+        assert_eq!(l.effects[0].table.as_ref().unwrap().values, [0.0, 0.5]);
     }
 
     #[test]

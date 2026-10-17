@@ -46,9 +46,6 @@ serialport = { version = "4.10.1", default-features = false }
 symphonia = { version = "0.6.1", features = ["all"] }
 uuid = { version = "1.28.0", features = ["v4", "serde"] }
 cosmic-text = "0.19.0"
-# Lighting effect scripts: CPython built for WASI runs inside this sandbox (no files, network or processes).
-wasmtime = { version = "47.0.4", default-features = false, features = ["anyhow", "cranelift", "runtime", "std", "parallel-compilation"], optional = true }
-wasmtime-wasi = { version = "47.0.4", default-features = false, features = ["p1"], optional = true }
 resvg = { version = "0.48.1", default-features = false, features = ["text", "system-fonts", "memmap-fonts", "svgz", "raster-images"] }
 # Fixture search and download from the Open Fixture Library website (HTTPS, rustls).
 ureq = { version = "3.4.2", default-features = false, features = ["rustls", "gzip"], optional = true }
@@ -66,15 +63,13 @@ winresource = "0.1"
 
 [features]
 default = ["video", "pipewire", "lighting"]
-# The lighting workspace (Lighting view, Light cues, playback window) with effect scripts and fixture
-# downloads. Without it OpenQ is cues only; lighting designs in a show are kept and still play.
-lighting = ["scripting", "fixture-download"]
+# The lighting workspace (Lighting view, Light cues, playback window) with fixture downloads. Without it
+# OpenQ is cues only; lighting designs in a show are kept and still play.
+lighting = ["fixture-download"]
 video = ["dep:ffmpeg-next"]
 # Linux: talk to PipeWire directly (every sink/source listed by name, no ALSA device busy errors).
 # Needs the libpipewire-0.3 headers; without it (or without a running PipeWire) ALSA is used.
 pipewire = ["cpal/pipewire"]
-# Python effect scripts in a WebAssembly sandbox (wasmtime); the interpreter itself is installed by oqman.
-scripting = ["dep:wasmtime", "dep:wasmtime-wasi"]
 # Search and download fixtures from the Open Fixture Library website (HTTPS; rustls/ring need a C compiler).
 fixture-download = ["dep:ureq"]
 # Lets the stress tests make chosen code paths panic on purpose (see `recovery::Fault`).

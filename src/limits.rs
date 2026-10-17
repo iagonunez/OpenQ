@@ -474,7 +474,7 @@ pub fn lighting(l: &mut Lighting) {
     fade(&mut l.release_fade);
 }
 
-/// Bring an effect into range (speed, depth, phase, groups, audio reaction, script values). A
+/// Bring an effect into range (speed, depth, phase, groups, audio reaction, formula sliders). A
 /// custom table that doesn't check out is dropped (the effect falls back to a sine).
 pub fn effect(e: &mut crate::light::effects::Effect) {
     use crate::light::effects::Shape;

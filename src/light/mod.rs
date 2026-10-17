@@ -15,7 +15,7 @@
 //! * [`patch`] — design deltas ([`patch::LightingPatch`]) sent between remote devices.
 //! * [`playback`] — the compiled show and the playback state machine (fades, HTP/LTP, masters).
 //! * [`engine`] — the light thread ([`engine::LightEngine`]): playback at 44 Hz into the outputs.
-//! * [`script`] — Python effect scripts in a WebAssembly sandbox (the `openq` module).
+//! * [`formula`] — effect formulas: the small language custom effect tables are written in.
 //! * [`fxfile`] — effect files (`.oqfx`) for sharing effects.
 //! * [`dmx`] — DMX frames and output threads; protocols in [`artnet`], [`sacn`], [`enttec`].
 //! * [`dmxin`] — Art-Net/sACN input: merged into the output or captured into the programmer.
@@ -47,8 +47,8 @@ pub mod place;
 pub mod plot;
 pub mod playback;
 pub mod sacn;
+pub mod formula;
 pub mod fxfile;
-pub mod script;
 pub mod zipread;
 
 pub use model::{Attribute, Feature, Fixture, FixtureType, Lighting, Look, LightCue, Sequence};

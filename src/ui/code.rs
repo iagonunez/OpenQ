@@ -1,8 +1,9 @@
-//! Python syntax highlighting for the effect script editor: a small tokenizer (no parser, no
-//! extra dependency) that colours keywords, built-ins, the `openq` module, strings, numbers,
-//! comments, decorators and the names after `def`/`class`, laid out as one egui `LayoutJob`.
+//! Syntax highlighting for the effect formula editor ([`crate::light::formula`]): a small tokenizer
+//! that colours keywords, functions and variables, attribute names, texts, numbers and comments,
+//! laid out as one egui `LayoutJob`.
 
 use super::theme;
+use crate::light::formula;
 use egui::text::{LayoutJob, TextFormat};
 use egui::{Color32, FontId};
 
@@ -11,27 +12,17 @@ use egui::{Color32, FontId};
 pub(crate) enum Kind {
     Plain,
     Keyword,
+    /// Functions and the built-in variables.
     Builtin,
-    /// `openq` and what follows `openq.`.
-    Api,
+    /// Attribute names.
+    Attribute,
     Str,
     Number,
     Comment,
-    Decorator,
-    /// The name being defined after `def` / `class`.
-    Definition,
 }
 
-const KEYWORDS: &[&str] = &[
-    "False", "None", "True", "and", "as", "assert", "async", "await", "break", "class", "continue", "def", "del", "elif", "else", "except",
-    "finally", "for", "from", "global", "if", "import", "in", "is", "lambda", "match", "case", "nonlocal", "not", "or", "pass", "raise",
-    "return", "try", "while", "with", "yield",
-];
-
-const BUILTINS: &[&str] = &[
-    "abs", "all", "any", "bool", "dict", "divmod", "enumerate", "filter", "float", "int", "len", "list", "map", "max", "min", "pow",
-    "print", "range", "reversed", "round", "set", "sorted", "str", "sum", "tuple", "zip", "math", "random", "self",
-];
+const KEYWORDS: &[&str] = &["effect", "smooth", "param", "int", "let", "and", "or", "not"];
+const VARIABLES: &[&str] = &["t", "step", "steps", "row", "width", "hsv"];
 
 /// Split `src` into (byte range, kind) spans covering all of it.
 pub(crate) fn tokens(src: &str) -> Vec<(std::ops::Range<usize>, Kind)> {
@@ -48,9 +39,6 @@ pub(crate) fn tokens(src: &str) -> Vec<(std::ops::Range<usize>, Kind)> {
         }
     };
     let mut i = 0;
-    // The previous word, for `def name` and `openq.name`.
-    let mut prev_word: &str = "";
-    let mut after_dot_of_api = false;
     while i < b.len() {
         let c = b[i];
         let start = i;
@@ -61,79 +49,54 @@ pub(crate) fn tokens(src: &str) -> Vec<(std::ops::Range<usize>, Kind)> {
             push(start..i, Kind::Comment);
             continue;
         }
-        if c == b'\'' || c == b'"' {
-            let triple = b.len() >= i + 3 && b[i + 1] == c && b[i + 2] == c;
-            i += if triple { 3 } else { 1 };
-            while i < b.len() {
-                if b[i] == b'\\' {
-                    i += 2;
-                    continue;
-                }
-                if triple {
-                    if b.len() >= i + 3 && b[i] == c && b[i + 1] == c && b[i + 2] == c {
-                        i += 3;
-                        break;
-                    }
-                } else if b[i] == c || b[i] == b'\n' {
-                    i += 1;
-                    break;
-                }
-                i += 1;
-            }
-            i = i.min(b.len());
-            push(start..i, Kind::Str);
-            prev_word = "";
-            continue;
-        }
-        if c == b'@' && src[..i].rsplit('\n').next().is_some_and(|line| line.trim().is_empty()) {
+        if c == b'"' {
             i += 1;
-            while i < b.len() && (b[i].is_ascii_alphanumeric() || b[i] == b'_' || b[i] == b'.') {
+            while i < b.len() && b[i] != b'"' && b[i] != b'\n' {
                 i += 1;
             }
-            push(start..i, Kind::Decorator);
+            if i < b.len() && b[i] == b'"' {
+                i += 1;
+            }
+            push(start..i, Kind::Str);
             continue;
         }
         if c.is_ascii_digit() || (c == b'.' && b.get(i + 1).is_some_and(|d| d.is_ascii_digit())) {
-            while i < b.len() && (b[i].is_ascii_alphanumeric() || b[i] == b'.' || b[i] == b'_') {
+            while i < b.len() && b[i].is_ascii_digit() {
                 i += 1;
+            }
+            if i + 1 < b.len() && b[i] == b'.' && b[i + 1].is_ascii_digit() {
+                i += 1;
+                while i < b.len() && b[i].is_ascii_digit() {
+                    i += 1;
+                }
             }
             push(start..i, Kind::Number);
-            prev_word = "";
             continue;
         }
-        if c.is_ascii_alphabetic() || c == b'_' || c >= 0x80 {
-            while i < b.len() && (b[i].is_ascii_alphanumeric() || b[i] == b'_' || b[i] >= 0x80) {
+        if c.is_ascii_alphabetic() || c == b'_' {
+            while i < b.len() && (b[i].is_ascii_alphanumeric() || b[i] == b'_') {
                 i += 1;
             }
-            let word = &src[start..i];
-            let kind = if prev_word == "def" || prev_word == "class" {
-                Kind::Definition
-            } else if after_dot_of_api || word == "openq" {
-                Kind::Api
-            } else if KEYWORDS.contains(&word) {
+            let word = src[start..i].to_ascii_lowercase();
+            // `effect` heads an effect only with its name in quotes; otherwise it's the attribute.
+            let header = word == "effect" && src[i..].trim_start().starts_with('"');
+            // `steps` and `width` are keywords on an effect line, variables elsewhere.
+            let on_effect_line = src[..start].rsplit('\n').next().is_some_and(|l| l.trim_start().to_ascii_lowercase().starts_with("effect") && l.contains('"'));
+            let size_word = (word == "steps" || word == "width") && on_effect_line;
+            let kind = if (KEYWORDS.contains(&word.as_str()) && word != "effect") || header || size_word {
                 Kind::Keyword
-            } else if BUILTINS.contains(&word) {
+            } else if VARIABLES.contains(&word.as_str()) || formula::Func::ALL.iter().any(|f| f.0 == word) {
                 Kind::Builtin
+            } else if formula::attribute(&word).is_some() {
+                Kind::Attribute
             } else {
                 Kind::Plain
             };
-            after_dot_of_api = false;
-            if word == "openq" && b.get(i) == Some(&b'.') {
-                after_dot_of_api = true;
-            }
-            prev_word = word;
             push(start..i, kind);
             continue;
         }
         // Anything else: one character (UTF-8 safe).
-        let len = src[i..].chars().next().map_or(1, char::len_utf8);
-        i += len;
-        if c != b'.' && !c.is_ascii_whitespace() {
-            after_dot_of_api = false;
-        }
-        if !c.is_ascii_whitespace() {
-            prev_word = "";
-        }
+        i += src[i..].chars().next().map_or(1, char::len_utf8);
         push(start..i, Kind::Plain);
     }
     out
@@ -144,12 +107,10 @@ fn colour(k: Kind) -> Color32 {
         Kind::Plain => theme::TEXT,
         Kind::Keyword => Color32::from_rgb(0xc5, 0x86, 0xf0),
         Kind::Builtin => Color32::from_rgb(0x5c, 0xc8, 0xd8),
-        Kind::Api => Color32::from_rgb(0x6c, 0xa8, 0xff),
+        Kind::Attribute => Color32::from_rgb(0x6c, 0xa8, 0xff),
         Kind::Str => Color32::from_rgb(0x9c, 0xd0, 0x7a),
         Kind::Number => Color32::from_rgb(0xf0, 0xa8, 0x60),
         Kind::Comment => Color32::from_gray(0x78),
-        Kind::Decorator => Color32::from_rgb(0xe8, 0xc0, 0x5a),
-        Kind::Definition => Color32::from_rgb(0xf0, 0xd8, 0x7a),
     }
 }
 
@@ -176,22 +137,23 @@ mod tests {
     }
 
     #[test]
-    fn python_tokens() {
-        let src = "import openq  # the API\ndef wave(n):\n    return openq.effect(\"Wave\", steps=16, x=0.5)\n";
+    fn formula_tokens() {
+        let src = "param lit 2 1..8 int  # the API\neffect \"Wave\" steps 16 width 2 smooth\nlet k = sine(t + row / width)\nred, effect = hsv(k), 0.5";
         let k = kinds(src);
-        assert!(k.contains(&("import", Kind::Keyword)));
-        assert!(k.contains(&("openq", Kind::Api)));
-        assert!(k.contains(&("effect", Kind::Api)));
+        for want in [("param", Kind::Keyword), ("int", Kind::Keyword), ("effect", Kind::Keyword), ("smooth", Kind::Keyword), ("let", Kind::Keyword)] {
+            assert!(k.contains(&want), "{want:?}");
+        }
         assert!(k.contains(&("# the API", Kind::Comment)));
-        assert!(k.contains(&("wave", Kind::Definition)));
         assert!(k.contains(&("\"Wave\"", Kind::Str)));
-        assert!(k.contains(&("16", Kind::Number)) && k.contains(&("0.5", Kind::Number)));
-        assert!(k.contains(&("return", Kind::Keyword)));
+        assert!(k.contains(&("16", Kind::Number)) && k.contains(&("0.5", Kind::Number)) && k.contains(&("1", Kind::Number)));
+        assert!(k.contains(&("sine", Kind::Builtin)) && k.contains(&("t", Kind::Builtin)) && k.contains(&("hsv", Kind::Builtin)));
+        assert!(k.contains(&("steps", Kind::Keyword)) && k.contains(&("width", Kind::Keyword)) && k.contains(&("width", Kind::Builtin)));
+        assert!(k.contains(&("red", Kind::Attribute)) && k.contains(&("effect", Kind::Attribute)), "effect without a name is the attribute");
     }
 
     #[test]
     fn spans_cover_everything() {
-        for src in ["s = '''a\n'b'\n''' + \"x\\\"y\" # c", "@deco\nclass A: pass", "ñ = 'unterminated", "x = 1e-3 + .5", ""] {
+        for src in ["red = \"unterminated\n1 + .5 # c", "ñ = 1..2", "x", ""] {
             let t = tokens(src);
             let mut at = 0;
             for (r, _) in &t {
@@ -200,7 +162,5 @@ mod tests {
             }
             assert_eq!(at, src.len(), "{src:?}");
         }
-        assert_eq!(kinds("s = '''a\n'b'\n'''"), vec![("'''a\n'b'\n'''", Kind::Str)]);
-        assert_eq!(kinds("@deco\nx")[0], ("@deco", Kind::Decorator));
     }
 }
