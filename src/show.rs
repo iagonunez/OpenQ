@@ -38,6 +38,16 @@ pub struct Show {
     /// Set when the engine recovered from an internal error (the UI tells the user, the
     /// autosave writes a fresh copy); cleared by whoever handles it.
     pub recovered: Option<String>,
+    /// Lighting design (and replica flag) last handed to the light thread.
+    light_loaded: Option<(crate::light::Lighting, bool)>,
+    /// The programmer's fixture selection, shared with remote devices (a visualiser shows it and
+    /// may set it). The UI keeps its own copy in step.
+    pub light_selection: Vec<crate::light::model::FixtureId>,
+    /// Bumped when a remote device sets [`Show::light_selection`] (the UI then takes it).
+    pub light_selection_gen: u64,
+    /// Network settings changes from replicas waiting for the operator to allow or deny them
+    /// ([`crate::remote::netguard`]), oldest first.
+    pub network_requests: Vec<crate::remote::netguard::NetworkRequest>,
 }
 
 /// How well the engine thread is keeping time.
@@ -78,6 +88,10 @@ impl Show {
             tc_last: Default::default(),
             stats: TickStats::default(),
             recovered: None,
+            light_loaded: None,
+            light_selection: Vec::new(),
+            light_selection_gen: 0,
+            network_requests: Vec::new(),
         }
     }
 
@@ -176,6 +190,31 @@ impl Show {
         self.edit_gen += 1;
         self.engine.workspace_changed();
         self.media.set_room(&self.ws.settings.speakers);
+        self.sync_lighting();
+    }
+
+    /// Recompile the lighting design for the light thread if it (or the replica flag) changed.
+    /// A replica plays nothing (it mirrors the main device's states and output), so it loads
+    /// an empty design once: no compile, no DMX outputs or inputs. The kept copy shares the
+    /// fixture and cue lists ([`crate::light::model::Shared`]), so when the edit was elsewhere the
+    /// compare is a few pointer checks rather than a walk over the whole design.
+    pub fn sync_lighting(&mut self) {
+        if self.light_loaded.as_ref().is_some_and(|(l, r)| *r == self.replica && *l == self.ws.lighting) {
+            return;
+        }
+        let was = self.light_loaded.as_ref().map(|(_, r)| *r);
+        // Edits playback doesn't read (fixture positions, plot shapes, names...) don't recompile.
+        let compile = !self.light_loaded.as_ref().is_some_and(|(l, r)| *r == self.replica && crate::light::playback::LightShow::same_input(l, &self.ws.lighting));
+        let light = &mut self.media.light;
+        if self.replica {
+            if was != Some(true) {
+                light.load(&crate::light::Lighting::default());
+            }
+        } else {
+            light.clear_mirror();
+            if compile { light.load(&self.ws.lighting) } else { light.load_io(&self.ws.lighting) }
+        }
+        self.light_loaded = Some((self.ws.lighting.clone(), self.replica));
     }
 
     /// Take a workspace edited on a remote device. Machine-specific settings (audio device,
@@ -185,6 +224,11 @@ impl Show {
         ws.settings.audio_device = mine.audio_device.clone();
         ws.settings.osc_enabled = mine.osc_enabled;
         ws.settings.osc_port = mine.osc_port;
+        // Displays are this computer's (a replica lists its own): stage outputs are chosen here,
+        // so a replica can't put fullscreen windows over the operator's screens either.
+        for st in &mut ws.stages {
+            st.output = self.ws.stages.iter().find(|s| s.id == st.id).and_then(|s| s.output.clone());
+        }
         if ws.settings.master_volume_db != mine.master_volume_db
             && let Some(a) = &mut self.media.audio
         {
@@ -197,17 +241,55 @@ impl Show {
         self.edited();
     }
 
+    /// Take an edit made on a remote device as changes to this workspace
+    /// ([`crate::remote::workspace_patch`]). False (nothing changed) if they don't fit.
+    pub fn apply_remote_patch(&mut self, cues: &[crate::model::Cue], lighting: Option<&crate::light::patch::LightingPatch>) -> bool {
+        if !crate::remote::apply_workspace_patch(&mut self.ws, cues, lighting) {
+            return false;
+        }
+        if self.engine.playhead.is_some_and(|p| self.ws.cue_list.find(p).is_none()) {
+            self.engine.set_playhead(None);
+        }
+        self.edited();
+        true
+    }
+
+    /// Queue a replica's held network settings change for the operator (nothing if empty).
+    pub fn request_network_change(&mut self, device: &str, change: crate::remote::netguard::NetworkChange) {
+        if change.is_empty() {
+            return;
+        }
+        let id = self.network_requests.last().map_or(1, |r| r.id + 1);
+        self.network_requests.push(crate::remote::netguard::NetworkRequest { id, device: device.to_string(), change });
+        let extra = self.network_requests.len().saturating_sub(crate::remote::netguard::MAX_REQUESTS);
+        self.network_requests.drain(..extra);
+    }
+
+    /// Answer a network settings request: allowed ones are applied to the show.
+    pub fn answer_network_request(&mut self, id: u64, allow: bool) {
+        let Some(i) = self.network_requests.iter().position(|r| r.id == id) else { return };
+        let r = self.network_requests.remove(i);
+        if allow {
+            r.change.apply(&mut self.ws);
+            self.edited();
+        }
+    }
+
     /// Swap in another workspace: stops everything, reopens audio with its settings.
     pub fn replace_workspace(&mut self, ws: Workspace, path: Option<PathBuf>) {
         let now = Instant::now();
         self.engine.stop_all(&mut self.media, now, 0.0);
         self.ws = ws;
         self.path = path;
+        // Requests were about the show that was open.
+        self.network_requests.clear();
         self.dirty = false;
         self.engine.set_playhead(self.ws.cue_list.first());
         self.engine.workspace_changed();
         let master = self.ws.settings.master_volume_db;
         self.media.set_room(&self.ws.settings.speakers);
+        self.media.light.release_all(0.0, now);
+        self.sync_lighting();
         self.media.reopen_audio(self.ws.settings.audio_device.as_deref(), master);
         if let Some(a) = &mut self.media.audio {
             a.set_master(master);
@@ -260,4 +342,56 @@ pub fn spawn_engine_thread(show: SharedShow, repaint: impl Fn() + Send + 'static
             }
         })
         .expect("spawn engine thread");
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::control::{Command, apply};
+    use crate::light::{library, model::*};
+    use crate::model::{Cue, CueKind, LightAction, LightingCue};
+
+    /// A Light cue in the cue list GOes its designed lighting cue on the light thread, and
+    /// waits for the lighting fade before continuing.
+    #[test]
+    fn light_cue_plays_the_design() {
+        let mut show = Show::new(crate::media::Prober::new());
+        let mut ws = Workspace::default();
+        let t = library::generic("generic/dimmer").unwrap();
+        ws.lighting.add_type(&t);
+        ws.lighting.fixtures.push(Fixture { id: 1, fixture_type: t.id.clone(), mode: t.modes[0].name.clone(), address: 1, ..Default::default() });
+        let mut lc = LightCue { fade: 0.0, delay: 0.5, ..Default::default() };
+        lc.values.entry(1).or_default().insert(Attribute::Dimmer, 1.0.into());
+        let target = lc.id;
+        ws.lighting.sequences.push(Sequence { id: 1, cues: vec![lc].into(), ..Default::default() });
+        ws.cue_list.cues.push(Cue::new(CueKind::Light(LightingCue { action: LightAction::Go, cue: Some(target), ..Default::default() })));
+        show.replace_workspace(ws, None);
+        let t0 = Instant::now();
+        apply(&mut show, Command::Go, t0).unwrap();
+        show.tick(t0);
+        let id = show.ws.cue_list.cues[0].id;
+        assert_eq!(show.engine.instances.get(&id).and_then(|i| i.action_duration), Some(0.5));
+        let lit = || show.media.light.frame().get(1).is_some_and(|u| u.data[0] == 255);
+        let deadline = Instant::now() + Duration::from_secs(3);
+        while !lit() && Instant::now() < deadline {
+            std::thread::sleep(Duration::from_millis(10));
+        }
+        assert!(lit(), "fixture 1 at full after the delay");
+        // Executor and masters through commands (what replicas send).
+        use crate::control::LightControl;
+        apply(&mut show, Command::Light(LightControl::GrandMaster(0.5)), Instant::now()).unwrap();
+        let half = || show.media.light.frame().get(1).is_some_and(|u| u.data[0] == 128);
+        let deadline = Instant::now() + Duration::from_secs(2);
+        while !half() && Instant::now() < deadline {
+            std::thread::sleep(Duration::from_millis(10));
+        }
+        assert!(half(), "grand master at 50 %");
+        apply(&mut show, Command::Light(LightControl::Release(None, 0.0)), Instant::now()).unwrap();
+        let dark = || show.media.light.frame().get(1).is_some_and(|u| u.data[0] == 0);
+        let deadline = Instant::now() + Duration::from_secs(2);
+        while !dark() && Instant::now() < deadline {
+            std::thread::sleep(Duration::from_millis(10));
+        }
+        assert!(dark(), "released");
+    }
 }

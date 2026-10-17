@@ -110,9 +110,10 @@ fn animation_editing_and_playback_stay_cheap() {
     app.inspector_tab = inspector::Tab::Animation;
     app.show_preview = true;
 
-    // Warm up: fonts, the first text render (preview and preload), textures.
+    // Warm up: fonts, the first text render (the preview's; the preload renders in the video
+    // output process), textures.
     let t0 = Instant::now();
-    while crate::media::text::render_count(text) < 2 || t0.elapsed() < Duration::from_millis(300) {
+    while crate::media::text::render_count(text) < 1 || t0.elapsed() < Duration::from_millis(300) {
         frame(&ctx, &mut app, &shared);
         assert!(t0.elapsed() < Duration::from_secs(30), "text never rendered");
         std::thread::sleep(Duration::from_millis(5));
@@ -160,9 +161,6 @@ fn animation_editing_and_playback_stay_cheap() {
             })
             .collect(),
     );
-    let shown = shared.lock().media.stage_layers().iter().find_map(|l| l.frame.lock().planes.as_ref().map(|p| (p.width, p.height)));
-    let (w, h) = shown.expect("text never showed");
-    assert!(w.max(h) <= 2048, "{w}×{h} text doesn't fit the GPU's textures");
     {
         let mut s = shared.lock();
         app.control(&mut s, Command::Panic);
@@ -242,4 +240,39 @@ fn engine_waits_for_one_panel_not_a_frame() {
     let frame_time = median(frames);
     eprintln!("3000 cues: frame {frame_time:?}, engine waited at most {worst_wait:?}");
     assert!(worst_wait < frame_time.mul_f32(0.75), "engine waited {worst_wait:?}; a frame takes {frame_time:?}");
+}
+
+/// The Lighting workspace with a big rig (2000 fixtures, 400 tracked cues, everything selected)
+/// costs about what a small one does per frame: the design is snapshotted every frame to detect
+/// edits (cue and preset values are shared, not copied), fixture lookups are indexed and the
+/// fixture tiles only lay out visible rows. It once took 100+ ms a frame, under the show lock.
+#[test]
+fn big_lighting_rig_frames_stay_cheap() {
+    use super::lighting::{LightTab, View};
+    let measure = |l: crate::light::Lighting| {
+        let prober = Prober::new();
+        let mut show = Show::new(prober.clone());
+        show.ws.lighting = l;
+        show.edited();
+        let shared: SharedShow = Arc::new(parking_lot::Mutex::new(show));
+        let mut app = App::new(shared.clone(), prober);
+        app.view = View::Lighting;
+        app.light.selection = shared.lock().ws.lighting.units();
+        let ctx = context();
+        let mut out = Vec::new();
+        for tab in [LightTab::Patch, LightTab::Programmer, LightTab::Sequences] {
+            app.light.tab = tab;
+            for i in 0..8 {
+                let d = frame(&ctx, &mut app, &shared);
+                if i >= 3 {
+                    out.push(d);
+                }
+            }
+        }
+        median(out)
+    };
+    let small = measure(crate::light::library::bench_rig(40, 1, 10));
+    let big = measure(crate::light::library::bench_rig(2000, 4, 100));
+    eprintln!("lighting view frame: small rig {small:?}, big rig {big:?}");
+    assert!(big < small * 6 + Duration::from_millis(30), "big rig {big:?} vs small rig {small:?}");
 }

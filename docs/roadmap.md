@@ -42,7 +42,32 @@ Still open:
   - A documented OpenQ serial protocol for the user's custom hardware
 - **Monitoring and preview:**
   - DMX monitor grid.
-  - 3D visualiser drawn with egui: orbit camera, beam cones, floor spots.
+  - 3D visualiser: a separate program (future) that connects to OpenQ; not part of the app.
+- **Console (future; wait until its requirements and hardware are clearer):**
+  - Two phases, never at the same time:
+    - *Design:* every lighting tool can be on screen (patch, programmer, keypad, effects, sequences…).
+    - *Running:* light cues are recorded and played by the Cues system. The lighting designer only sees the
+      executors and the DMX preview, and only the executor window takes input.
+  - The console is a hybrid with a Design mode and a Running mode. Each display is assigned one tool (keypad,
+    programmer, executors, DMX monitor…).
+  - Usual setup: one PC for Cues, another for lighting design and executors during the show. If everything runs on
+    one PC, the other displays serve the Cues mode or the executors while the show runs.
+  - Input: key presses and executor taps go straight to the show core (ordered, never dropped, never waiting for a
+    redraw). Screens redraw only on change, at a rate each tool picks; continuous controls (faders) may merge values.
+    Physical controls skip the UI (as `crate::surface` does).
+  - Each tool draws from a snapshot of the state it needs and sends commands, so it can be a deferred viewport now
+    and its own process later (core + one UI process per display, reusing the remote protocol).
+  - Related: the Playback window is still an immediate viewport (it slows to the main window's rate when that one is
+    hidden). Stage video moved to its own process (done 2026-10-17, see "Video output process").
+
+## Video output process (done: `openq --video-output`, own wgpu renderer, YUV in the shader; follow-ups)
+- Live pictures in the geometry preview (small frames from the video process); it shows posters now.
+- Keep fades in progress (and exact loop positions) when a restarted video process brings layers back.
+- Mipmaps for the canvas and for text, so pictures drawn much smaller than their size don't alias.
+- Hardware decoding (VAAPI / VideoToolbox / D3D11VA) with zero-copy upload where the platform allows it.
+- Optional "close outputs when nothing plays" per stage (now: black while open).
+- GO/Stop keys pressed in an output window forwarded to OpenQ.
+- The same protocol over the network for a separate media-server machine.
 
 ## Animation (done: live keyframes for video/text layers; follow-ups)
 - **Bake to file**: render heavy effects (animated blur, typewriter/reflowing text, morphing SVG)

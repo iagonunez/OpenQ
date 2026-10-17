@@ -23,6 +23,16 @@ const FILES: &[(&str, &[u8])] = &[
     ("img/io.webp", include_bytes!("../../docs/manual/img/io.webp")),
     ("img/levels.webp", include_bytes!("../../docs/manual/img/levels.webp")),
     ("img/mapping.webp", include_bytes!("../../docs/manual/img/mapping.webp")),
+    ("img/light-cue.webp", include_bytes!("../../docs/manual/img/light-cue.webp")),
+    ("img/lighting-patch.webp", include_bytes!("../../docs/manual/img/lighting-patch.webp")),
+    ("img/lighting-plan.webp", include_bytes!("../../docs/manual/img/lighting-plan.webp")),
+    ("img/fixture-types.webp", include_bytes!("../../docs/manual/img/fixture-types.webp")),
+    ("img/lighting-programmer.webp", include_bytes!("../../docs/manual/img/lighting-programmer.webp")),
+    ("img/lighting-effects.webp", include_bytes!("../../docs/manual/img/lighting-effects.webp")),
+    ("img/lighting-sequences.webp", include_bytes!("../../docs/manual/img/lighting-sequences.webp")),
+    ("img/lighting-executors.webp", include_bytes!("../../docs/manual/img/lighting-executors.webp")),
+    ("img/lighting-outputs.webp", include_bytes!("../../docs/manual/img/lighting-outputs.webp")),
+    ("img/lighting-monitor.webp", include_bytes!("../../docs/manual/img/lighting-monitor.webp")),
     ("img/mic.webp", include_bytes!("../../docs/manual/img/mic.webp")),
     ("img/recovery.webp", include_bytes!("../../docs/manual/img/recovery.webp")),
     ("img/remote-share.webp", include_bytes!("../../docs/manual/img/remote-share.webp")),
@@ -32,14 +42,17 @@ const FILES: &[(&str, &[u8])] = &[
     ("img/waveform.webp", include_bytes!("../../docs/manual/img/waveform.webp")),
     // Icons in the manual use the app's own Material Symbols subset.
     ("fonts/MaterialSymbolsRounded.ttf", include_bytes!("../../assets/fonts/MaterialSymbolsRounded.ttf")),
-    ("img/es/animation.webp", include_bytes!("../../docs/manual/img/es/animation.webp")),
     ("img/es/animation-stage.webp", include_bytes!("../../docs/manual/img/es/animation-stage.webp")),
+    ("img/es/animation.webp", include_bytes!("../../docs/manual/img/es/animation.webp")),
     ("img/es/audio-fx.webp", include_bytes!("../../docs/manual/img/es/audio-fx.webp")),
     ("img/es/edit-mode.webp", include_bytes!("../../docs/manual/img/es/edit-mode.webp")),
     ("img/es/eq.webp", include_bytes!("../../docs/manual/img/es/eq.webp")),
     ("img/es/geometry-preview.webp", include_bytes!("../../docs/manual/img/es/geometry-preview.webp")),
     ("img/es/io.webp", include_bytes!("../../docs/manual/img/es/io.webp")),
     ("img/es/levels.webp", include_bytes!("../../docs/manual/img/es/levels.webp")),
+    ("img/es/lighting-patch.webp", include_bytes!("../../docs/manual/img/es/lighting-patch.webp")),
+    ("img/es/lighting-plan.webp", include_bytes!("../../docs/manual/img/es/lighting-plan.webp")),
+    ("img/es/lighting-programmer.webp", include_bytes!("../../docs/manual/img/es/lighting-programmer.webp")),
     ("img/es/mapping.webp", include_bytes!("../../docs/manual/img/es/mapping.webp")),
     ("img/es/mic.webp", include_bytes!("../../docs/manual/img/es/mic.webp")),
     ("img/es/object-audio.webp", include_bytes!("../../docs/manual/img/es/object-audio.webp")),
@@ -49,17 +62,20 @@ const FILES: &[(&str, &[u8])] = &[
     ("img/es/show-mode.webp", include_bytes!("../../docs/manual/img/es/show-mode.webp")),
     ("img/es/text-cue.webp", include_bytes!("../../docs/manual/img/es/text-cue.webp")),
     ("img/es/triggers.webp", include_bytes!("../../docs/manual/img/es/triggers.webp")),
-    ("img/es/video-fx.webp", include_bytes!("../../docs/manual/img/es/video-fx.webp")),
     ("img/es/video-fx-stage.webp", include_bytes!("../../docs/manual/img/es/video-fx-stage.webp")),
+    ("img/es/video-fx.webp", include_bytes!("../../docs/manual/img/es/video-fx.webp")),
     ("img/es/waveform.webp", include_bytes!("../../docs/manual/img/es/waveform.webp")),
-    ("img/gl/animation.webp", include_bytes!("../../docs/manual/img/gl/animation.webp")),
     ("img/gl/animation-stage.webp", include_bytes!("../../docs/manual/img/gl/animation-stage.webp")),
+    ("img/gl/animation.webp", include_bytes!("../../docs/manual/img/gl/animation.webp")),
     ("img/gl/audio-fx.webp", include_bytes!("../../docs/manual/img/gl/audio-fx.webp")),
     ("img/gl/edit-mode.webp", include_bytes!("../../docs/manual/img/gl/edit-mode.webp")),
     ("img/gl/eq.webp", include_bytes!("../../docs/manual/img/gl/eq.webp")),
     ("img/gl/geometry-preview.webp", include_bytes!("../../docs/manual/img/gl/geometry-preview.webp")),
     ("img/gl/io.webp", include_bytes!("../../docs/manual/img/gl/io.webp")),
     ("img/gl/levels.webp", include_bytes!("../../docs/manual/img/gl/levels.webp")),
+    ("img/gl/lighting-patch.webp", include_bytes!("../../docs/manual/img/gl/lighting-patch.webp")),
+    ("img/gl/lighting-plan.webp", include_bytes!("../../docs/manual/img/gl/lighting-plan.webp")),
+    ("img/gl/lighting-programmer.webp", include_bytes!("../../docs/manual/img/gl/lighting-programmer.webp")),
     ("img/gl/mapping.webp", include_bytes!("../../docs/manual/img/gl/mapping.webp")),
     ("img/gl/mic.webp", include_bytes!("../../docs/manual/img/gl/mic.webp")),
     ("img/gl/object-audio.webp", include_bytes!("../../docs/manual/img/gl/object-audio.webp")),
@@ -69,8 +85,8 @@ const FILES: &[(&str, &[u8])] = &[
     ("img/gl/show-mode.webp", include_bytes!("../../docs/manual/img/gl/show-mode.webp")),
     ("img/gl/text-cue.webp", include_bytes!("../../docs/manual/img/gl/text-cue.webp")),
     ("img/gl/triggers.webp", include_bytes!("../../docs/manual/img/gl/triggers.webp")),
-    ("img/gl/video-fx.webp", include_bytes!("../../docs/manual/img/gl/video-fx.webp")),
     ("img/gl/video-fx-stage.webp", include_bytes!("../../docs/manual/img/gl/video-fx-stage.webp")),
+    ("img/gl/video-fx.webp", include_bytes!("../../docs/manual/img/gl/video-fx.webp")),
     ("img/gl/waveform.webp", include_bytes!("../../docs/manual/img/gl/waveform.webp")),
 ];
 
@@ -86,15 +102,35 @@ fn extract(dir: &Path) -> std::io::Result<PathBuf> {
     Ok(dir.join("index.html"))
 }
 
+/// Where the manual is written: the per-user settings folder. Not a fixed name in the shared
+/// temporary folder, where another user of the computer could have put links or their own pages
+/// first.
+fn manual_dir() -> anyhow::Result<PathBuf> {
+    let version = env!("CARGO_PKG_VERSION");
+    if let Some(d) = crate::remote::config_dir() {
+        return Ok(d.join("manual").join(version));
+    }
+    // No settings folder: a new folder of our own (creating it fails if the name is taken).
+    let dir = std::env::temp_dir().join(format!("openq-manual-{version}-{}", uuid::Uuid::new_v4().simple()));
+    #[allow(unused_mut)] // only Unix sets a mode
+    let mut b = std::fs::DirBuilder::new();
+    #[cfg(unix)]
+    std::os::unix::fs::DirBuilderExt::mode(&mut b, 0o700);
+    b.create(&dir)?;
+    Ok(dir)
+}
+
 /// Ask the operating system to open a file with its default application.
 pub(super) fn open_with_default_app(path: &Path) -> std::io::Result<()> {
+    // Absolute: a relative path (from a show file) could start with `-` and pass as an option.
+    let path = std::path::absolute(path)?;
     #[cfg(target_os = "windows")]
     let mut cmd = std::process::Command::new("explorer");
     #[cfg(target_os = "macos")]
     let mut cmd = std::process::Command::new("open");
     #[cfg(not(any(target_os = "windows", target_os = "macos")))]
     let mut cmd = std::process::Command::new("xdg-open");
-    cmd.arg(path).spawn().map(|_| ())
+    cmd.arg(&path).spawn().map(|_| ())
 }
 
 /// The manual page for a language code or POSIX locale name such as `es_ES.UTF-8` or `gl` (English otherwise).
@@ -108,7 +144,7 @@ fn page_for(locale: &str) -> &'static str {
 
 /// Extract the manual for this version and open it in the browser. Returns where it was written.
 pub(super) fn open() -> anyhow::Result<PathBuf> {
-    let dir = std::env::temp_dir().join(format!("openq-manual-{}", env!("CARGO_PKG_VERSION")));
+    let dir = manual_dir()?;
     extract(&dir).map_err(|e| anyhow::anyhow!("cannot write the manual to {}: {e}", dir.display()))?;
     let page = dir.join(page_for(crate::i18n::lang().code()));
     open_with_default_app(&page).map_err(|e| anyhow::anyhow!("cannot open a browser ({e}); the manual is at {}", page.display()))?;

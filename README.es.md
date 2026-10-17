@@ -38,6 +38,7 @@ un instalador al estilo de rustup. Instala Rust y las dependencias de compilaci�
 Windows y macOS un FFmpeg solo LGPL, en Linux los paquetes de tu distribución, preguntando antes),
 compila la versión etiquetada más reciente e instala la aplicación con su entrada en el menú.
 `oqman update` vuelve a compilar cuando sale una versión nueva; `oqman uninstall` la elimina.
+`oqman install --no-lighting` instala solo los cues, sin el espacio de iluminación (`--lighting` lo vuelve a añadir).
 
 ### 🐧 Linux y 🍎 macOS
 

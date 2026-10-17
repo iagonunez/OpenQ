@@ -133,8 +133,8 @@ fn main() {
         let mut frames = 0u64;
         while t1.elapsed() < Duration::from_secs(3) {
             show.tick(Instant::now());
-            if let Some(l) = show.media.stage_layers().first() {
-                frames = frames.max(l.frame.lock().generation);
+            if let Some(n) = show.media.video.as_ref().and_then(|v| v.frames(vi)) {
+                frames = frames.max(n);
             }
             std::thread::sleep(Duration::from_millis(2));
         }
@@ -157,7 +157,7 @@ fn main() {
     let mut gone_at = None;
     while t2.elapsed() < Duration::from_secs(2) {
         show.tick(Instant::now());
-        if show.media.stage_layers().iter().any(|l| l.id == si && l.frame.lock().width == 64) {
+        if show.media.video.as_ref().and_then(|v| v.frames(si)).is_some_and(|n| n > 0) {
             shown = true;
         }
         if gone_at.is_none() && !show.engine.instances.contains_key(&si) {
@@ -233,8 +233,8 @@ fn main() {
         let mut frames = 0u64;
         while t.elapsed() < Duration::from_millis(1200) {
             show.tick(Instant::now());
-            if let Some(l) = show.media.stage_layers().iter().find(|l| l.id == avi) {
-                frames = frames.max(l.frame.lock().generation);
+            if let Some(n) = show.media.video.as_ref().and_then(|v| v.frames(avi)) {
+                frames = frames.max(n);
             }
             std::thread::sleep(Duration::from_millis(2));
         }

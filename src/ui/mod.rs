@@ -3,16 +3,18 @@
 mod about;
 mod animation;
 pub(crate) mod bench;
-#[cfg(feature = "video")]
-mod blend;
+mod code;
 mod debug;
 mod cue_list;
 mod devices;
 mod eq;
 mod effects;
+mod fixture_types;
 mod icons;
 mod inspector;
 mod language;
+mod light_playback;
+mod lighting;
 mod manual;
 #[cfg(target_os = "macos")]
 mod native_menu;
@@ -26,6 +28,7 @@ mod remote;
 mod room;
 #[cfg(feature = "video")]
 mod stage;
+mod surfaces;
 mod theme;
 mod waveform;
 mod widgets;
@@ -58,6 +61,16 @@ enum Deferred {
     AddMediaCues,
     /// Open a show autosaved before a crash (may ask to discard the current one first).
     Recover(crate::recovery::Orphan),
+    /// Import fixture types (OFL, GDTF, QLC+, OpenQ files) into the design and the library.
+    ImportFixture,
+    /// Save a fixture type as an `.oqfixture` file.
+    ExportFixture(Box<crate::light::FixtureType>),
+    /// Import effect files (`.oqfx`) into the effects pool.
+    ImportEffects,
+    /// Save an effect as an effect file.
+    ExportEffect(crate::light::effects::EffectId),
+    /// Save the patch as an MVR file (false) or the plan as an SVG plot (true).
+    ExportPatch(bool),
     /// Close the window (asks about unsaved changes first).
     Quit,
 }
@@ -97,14 +110,22 @@ pub(crate) enum Mode {
 struct UndoState {
     cues: crate::model::CueList,
     stages: Vec<Stage>,
-    /// Cues in `cues` (for the history's memory budget).
+    lighting: crate::light::Lighting,
+    /// Cues in `cues` plus the lighting design's weight in cue-sized units (the history's memory
+    /// budget).
     size: usize,
 }
 
 impl UndoState {
     fn of(show: &Show) -> Self {
         let cues = show.ws.cue_list.clone();
-        Self { size: cues.iter_all().len(), cues, stages: show.ws.stages.clone() }
+        let l = &show.ws.lighting;
+        // Every step copies the patch, types and cue headers; cue and preset values are shared
+        // between steps (`light::model::Shared`) until edited, so they aren't counted.
+        let channels: usize = l.fixture_types.iter().flat_map(|t| &t.modes).map(|m| m.all_channels().count()).sum();
+        let light_cues: usize = l.sequences.iter().map(|s| s.cues.len()).sum();
+        let lighting = l.fixtures.len() + channels / 4 + light_cues / 4 + l.effects.len();
+        Self { size: cues.iter_all().len() + lighting, cues, stages: show.ws.stages.clone(), lighting: l.clone() }
     }
 }
 
@@ -122,7 +143,8 @@ fn trim_undo(stack: &mut Vec<UndoState>) {
 /// Undo steps kept at most.
 const UNDO_STEPS: usize = 200;
 /// Cues kept across all undo steps. Every step is a full copy of the cue lists (~0.5 KB per
-/// cue), so 200 steps of a 5000-cue show would hold ~500 MB; big shows keep fewer steps.
+/// cue) and of the lighting patch, so 200 steps of a 5000-cue show would hold ~500 MB; big
+/// shows keep fewer steps.
 const UNDO_CUE_BUDGET: usize = 100_000;
 /// Steps kept whatever the budget says.
 const UNDO_MIN_STEPS: usize = 10;
@@ -132,6 +154,7 @@ enum SettingsTab {
     General,
     Audio,
     Stages,
+    Surfaces,
 }
 
 /// Default height of the inspector panel: room for the tallest tab (the waveform plus a row of
@@ -158,10 +181,8 @@ pub struct App {
     stage_open: HashSet<StageId>,
     stage_fullscreen: HashSet<StageId>,
     mapping_edit: HashSet<StageId>,
-    /// Displays a stage can be sent to, and the monitor index last applied to each stage window.
+    /// Displays a stage can be sent to.
     displays: Arc<Mutex<outputs::DisplayList>>,
-    #[cfg(feature = "video")]
-    stage_monitor: std::collections::HashMap<StageId, Option<usize>>,
     show_preview: bool,
     /// The user has dragged the inspector's edge; until then it keeps its default height.
     inspector_resized: bool,
@@ -186,11 +207,6 @@ pub struct App {
     settings_tab: SettingsTab,
     /// Cached audio device list for the settings window.
     devices: Option<Vec<DeviceEntry>>,
-    #[cfg(feature = "video")]
-    textures: stage::LayerTextures,
-    /// The wgpu renderer, for stage layers with a blend mode (None when headless).
-    #[cfg(feature = "video")]
-    gpu: Option<eframe::egui_wgpu::RenderState>,
     meters: Vec<f32>,
     status: Option<(String, Instant)>,
     /// The engine log entry shown in the status bar and when it appeared (hidden after
@@ -218,14 +234,28 @@ pub struct App {
     osc: Option<crate::osc::OscServer>,
     osc_error: Option<String>,
     osc_failed_for: Option<u16>,
+    /// What the OSC listener and the MIDI surface share (learn mode, button states).
+    surfaces: crate::surface::SurfaceHub,
+    /// This computer's MIDI input for control surfaces, and its connection.
+    midi_port: Option<String>,
+    midi_surface: Option<crate::surface::MidiSurface>,
+    /// Where a control being learned goes.
+    learn_into: Option<surfaces::LearnInto>,
     debug_t0: Option<Instant>,
     /// `OPENQ_DEBUG_SCRIPT` run and frame timings.
     debug_run: debug::DebugRun,
     debug_gos: u64,
+    /// `OPENQ_SCREENSHOT_STAGE`: the stage snapshot was asked for (false) / has arrived (true).
+    #[cfg(feature = "video")]
+    debug_stage_shot: Option<bool>,
     /// Autosave session and shows to recover after a crash.
     recovery: recovery::Recovery,
     /// Audio was reconnecting at the last frame (to announce changes).
     audio_reconnecting: bool,
+    /// Cue lists or the Lighting workspace.
+    view: lighting::View,
+    /// Lighting workspace state.
+    light: lighting::LightUi,
 }
 
 impl App {
@@ -245,8 +275,6 @@ impl App {
             stage_fullscreen: HashSet::new(),
             mapping_edit: HashSet::new(),
             displays: Default::default(),
-            #[cfg(feature = "video")]
-            stage_monitor: Default::default(),
             show_preview: false,
             inspector_resized: false,
             list_rename: None,
@@ -265,10 +293,6 @@ impl App {
             anim_edit: Default::default(),
             settings_tab: SettingsTab::General,
             devices: None,
-            #[cfg(feature = "video")]
-            textures: Default::default(),
-            #[cfg(feature = "video")]
-            gpu: None,
             meters: Vec::new(),
             status: None,
             log_tail: (0, String::new(), Instant::now()),
@@ -291,11 +315,19 @@ impl App {
             osc: None,
             osc_error: None,
             osc_failed_for: None,
+            surfaces: Default::default(),
+            midi_port: crate::surface::saved_midi_port(),
+            midi_surface: None,
+            learn_into: None,
             debug_t0: None,
             debug_run: Default::default(),
             debug_gos: 0,
+            #[cfg(feature = "video")]
+            debug_stage_shot: None,
             recovery: Default::default(),
             audio_reconnecting: false,
+            view: Default::default(),
+            light: Default::default(),
         }
     }
 
@@ -608,13 +640,18 @@ impl App {
             if ctx.input_mut(|i| i.consume_shortcut(&sc(cmd, Key::G))) {
                 self.group_selected(show);
             }
-            if ctx.input_mut(|i| {
-                i.consume_key(Modifiers::NONE, Key::Delete)
-                    || i.consume_key(Modifiers::NONE, Key::Backspace)
-            }) {
+            // Delete and Enter act on the cue list only while it is showing (the Lighting view
+            // uses Delete for its own things).
+            let cues = self.view == lighting::View::Cues;
+            if cues
+                && ctx.input_mut(|i| {
+                    i.consume_key(Modifiers::NONE, Key::Delete)
+                        || i.consume_key(Modifiers::NONE, Key::Backspace)
+                })
+            {
                 self.delete_selected(show);
             }
-            if ctx.input_mut(|i| i.consume_key(Modifiers::NONE, Key::Enter)) {
+            if cues && ctx.input_mut(|i| i.consume_key(Modifiers::NONE, Key::Enter)) {
                 // Enter edits the selected cue's name in place.
                 if let Some(c) = self.primary().and_then(|p| show.ws.cue_list.find(p)) {
                     self.inline = Some(cue_list::InlineEdit::new(
@@ -710,8 +747,10 @@ impl App {
     fn apply_undo_state(&mut self, show: &mut Show, st: UndoState) {
         show.ws.cue_list = st.cues.clone();
         show.ws.stages = st.stages.clone();
+        show.ws.lighting = st.lighting.clone();
         show.dirty = true;
         show.engine.workspace_changed();
+        show.sync_lighting();
         self.undo_base = Some(st);
         self.undo_seen_gen = show.edit_gen;
         self.inline = None;
@@ -761,7 +800,7 @@ impl App {
         self.osc_failed_for = None;
         if let Some(port) = want {
             let c = ctx.clone();
-            match crate::osc::OscServer::start(port, self.show.clone(), move || c.request_repaint())
+            match crate::osc::OscServer::start_with(port, self.show.clone(), self.surfaces.clone(), move || c.request_repaint())
             {
                 Ok(s) => self.osc = Some(s),
                 Err(e) => {
@@ -880,7 +919,7 @@ impl App {
                 if self.mode == Mode::Show {
                     ui.disable();
                 }
-                for (i, tag) in KindTag::ALL.iter().enumerate() {
+                for (i, tag) in KindTag::ALL.iter().enumerate().filter(|(_, t)| t.enabled()) {
                     let mut b = egui::Button::new(wi(
                         theme::kind_icon(*tag),
                         &tr!("New {kind} cue", kind = tag.label()),
@@ -1643,10 +1682,22 @@ impl App {
                 ),
             }
             ui.add_space(10.0);
-            match &show.media.video_error {
+            #[cfg(feature = "video")]
+            let video_status = show.media.video.as_ref().map(|v| v.status());
+            #[cfg(not(feature = "video"))]
+            let video_status: Option<()> = None;
+            match (&show.media.video_error, video_status) {
                 _ if replica => {}
-                None => item(ui, icons::VIDEOCAM, t("video ready").into(), theme::TEXT_DIM),
-                Some(e) => item(ui, icons::VIDEOCAM, tr!("video: {e}", e), AMBER),
+                (Some(e), _) => item(ui, icons::VIDEOCAM, tr!("video: {e}", e), AMBER),
+                #[cfg(feature = "video")]
+                (None, Some(crate::vout::link::Status::Restarting(_))) => {
+                    item(ui, icons::VIDEOCAM, t("video output restarting…").into(), AMBER)
+                }
+                #[cfg(feature = "video")]
+                (None, Some(crate::vout::link::Status::Unavailable(why))) => {
+                    item(ui, icons::VIDEOCAM, tr!("video output unavailable: {why}", why), RED)
+                }
+                (None, _) => item(ui, icons::VIDEOCAM, t("video ready").into(), theme::TEXT_DIM),
             }
             ui.add_space(10.0);
             match (&self.osc, &self.osc_error) {
@@ -1728,12 +1779,14 @@ impl App {
                     theme::tab(ui, &mut self.settings_tab, SettingsTab::General, icons::SETTINGS, t("General"));
                     theme::tab(ui, &mut self.settings_tab, SettingsTab::Audio, icons::SPEAKER, t("Audio"));
                     theme::tab(ui, &mut self.settings_tab, SettingsTab::Stages, icons::DESKTOP_WINDOWS, t("Video stages"));
+                    theme::tab(ui, &mut self.settings_tab, SettingsTab::Surfaces, icons::PIANO, t("Control surfaces"));
                 });
                 ui.separator();
                 match self.settings_tab {
                     SettingsTab::General => self.settings_general(ui, show),
                     SettingsTab::Audio => self.settings_audio(ui, show),
                     SettingsTab::Stages => self.settings_stages(ui, show),
+                    SettingsTab::Surfaces => self.settings_surfaces(ui, show),
                 }
             });
         self.show_settings = open;
@@ -1902,15 +1955,9 @@ impl App {
                         .clicked()
                     {
                         self.stage_open.insert(st.id);
-                        let fs = !self.stage_fullscreen.remove(&st.id);
-                        if fs {
+                        if !self.stage_fullscreen.remove(&st.id) {
                             self.stage_fullscreen.insert(st.id);
                         }
-                        #[cfg(feature = "video")]
-                        ui.ctx().send_viewport_cmd_to(
-                            stage::viewport_id(st.id),
-                            egui::ViewportCommand::Fullscreen(fs),
-                        );
                     }
                     let mut editing = self.mapping_edit.contains(&st.id);
                     if ui
@@ -2113,6 +2160,11 @@ impl App {
                 }
             }
             match d {
+                Deferred::ImportFixture => self.import_fixture(ctx),
+                Deferred::ExportFixture(ty) => self.export_fixture(*ty),
+                Deferred::ImportEffects => self.import_effects(),
+                Deferred::ExportEffect(id) => self.export_effect(id),
+                Deferred::ExportPatch(plot) => self.export_patch(plot),
                 Deferred::New => {
                     if self.may_discard(Discarding::New) {
                         self.show
@@ -2213,10 +2265,17 @@ impl App {
     /// `OPENQ_SCREENSHOT_GOS` times (default 0), captures its window a couple of frames later and exits.
     /// `OPENQ_SCREENSHOT_CUE` / `OPENQ_SCREENSHOT_TAB` pick the cue and inspector tab shown
     /// (`OPENQ_SCREENSHOT_ANIM_TIME` sets the Animation tab playhead);
+    /// `OPENQ_SCREENSHOT_LIGHTING=<page>` opens the Lighting workspace on a page (`playback`: the
+    /// Playback page with its sequence and button cards; `colour`: the
+    /// programmer's Colour encoders; `plan`: the patch's top view with four fixtures selected;
+    /// `types`: the fixture type editor on a type with ranges; `beam`: the Beam encoders with
+    /// range buttons for every unit with a gobo; `ofl`: the Open Fixture Library window searching
+    /// `OPENQ_SCREENSHOT_OFL`);
     /// `OPENQ_SCREENSHOT_MODE=show` starts in show mode; `OPENQ_SCREENSHOT_INLINE=1` opens an
     /// in-place pre-wait editor on the selected cue.
-    /// `OPENQ_SCREENSHOT_STAGE=1` embeds stage windows in the main window for the capture
-    /// (`OPENQ_SCREENSHOT_MAPPING=1` turns on the first stage's mapping test pattern).
+    /// `OPENQ_SCREENSHOT_STAGE=<n>` also saves stage n's output (1 = the first), as the video
+    /// output process draws it, next to the capture (`<path>.stage.png`;
+    /// `OPENQ_SCREENSHOT_MAPPING=1` turns on the first stage's mapping test pattern).
     fn debug_screenshot(&mut self, ctx: &egui::Context, show: &mut Show) {
         let Some(path) = std::env::var_os("OPENQ_SCREENSHOT") else {
             return;
@@ -2260,6 +2319,67 @@ impl App {
             if std::env::var("OPENQ_SCREENSHOT_MODE").as_deref() == Ok("show") {
                 self.mode = Mode::Show;
             }
+            if let Ok(page) = std::env::var("OPENQ_SCREENSHOT_LIGHTING") {
+                self.view = lighting::View::Lighting;
+                self.light.tab = lighting::LightTab::from_name(&page);
+                if page == "colour" {
+                    self.light.feature = Some(crate::light::Feature::Colour);
+                }
+                self.light.keypad = page == "keypad";
+                if page == "effects" {
+                    // `OPENQ_SCREENSHOT_EFFECT=<number>` picks the effect (e.g. a script effect).
+                    let pick = std::env::var("OPENQ_SCREENSHOT_EFFECT").ok().and_then(|n| n.parse::<u32>().ok());
+                    let l = &show.ws.lighting;
+                    self.light.effect = pick.filter(|id| l.effect(*id).is_some()).or_else(|| l.effects.first().map(|e| e.id));
+                }
+                if page == "plan" {
+                    self.light.patch_view = lighting::PatchView::Plan;
+                    self.light.patch_sel = show.ws.lighting.fixtures.iter().take(4).map(|f| f.id).collect();
+                    self.light.shape_sel = show.ws.lighting.shapes.first().map(|s| s.id);
+                }
+                if page == "types"
+                    && let Some(ty) = show.ws.lighting.fixture_types.iter().find(|t| t.modes.iter().any(|m| m.all_channels().any(|c| !c.ranges.is_empty())))
+                {
+                    self.light.patch_view = lighting::PatchView::Types;
+                    self.light.types.edit = Some(fixture_types::TypeEdit::open_ranges(ty.clone()));
+                }
+                if page == "ofl" {
+                    self.light.patch_view = lighting::PatchView::Types;
+                    self.light.types.open_ofl(std::env::var("OPENQ_SCREENSHOT_OFL").unwrap_or_default());
+                }
+                // A selection and some programmer values to look at.
+                if page == "beam" {
+                    use crate::light::Attribute;
+                    let l = &show.ws.lighting;
+                    self.light.feature = Some(crate::light::Feature::Beam);
+                    self.light.selection = l.units().into_iter().filter(|u| l.unit_attributes(*u).contains(&Attribute::Gobo)).collect();
+                    for f in &self.light.selection {
+                        let v = self.light.programmer.entry(*f).or_default();
+                        v.insert(Attribute::Dimmer, 1.0.into());
+                        let chans = l.unit_channels(*f).unwrap_or_default();
+                        for a in [Attribute::Gobo, Attribute::Shutter] {
+                            if let Some(r) = chans.iter().find(|c| c.attribute == a).and_then(|c| c.ranges.get(1)) {
+                                v.insert(a, r.value().into());
+                            }
+                        }
+                    }
+                } else if let Some(g) = {
+                    // The colour page: the first group of colour-mixing fixtures.
+                    let l = &show.ws.lighting;
+                    let mixes = |f: &crate::light::model::FixtureId| l.unit_attributes(*f).contains(&crate::light::Attribute::Red);
+                    let colour = l.groups.iter().find(|g| g.fixtures.first().is_some_and(mixes));
+                    if page == "colour" { colour.or(l.groups.first()) } else { l.groups.first() }
+                } {
+                    self.light.selection = g.fixtures.clone();
+                    for f in g.fixtures.iter().take(4) {
+                        let v = self.light.programmer.entry(*f).or_default();
+                        v.insert(crate::light::Attribute::Dimmer, 0.75.into());
+                        v.insert(crate::light::Attribute::Red, 1.0.into());
+                        v.insert(crate::light::Attribute::Green, 0.45.into());
+                        v.insert(crate::light::Attribute::Blue, 0.1.into());
+                    }
+                }
+            }
             if std::env::var_os("OPENQ_SCREENSHOT_INLINE").is_some()
                 && let Some(id) = self.primary()
             {
@@ -2285,6 +2405,22 @@ impl App {
                 self.remote.window = true;
                 self.remote.tab = if t == "connect" { remote::RemoteTab::Connect } else { remote::RemoteTab::Share };
             }
+            if std::env::var_os("OPENQ_SCREENSHOT_NETREQ").is_some() {
+                // A replica's held network change, as the operator sees it.
+                use crate::remote::netguard::{HeldCue, NetworkChange};
+                let change = NetworkChange {
+                    cues: vec![HeldCue {
+                        id: crate::model::CueId::new_v4(),
+                        label: "12 \u{201c}Lights GO\u{201d}".into(),
+                        before: Some(("10.0.0.5".into(), 53000)),
+                        wanted: ("203.0.113.9".into(), 9000),
+                    }],
+                    outputs: Some(vec![crate::light::dmx::OutputConfig::default()]),
+                    inputs: None,
+                };
+                show.request_network_change("Tablet", change.clone());
+                show.request_network_change("Tablet", change);
+            }
             if std::env::var_os("OPENQ_SCREENSHOT_ABOUT").is_some() {
                 self.show_about = true;
             }
@@ -2299,6 +2435,7 @@ impl App {
                 self.settings_tab = match t.as_str() {
                     "audio" => SettingsTab::Audio,
                     "general" => SettingsTab::General,
+                    "surfaces" => SettingsTab::Surfaces,
                     _ => SettingsTab::Stages,
                 };
             }
@@ -2316,11 +2453,26 @@ impl App {
             self.control(show, Command::Go);
             self.debug_gos += 1;
         }
-        if std::env::var_os("OPENQ_SCREENSHOT_STAGE").is_some() {
-            // Render stage windows embedded in the main window so one capture shows them.
-            ctx.set_embed_viewports(true);
+        #[cfg(not(feature = "video"))]
+        let stage_ready = true;
+        #[cfg(feature = "video")]
+        let mut stage_ready = true;
+        #[cfg(feature = "video")]
+        if std::env::var_os("OPENQ_SCREENSHOT_STAGE").is_some() && self.frame_count > 2 && elapsed > gos as f64 * 0.4 + 2.0 {
+            // The output is drawn by the video process: it saves its own picture.
+            if self.debug_stage_shot.is_none()
+                && let Some(v) = show.media.video.as_mut()
+                && let n = std::env::var("OPENQ_SCREENSHOT_STAGE").ok().and_then(|n| n.parse::<usize>().ok()).unwrap_or(1)
+                && let Some(st) = show.ws.stages.get(n.saturating_sub(1))
+            {
+                let mut p = std::path::PathBuf::from(&path).into_os_string();
+                p.push(".stage.png");
+                v.snapshot(st.id, p.into());
+                self.debug_stage_shot = Some(false);
+            }
+            stage_ready = self.debug_stage_shot != Some(false) || elapsed > gos as f64 * 0.4 + 12.0;
         }
-        if self.frame_count > 2 && elapsed > gos as f64 * 0.4 + 2.0 {
+        if self.frame_count > 2 && elapsed > gos as f64 * 0.4 + 2.0 && stage_ready {
             ctx.send_viewport_cmd(egui::ViewportCommand::Screenshot(Default::default()));
         }
         let shot = ctx.input(|i| {
@@ -2495,10 +2647,6 @@ impl eframe::App for App {
     }
 
     fn ui(&mut self, ui: &mut egui::Ui, frame: &mut eframe::Frame) {
-        #[cfg(feature = "video")]
-        if self.gpu.is_none() {
-            self.gpu = frame.wgpu_render_state().cloned();
-        }
         self.draw(ui, frame.info().cpu_usage);
         #[cfg(target_os = "macos")]
         native_menu::place_window_buttons(frame, MAC_TITLE_H as f64);
@@ -2513,8 +2661,6 @@ impl App {
         let ctx = ui.ctx().clone();
         media::set_max_texture_side(ctx.input(|i| i.max_texture_side));
         let show_arc = self.show.clone();
-        #[cfg(feature = "video")]
-        let stage_input: Option<(Vec<crate::model::Stage>, Vec<media::video::StageLayer>)>;
         {
             let mut guard = show_arc.lock();
 
@@ -2569,20 +2715,32 @@ impl App {
                     .frame(bar(theme::BG_APP))
                     .show(ui, |ui| self.menu_bar(ui, show));
             }
-            egui::Panel::top("header")
-                .frame(
-                    egui::Frame::new()
-                        .fill(theme::BG_PANEL)
-                        .inner_margin(egui::Margin::symmetric(14, 12)),
-                )
-                .show(ui, |ui| self.header(ui, show));
+            // Cues / Lighting switch above everything else; the GO / standby header only in the Cues view.
+            // Without the lighting feature there is only the Cues view.
+            if lighting::ENABLED {
+                egui::Panel::top("view_tabs")
+                    .frame(egui::Frame::new().fill(theme::BG_APP).inner_margin(egui::Margin { left: 10, right: 10, top: 6, bottom: 6 }))
+                    .show_separator_line(false)
+                    .show(ui, |ui| self.view_tabs(ui));
+            } else {
+                self.view = lighting::View::Cues;
+            }
+            if self.view == lighting::View::Cues {
+                egui::Panel::top("header")
+                    .frame(
+                        egui::Frame::new()
+                            .fill(theme::BG_PANEL)
+                            .inner_margin(egui::Margin::symmetric(14, 12)),
+                    )
+                    .show(ui, |ui| self.header(ui, show));
+            }
             egui::Panel::bottom("status")
                 .frame(bar(theme::BG_APP))
                 .show(ui, |ui| self.status_bar(ui, show));
             // Let a waiting engine tick in between panels: the engine never waits for a whole frame.
             parking_lot::MutexGuard::bump(&mut guard);
             let show: &mut Show = &mut guard;
-            if self.mode == Mode::Edit {
+            if self.mode == Mode::Edit && self.view == lighting::View::Cues {
                 // Tall enough for every tab's cards without scrolling. Until the user drags the edge,
                 // forget the stored height so a tiny first frame (or a window resize) can't shrink it.
                 let id = egui::Id::new("inspector");
@@ -2603,15 +2761,18 @@ impl App {
             // Let a waiting engine tick in between panels: the engine never waits for a whole frame.
             parking_lot::MutexGuard::bump(&mut guard);
             let show: &mut Show = &mut guard;
-            egui::Panel::right("active")
-                .frame(
-                    egui::Frame::new()
-                        .fill(theme::BG_PANEL)
-                        .inner_margin(egui::Margin::same(10)),
-                )
-                .resizable(true)
-                .default_size(280.0)
-                .show(ui, |ui| self.active_panel(ui, show));
+            // Active cues only next to the cue lists: the Lighting workspace needs the width.
+            if self.view == lighting::View::Cues {
+                egui::Panel::right("active")
+                    .frame(
+                        egui::Frame::new()
+                            .fill(theme::BG_PANEL)
+                            .inner_margin(egui::Margin::same(10)),
+                    )
+                    .resizable(true)
+                    .default_size(280.0)
+                    .show(ui, |ui| self.active_panel(ui, show));
+            }
             egui::CentralPanel::default()
                 .frame(
                     egui::Frame::new()
@@ -2619,6 +2780,10 @@ impl App {
                         .inner_margin(egui::Margin::symmetric(10, 8)),
                 )
                 .show(ui, |ui| {
+                    if self.view == lighting::View::Lighting {
+                        self.lighting_view(ui, show);
+                        return;
+                    }
                     if show.ws.cue_list.list_count() > 1 || self.mode == Mode::Edit {
                         self.list_tabs(ui, show);
                     }
@@ -2642,6 +2807,10 @@ impl App {
             #[cfg(feature = "video")]
             self.geometry_preview(&ctx, show);
             self.remote_window(&ctx, show);
+            self.network_requests_window(&ctx, show);
+            if lighting::ENABLED {
+                self.playback_window(&ctx, show);
+            }
             self.about_window(&ctx);
             // One centred window at a time: the language first, then lost work.
             if self.ask_language {
@@ -2652,17 +2821,13 @@ impl App {
             self.discard_window(&ctx);
             self.track_undo(&ctx, show);
             self.sync_osc(&ctx, show);
+            self.sync_surfaces(&ctx, show);
+            self.lighting_frame(show);
+            self.poll_fixture_imports(show);
 
-            // Stage windows are drawn after the lock is released, from this snapshot.
+            // The video output process draws the stage windows; tell it which to show.
             #[cfg(feature = "video")]
-            let video_active = {
-                let layers = show.media.stage_layers();
-                let active = !layers.is_empty();
-                stage_input = Some((show.ws.stages.clone(), layers));
-                active
-            };
-            #[cfg(not(feature = "video"))]
-            let video_active = false;
+            self.stages(&ctx, show);
 
             let hovering = ctx.input(|i| !i.raw.hovered_files.is_empty());
             if hovering {
@@ -2694,11 +2859,7 @@ impl App {
             }
 
             if show.engine.is_active() {
-                ctx.request_repaint_after(if video_active {
-                    Duration::from_millis(16)
-                } else {
-                    Duration::from_millis(33)
-                });
+                ctx.request_repaint_after(Duration::from_millis(33));
             } else {
                 ctx.request_repaint_after(Duration::from_millis(100));
             }
@@ -2707,19 +2868,6 @@ impl App {
                 ctx.send_viewport_cmd(egui::ViewportCommand::CancelClose);
                 self.discard_prompt.get_or_insert(Discarding::Quit);
                 ctx.request_repaint();
-            }
-        }
-        #[cfg(feature = "video")]
-        if let Some((stages, layers)) = stage_input {
-            let moved = self.stages(&ctx, stages, layers);
-            if !moved.is_empty() {
-                let mut show = self.show.lock();
-                for (id, corners) in moved {
-                    if let Some(s) = show.ws.stages.iter_mut().find(|s| s.id == id) {
-                        s.corners = corners;
-                    }
-                }
-                show.edited();
             }
         }
         self.run_deferred(&ctx);
@@ -2735,7 +2883,7 @@ mod tests {
     /// holding hundreds of megabytes, a small one keeps the full history.
     #[test]
     fn undo_history_has_a_memory_budget() {
-        let step = |size| UndoState { cues: Default::default(), stages: Vec::new(), size };
+        let step = |size| UndoState { cues: Default::default(), stages: Vec::new(), lighting: Default::default(), size };
         let mut small: Vec<UndoState> = (0..UNDO_STEPS + 50).map(|_| step(50)).collect();
         trim_undo(&mut small);
         assert_eq!(small.len(), UNDO_STEPS);

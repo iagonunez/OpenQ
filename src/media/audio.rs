@@ -36,7 +36,7 @@ use std::time::{Duration, Instant};
 const MAX_METER_CHANNELS: usize = MAX_OUT_CHANNELS;
 
 /// Peak-hold slots written by the audio callback, one per reader.
-type Meters = Arc<[[AtomicU32; MAX_METER_CHANNELS]; 2]>;
+type Meters = Arc<[[AtomicU32; MAX_METER_CHANNELS]; 3]>;
 
 /// Who is reading the meters; each has its own peak-hold slot.
 #[derive(Clone, Copy, Debug)]
@@ -45,6 +45,28 @@ pub enum MeterReader {
     Local = 0,
     /// Remote replicas.
     Remote = 1,
+    /// The light thread (audio-reactive effects), through a [`MeterTap`].
+    Light = 2,
+}
+
+/// The light thread's view of an output's meters: the loudest peak since the last read.
+#[derive(Clone)]
+pub struct MeterTap {
+    meters: Meters,
+    channels: usize,
+}
+
+impl MeterTap {
+    /// Peak over every output channel since the last call (linear 0..1). No allocation.
+    pub fn take_peak(&self) -> f32 {
+        let set = &self.meters[MeterReader::Light as usize];
+        set[..self.channels].iter().map(|m| f32::from_bits(m.swap(0, Ordering::Relaxed))).fold(0.0, f32::max)
+    }
+
+    /// Identity of the output it reads (changes when the output is reopened).
+    pub fn id(&self) -> usize {
+        Arc::as_ptr(&self.meters) as *const u8 as usize
+    }
 }
 /// Fade applied on stop to avoid clicks.
 const DECLICK_SECS: f64 = 0.008;
@@ -1489,6 +1511,11 @@ impl AudioOutput {
         (0..self.channels.min(MAX_METER_CHANNELS))
             .map(|c| f32::from_bits(set[c].swap(0, Ordering::Relaxed)))
             .collect()
+    }
+
+    /// A reader of this output's peaks for the light thread.
+    pub fn meter_tap(&self) -> MeterTap {
+        MeterTap { meters: self.meters.clone(), channels: self.channels.min(MAX_METER_CHANNELS) }
     }
 
     /// Housekeeping: free retired voices and matrices.

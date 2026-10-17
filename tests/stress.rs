@@ -966,6 +966,41 @@ mod faults {
         wait_for("prober still serves", 5.0, || matches!(prober.get(&other), Some(Ok(_))));
         let _ = std::fs::remove_dir_all(&dir);
     }
+
+    /// A lighting frame panics: the light thread keeps sending the last good frame, reports it
+    /// once and goes on with the next GO.
+    #[test]
+    #[ignore = "stress"]
+    fn stress_light_panic_is_recovered() {
+        use openq::light::{engine::LightEngine, library, model::*};
+        let mut l = Lighting::default();
+        let t = library::generic("generic/dimmer").unwrap();
+        l.add_type(&t);
+        l.fixtures.push(Fixture { id: 1, fixture_type: t.id.clone(), mode: t.modes[0].name.clone(), address: 1, ..Default::default() });
+        let cues: Vec<LightCue> = [1.0, 0.5]
+            .iter()
+            .map(|v| {
+                let mut c = LightCue { fade: 0.0, ..Default::default() };
+                c.values.entry(1).or_default().insert(Attribute::Dimmer, (*v).into());
+                c
+            })
+            .collect();
+        let ids: Vec<_> = cues.iter().map(|c| c.id).collect();
+        l.sequences.push(Sequence { id: 1, cues: cues.into(), ..Default::default() });
+        let mut e = LightEngine::start();
+        e.load(&l);
+        e.go_cue(ids[0], Instant::now());
+        wait_for("first look", 2.0, || e.frame().get(1).is_some_and(|u| u.data[0] == 255));
+        // Light threads of shows left by earlier tests can take the fault: arm until ours does.
+        wait_for("fault reported", 5.0, || {
+            arm(Fault::LightTick);
+            std::thread::sleep(Duration::from_millis(60));
+            e.drain_errors().iter().any(|m| m.contains("injected fault"))
+        });
+        assert_eq!(e.frame().get(1).unwrap().data[0], 255, "last good frame held");
+        e.go_cue(ids[1], Instant::now());
+        wait_for("next GO after the fault", 2.0, || e.frame().get(1).is_some_and(|u| u.data[0] == 128));
+    }
 }
 
 /// A long cue list with only a few cues running (the usual show): the tick must not walk the
@@ -1001,4 +1036,529 @@ fn stress_long_list_few_running() {
     let p99 = ticks[ticks.len() * 99 / 100];
     eprintln!("{n} cues, 4 running: p50 {p50:?}, p99 {p99:?}");
     assert!(p50 < Duration::from_micros(500), "p50 tick {p50:?}");
+}
+
+// ------------------------------------------------------------------ lighting
+
+mod lighting {
+    use super::{rss, scale, tmpdir, wait_for};
+    use openq::light::engine::LightEngine;
+    use openq::light::effects::{Effect, EffectRun, Shape};
+    use openq::light::fixlib::{self, Library};
+    use openq::light::import::{Format, import};
+    use openq::light::library;
+    use openq::light::model::*;
+    use openq::light::playback::{LightShow, Playback};
+    use std::sync::Arc;
+    use std::time::{Duration, Instant};
+
+    const OFL: &str = r##"{
+      "name": "Fuzz Bar",
+      "matrix": { "pixelCount": [4, 1, 1], "pixelGroups": { "Master": "all" } },
+      "wheels": { "Color Wheel": { "slots": [ { "type": "Open" }, { "type": "Color", "name": "Red", "colors": ["#ff0000"] } ] } },
+      "availableChannels": {
+        "Pan": { "fineChannelAliases": ["Pan fine"], "capability": { "type": "Pan" } },
+        "Color Wheel": { "capabilities": [ { "dmxRange": [0, 9], "type": "WheelSlot", "slotNumber": 1 }, { "dmxRange": [10, 255], "type": "WheelSlot", "slotNumber": 2 } ] },
+        "Shutter": { "capabilities": [ { "dmxRange": [0, 9], "type": "ShutterStrobe", "shutterEffect": "Closed", "switchChannels": { "Sw": "Pan" } }, { "dmxRange": [10, 255], "type": "ShutterStrobe", "shutterEffect": "Open" } ] }
+      },
+      "templateChannels": {
+        "Dimmer $pixelKey": { "capability": { "type": "Intensity" } },
+        "Red $pixelKey": { "fineChannelAliases": ["Red $pixelKey fine"], "capability": { "type": "ColorIntensity", "color": "Red" } }
+      },
+      "modes": [
+        { "name": "A", "channels": ["Dimmer Master", "Pan", "Pan fine", "Color Wheel", "Shutter", "Sw", null,
+          { "insert": "matrixChannels", "repeatFor": "eachPixelXYZ", "channelOrder": "perPixel", "templateChannels": ["Red $pixelKey", "Red $pixelKey fine"] } ] },
+        { "name": "B", "channels": [ { "insert": "matrixChannels", "repeatFor": ["2", "1"], "channelOrder": "perChannel", "templateChannels": ["Red $pixelKey", "Dimmer $pixelKey"] } ] }
+      ]
+    }"##;
+
+    const QXF: &str = r##"<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE FixtureDefinition>
+<FixtureDefinition xmlns="http://www.qlcplus.org/FixtureDefinition">
+ <Manufacturer>Fuzz</Manufacturer><Model>Bar</Model>
+ <Channel Name="Dimmer" Preset="IntensityMasterDimmer"/>
+ <Channel Name="Dimmer fine" Preset="IntensityMasterDimmerFine"/>
+ <Channel Name="Strobe"><Group Byte="0">Shutter</Group>
+  <Capability Min="0" Max="9">Open</Capability><Capability Min="10" Max="255" Res1="#ff0000">Strobe</Capability></Channel>
+ <Channel Name="Red"><Group Byte="0">Intensity</Group><Colour>Red</Colour></Channel>
+ <Mode Name="M"><Physical><Lens DegreesMin="20" DegreesMax="40"/><Focus Type="Head" PanMax="540" TiltMax="270"/></Physical>
+  <Channel Number="0">Dimmer</Channel><Channel Number="1">Dimmer fine</Channel><Channel Number="2">Strobe</Channel>
+  <Channel Number="3">Red</Channel><Channel Number="4">Red</Channel>
+  <Head><Channel>3</Channel></Head><Head><Channel>4</Channel></Head>
+ </Mode>
+</FixtureDefinition>"##;
+
+    const GDTF: &str = r#"<?xml version="1.0" encoding="UTF-8"?>
+<GDTF DataVersion="1.2"><FixtureType Name="Bar" LongName="Fuzz Bar" Manufacturer="Fuzz">
+ <Wheels><Wheel Name="Gobo1"><Slot Name="Open"/><Slot Name="Star" MediaFileName="star"/></Wheel>
+  <Wheel Name="Color1"><Slot Name="Open" Color="0.3127,0.3290,100"/><Slot Name="Red" Color="0.64,0.33,21"/></Wheel></Wheels>
+ <Geometries><Geometry Name="Body">
+   <GeometryReference Name="P1" Geometry="Pixel"><Break DMXBreak="1" DMXOffset="4"/></GeometryReference>
+   <GeometryReference Name="P2" Geometry="Pixel"><Break DMXBreak="1" DMXOffset="5"/></GeometryReference>
+   <Axis Name="Yoke"><Axis Name="Head"><Beam Name="B" BeamAngle="20"/></Axis></Axis></Geometry>
+  <Geometry Name="Pixel"/></Geometries>
+ <DMXModes><DMXMode Name="M" Geometry="Body"><DMXChannels>
+  <DMXChannel DMXBreak="1" Offset="1,2" Geometry="Yoke"><LogicalChannel Attribute="Pan"><ChannelFunction Attribute="Pan" DMXFrom="0/2" Default="32768/2" PhysicalFrom="-270" PhysicalTo="270"/></LogicalChannel></DMXChannel>
+  <DMXChannel DMXBreak="1" Offset="3" Geometry="Head"><LogicalChannel Attribute="Gobo1"><ChannelFunction Attribute="Gobo1" DMXFrom="0/1" Wheel="Gobo1">
+   <ChannelSet DMXFrom="0/1" WheelSlotIndex="1"/><ChannelSet DMXFrom="20/1" WheelSlotIndex="2"/></ChannelFunction>
+   <ChannelFunction Attribute="Gobo1WheelSpin" DMXFrom="128/1"/></LogicalChannel></DMXChannel>
+  <DMXChannel DMXBreak="1" Offset="1" Geometry="Pixel"><LogicalChannel Attribute="ColorAdd_R"><ChannelFunction Attribute="ColorAdd_R"/></LogicalChannel></DMXChannel>
+  <DMXChannel DMXBreak="2" Offset="1" Geometry="Head"><LogicalChannel Attribute="Zoom"><ChannelFunction Attribute="Zoom"/></LogicalChannel></DMXChannel>
+ </DMXChannels></DMXMode></DMXModes></FixtureType></GDTF>"#;
+
+    /// A zip of the given entries; `deflate` compresses them (else stored).
+    fn zip(files: &[(&str, &[u8])], deflate: bool) -> Vec<u8> {
+        use std::io::Write;
+        let (mut out, mut central) = (Vec::new(), Vec::new());
+        for (name, data) in files {
+            let body = if deflate {
+                let mut e = flate2::write::DeflateEncoder::new(Vec::new(), flate2::Compression::fast());
+                e.write_all(data).unwrap();
+                e.finish().unwrap()
+            } else {
+                data.to_vec()
+            };
+            let method: u16 = if deflate { 8 } else { 0 };
+            let local = out.len() as u32;
+            let header = |v: &mut Vec<u8>, sig: u32, central: bool| {
+                v.extend_from_slice(&sig.to_le_bytes());
+                if central {
+                    v.extend_from_slice(&20u16.to_le_bytes());
+                }
+                v.extend_from_slice(&[20, 0, 0, 0]);
+                v.extend_from_slice(&method.to_le_bytes());
+                v.extend_from_slice(&[0; 8]); // time, date, crc (not checked)
+                v.extend_from_slice(&(body.len() as u32).to_le_bytes());
+                v.extend_from_slice(&(data.len() as u32).to_le_bytes());
+                v.extend_from_slice(&(name.len() as u16).to_le_bytes());
+                v.extend_from_slice(&0u16.to_le_bytes());
+                if central {
+                    v.extend_from_slice(&[0; 10]); // comment length, disk, attributes
+                    v.extend_from_slice(&local.to_le_bytes());
+                }
+                v.extend_from_slice(name.as_bytes());
+            };
+            header(&mut out, 0x0403_4b50, false);
+            out.extend_from_slice(&body);
+            header(&mut central, 0x0201_4b50, true);
+        }
+        let at = out.len() as u32;
+        out.extend_from_slice(&central);
+        out.extend_from_slice(&0x0605_4b50u32.to_le_bytes());
+        out.extend_from_slice(&[0; 4]);
+        out.extend_from_slice(&(files.len() as u16).to_le_bytes());
+        out.extend_from_slice(&(files.len() as u16).to_le_bytes());
+        out.extend_from_slice(&(central.len() as u32).to_le_bytes());
+        out.extend_from_slice(&at.to_le_bytes());
+        out.extend_from_slice(&0u16.to_le_bytes());
+        out
+    }
+
+    /// Damage a file: flip bytes, cut, repeat or drop a span.
+    fn mutate(rng: &mut fastrand::Rng, src: &[u8]) -> Vec<u8> {
+        let mut v = src.to_vec();
+        for _ in 0..rng.usize(1..6) {
+            if v.is_empty() {
+                break;
+            }
+            let i = rng.usize(..v.len());
+            match rng.u8(..5) {
+                0 => v[i] = rng.u8(..),
+                1 => v.truncate(i),
+                2 => {
+                    let j = (i + rng.usize(..64)).min(v.len());
+                    let span = v[i..j].to_vec();
+                    v.splice(i..i, span.iter().cycle().take(span.len() * rng.usize(1..20)).copied());
+                }
+                3 => {
+                    let j = (i + rng.usize(..32)).min(v.len());
+                    v.drain(i..j);
+                }
+                _ => {
+                    // A digit into a number: offsets, DMX values, counts.
+                    let d = [b'0', b'9', b'5', b'1'][rng.usize(..4)];
+                    if v[i].is_ascii_digit() {
+                        v.insert(i, d);
+                    }
+                }
+            }
+        }
+        v
+    }
+
+    /// Change values inside valid JSON (numbers huge/negative/fractional, strings, arrays
+    /// emptied or repeated), so the importer gets past the parser.
+    fn mutate_json(rng: &mut fastrand::Rng, v: &mut serde_json::Value) {
+        use serde_json::Value;
+        match v {
+            Value::Number(_) => {
+                if rng.u8(..4) == 0 {
+                    *v = [serde_json::json!(-1), serde_json::json!(1e12), serde_json::json!(65535), serde_json::json!(0.5), serde_json::json!(511), serde_json::json!("x")][rng.usize(..6)].clone();
+                }
+            }
+            Value::String(s) => {
+                if rng.u8(..8) == 0 {
+                    *s = ["", "Pan", "Red $pixelKey", "eachPixelABC", "1", "#zzzzzz", "Open"][rng.usize(..7)].to_string();
+                }
+            }
+            Value::Array(a) => {
+                if rng.u8(..10) == 0 && !a.is_empty() {
+                    let i = rng.usize(..a.len());
+                    let x = a[i].clone();
+                    a.extend(std::iter::repeat_n(x, rng.usize(1..40)));
+                } else if rng.u8(..15) == 0 {
+                    a.clear();
+                }
+                for x in a.iter_mut() {
+                    mutate_json(rng, x);
+                }
+            }
+            Value::Object(o) => {
+                if rng.u8(..12) == 0 && !o.is_empty() {
+                    let k = o.keys().nth(rng.usize(..o.len())).cloned().expect("key");
+                    o.remove(&k);
+                }
+                for x in o.values_mut() {
+                    mutate_json(rng, x);
+                }
+            }
+            _ => {}
+        }
+    }
+
+    /// What an import may hand to the show: within the limits, and it compiles and plays.
+    fn check_type(t: &FixtureType, what: &str) {
+        assert!(!t.modes.is_empty() && t.modes.len() <= fixlib::MAX_MODES, "{what}: modes");
+        for m in &t.modes {
+            assert!(m.footprint() <= 512, "{what}: footprint {}", m.footprint());
+            assert!(m.heads.len() <= MAX_CELLS as usize, "{what}: cells");
+            for c in m.all_channels() {
+                assert!(c.offset < 512 && c.fine.is_none_or(|f| f < 512), "{what}: offset");
+                assert!(c.default.is_none_or(|v| (0.0..=1.0).contains(&v)), "{what}: default");
+            }
+        }
+        let mut l = Lighting::default();
+        l.add_type(t);
+        for (i, m) in t.modes.iter().enumerate() {
+            l.fixtures.push(Fixture { id: i as u32 + 1, fixture_type: t.id.clone(), mode: m.name.clone(), universe: i as u16 + 1, address: 1, ..Default::default() });
+        }
+        let units = l.units();
+        let show = Arc::new(LightShow::compile(&l));
+        let t0 = Instant::now();
+        let mut p = Playback::new(show, t0);
+        let values: Vec<(FixtureId, Attribute, f32)> = units.iter().flat_map(|u| l.unit_attributes(*u).into_iter().map(move |a| (*u, a, 0.7))).collect();
+        p.set_programmer(&values);
+        p.tick(t0);
+    }
+
+    /// Damaged and hostile fixture files (OFL, QLC+, GDTF, OpenQ): never a panic, a hang or a
+    /// memory blow-up; whatever imports stays within the limits and plays.
+    #[test]
+    #[ignore = "stress"]
+    fn stress_fixture_import_fuzz() {
+        let mut rng = fastrand::Rng::with_seed(0x6f71_6669);
+        let gdtf = zip(&[("description.xml", GDTF.as_bytes())], true);
+        let oq = fixlib::write(&import(OFL.as_bytes(), Format::Ofl, "fuzz").unwrap().fixture);
+        let samples: [(&str, Format, Vec<u8>); 4] =
+            [("ofl", Format::Ofl, OFL.into()), ("qxf", Format::Qxf, QXF.into()), ("gdtf", Format::Gdtf, gdtf), ("oqfixture", Format::OpenQ, oq.into_bytes())];
+        for (name, f, bytes) in &samples {
+            check_type(&import(bytes, *f, "fuzz").unwrap_or_else(|e| panic!("{name}: {e:#}")).fixture, name);
+        }
+        let n = 4000 * scale();
+        let (mut ok, mut err) = (0, 0);
+        let t = Instant::now();
+        for i in 0..n {
+            let (name, f, src) = &samples[i % samples.len()];
+            // GDTF: damage the XML inside a valid zip too, not only the zip.
+            let bytes = if *f == Format::Gdtf && rng.bool() {
+                zip(&[("description.xml", &mutate(&mut rng, GDTF.as_bytes()))], rng.bool())
+            } else if matches!(f, Format::Ofl | Format::OpenQ) && rng.u8(..3) > 0 {
+                let mut v: serde_json::Value = serde_json::from_slice(src).expect("sample");
+                mutate_json(&mut rng, &mut v);
+                serde_json::to_vec(&v).expect("json")
+            } else {
+                mutate(&mut rng, src)
+            };
+            let start = Instant::now();
+            let r = std::panic::catch_unwind(|| import(&bytes, *f, "fuzz")).unwrap_or_else(|_| panic!("{name} #{i} panicked"));
+            assert!(start.elapsed() < Duration::from_secs(2), "{name} #{i} took {:?}", start.elapsed());
+            match r {
+                Ok(imp) => {
+                    check_type(&imp.fixture, &format!("{name} #{i}"));
+                    ok += 1;
+                }
+                Err(_) => err += 1,
+            }
+        }
+        eprintln!("{n} damaged files in {:.1} s: {ok} imported, {err} refused", t.elapsed().as_secs_f64());
+
+        // Hostile on purpose.
+        let rss0 = rss();
+        let bomb = zip(&[("description.xml", &vec![b' '; 300 << 20])], true);
+        eprintln!("zip bomb: {} KB → 300 MB", bomb.len() >> 10);
+        assert!(import(&bomb, Format::Gdtf, "x").is_err(), "zip bomb refused");
+        let laughs = r#"<?xml version="1.0"?><!DOCTYPE x [<!ENTITY a "aaaaaaaaaa"><!ENTITY b "&a;&a;&a;&a;&a;&a;&a;&a;&a;&a;"><!ENTITY c "&b;&b;&b;&b;&b;&b;&b;&b;&b;&b;">]><FixtureDefinition><Model>&c;</Model></FixtureDefinition>"#;
+        assert!(import(laughs.as_bytes(), Format::Qxf, "x").is_err(), "entities refused");
+        assert!(import(&zip(&[("description.xml", laughs.as_bytes())], false), Format::Gdtf, "x").is_err());
+        let deep = format!("{}{}", "<a>".repeat(200_000), "</a>".repeat(200_000));
+        let _ = import(deep.as_bytes(), Format::Qxf, "x");
+        let _ = import(&zip(&[("description.xml", deep.as_bytes())], true), Format::Gdtf, "x");
+        let nested = format!("{}{}", "[".repeat(100_000), "]".repeat(100_000));
+        assert!(import(nested.as_bytes(), Format::Ofl, "x").is_err(), "deep JSON refused");
+        let t = Instant::now();
+        let huge = OFL.replace("\"pixelCount\": [4, 1, 1]", "\"pixelCount\": [100000, 100000, 100000]");
+        let r = import(huge.as_bytes(), Format::Ofl, "x").expect("huge matrix imports, capped");
+        check_type(&r.fixture, "huge matrix");
+        assert!(r.fixture.modes.iter().all(|m| m.heads.len() <= MAX_CELLS as usize));
+        assert!(t.elapsed() < Duration::from_secs(2), "huge matrix took {:?}", t.elapsed());
+        let wide = OFL.replace("\"repeatFor\": [\"2\", \"1\"]", &format!("\"repeatFor\": [{}]", (0..100_000).map(|i| format!("\"{i}\"")).collect::<Vec<_>>().join(",")));
+        check_type(&import(wide.as_bytes(), Format::Ofl, "x").expect("long repeat list, cut at 512").fixture, "wide mode");
+        let mut far = import(OFL.as_bytes(), Format::Ofl, "x").unwrap().fixture;
+        far.modes[0].channels[0].offset = 4000;
+        assert!(import(fixlib::write(&far).as_bytes(), Format::OpenQ, "x").is_err(), "offsets past the universe refused");
+        if let (Some(a), Some(b)) = (rss0, rss()) {
+            eprintln!("RSS {} → {} MB", a >> 20, b >> 20);
+            assert!(b < a + (200 << 20), "memory grew by {} MB", (b - a) >> 20);
+        }
+    }
+
+    /// A type with `cells` RGB cells and a master dimmer.
+    fn bar(cells: u16) -> FixtureType {
+        let heads = (0..cells)
+            .map(|i| Head {
+                name: (i + 1).to_string(),
+                channels: [Attribute::Red, Attribute::Green, Attribute::Blue]
+                    .iter()
+                    .enumerate()
+                    .map(|(k, a)| ChannelDef { attribute: *a, offset: 1 + 3 * i + k as u16, ..Default::default() })
+                    .collect(),
+            })
+            .collect();
+        let mut m = FixtureMode::sequential("bar", &[(Attribute::Dimmer, false)]);
+        m.heads = heads;
+        FixtureType { id: format!("stress/bar{cells}"), name: "Bar".into(), modes: vec![m], ..Default::default() }
+    }
+
+    /// A random design: generic types and a multi-cell bar, sequences with random values
+    /// (also on units that don't exist), effects on random units.
+    fn random_design(rng: &mut fastrand::Rng, fixtures: u32) -> Lighting {
+        let mut types: Vec<FixtureType> = ["generic/dimmer", "generic/drgbw", "generic/spot", "generic/wash"].iter().filter_map(|i| library::generic(i)).collect();
+        types.push(bar(16));
+        let mut l = Lighting::default();
+        let (mut u, mut a) = (1u16, 1u16);
+        for i in 0..fixtures {
+            let t = &types[rng.usize(..types.len())];
+            l.add_type(t);
+            let n = t.modes[0].footprint();
+            if a + n - 1 > 512 {
+                u += 1;
+                a = 1;
+            }
+            l.fixtures.push(Fixture { id: i + 1, fixture_type: t.id.clone(), mode: t.modes[0].name.clone(), universe: u, address: if rng.u8(..20) == 0 { 0 } else { a }, ..Default::default() });
+            a += n;
+        }
+        let units = l.units();
+        let pick = |rng: &mut fastrand::Rng| if rng.u8(..30) == 0 { cell_id(rng.u32(1..fixtures + 5), rng.u32(1..40)) } else { units[rng.usize(..units.len())] };
+        for e in 1..=4 {
+            let shape = [Shape::Sine, Shape::Square, Shape::Circle, Shape::Random][rng.usize(..4)];
+            l.effects.push(Effect { id: e, shape, attribute: Attribute::ALL[rng.usize(..Attribute::ALL.len())], ..Default::default() });
+        }
+        for s in 1..=3 {
+            let cues = (0..rng.usize(1..12))
+                .map(|c| {
+                    let mut cue = LightCue { number: (c + 1).to_string(), fade: rng.f64() * 3.0, delay: rng.f64(), cue_only: rng.u8(..8) == 0, ..Default::default() };
+                    for _ in 0..rng.usize(..200) {
+                        let f = pick(rng);
+                        let a = Attribute::ALL[rng.usize(..Attribute::ALL.len())];
+                        cue.values.entry(f).or_default().insert(a, rng.f32().into());
+                    }
+                    if rng.bool() {
+                        let fx: Vec<FixtureId> = (0..rng.usize(1..64)).map(|_| pick(rng)).collect();
+                        cue.effects.push(EffectRun { effect: rng.u32(1..6), fixtures: fx, stop: rng.u8(..5) == 0 });
+                    }
+                    cue
+                })
+                .collect();
+            l.sequences.push(Sequence { id: s, cues, move_in_black: rng.bool(), ..Default::default() });
+        }
+        l
+    }
+
+    /// Random designs, edits (renumber, remove, re-patch) and transport on the light thread at
+    /// once: no internal errors, frames keep coming, the design stays consistent.
+    #[test]
+    #[ignore = "stress"]
+    fn stress_light_engine_random_operations() {
+        let mut rng = fastrand::Rng::with_seed(0x6c69_6768);
+        let mut e = LightEngine::start();
+        let mut l = random_design(&mut rng, 150);
+        e.load(&l);
+        let steps = 3000 * scale();
+        let t = Instant::now();
+        for step in 0..steps {
+            let now = Instant::now();
+            match rng.u8(..12) {
+                0 => {
+                    let n = rng.u32(1..300);
+                    l = random_design(&mut rng, n);
+                    e.load(&l);
+                }
+                1 if !l.fixtures.is_empty() => {
+                    let old = l.fixtures[rng.usize(..l.fixtures.len())].id;
+                    let new = rng.u32(1..400);
+                    l.renumber_fixture(old, new);
+                    e.load(&l);
+                }
+                2 if !l.fixtures.is_empty() => {
+                    let gone = (0..rng.usize(1..10)).map(|_| l.fixtures[rng.usize(..l.fixtures.len())].id).collect();
+                    l.remove_fixtures(&gone);
+                    e.load(&l);
+                }
+                3 => {
+                    let units = l.units();
+                    let values = (0..rng.usize(..500))
+                        .filter_map(|_| units.get(rng.usize(..units.len().max(1))).map(|u| (*u, Attribute::ALL[rng.usize(..Attribute::ALL.len())], rng.f32() * 1.4 - 0.2)))
+                        .collect();
+                    e.set_programmer(values);
+                }
+                4 => {
+                    let fx = (1..=rng.u32(..4)).filter_map(|i| l.effect(i).cloned()).map(|f| (f, l.units())).collect();
+                    e.set_programmer_effects(fx);
+                }
+                5 => e.release(rng.u32(1..5), rng.f64(), now),
+                6 => e.set_level(rng.u32(1..4), rng.f32()),
+                7 => e.set_grand_master(rng.f32()),
+                8 => e.set_blackout(rng.u8(..10) == 0),
+                9 => e.set_tempo(rng.f32() * 300.0),
+                10 => {
+                    if let Some(c) = l.sequences.iter().flat_map(|s| s.cues.iter()).nth(rng.usize(..20)) {
+                        e.go_cue(c.id, now);
+                    }
+                }
+                _ => e.go(rng.u32(1..5), None, now),
+            }
+            if step % 50 == 0 {
+                std::thread::sleep(Duration::from_millis(2));
+            }
+            for err in e.drain_errors() {
+                assert!(!err.contains("internal error") && !err.contains("panic"), "step {step}: {err}");
+            }
+            assert!(l.validate().iter().all(|i| !matches!(i, PatchIssue::DuplicateId(_))), "step {step}: duplicate numbers");
+        }
+        let before = e.frames();
+        std::thread::sleep(Duration::from_millis(300));
+        assert!(e.frames() > before + 5, "light thread still running");
+        eprintln!("{steps} operations in {:.1} s, {} frames", t.elapsed().as_secs_f64(), e.frames());
+    }
+
+    /// A big pixel rig (bars of 32 RGB cells, every cell in a cue and a chase across all of
+    /// them) on the real light thread: it keeps its 44 Hz and a frame stays well in budget.
+    #[test]
+    #[ignore = "stress"]
+    fn stress_light_pixel_rig() {
+        let bars = 300 * scale() as u32;
+        let ty = bar(32);
+        let mut l = Lighting::default();
+        l.add_type(&ty);
+        for i in 0..bars {
+            l.fixtures.push(Fixture { id: i + 1, fixture_type: ty.id.clone(), mode: "bar".into(), universe: 1 + (i / 5) as u16, address: 1 + 97 * (i % 5) as u16, ..Default::default() });
+        }
+        let cells: Vec<FixtureId> = (1..=bars).flat_map(|f| (1..=32).map(move |c| cell_id(f, c))).collect();
+        l.effects.push(Effect { id: 1, shape: Shape::Square, ..Default::default() });
+        l.effects.push(Effect { id: 2, shape: Shape::Sine, attribute: Attribute::Blue, ..Default::default() });
+        let cues: Vec<LightCue> = (0..4)
+            .map(|k| {
+                let mut c = LightCue { fade: 2.0, ..Default::default() };
+                for (i, id) in cells.iter().enumerate() {
+                    let v = c.values.entry(*id).or_default();
+                    v.insert(Attribute::Red, (((i + k) % 10) as f32 / 10.0).into());
+                    v.insert(Attribute::Green, (((i * 3 + k) % 10) as f32 / 10.0).into());
+                }
+                for f in 1..=bars {
+                    c.values.entry(f).or_default().insert(Attribute::Dimmer, 1.0.into());
+                }
+                c.effects.push(EffectRun { effect: 1 + (k as u32 % 2), fixtures: cells.clone(), stop: false });
+                c
+            })
+            .collect();
+        let ids: Vec<_> = cues.iter().map(|c| c.id).collect();
+        l.sequences.push(Sequence { id: 1, cues: cues.into(), ..Default::default() });
+        eprintln!("{bars} bars, {} cells, {} universes", cells.len(), bars.div_ceil(5));
+        // Compile and frame cost, measured directly.
+        let t = Instant::now();
+        let show = Arc::new(LightShow::compile(&l));
+        let compile = t.elapsed();
+        let t0 = Instant::now();
+        let mut p = Playback::new(show, t0);
+        p.go(1, None, t0).unwrap();
+        let mut v: Vec<Duration> = (0..500)
+            .map(|i| {
+                let t = Instant::now();
+                std::hint::black_box(p.tick(t0 + Duration::from_secs_f64(i as f64 * 0.0227)));
+                t.elapsed()
+            })
+            .collect();
+        v.sort();
+        let (p50, p99) = (v[v.len() / 2], v[v.len() * 99 / 100]);
+        eprintln!("compile {compile:?}, frame p50 {p50:?}, p99 {p99:?}");
+        assert!(p99 < Duration::from_millis(8), "frame p99 {p99:?} (budget 22.7 ms)");
+        // The light thread under it, with GOs while it runs.
+        let mut e = LightEngine::start();
+        e.load(&l);
+        wait_for("rig loaded", 30.0, || e.status().len() == 1);
+        let f0 = e.frames();
+        let t = Instant::now();
+        for (k, id) in ids.iter().cycle().take(12).enumerate() {
+            e.go_cue(*id, Instant::now());
+            std::thread::sleep(Duration::from_millis(250));
+            assert!(e.drain_errors().is_empty(), "GO {k}");
+        }
+        let rate = (e.frames() - f0) as f64 / t.elapsed().as_secs_f64();
+        eprintln!("light thread: {rate:.1} frames/s");
+        assert!(rate > 40.0, "{rate:.1} frames/s");
+        assert_eq!(e.frame().universes.len(), bars.div_ceil(5) as usize);
+    }
+
+    /// The fixture library under concurrent saves, removals and reloads from several threads,
+    /// with junk files in the folder: no panic, every save lands, junk is reported, not loaded.
+    #[test]
+    #[ignore = "stress"]
+    fn stress_fixture_library_concurrent() {
+        let dir = tmpdir("fixlib");
+        std::fs::create_dir_all(&dir).unwrap();
+        std::fs::write(dir.join("junk.oqfixture"), b"\x00\xffnot json").unwrap();
+        std::fs::write(dir.join("other.txt"), b"ignored").unwrap();
+        let lib = Library::new(Some(dir.clone()));
+        let per = 40 * scale();
+        let workers: Vec<_> = (0..8)
+            .map(|w| {
+                let lib = lib.clone();
+                std::thread::spawn(move || {
+                    for i in 0..per {
+                        let mut t = bar(1 + (i % 32) as u16);
+                        t.id = format!("stress/w{w}-{i}");
+                        t.name = format!("Bar {w}-{i}");
+                        lib.save(vec![t.clone()], |r| r.expect("save"));
+                        if i % 4 == 3 {
+                            lib.remove(t, |r| r.expect("remove"));
+                        }
+                        if i % 7 == 0 {
+                            lib.reload();
+                        }
+                        let _ = lib.snapshot();
+                    }
+                })
+            })
+            .collect();
+        for w in workers {
+            w.join().expect("worker");
+        }
+        lib.wait();
+        assert!(!lib.snapshot().loading);
+        let s = lib.snapshot();
+        let expect = 8 * (per - per / 4);
+        assert_eq!(s.items.len(), expect, "saved minus removed");
+        assert_eq!(s.errors.len(), 1, "the junk file: {:?}", s.errors);
+        let _ = std::fs::remove_dir_all(&dir);
+    }
 }

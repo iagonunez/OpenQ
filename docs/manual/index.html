@@ -203,7 +203,8 @@ footer { margin-top: 56px; padding-top: 18px; border-top: 1px solid var(--border
     <li><a href="#fades">Fades</a></li>
     <li><a href="#timecode">Timecode</a></li>
     <li><a href="#stages">Stages and projection</a></li>
-    <li><a href="#remote">Remote devices</a></li>
+    <li><a href="#lighting">Lighting</a></li>
+<li><a href="#remote">Remote devices</a></li>
     <li><a href="#osc">OSC and network cues</a></li>
     <li><a href="#settings">Settings</a></li>
     <li><a href="#safety">Crash safety</a></li>
@@ -292,6 +293,9 @@ echo 'export PATH="$HOME/.local/bin:$PATH"' &gt;&gt; ~/.bashrc   # bash (zsh: ~/
   OpenQ, run <code>oqman uninstall</code>; it asks first. Add <code>--purge</code> to remove oqman's Rust, dependencies and
   build cache as well. On Windows you can also remove OpenQ from <em>Settings → Apps → Installed apps</em>. Your shows
   are never touched.</p>
+  <p>If you only need cues, <code>oqman install --no-lighting</code> builds OpenQ without the lighting workspace (no
+  Lighting view, Light cues, effect scripts or fixture downloads); the build is smaller and faster. Shows with a lighting
+  design still open, keep it and play their Light cues. <code>oqman install --lighting</code> adds it back.</p>
   <p>To run a copy you are working on from source instead:</p>
 <pre><code>cargo run --release                  # start with an empty show
 cargo run --release -- show.openq    # open a saved show</code></pre>
@@ -399,6 +403,7 @@ cargo run --release -- show.openq    # open a saved show</code></pre>
     <div class="type"><b><span class="ms" aria-hidden="true">&#xeb2f;</span>Network</b><span class="d">Sends an OSC message to other gear, such as a lighting desk.</span></div>
     <div class="type"><b><span class="ms" aria-hidden="true">&#xe31d;</span>Mic</b><span class="d">Plays a live audio input, such as a microphone, through the mixer.</span></div>
     <div class="type"><b><span class="ms" aria-hidden="true">&#xe412;</span>Camera</b><span class="d">Shows a live camera or capture card on a stage.</span></div>
+    <div class="type"><b><span class="ms" aria-hidden="true">&#xe90f;</span>Light</b><span class="d">Plays a cue of the lighting design, or releases its sequences (see <a href="#lighting">Lighting</a>).</span></div>
   </div>
   <p>Every cue has a <strong>number</strong> (free text, like <code>4.2</code>), a <strong>name</strong>, <strong>notes</strong>,
   a <strong>colour</strong> and an <strong>armed</strong> switch, all on the Basics tab. A disarmed cue is skipped by GO. Basics also
@@ -704,6 +709,7 @@ cargo run --release -- show.openq    # open a saved show</code></pre>
     <li><strong>Objects</strong>, for targets in <a href="#audio">object audio</a> mode: the positions and spread to move
     the objects to, edited on the same room view.</li>
   </ul>
+  <p>Light cues can't be the target of a Fade cue: lighting fades with its own Light cues (see <a href="#lighting">Lighting</a>).</p>
   <p>Tick <strong>Stop target</strong> for a fade-out: the target stops when the fade ends. Pausing a fade freezes it, and resuming it continues
   with the time that was left.</p>
 </section>
@@ -750,8 +756,207 @@ cargo run --release -- show.openq    # open a saved show</code></pre>
   arrow keys: one pixel at a time, or ten with <kbd>Shift</kbd>. <em>Reset mapping</em> puts the corners back.</p>
 </section>
 
+<section id="lighting">
+  <h2><span class="n">11</span>Lighting</h2>
+  <p>OpenQ drives lighting over DMX. The <strong>lighting design</strong> (patch, groups, presets, effects and sequences of
+  lighting cues) is kept apart from the cue list, in the <strong>Lighting</strong> workspace: switch between
+  <span class="menu"><span class="ms" aria-hidden="true">&#xe90f;</span> Lighting</span> and <em>Cues</em> above the cue list.
+  The design can only be changed in Edit mode. In Show mode the Lighting workspace shows the executors and the DMX monitor.</p>
+  <h3>Light cues</h3>
+  <p>A <strong>Light</strong> cue <span class="ms" aria-hidden="true">&#xe90f;</span> in the cue list plays the lighting design;
+  it holds no levels of its own. On its Settings tab choose the <em>Action</em>: <em>GO lighting cue</em> fires a lighting
+  cue of a sequence (shown as <code>sequence/cue</code>) with that cue's own fades, and <em>Release</em> fades one sequence, or
+  all of them, out over the given time. Light cues fire together with sound and video, so a lighting change can sit on the
+  same GO as an effect or a video.</p>
+  <figure>
+    <img src="img/light-cue.webp" width="1100" height="444" alt="Cue list with Light cues targeting lighting cues 1/1 to 1/4, and the Settings tab of the selected Light cue.">
+    <figcaption>Light cues in the cue list. The Target column shows the lighting cue each one fires.</figcaption>
+  </figure>
+  <div class="note tip"><span class="label">Stop</span><p>A Stop cue aimed at a Light cue releases that cue's sequence. With
+  <em>Stop all also fades the lighting out</em> (Sequences page), Stop all, Panic and Stop cues without a target release every
+  sequence too, over the <em>Release fade</em>.</p></div>
+  <p>Lighting fades only through Light cues: a lighting cue fades with its own times, and the next lighting cue or a
+  Release takes it on from there. Fade cues don't act on Light cues.</p>
+
+  <h3><span class="ms" aria-hidden="true">&#xefe6;</span> Patch</h3>
+  <p>The Patch page has three views: <em>Sheet</em>, <em>Plan</em> and <em>Fixture types</em>. The sheet lists the fixtures. To
+  add some (on the Sheet or the Plan), pick a fixture type and mode in <em>Add fixtures</em>, set how many, the
+  first fixture number, the universe and the start address (<em>auto</em> takes the next free one), and click <em>Add</em>.
+  Every cell of the sheet can be edited: name, type, mode, universe, address, position and rotation, and pan or tilt reversal.
+  Overlapping addresses and duplicate numbers are flagged above the sheet.</p>
+  <figure>
+    <img src="img/lighting-patch.webp" width="1100" height="462" alt="Patch sheet with eight RGB washes, two spots and a pixel bar, with address, position and rotation columns.">
+    <figcaption>The patch sheet. Positions are in metres: x to the right, y up, z towards the audience.</figcaption>
+  </figure>
+  <p>Fixtures with several cells, such as LED bars, are controlled cell by cell too: cell 3 of fixture 101 is <code>101.3</code>.
+  <em>Plan</em> shows the rig from above. Click to select (<kbd>Ctrl</kbd> adds), drag to move the selection, drag empty space to
+  pan and scroll to zoom. With fixtures selected, <em>Arrange</em> spreads them along a line, an arc or a grid.</p>
+  <figure>
+    <img src="img/lighting-plan.webp" width="1100" height="389" alt="Top view of the rig: a stage outline with a riser, two lighting bars LX1 and LX2, and fixtures; LX1 is selected with its handles.">
+    <figcaption>The Plan view with the stage, a riser and two bars. The tick on each fixture shows which way it faces.</figcaption>
+  </figure>
+  <p>To make the plan look like the real venue, draw on it: choose <em>Bar</em> or <em>Rectangle</em> next to <em>Draw</em>
+  and drag on the plan. Bars are pipes, trusses or booms, with a trim height; rectangles are the stage, risers or set pieces.
+  Click a bar, or the outline of a rectangle, to select it: drag it to move it, drag its white handles to change its ends or
+  corners, and set its name, exact coordinates and height in the row above. <kbd>Delete</kbd> over the plan removes it.
+  With fixtures and a bar selected, <em>Hang</em> spreads the fixtures evenly along the bar at its height. Drag the label of a
+  bar or a rectangle to move it out of the way; the plot puts it there too, and
+  <span class="ms" aria-hidden="true">&#xe042;</span> in the row above puts it back.</p>
+  <h3>Fixture types</h3>
+  <p>OpenQ comes with generic types (dimmer, RGB, RGBW, CMY, moving heads, strobe, fog). <em>Import fixture…</em> (on the
+  Sheet and the Plan) reads
+  Open Fixture Library (<code>.json</code>), GDTF (<code>.gdtf</code>), QLC+ (<code>.qxf</code>) and OpenQ
+  (<code>.oqfixture</code>) files. Imported types are copied into the show and saved in your fixture library, so they are there
+  for the next show. <em>Fixture types</em> opens the editor: channels and their attributes, 16-bit fine channels, defaults,
+  the value used by Highlight, and <strong>ranges</strong>: the named parts of a channel, such as the slots of a colour wheel or
+  a gobo wheel. GDTF files also bring the colours of the fixture's LEDs, which the colour picker uses.</p>
+  <figure>
+    <img src="img/fixture-types.webp" width="1100" height="778" alt="Fixture type editor for a moving spot, listing channels with attribute, fine channel, default and ranges.">
+    <figcaption>The fixture type editor.</figcaption>
+  </figure>
+  <p>On the Plan view, <em>Export MVR…</em> saves the patch with positions as an MVR file, which visualisers and other desks can import.
+  <em>Export plot…</em> saves the Plan view as a PDF (one A3 sheet, at the largest standard scale that fits, such as 1:50) or an SVG drawing — pick the type in the save dialog — with the bars and rectangles, fixture numbers, addresses
+  and a legend. Labels never cover each other: where fixtures are close together, their labels move apart.</p>
+
+  <h3><span class="ms" aria-hidden="true">&#xe429;</span> Programmer</h3>
+  <p>Select fixtures on their tiles: a click adds a fixture to the selection (a second click takes it out), dragging across
+  tiles adds all of them, and a right-click selects only that fixture. Groups and the command line select too. The panel on the
+  right sets their values, one page per feature: <em>Intensity</em>, <em>Colour</em>, <em>Position</em> (drag the pad to aim),
+  <em>Beam</em> and <em>Control</em>. Drag a bar to set a value, or scroll over it for 1&nbsp;% steps. Channels with ranges have
+  a button per range, such as each gobo.</p>
+  <p>The colour picker shows every colour you can see, and brightens the ones the selected fixture can make: the shape between
+  its LED colours. Colours outside it are dimmed, and a click there takes the nearest colour it can make. Each fixture mixes
+  the colour with its own LEDs. The LED colours come from the fixture type (GDTF files have them); without them OpenQ uses
+  typical LED colours, and says so under the picker.</p>
+  <figure>
+    <img src="img/lighting-programmer.webp" width="1100" height="791" alt="Programmer page: groups, presets and effects as cards in the left column, fixture tiles with eight washes selected, and the colour page with the colour range of the washes.">
+    <figcaption>The programmer. Fixtures with values in the programmer show an orange dot.</figcaption>
+  </figure>
+  <p>Programmer values override the playback while they are set, and they are what <em>Record cue</em> stores. <em>Clear
+  programmer</em> lets playback take over again.</p>
+  <ul>
+    <li>The column on the left holds the <strong>groups</strong>, <strong>presets</strong> and <strong>effects</strong> as cards.
+    The buttons at its top show only the presets and effects of one feature (intensity, colour, position, beam, control).</li>
+    <li><strong>Groups</strong>: <span class="ms" aria-hidden="true">&#xe145;</span> stores the selection as a group; click a
+    group to select it (<kbd>Ctrl</kbd> adds); right-click it to overwrite or delete it.</li>
+    <li><strong>Presets</strong>: <span class="ms" aria-hidden="true">&#xe145;</span> stores the selected fixtures' values as a
+    preset: all attributes, or only the feature the filter shows. Clicking a preset applies it. Cues keep a link to the preset,
+    so changing the preset changes every cue that uses it.</li>
+    <li><strong>Spread</strong> sets a value fanned across the selection, for example from 0 to 100&nbsp;%, optionally from the centre out.</li>
+    <li><strong>Blind</strong> programs without changing the output. <strong>Highlight</strong> puts the selected fixtures at
+    open white and full (not recorded); the arrow steps through them one by one.</li>
+    <li><strong>Capture input</strong> takes what the <a href="#lighting-io">DMX inputs</a> receive into the programmer,
+    so a look built on another desk can be recorded here.</li>
+  </ul>
+  <h3>Command line and keypad</h3>
+  <p>The command line above the pages takes desk-style commands; <em>Keypad</em> opens on-screen keys for a touch screen
+  (<em>Clear line</em> empties the command line).
+  Keywords can be shortened to two letters (<code>th</code>, <code>gr</code>, <code>rec</code>).</p>
+  <div class="table-wrap"><table>
+    <thead><tr><th>Command</th><th>Does</th></tr></thead>
+    <tbody>
+      <tr><td><code>1 thru 10 at 50</code></td><td>Selects fixtures 1 to 10 at 50&nbsp;% intensity. <code>&gt;</code> also means thru, <code>@</code> means at.</td></tr>
+      <tr><td><code>101.1 thru 101.12 at 80</code></td><td>Cells 1 to 12 of fixture 101.</td></tr>
+      <tr><td><code>group 2 + 7 - 3 at full</code></td><td>Group 2, plus fixture 7, minus fixture 3, at full. <code>out</code> is 0.</td></tr>
+      <tr><td><code>1 thru 4 preset 3</code></td><td>Applies preset 3.</td></tr>
+      <tr><td><code>effect 2</code></td><td>Runs effect 2 on the selection.</td></tr>
+      <tr><td><code>gobo star</code>, <code>wheel 3</code></td><td>Picks a range by name (the start is enough) or number.</td></tr>
+      <tr><td><code>record cue 5 / 2</code></td><td>Records the programmer as cue 5 of sequence 2. Also <code>record group 4</code>, <code>record preset 6</code>.</td></tr>
+      <tr><td><code>update</code>, <code>clear</code>, <code>blind</code>, <code>highlight</code></td><td>Same as the buttons.</td></tr>
+      <tr><td><code>go 2</code>, <code>go cue 5 / 2</code>, <code>release 2</code></td><td>Plays sequences.</td></tr>
+      <tr><td><code>delete cue 5 / 2</code></td><td>Deletes a cue, a group or a preset.</td></tr>
+    </tbody>
+  </table></div>
+
+  <h3><span class="ms" aria-hidden="true">&#xe663;</span> Effects</h3>
+  <p>An effect moves one attribute of a set of fixtures with a waveform: sine, triangle, square, ramps, random, or a circle for
+  pan and tilt. <em>Speed</em> is in Hz, or per beat with <em>Follow tempo</em>. <em>Size</em> and <em>Base</em> set the swing;
+  it runs around the cue's value or, with <em>Absolute</em>, around the base. <em>Phase spread</em> staggers the fixtures,
+  <em>Groups</em> moves several fixtures together and <em>Wings</em> mirrors the pattern. The preview shows the result across
+  the fixtures.</p>
+  <figure>
+    <img src="img/lighting-effects.webp" width="1100" height="778" alt="Effects page with a custom rainbow effect: settings, preview of red, green and blue across eight fixtures, and its Python script.">
+    <figcaption>A script effect: the script made the colour table, the preview shows it across eight fixtures.</figcaption>
+  </figure>
+  <p>Run an effect from the programmer (the effects pool, or <code>effect 2</code>), then record it into a cue. It keeps running
+  through the following cues until a cue stops it.</p>
+  <p><strong>Script effects</strong> are written in Python with the <code>openq</code> module, for patterns the waveforms
+  can't make. Scripts only make effects: they run in a sandbox with no access to files, the network or other programs, and
+  they never run during the show, only the effect they made does. The Python they need is installed by oqman. Effects can be
+  shared as <code>.oqfx</code> files (<em>Export effect file…</em>, and the import button on the pool).</p>
+
+  <h3><span class="ms" aria-hidden="true">&#xe1c4;</span> Sequences</h3>
+  <p>A sequence is a cue stack. Lighting cues <strong>track</strong>: a cue stores only what changes, and everything else
+  carries on from the cues before it. Each cue has a fade, a separate down fade for intensity going down, and a delay.</p>
+  <figure>
+    <img src="img/lighting-sequences.webp" width="1100" height="307" alt="Sequences page with sequence Main and its four cues, their fade, down fade and delay times.">
+    <figcaption>A sequence. The arrow marks its current cue.</figcaption>
+  </figure>
+  <ul>
+    <li><strong>Timing per feature</strong> gives colour, position or beam their own fade and delay.</li>
+    <li><strong>Cue only</strong>: the cue's changes don't track; the next cue goes back to what was there before.</li>
+    <li><strong>Block</strong> stores every tracked value in the cue, so edits to earlier cues no longer change it. A blocked
+    cue shows a lock in the list and the button reads <em>Blocked</em>; press it again to let those values track again.</li>
+    <li><strong>Move in black</strong> (per sequence): fixtures that are dark take their next cue's position, colour and beam
+    before they come up, after the set delay.</li>
+    <li><em>Load into programmer</em> brings a cue back for editing; <em>Update cue</em> on the Programmer page stores the changes.</li>
+  </ul>
+  <h3>Executors</h3>
+  <p>The executor bar at the bottom of the Lighting workspace is there in both modes. It has the <strong>grand master</strong>,
+  <strong>blackout</strong>, the effects <strong>tempo</strong> (type it or tap it) and one executor per sequence: its current
+  and next cue, a level fader, <em>GO</em> and <em>Release</em>.</p>
+  <figure class="narrow">
+    <img src="img/lighting-executors.webp" width="927" height="197" alt="Executor bar: grand master at 100 percent, blackout, tempo 120 BPM and two sequence executors.">
+    <figcaption>Executors. In Show mode only GO and release work.</figcaption>
+  </figure>
+
+  <h3 id="surfaces"><span class="ms" aria-hidden="true">&#xe521;</span> Control surfaces</h3>
+  <p>A MIDI controller or an OSC app (TouchOSC, for example) can run the executors. In
+  <span class="menu">Settings → Control surfaces</span> choose this computer's <strong>MIDI input</strong>, then add
+  <strong>mappings</strong>: click <em>Learn new</em> (or the control of a mapping) and move a fader or press a button, then
+  pick what it does. <em>Executor bank</em> adds faders on CC 1–8 and buttons on notes 36–43 in one go. Executors are numbered
+  by their place in the sequence list.</p>
+  <ul>
+    <li><strong>Faders</strong>: executor level, grand master.</li>
+    <li><strong>Buttons</strong>: executor GO, release and flash (full while held), blackout, release all, tap tempo, and the
+    cue list's GO and Stop all. A button acts once per press, whether it sends notes, CC 127/0 or OSC 1/0.</li>
+  </ul>
+  <p>The mappings are saved with the show; the MIDI input belongs to the computer, so a remote device can use its own
+  controller (its moves go to the main device). OSC mappings come in through the <a href="#osc">OSC listener</a>, which also
+  knows the <code>/light/…</code> addresses without any mapping.</p>
+
+  <h3 id="lighting-io"><span class="ms" aria-hidden="true">&#xe328;</span> Outputs and inputs</h3>
+  <p>On the Outputs page add where the DMX goes: <strong>Art-Net</strong> (a node's address, or broadcast; <em>Find
+  devices</em> lists the nodes on the network), <strong>sACN</strong> (multicast, or a unicast address, with a priority) or an
+  <strong>Enttec DMX USB Pro</strong> (or compatible) interface. Each output sends a list of universes: the patch's universe on
+  the left, the number on the wire on the right (Art-Net counts from 0). Every output runs on its own, so a slow or unplugged
+  device doesn't hold up the others, and a lost device is reopened by itself.</p>
+  <figure>
+    <img src="img/lighting-outputs.webp" width="1100" height="448" alt="Outputs page with an Art-Net output sending, a disabled sACN output, and an sACN input set to merge.">
+    <figcaption>Outputs and inputs, each with its live status.</figcaption>
+  </figure>
+  <p><strong>Inputs</strong> receive Art-Net or sACN from another desk. Each one either <em>merges</em> with OpenQ's output
+  (the highest value wins), <em>replaces</em> it on the universes it receives, or is kept for <em>capture only</em>. When
+  several desks send the same sACN universe, the highest priority wins. OpenQ ignores its own packets, so a broadcast output
+  doesn't come back in through an input.</p>
+    <p>An Art-Net output can send <strong>ArtSync</strong> after every frame, so nodes that support it change all their
+  universes at the same moment. Shift-click a node in the <em>Nodes</em> list to send it the universes it outputs; a warning
+  shows when the output sends a universe the chosen node doesn't have. An Art-Net input answers desks that look for nodes
+  (ArtPoll), so desks that only send to nodes they found send to OpenQ too.</p>
+  <h3><span class="ms" aria-hidden="true">&#xe9b0;</span> DMX monitor</h3>
+  <p>The DMX monitor shows every slot of a universe as it goes out, inputs included. A yellow line marks where each fixture starts.</p>
+  <figure>
+    <img src="img/lighting-monitor.webp" width="1100" height="353" alt="DMX monitor grid of universe 1 with values on the first slots.">
+    <figcaption>The DMX monitor.</figcaption>
+  </figure>
+  <h3>Remote devices and visualisers</h3>
+  <p>A <a href="#remote">remote device</a> gets the lighting design and its changes, and shows the main device's executors
+  and DMX output; its GO and faders act on the main device. A device with the edit role can change the design too.
+  A visualiser can follow OpenQ the same way, or read the DMX from Art-Net or sACN and the rig from an MVR export.</p>
+</section>
+
 <section id="remote">
-  <h2><span class="n">11</span>Remote devices</h2>
+  <h2><span class="n">12</span>Remote devices</h2>
   <p>A second computer running OpenQ on the same network can follow the show and run it. This could be the stage manager's laptop
   or a tablet at the tech table. The computer running the show is the <strong>main device</strong>, and it does all the playback.
   The other device shows its cue list, playhead, running cues and meters, and sends GO and other commands to it.</p>
@@ -789,7 +994,7 @@ cargo run --release -- show.openq    # open a saved show</code></pre>
 </section>
 
 <section id="osc">
-  <h2><span class="n">12</span>OSC and network cues</h2>
+  <h2><span class="n">13</span>OSC and network cues</h2>
   <p>Turn on <strong>OSC remote control</strong> in <span class="menu">Settings → General</span>. It listens on UDP port 53000
   by default. Cues are addressed by their number.</p>
   <div class="table-wrap"><table>
@@ -801,6 +1006,7 @@ cargo run --release -- show.openq    # open a saved show</code></pre>
       <tr><td><code>/playhead/next</code> · <code>/playhead/previous</code></td><td>Move the playhead</td></tr>
       <tr><td><code>/playhead/4.2</code></td><td>Put the playhead on cue 4.2</td></tr>
       <tr><td><code>/cue/4.2/start</code></td><td>Also <code>stop</code>, <code>pause</code>, <code>resume</code>, <code>devamp</code></td></tr>
+      <tr><td><code>/light/executor/2/level 0.5</code></td><td>Executor 2's level; also <code>go</code>, <code>release</code>, <code>flash</code> (1 = press, 0 = let go). <code>/light/grandmaster 0.8</code>, <code>/light/blackout</code>, <code>/light/release</code>, <code>/light/tap</code></td></tr>
     </tbody>
   </table></div>
   <p>A <strong>Network cue</strong> sends one OSC message to other gear. Set the host, port, address
@@ -809,9 +1015,9 @@ cargo run --release -- show.openq    # open a saved show</code></pre>
 </section>
 
 <section id="settings">
-  <h2><span class="n">13</span>Settings</h2>
+  <h2><span class="n">14</span>Settings</h2>
   <p><span class="menu">Edit → Settings…</span>, or the <span class="ms" aria-hidden="true">&#xe8b8;</span> button at the
-  right of the status bar. These are saved with the show, except the language, which belongs to the computer.</p>
+  right of the status bar. These are saved with the show, except the language and the control surface MIDI input, which belong to the computer.</p>
   <div class="table-wrap"><table>
     <thead><tr><th>Tab</th><th>Settings</th></tr></thead>
     <tbody>
@@ -819,6 +1025,7 @@ cargo run --release -- show.openq    # open a saved show</code></pre>
       <tr><td>Audio</td><td>Output device. Changing it stops all playback. Routing matrices address this device's outputs.
       The <strong>room for object audio</strong>: the speakers, where they stand and which output each one is on.</td></tr>
       <tr><td>Stages</td><td>Add and name stages, canvas size, output display, fullscreen, mapping.</td></tr>
+      <tr><td>Control surfaces</td><td>This computer's MIDI input and the show's <a href="#surfaces">control surface mappings</a>, with learn.</td></tr>
     </tbody>
   </table></div>
   <figure class="narrow">
@@ -833,7 +1040,7 @@ cargo run --release -- show.openq    # open a saved show</code></pre>
 </section>
 
 <section id="safety">
-  <h2><span class="n">14</span>Crash safety</h2>
+  <h2><span class="n">15</span>Crash safety</h2>
   <p>A show has to carry on when something goes wrong. OpenQ keeps problems as small as it can and
   gets your work back if it does go down.</p>
   <h3>Autosave and recovery</h3>
@@ -879,7 +1086,7 @@ cargo run --release -- show.openq    # open a saved show</code></pre>
 </section>
 
 <section id="keys">
-  <h2><span class="n">15</span>Keyboard shortcuts</h2>
+  <h2><span class="n">16</span>Keyboard shortcuts</h2>
   <div class="table-wrap"><table>
     <thead><tr><th>Keys</th><th>Action</th></tr></thead>
     <tbody>
@@ -903,7 +1110,7 @@ cargo run --release -- show.openq    # open a saved show</code></pre>
 </section>
 
 <section id="trouble">
-  <h2><span class="n">16</span>Troubleshooting</h2>
+  <h2><span class="n">17</span>Troubleshooting</h2>
   <div class="table-wrap"><table>
     <thead><tr><th>Problem</th><th>Try</th></tr></thead>
     <tbody>
@@ -937,7 +1144,7 @@ cargo run --release -- show.openq    # open a saved show</code></pre>
 </section>
 
 <section id="license">
-  <h2><span class="n">17</span>License and credits</h2>
+  <h2><span class="n">18</span>License and credits</h2>
   <p>OpenQ is licensed under the <a href="https://www.apache.org/licenses/LICENSE-2.0">Apache License 2.0</a>.</p>
   <div class="table-wrap split"><table>
     <thead><tr><th>You may</th><th>You must</th></tr></thead>

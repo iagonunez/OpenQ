@@ -1,9 +1,10 @@
 //! Main-device side: accept paired devices, keep them in sync and take their commands.
 
 use super::secure::{self, HandshakeError, Hello, ServerInfo};
+use super::netguard::{self, NetworkChange};
 use super::{ClientMsg, LiveState, RemoteConfig, Role, ServerMsg, TrustedDevice, normalize_code, unix_now};
 use crate::media::audio::MeterReader;
-use crate::model::{CueKind, Workspace};
+use crate::model::Workspace;
 use crate::show::SharedShow;
 use parking_lot::Mutex;
 use std::collections::{HashMap, HashSet, VecDeque};
@@ -22,6 +23,15 @@ pub const PAIRING_ATTEMPTS: u32 = 5;
 const MAX_FAILURES: u32 = 10;
 const BLOCK_FOR: Duration = Duration::from_secs(300);
 const MAX_CONNECTIONS: usize = 32;
+/// Connections from one address at a time (a replica needs one; this leaves room for a few
+/// instances on one computer while one host can't take every slot).
+const MAX_PER_ADDRESS: usize = 8;
+/// Addresses remembered for failed logins (the oldest is forgotten first).
+const MAX_FAILURE_ENTRIES: usize = 4096;
+/// Largest message taken from a device that can't edit (commands, selections, pings).
+const SMALL_MESSAGE: usize = 1 << 20;
+/// Waveform requests one connection may have waiting.
+const WAVEFORM_QUEUE: usize = 64;
 /// Replicas get state at most this often, and at least once a second as a heartbeat.
 const STATE_INTERVAL: Duration = Duration::from_millis(50);
 const HEARTBEAT: Duration = Duration::from_secs(1);
@@ -64,6 +74,8 @@ struct Shared {
     pairing: Mutex<Option<Pairing>>,
     clients: Mutex<Vec<Connected>>,
     failures: Mutex<HashMap<IpAddr, Failures>>,
+    /// Open connections per address.
+    per_address: Mutex<HashMap<IpAddr, usize>>,
     events: Mutex<VecDeque<String>>,
     stop: Arc<AtomicBool>,
     next_conn: AtomicU64,
@@ -94,6 +106,14 @@ impl Shared {
 
     fn record_failure(&self, ip: IpAddr) {
         let mut f = self.failures.lock();
+        if f.len() >= MAX_FAILURE_ENTRIES && !f.contains_key(&ip) {
+            f.retain(|_, v| v.last.elapsed() < BLOCK_FOR);
+            if f.len() >= MAX_FAILURE_ENTRIES
+                && let Some(oldest) = f.iter().min_by_key(|(_, v)| v.last).map(|(k, _)| *k)
+            {
+                f.remove(&oldest);
+            }
+        }
         let e = f.entry(ip).or_insert(Failures { count: 0, last: Instant::now() });
         e.count += 1;
         e.last = Instant::now();
@@ -137,6 +157,7 @@ impl Server {
             pairing: Mutex::new(None),
             clients: Mutex::new(Vec::new()),
             failures: Mutex::new(HashMap::new()),
+            per_address: Mutex::new(HashMap::new()),
             events: Mutex::new(VecDeque::new()),
             stop: stop.clone(),
             next_conn: AtomicU64::new(1),
@@ -206,19 +227,33 @@ fn accept_loop(shared: Arc<Shared>, listener: TcpListener) {
     while !shared.stop.load(Ordering::Relaxed) {
         match listener.accept() {
             Ok((stream, addr)) => {
-                if shared.blocked(addr.ip()) || active.load(Ordering::Relaxed) as usize >= MAX_CONNECTIONS {
+                let ip = addr.ip();
+                if shared.blocked(ip) || active.load(Ordering::Relaxed) as usize >= MAX_CONNECTIONS {
                     continue; // dropping the stream closes it
+                }
+                {
+                    let mut per = shared.per_address.lock();
+                    let n = per.entry(ip).or_insert(0);
+                    if *n >= MAX_PER_ADDRESS {
+                        continue;
+                    }
+                    *n += 1;
                 }
                 let (sh, act) = (shared.clone(), active.clone());
                 act.fetch_add(1, Ordering::Relaxed);
-                let _ = std::thread::Builder::new().name("openq-remote-conn".into()).spawn(move || {
+                let spawned = std::thread::Builder::new().name("openq-remote-conn".into()).spawn(move || {
                     // Even a connection that fails in an unexpected way gives its slot back,
                     // or the server would end up refusing everyone.
                     if let Err(e) = crate::recovery::catch(|| serve(&sh, stream, addr)) {
                         log::debug!("remote connection {addr}: {e:#}");
                     }
                     act.fetch_sub(1, Ordering::Relaxed);
+                    release_address(&sh, ip);
                 });
+                if spawned.is_err() {
+                    active.fetch_sub(1, Ordering::Relaxed);
+                    release_address(&shared, ip);
+                }
             }
             Err(e) if e.kind() == std::io::ErrorKind::WouldBlock => std::thread::sleep(Duration::from_millis(50)),
             Err(e) => {
@@ -229,19 +264,18 @@ fn accept_loop(shared: Arc<Shared>, listener: TcpListener) {
     }
 }
 
-/// Media files the workspace refers to.
-fn media_paths(ws: &Workspace) -> Vec<PathBuf> {
-    ws.cue_list
-        .iter_all()
-        .iter()
-        .filter_map(|c| match &c.kind {
-            CueKind::Audio(a) => Some(a.path.clone()),
-            CueKind::Video(v) => Some(v.path.clone()),
-            _ => None,
-        })
-        .filter(|p| !p.as_os_str().is_empty())
-        .collect()
+/// A connection from `ip` ended.
+fn release_address(shared: &Shared, ip: IpAddr) {
+    let mut per = shared.per_address.lock();
+    if let Some(n) = per.get_mut(&ip) {
+        *n = n.saturating_sub(1);
+        if *n == 0 {
+            per.remove(&ip);
+        }
+    }
 }
+
+use super::vet::media_paths;
 
 fn title_of(path: &Option<PathBuf>) -> String {
     path.as_ref().and_then(|p| p.file_stem()).map_or_else(|| "Untitled".into(), |s| s.to_string_lossy().into_owned())
@@ -303,6 +337,12 @@ fn serve(shared: &Arc<Shared>, stream: TcpStream, addr: SocketAddr) -> anyhow::R
             return Ok(());
         }
         Err(HandshakeError::Io(e)) => {
+            // Holding a connection open without finishing the handshake counts as a failure
+            // (a host that keeps doing it would hold the connection slots).
+            if secure::is_timeout(&e) {
+                shared.record_failure(addr.ip());
+                shared.event(format!("Dropped {addr}: the handshake took too long"));
+            }
             // Gone before sending its proof: it learned nothing about the code, so the try
             // doesn't count.
             if reserved.get()
@@ -357,14 +397,13 @@ fn serve(shared: &Arc<Shared>, stream: TcpStream, addr: SocketAddr) -> anyhow::R
 
     let closed = Arc::new(AtomicBool::new(false));
     let (notice_tx, notice_rx) = std::sync::mpsc::channel::<ServerMsg>();
-    // Set by the replica's Resync: the next workspace goes whole.
-    let resync = Arc::new(AtomicBool::new(false));
+    let flags = Arc::new(Flags::default());
     let writer = {
-        let (sh, closed, resync) = (shared.clone(), closed.clone(), resync.clone());
+        let (sh, closed, flags) = (shared.clone(), closed.clone(), flags.clone());
         std::thread::Builder::new()
             .name("openq-remote-send".into())
             .spawn(move || {
-                if let Err(e) = send_loop(&sh, &mut tx, hello.client_id, role, &closed, &resync, notice_rx) {
+                if let Err(e) = send_loop(&sh, &mut tx, hello.client_id, role, &closed, &flags, notice_rx) {
                     log::debug!("remote send: {e:#}");
                 }
                 closed.store(true, Ordering::Relaxed);
@@ -373,12 +412,21 @@ fn serve(shared: &Arc<Shared>, stream: TcpStream, addr: SocketAddr) -> anyhow::R
     };
 
     rx.set_timeout(Some(IDLE_TIMEOUT));
-    let result = receive_loop(shared, &mut rx, hello.client_id, &closed, &resync, &notice_tx);
+    let result = receive_loop(shared, &mut rx, hello.client_id, &device_name, &closed, &flags, &notice_tx);
     closed.store(true, Ordering::Relaxed);
     let _ = writer.join();
     shared.clients.lock().retain(|c| c.conn != conn);
     shared.event(format!("{device_name} disconnected"));
     result
+}
+
+/// Requests a replica makes of its connection's sender.
+#[derive(Default)]
+struct Flags {
+    /// Set by the replica's Resync: the next workspace goes whole.
+    resync: AtomicBool,
+    /// The replica wants the DMX output ([`ServerMsg::Dmx`]).
+    dmx: AtomicBool,
 }
 
 fn role_of(shared: &Shared, device: Uuid) -> Option<Role> {
@@ -389,17 +437,35 @@ fn receive_loop(
     shared: &Arc<Shared>,
     rx: &mut secure::Receiver,
     device: Uuid,
+    device_name: &str,
     closed: &AtomicBool,
-    resync: &AtomicBool,
+    flags: &Flags,
     notices: &std::sync::mpsc::Sender<ServerMsg>,
 ) -> anyhow::Result<()> {
+    let mut waveforms = Waveforms::new(notices.clone());
     while !closed.load(Ordering::Relaxed) && !shared.stop.load(Ordering::Relaxed) {
+        // Only an editor may send big messages (a whole show): the others can't make the main
+        // device hold one in memory.
+        let editor = role_of(shared, device).is_some_and(Role::can_edit);
+        rx.set_limit(if editor { secure::MAX_MESSAGE } else { SMALL_MESSAGE });
         let msg: ClientMsg = rx.recv()?;
         // Look the role up for every message, so changes and removals apply at once.
         let Some(role) = role_of(shared, device) else { return Ok(()) };
         match msg {
             ClientMsg::Ping => {}
-            ClientMsg::Resync => resync.store(true, Ordering::Release),
+            ClientMsg::Resync => flags.resync.store(true, Ordering::Release),
+            ClientMsg::Subscribe { dmx } => flags.dmx.store(dmx, Ordering::Release),
+            ClientMsg::Select(fixtures) => {
+                if role.can_control() {
+                    let mut show = shared.show.lock();
+                    show.light_selection = fixtures.into_iter().take(crate::light::model::MAX_FIXTURE_ID as usize).collect();
+                    show.light_selection_gen += 1;
+                    drop(show);
+                    (shared.repaint)();
+                } else {
+                    let _ = notices.send(ServerMsg::Refused("This device is view-only".into()));
+                }
+            }
             ClientMsg::Command(cmd) => {
                 if role.can_control() {
                     let r = crate::control::apply(&mut shared.show.lock(), cmd, Instant::now());
@@ -410,9 +476,74 @@ fn receive_loop(
                     let _ = notices.send(ServerMsg::Refused("This device is view-only".into()));
                 }
             }
-            ClientMsg::Edit(ws) => {
+            ClientMsg::Patch { mut cues, mut lighting } => {
+                if !role.can_edit() {
+                    let _ = notices.send(ServerMsg::Refused("This device can't edit the show".into()));
+                    continue;
+                }
+                let mut show = shared.show.lock();
+                if let Err(why) = super::vet::cues(&show.ws, &cues).and_then(|_| super::vet::numbers(&lighting)) {
+                    drop(show);
+                    refuse_edit(shared, flags, notices, why);
+                    continue;
+                }
+                let mut held = NetworkChange::default();
+                netguard::hold_cues(&show.ws, &mut cues, &mut held);
+                if let Some(p) = lighting.as_deref_mut() {
+                    netguard::hold_lighting(&show.ws, p, &mut held);
+                }
+                if show.apply_remote_patch(&cues, lighting.as_deref()) {
+                    hold_for_operator(shared, &mut show, flags, notices, device_name, held);
+                    drop(show);
+                    (shared.repaint)();
+                } else {
+                    drop(show);
+                    // The replica's copy has drifted: its edit is lost, it gets the whole show.
+                    flags.resync.store(true, Ordering::Release);
+                    let _ = notices.send(ServerMsg::Refused("An edit didn't fit the show on the main device; resyncing".into()));
+                }
+            }
+            ClientMsg::Reshape { mut ws, mut lighting } => {
+                if !role.can_edit() {
+                    let _ = notices.send(ServerMsg::Refused("This device can't edit the show".into()));
+                    continue;
+                }
+                let mut show = shared.show.lock();
+                if let Err(why) = super::vet::workspace(&show.ws, &ws).and_then(|_| super::vet::numbers(&lighting)) {
+                    drop(show);
+                    refuse_edit(shared, flags, notices, why);
+                    continue;
+                }
+                let mut held = NetworkChange::default();
+                netguard::hold_workspace(&show.ws, &mut ws, &mut held);
+                if let Some(p) = lighting.as_deref_mut() {
+                    netguard::hold_lighting(&show.ws, p, &mut held);
+                }
+                ws.lighting = show.ws.lighting.clone();
+                if lighting.as_ref().is_some_and(|p| !crate::light::patch::apply(&mut ws.lighting, p)) {
+                    drop(show);
+                    flags.resync.store(true, Ordering::Release);
+                    let _ = notices.send(ServerMsg::Refused("An edit didn't fit the show on the main device; resyncing".into()));
+                    continue;
+                }
+                show.apply_remote_edit(*ws);
+                hold_for_operator(shared, &mut show, flags, notices, device_name, held);
+                drop(show);
+                (shared.repaint)();
+            }
+            ClientMsg::Edit(mut ws) => {
                 if role.can_edit() {
-                    shared.show.lock().apply_remote_edit(*ws);
+                    let mut show = shared.show.lock();
+                    if let Err(why) = super::vet::workspace(&show.ws, &ws) {
+                        drop(show);
+                        refuse_edit(shared, flags, notices, why);
+                        continue;
+                    }
+                    let mut held = NetworkChange::default();
+                    netguard::hold_workspace(&show.ws, &mut ws, &mut held);
+                    show.apply_remote_edit(*ws);
+                    hold_for_operator(shared, &mut show, flags, notices, device_name, held);
+                    drop(show);
                     (shared.repaint)();
                 } else {
                     let _ = notices.send(ServerMsg::Refused("This device can't edit the show".into()));
@@ -422,11 +553,7 @@ fn receive_loop(
                 // Only files the show uses: a replica must not be able to read anything else.
                 let known = media_paths(&shared.show.lock().ws).contains(&path);
                 if known {
-                    let tx = notices.clone();
-                    std::thread::spawn(move || {
-                        let r = crate::media::decoder::waveform(&path).map_err(|e| format!("{e:#}"));
-                        let _ = tx.send(ServerMsg::Waveform(path, r));
-                    });
+                    waveforms.request(path);
                 } else {
                     let _ = notices.send(ServerMsg::Waveform(path, Err("not part of the show".into())));
                 }
@@ -436,13 +563,81 @@ fn receive_loop(
     Ok(())
 }
 
+/// Queue network settings changes held back from a replica's edit for the operator; the replica
+/// is told and gets the show as it now is (without them).
+fn hold_for_operator(
+    shared: &Shared,
+    show: &mut crate::show::Show,
+    flags: &Flags,
+    notices: &std::sync::mpsc::Sender<ServerMsg>,
+    device_name: &str,
+    held: NetworkChange,
+) {
+    if held.is_empty() {
+        return;
+    }
+    shared.event(format!("{device_name} asks to change network settings: {}", held.describe().join("; ")));
+    show.request_network_change(device_name, held);
+    flags.resync.store(true, Ordering::Release);
+    let _ = notices.send(ServerMsg::Refused("Network settings changes wait for approval on the main device".into()));
+}
+
+/// Refuse a replica's edit: it gets the reason and, as its copy now differs, the whole show.
+fn refuse_edit(shared: &Shared, flags: &Flags, notices: &std::sync::mpsc::Sender<ServerMsg>, why: String) {
+    shared.event(format!("Refused an edit: {why}"));
+    flags.resync.store(true, Ordering::Release);
+    let _ = notices.send(ServerMsg::Refused(why));
+}
+
+/// Waveforms a connection asked for, made one at a time on its own worker thread (a replica
+/// can't start any number of decodes at once).
+struct Waveforms {
+    notices: std::sync::mpsc::Sender<ServerMsg>,
+    queue: Option<std::sync::mpsc::SyncSender<PathBuf>>,
+}
+
+impl Waveforms {
+    fn new(notices: std::sync::mpsc::Sender<ServerMsg>) -> Self {
+        Self { notices, queue: None }
+    }
+
+    fn request(&mut self, path: PathBuf) {
+        if self.queue.is_none() {
+            let (tx, rx) = std::sync::mpsc::sync_channel::<PathBuf>(WAVEFORM_QUEUE);
+            let notices = self.notices.clone();
+            // The worker ends when the connection drops its queue.
+            let spawned = std::thread::Builder::new().name("openq-remote-waveform".into()).spawn(move || {
+                for path in rx {
+                    let r = crate::recovery::catch(|| crate::media::decoder::waveform(&path)).map_err(|e| format!("{e:#}"));
+                    if notices.send(ServerMsg::Waveform(path, r)).is_err() {
+                        break;
+                    }
+                }
+            });
+            if spawned.is_ok() {
+                self.queue = Some(tx);
+            }
+        }
+        let refused = match &self.queue {
+            Some(q) => match q.try_send(path) {
+                Ok(()) => None,
+                Err(std::sync::mpsc::TrySendError::Full(p) | std::sync::mpsc::TrySendError::Disconnected(p)) => Some(p),
+            },
+            None => Some(path),
+        };
+        if let Some(path) = refused {
+            let _ = self.notices.send(ServerMsg::Waveform(path, Err("too many waveform requests".into())));
+        }
+    }
+}
+
 fn send_loop(
     shared: &Arc<Shared>,
     tx: &mut secure::Sender,
     device: Uuid,
     mut role: Role,
     closed: &AtomicBool,
-    resync: &AtomicBool,
+    flags: &Flags,
     notices: std::sync::mpsc::Receiver<ServerMsg>,
 ) -> anyhow::Result<()> {
     let mut last_ws: Option<Workspace> = None;
@@ -454,6 +649,8 @@ fn send_loop(
     let mut last_state: Option<LiveState> = None;
     let mut last_sent = Instant::now();
     let mut media_sent: HashSet<PathBuf> = HashSet::new();
+    // DMX output as last sent to a replica that asked for it (None: send everything next).
+    let mut dmx_sent: Option<crate::light::dmx::DmxFrame> = None;
     while !closed.load(Ordering::Relaxed) && !shared.stop.load(Ordering::Relaxed) {
         match role_of(shared, device) {
             None => {
@@ -470,12 +667,16 @@ fn send_loop(
             tx.send(&n)?;
         }
 
-        if resync.swap(false, Ordering::AcqRel) {
+        if flags.resync.swap(false, Ordering::AcqRel) {
             last_ws = None;
             last_gen = None;
         }
         let meters = shared.meters();
-        let (ws, title, state, prober) = {
+        let want_dmx = flags.dmx.load(Ordering::Acquire);
+        if !want_dmx {
+            dmx_sent = None;
+        }
+        let (ws, title, state, prober, dmx) = {
             let show = shared.show.lock();
             let now = Instant::now();
             let compare = last_gen != Some(show.edit_gen) || now.duration_since(last_compare) >= HEARTBEAT;
@@ -493,14 +694,51 @@ fn send_loop(
                 log: show.engine.log.clone(),
                 meters,
                 dirty: show.dirty,
+                lighting: super::LightLive {
+                    masters: show.media.light.masters().clone(),
+                    sequences: show.media.light.status(),
+                    selection: show.light_selection.clone(),
+                },
             };
-            (ws, title_of(&show.path), state, show.media.prober.clone())
+            let dmx = want_dmx.then(|| show.media.light.frame());
+            (ws, title_of(&show.path), state, show.media.prober.clone(), dmx)
         };
+        if let Some(frame) = dmx {
+            let changed: Vec<(u16, Vec<u8>)> = frame
+                .universes
+                .iter()
+                .filter(|u| dmx_sent.as_ref().and_then(|f| f.get(u.id)) != Some(u))
+                .map(|u| (u.id, u.data.to_vec()))
+                .collect();
+            if !changed.is_empty() {
+                tx.send(&ServerMsg::Dmx(changed))?;
+            }
+            dmx_sent = Some(frame);
+        }
         if let Some(ws) = ws {
-            // Small edits (a slider being dragged) go as the changed cues, not the whole show.
-            match last_ws.as_ref().and_then(|old| super::cue_patch(old, &ws)) {
-                Some(patch) => tx.send(&ServerMsg::Cues(patch))?,
-                None => tx.send(&ServerMsg::Workspace { ws: Box::new(ws.clone()), title })?,
+            // Small edits (a slider being dragged) go as the changed cues and lighting design
+            // changes, not the whole show.
+            match last_ws.as_ref().and_then(|old| super::workspace_patch(old, &ws)) {
+                Some((cues, lighting)) => {
+                    if !cues.is_empty() || lighting.is_none() {
+                        tx.send(&ServerMsg::Cues(cues))?;
+                    }
+                    if let Some(l) = lighting {
+                        tx.send(&ServerMsg::Lighting(Box::new(l)))?;
+                    }
+                }
+                None => match &last_ws {
+                    // The replica has a design: keep it, send only its changes.
+                    Some(old) => {
+                        let mut light = ws.clone();
+                        light.lighting = Default::default();
+                        tx.send(&ServerMsg::Workspace { ws: Box::new(light), title, keep_lighting: true })?;
+                        if let Some(l) = crate::light::patch::diff(&old.lighting, &ws.lighting) {
+                            tx.send(&ServerMsg::Lighting(Box::new(l)))?;
+                        }
+                    }
+                    None => tx.send(&ServerMsg::Workspace { ws: Box::new(ws.clone()), title, keep_lighting: false })?,
+                },
             }
             last_ws = Some(ws);
         }

@@ -22,8 +22,25 @@ pub enum CueAction {
     Devamp,
 }
 
+/// A lighting playback action (executors and masters). Design edits are not commands.
+#[derive(Serialize, Deserialize, Clone, Copy, PartialEq, Debug)]
+pub enum LightControl {
+    /// GO a sequence's next cue, or a given cue.
+    Go(crate::light::model::SequenceId, Option<crate::light::model::LightCueId>),
+    /// Fade a sequence (None = all) out over `fade` seconds.
+    Release(Option<crate::light::model::SequenceId>, f32),
+    /// A sequence's master level (0..=1).
+    Level(crate::light::model::SequenceId, f32),
+    /// Grand master (0..=1).
+    GrandMaster(f32),
+    /// Blackout on/off.
+    Blackout(bool),
+    /// Effects tempo, BPM.
+    Tempo(f32),
+}
+
 /// A transport or playhead action, independent of where it came from.
-#[derive(Serialize, Deserialize, Clone, Copy, PartialEq, Eq, Debug)]
+#[derive(Serialize, Deserialize, Clone, Copy, PartialEq, Debug)]
 pub enum Command {
     /// Fire the cue at the playhead and advance the playhead.
     Go,
@@ -46,6 +63,8 @@ pub enum Command {
     /// Bring cue list `n` (tab order, from 0) forward: GO and the playhead then work on it, while
     /// cues already running in other lists carry on.
     SwitchList(usize),
+    /// Lighting playback.
+    Light(LightControl),
 }
 
 /// Apply a command to the show.
@@ -53,8 +72,18 @@ pub fn apply(show: &mut Show, cmd: Command, now: Instant) -> Result<(), String> 
     let Show { ws, engine, media, .. } = show;
     match cmd {
         Command::Go => engine.go(ws, media, now),
-        Command::Stop => engine.stop_all(media, now, ws.settings.panic_fade),
-        Command::Panic => engine.stop_all(media, now, 0.0),
+        Command::Stop => {
+            if ws.lighting.stop_all_releases {
+                media.light.release_all(ws.settings.panic_fade, now);
+            }
+            engine.stop_all(media, now, ws.settings.panic_fade)
+        }
+        Command::Panic => {
+            if ws.lighting.stop_all_releases {
+                media.light.release_all(0.0, now);
+            }
+            engine.stop_all(media, now, 0.0)
+        }
         Command::PauseAll => engine.pause_all(media, now),
         Command::ResumeAll => engine.resume_all(media, now),
         Command::PlayheadNext | Command::PlayheadPrevious => {
@@ -83,6 +112,18 @@ pub fn apply(show: &mut Show, cmd: Command, now: Instant) -> Result<(), String> 
             let ph = ws.cue_list.switch_to(tab, engine.playhead);
             engine.set_playhead(ph.or(ws.cue_list.first()));
             show.edited();
+        }
+        Command::Light(c) => {
+            let l = &mut media.light;
+            match c {
+                LightControl::Go(seq, cue) => l.go(seq, cue, now),
+                LightControl::Release(Some(seq), fade) => l.release(seq, fade as f64, now),
+                LightControl::Release(None, fade) => l.release_all(fade as f64, now),
+                LightControl::Level(seq, v) => l.set_level(seq, v),
+                LightControl::GrandMaster(v) => l.set_grand_master(v),
+                LightControl::Blackout(b) => l.set_blackout(b),
+                LightControl::Tempo(bpm) => l.set_tempo(bpm),
+            }
         }
         Command::Cue(id, action) => {
             if ws.cue_list.find(id).is_none() {

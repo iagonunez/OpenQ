@@ -167,6 +167,7 @@ struct Opened {
 }
 
 fn open(path: &Path) -> anyhow::Result<Opened> {
+    super::check_local(path)?;
     let file = std::fs::File::open(path).with_context(|| format!("cannot open {}", path.display()))?;
     let mss = MediaSourceStream::new(Box::new(file), Default::default());
     let mut hint = Hint::new();

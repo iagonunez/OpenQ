@@ -201,7 +201,7 @@ impl NativeMenu {
         );
 
         let cue = Submenu::new(t("Cue"), true);
-        for (i, tag) in KindTag::ALL.iter().enumerate() {
+        for (i, tag) in KindTag::ALL.iter().enumerate().filter(|(_, t)| t.enabled()) {
             let _ = cue.append(&item(Action::NewCue(i), tr!("New {kind} cue", kind = tag.label())));
         }
 
@@ -346,7 +346,7 @@ impl App {
             Action::Renumber => self.renumber_all(show),
             Action::Settings => self.show_settings = true,
             Action::NewCue(i) => {
-                if let Some(tag) = KindTag::ALL.get(i) {
+                if let Some(tag) = KindTag::ALL.get(i).filter(|t| t.enabled()) {
                     self.add_cue(show, *tag);
                 }
             }

@@ -941,6 +941,43 @@ impl Default for NetworkCue {
     }
 }
 
+/// What a Light cue does with the lighting design.
+#[derive(Serialize, Deserialize, Clone, Copy, PartialEq, Eq, Debug, Default)]
+pub enum LightAction {
+    /// GO a designed lighting cue.
+    #[default]
+    Go,
+    /// Fade a sequence out (None = every sequence).
+    Release,
+}
+
+impl LightAction {
+    /// Every action.
+    pub const ALL: [LightAction; 2] = [LightAction::Go, LightAction::Release];
+
+    /// Name shown in the UI.
+    pub fn label(self) -> &'static str {
+        match self {
+            LightAction::Go => crate::i18n::t("GO lighting cue"),
+            LightAction::Release => crate::i18n::t("Release sequence"),
+        }
+    }
+}
+
+/// Plays a cue of the lighting design (the design itself lives in `Workspace.lighting`).
+#[derive(Serialize, Deserialize, Clone, PartialEq, Debug, Default)]
+#[serde(default)]
+pub struct LightingCue {
+    /// Go or release.
+    pub action: LightAction,
+    /// Lighting cue fired by [`LightAction::Go`].
+    pub cue: Option<crate::light::model::LightCueId>,
+    /// Sequence released by [`LightAction::Release`] (None = all).
+    pub sequence: Option<crate::light::model::SequenceId>,
+    /// Release fade in seconds.
+    pub fade: f64,
+}
+
 /// Plays a live audio input (microphones, line inputs) through the mixer.
 #[derive(Serialize, Deserialize, Clone, PartialEq, Debug)]
 #[serde(default)]
@@ -1105,6 +1142,8 @@ pub enum CueKind {
     Mic(MicCue),
     /// Show a live camera on a stage.
     Camera(CameraCue),
+    /// Play a cue of the lighting design.
+    Light(LightingCue),
 }
 
 /// The type of a cue without its settings (for menus, icons and display).
@@ -1140,6 +1179,8 @@ pub enum KindTag {
     Mic,
     /// Camera cue.
     Camera,
+    /// Light cue.
+    Light,
 }
 
 impl KindTag {
@@ -1149,7 +1190,7 @@ impl KindTag {
     }
 
     /// Every type, in toolbox order (the first ten match Ctrl+1…0).
-    pub const ALL: [KindTag; 15] = [
+    pub const ALL: [KindTag; 16] = [
         KindTag::Audio,
         KindTag::Video,
         KindTag::Group,
@@ -1165,7 +1206,13 @@ impl KindTag {
         KindTag::Text,
         KindTag::Mic,
         KindTag::Camera,
+        KindTag::Light,
     ];
+
+    /// Whether this build offers the type (Light cues need the `lighting` feature).
+    pub fn enabled(self) -> bool {
+        self != KindTag::Light || cfg!(feature = "lighting")
+    }
 
     /// Name shown in the UI.
     pub fn label(self) -> &'static str {
@@ -1185,6 +1232,7 @@ impl KindTag {
             KindTag::Text => crate::i18n::t("Text"),
             KindTag::Mic => crate::i18n::t("Mic"),
             KindTag::Camera => crate::i18n::t("Camera"),
+            KindTag::Light => crate::i18n::t("Light"),
         }
     }
 
@@ -1206,6 +1254,7 @@ impl KindTag {
             KindTag::Text => CueKind::Text(TextCue::default()),
             KindTag::Mic => CueKind::Mic(MicCue::default()),
             KindTag::Camera => CueKind::Camera(CameraCue::default()),
+            KindTag::Light => CueKind::Light(LightingCue::default()),
         }
     }
 }
@@ -1229,6 +1278,7 @@ impl CueKind {
             CueKind::Text(_) => KindTag::Text,
             CueKind::Mic(_) => KindTag::Mic,
             CueKind::Camera(_) => KindTag::Camera,
+            CueKind::Light(_) => KindTag::Light,
         }
     }
 
@@ -2056,6 +2106,9 @@ pub struct Settings {
     /// device's output count, see [`crate::spatial::default_room`]).
     #[serde(skip_serializing_if = "Vec::is_empty")]
     pub speakers: Vec<Speaker>,
+    /// MIDI/OSC control surfaces mapped onto executors, masters and GO.
+    #[serde(skip_serializing_if = "crate::surface::SurfaceSettings::is_empty")]
+    pub surfaces: crate::surface::SurfaceSettings,
 }
 
 impl Default for Settings {
@@ -2064,6 +2117,7 @@ impl Default for Settings {
             osc_enabled: false,
             osc_port: 53000,
             speakers: Vec::new(),
+            surfaces: Default::default(),
         }
     }
 }
@@ -2080,6 +2134,9 @@ pub struct Workspace {
     pub settings: Settings,
     /// Video outputs.
     pub stages: Vec<Stage>,
+    /// Lighting design (patch, groups, lighting cue sequences).
+    #[serde(skip_serializing_if = "crate::light::Lighting::is_empty")]
+    pub lighting: crate::light::Lighting,
 }
 
 impl Default for Workspace {
@@ -2089,6 +2146,7 @@ impl Default for Workspace {
             cue_list: CueList::default(),
             settings: Settings::default(),
             stages: vec![Stage::default()],
+            lighting: Default::default(),
         }
     }
 }

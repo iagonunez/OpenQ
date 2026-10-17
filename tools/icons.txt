@@ -103,3 +103,9 @@ instant_mix
 surround_sound
 arrow_upward
 language
+code
+download
+expand_less
+open_in_new
+touch_app
+smart_button

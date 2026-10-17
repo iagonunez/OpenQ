@@ -13,7 +13,7 @@
 //! into are preloaded along with the next GO's. A cue that keeps restarting itself with no time
 //! in between (a Start cue aimed at itself) is held off and reported instead of spinning.
 
-use crate::model::{Cue, CueId, CueKind, FadeCurve, GroupMode, KindTag, MIN_DB, NetworkCue, Workspace};
+use crate::model::{Cue, CueId, CueKind, FadeCurve, GroupMode, KindTag, LightingCue, MIN_DB, NetworkCue, Workspace};
 use std::collections::{HashMap, HashSet};
 use std::time::{Duration, Instant};
 
@@ -83,6 +83,12 @@ pub trait Backend {
     /// Send a Network cue's message.
     fn send_network(&mut self, _net: &NetworkCue) -> Result<(), String> {
         Err("network output unavailable".into())
+    }
+    /// Run a Light cue (GO a lighting cue, release a sequence) at `at`. Returns how long its
+    /// fades take, in seconds.
+    /// `design` is the workspace's lighting design (for the cue's timing).
+    fn light(&mut self, _cue: &LightingCue, _design: &crate::light::Lighting, _at: Instant) -> Result<f64, String> {
+        Err("lighting unavailable".into())
     }
 }
 
@@ -169,8 +175,17 @@ pub struct InstanceSnapshot {
     pub parent: Option<CueId>,
 }
 
+/// Longest time the engine schedules, seconds (about 30 years).
+const MAX_SECS: f64 = 1e9;
+
+/// `secs` as a duration that can't panic or overflow clock arithmetic: negative and NaN give 0,
+/// anything huge (from a damaged show file or a replica) is capped at about 30 years.
+pub fn duration(secs: f64) -> Duration {
+    Duration::from_secs_f64(if secs.is_nan() { 0.0 } else { secs.clamp(0.0, MAX_SECS) })
+}
+
 fn before(t: Instant, secs: f64) -> Instant {
-    t.checked_sub(Duration::from_secs_f64(secs.max(0.0))).unwrap_or(t)
+    t.checked_sub(duration(secs)).unwrap_or(t)
 }
 
 /// Seconds from `now` until `t` (negative if `t` is in the past).
@@ -179,7 +194,7 @@ fn secs_between(now: Instant, t: Instant) -> f64 {
 }
 
 fn after(t: Instant, secs: f64) -> Instant {
-    t + Duration::from_secs_f64(secs.max(0.0))
+    t.checked_add(duration(secs)).unwrap_or(t)
 }
 
 /// The cue playback state machine. Pure logic: all media work goes through a [`Backend`].
@@ -820,10 +835,17 @@ impl Engine {
             }
             CueKind::Stop { target } => {
                 match target {
-                    Some(t) => self.stop_cue(ws, be, *t),
+                    Some(t) => {
+                        self.release_light_cues(ws, be, *t, at);
+                        self.stop_cue(ws, be, *t)
+                    }
                     None => {
                         let keep = self.ancestors(ws, cue.id);
                         self.stop_all_except(be, &keep);
+                        if ws.lighting.stop_all_releases {
+                            let all = LightingCue { action: crate::model::LightAction::Release, fade: ws.lighting.release_fade, ..Default::default() };
+                            let _ = be.light(&all, &ws.lighting, at);
+                        }
                     }
                 }
                 Some(0.0)
@@ -867,6 +889,13 @@ impl Engine {
                 }
                 Some(0.0)
             }
+            CueKind::Light(l) => match be.light(l, &ws.lighting, at) {
+                Ok(d) => Some(d),
+                Err(e) => {
+                    self.log(format!("Light cue {}: {e}", cue.number));
+                    Some(0.0)
+                }
+            },
             CueKind::Group { mode, children } => {
                 if children.is_empty() {
                     return Some(0.0);
@@ -886,6 +915,33 @@ impl Engine {
                     }
                 }
                 None
+            }
+        }
+    }
+
+    /// A Stop cue aimed at a Light cue (or a group holding some) releases the sequences those
+    /// cues play, over the design's release fade.
+    fn release_light_cues(&mut self, ws: &Workspace, be: &mut dyn Backend, target: CueId, at: Instant) {
+        fn walk(c: &Cue, out: &mut Vec<crate::light::model::SequenceId>, ws: &Workspace) {
+            match &c.kind {
+                CueKind::Light(l) if l.action == crate::model::LightAction::Go => {
+                    if let Some((s, _)) = l.cue.and_then(|id| ws.lighting.find_cue(id)) {
+                        out.push(s.id);
+                    }
+                }
+                CueKind::Group { children, .. } => children.iter().for_each(|ch| walk(ch, out, ws)),
+                _ => {}
+            }
+        }
+        let Some(c) = ws.cue_list.find(target) else { return };
+        let mut seqs = Vec::new();
+        walk(c, &mut seqs, ws);
+        seqs.sort();
+        seqs.dedup();
+        for s in seqs {
+            let rel = LightingCue { action: crate::model::LightAction::Release, sequence: Some(s), fade: ws.lighting.release_fade, ..Default::default() };
+            if let Err(e) = be.light(&rel, &ws.lighting, at) {
+                self.log(format!("Stop cue: {e}"));
             }
         }
     }
@@ -959,6 +1015,19 @@ fn preload_set(ws: &Workspace, seeds: &[CueId]) -> Vec<CueId> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// Wild times (a damaged show file, a replica's edit) neither panic nor overflow the clock.
+    #[test]
+    fn wild_times_are_safe() {
+        let now = Instant::now();
+        for s in [f64::NAN, f64::INFINITY, f64::NEG_INFINITY, -5.0, 1e300, f64::MAX] {
+            let _ = (after(now, s), before(now, s), duration(s));
+        }
+        assert_eq!(duration(f64::NAN), Duration::ZERO);
+        assert_eq!(duration(-1.0), Duration::ZERO);
+        assert_eq!(duration(1e300), Duration::from_secs_f64(MAX_SECS));
+        assert!(after(now, 1e300) > now + Duration::from_secs(1 << 20));
+    }
     use crate::model::{ContinueMode, CueKind, FadeCue, KindTag};
 
     #[derive(Default)]
@@ -985,6 +1054,10 @@ mod tests {
         fn send_network(&mut self, n: &NetworkCue) -> Result<(), String> {
             self.events.push(format!("net {}", n.address));
             Ok(())
+        }
+        fn light(&mut self, c: &LightingCue, _design: &crate::light::Lighting, _at: Instant) -> Result<f64, String> {
+            self.events.push(format!("light {:?} {:?} {:?}", c.action, c.sequence, c.cue.is_some()));
+            Ok(0.0)
         }
         fn set_preloaded(&mut self, cues: &[&Cue]) {
             self.preloaded = cues.iter().map(|c| c.id).collect();
@@ -1357,6 +1430,38 @@ mod tests {
         assert!(m.events.contains(&format!("devamp {ai}")));
         assert!(m.events.contains(&"net /lights/go".to_string()));
         assert!(e.log.is_empty(), "{:?}", e.log);
+    }
+
+    /// Stop cues release the lighting their target Light cues play; a Stop without a target
+    /// releases everything only when the design asks for it.
+    #[test]
+    fn stop_cues_release_lighting() {
+        use crate::light::model::{LightCue, Sequence};
+        use crate::model::{LightAction, LightingCue};
+        let lc = LightCue::default();
+        let mut l = cue("1", KindTag::Light);
+        l.kind = CueKind::Light(LightingCue { action: LightAction::Go, cue: Some(lc.id), ..Default::default() });
+        let li = l.id;
+        let mut stop = cue("2", KindTag::Stop);
+        stop.kind = CueKind::Stop { target: Some(li) };
+        let stop_all = cue("3", KindTag::Stop);
+        let mut w = ws(vec![l, stop, stop_all]);
+        w.lighting.sequences.push(Sequence { id: 7, cues: vec![lc].into(), ..Default::default() });
+        let mut e = Engine::new();
+        let mut m = Mock::default();
+        let t0 = Instant::now();
+        e.set_playhead(Some(li));
+        e.go(&w, &mut m, t0);
+        e.go(&w, &mut m, t0 + ms(10));
+        assert!(m.events.contains(&"light Go None true".to_string()), "{:?}", m.events);
+        assert!(m.events.contains(&"light Release Some(7) false".to_string()), "{:?}", m.events);
+        e.go(&w, &mut m, t0 + ms(20));
+        assert_eq!(m.events.iter().filter(|x| x.starts_with("light Release None")).count(), 0, "off by default");
+        w.lighting.stop_all_releases = true;
+        let first = w.cue_list.cues[2].id;
+        e.set_playhead(Some(first));
+        e.go(&w, &mut m, t0 + ms(30));
+        assert!(m.events.contains(&"light Release None false".to_string()));
     }
 
     #[test]

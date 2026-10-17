@@ -1,10 +1,12 @@
 //! Video playback with FFmpeg (libavformat/libavcodec) plus still images.
 //!
-//! Each movie runs on its own decode thread: video frames are converted to RGBA and published
-//! into a shared slot at their presentation time (the stage windows upload them as textures);
-//! the soundtrack is resampled to the mixer's rate and fed to an OpenQ mixer voice, so it gets
-//! level, fades, EQ and routing like an audio cue. Using FFmpeg directly means any format the
-//! system FFmpeg can play works, with no codec plugins to install.
+//! [`VideoOutput`] runs in the video output process ([`crate::vout`]): each movie has its own
+//! decode thread, which publishes the decoded pictures into a shared slot at their presentation
+//! time, as they come from the decoder ([`Picture`]: YUV planes, converted to RGB by the output's
+//! shader). In OpenQ itself a [`VideoOutput::soundtracks`] decodes only the soundtracks: resampled
+//! to the mixer's rate and fed to a mixer voice, so they get level, fades, EQ and routing like an
+//! audio cue. Using FFmpeg directly means any format the system FFmpeg can play works, with no
+//! codec plugins to install.
 
 use super::audio::VoiceShared;
 use super::text::{TextPlanes, TextRender};
@@ -51,18 +53,95 @@ pub struct Frame {
     pub width: u32,
     /// Height in pixels.
     pub height: u32,
-    /// Tightly packed RGBA.
-    pub data: Vec<u8>,
-    /// Bumped on every new frame so the UI only re-uploads when needed.
+    /// The picture (empty for Text cues, which use `planes`).
+    pub pixels: Pixels,
+    /// Bumped on every new frame so the renderer only re-uploads when needed.
     pub generation: u64,
     /// Image pixels per stage pixel (rendered text is supersampled); 0 means 1.
     pub density: f32,
-    /// `data` is premultiplied RGBA (decoded movies and cameras: the stage uploads it without a
-    /// per-pixel conversion, which took milliseconds per frame under the show lock).
-    pub premultiplied: bool,
-    /// Text cues: coverage planes coloured as they are drawn (`data` is then empty). Shared with
-    /// the render cache, so firing a text cue again costs no copy.
+    /// Show the picture mirrored left to right (Camera cues).
+    pub mirror: bool,
+    /// Text cues: coverage planes coloured as they are drawn. Shared with the render cache, so
+    /// firing a text cue again costs no copy.
     pub planes: Option<Arc<TextPlanes>>,
+}
+
+/// The pixels of a [`Frame`].
+#[derive(Default)]
+pub enum Pixels {
+    /// Nothing to show (yet).
+    #[default]
+    None,
+    /// Tightly packed RGBA (still images).
+    Rgba {
+        /// The pixels, row after row.
+        data: Vec<u8>,
+        /// `data` is premultiplied.
+        premultiplied: bool,
+    },
+    /// A decoded movie or camera picture as FFmpeg made it (YUV planes, converted on the GPU).
+    Picture(Picture),
+}
+
+/// A decoded picture held by reference: the decoder's own buffer, uploaded plane by plane and
+/// converted to RGB by the output's shader, so no CPU pass touches its pixels.
+pub struct Picture {
+    /// The FFmpeg frame (a new reference to the decoder's buffer, or a converted copy).
+    pub frame: ff::util::frame::video::Video,
+    /// How its planes are laid out.
+    pub layout: PlaneLayout,
+    /// YUV → RGB: `rgb[i] = dot(rows[i].xyz, yuv) + rows[i].w` (gamma-encoded, 0..1).
+    pub matrix: [[f32; 4]; 3],
+    /// Made by our converter (its buffer can be reused for the next conversion).
+    owned: bool,
+}
+
+impl Picture {
+    /// A picture of a decoded frame in a format the shader reads (converted when it isn't).
+    pub fn of(f: &ff::util::frame::video::Video) -> anyhow::Result<Self> {
+        let mut c = Converter::default();
+        c.convert(f)?;
+        c.next.context("nothing converted")
+    }
+
+    /// The colour of one pixel, converted on the CPU (tests and snapshots only; the output does
+    /// this in its shader).
+    pub fn rgb_at(&self, x: u32, y: u32) -> [u8; 3] {
+        let f = &self.frame;
+        let at = |plane: usize, x: u32, y: u32, size: usize| -> &[u8] {
+            let (pw, ph) = (f.plane_width(plane).max(1), f.plane_height(plane).max(1));
+            let (px, py) = ((x * pw / f.width().max(1)).min(pw - 1), (y * ph / f.height().max(1)).min(ph - 1));
+            let i = py as usize * f.stride(plane) + px as usize * size;
+            &f.data(plane)[i..i + size]
+        };
+        let yuv = match self.layout {
+            PlaneLayout::Rgba => {
+                let p = at(0, x, y, 4);
+                return [p[0], p[1], p[2]];
+            }
+            PlaneLayout::Planar { .. } => [at(0, x, y, 1)[0], at(1, x, y, 1)[0], at(2, x, y, 1)[0]],
+            PlaneLayout::Nv12 => {
+                let uv = at(1, x, y, 2);
+                [at(0, x, y, 1)[0], uv[0], uv[1]]
+            }
+        };
+        let [y, u, v] = yuv.map(|c| c as f32 / 255.0);
+        self.matrix.map(|r| ((r[0] * y + r[1] * u + r[2] * v + r[3]).clamp(0.0, 1.0) * 255.0).round() as u8)
+    }
+}
+
+/// Plane layouts the output's shader reads directly.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum PlaneLayout {
+    /// Separate Y, U and V planes (any chroma subsampling), plus an alpha plane when `alpha`.
+    Planar {
+        /// Fourth plane: straight alpha.
+        alpha: bool,
+    },
+    /// Y plane plus one interleaved UV plane.
+    Nv12,
+    /// One RGBA plane with straight alpha.
+    Rgba,
 }
 
 impl Frame {
@@ -70,6 +149,11 @@ impl Frame {
     pub fn stage_size(&self) -> [f32; 2] {
         let d = if self.density > 0.0 { self.density } else { 1.0 };
         [self.width as f32 / d, self.height as f32 / d]
+    }
+
+    /// True when there is something to draw.
+    pub fn has_picture(&self) -> bool {
+        self.width > 0 && (self.planes.is_some() || !matches!(self.pixels, Pixels::None))
     }
 }
 
@@ -204,6 +288,9 @@ fn join_briefly(t: std::thread::JoinHandle<()>, what: &str) {
 
 struct DecodeJob {
     params: VideoCue,
+    /// Decode the pictures (false: only the soundtrack, for OpenQ's side of a movie whose
+    /// pictures the video output process decodes itself).
+    video: bool,
     frame: FrameSlot,
     ctl: Arc<MovieCtl>,
     tap: Option<AudioTap>,
@@ -255,7 +342,7 @@ impl DecodeJob {
                 self.ctl.wait(&mut st, Duration::from_millis(20));
                 continue;
             };
-            let due = origin + Duration::from_secs_f64(t.max(0.0));
+            let due = origin + crate::engine::duration(t);
             let now = Instant::now();
             if now >= due {
                 return Flow::Continue;
@@ -294,9 +381,13 @@ impl DecodeJob {
 
     fn decode(&self) -> anyhow::Result<()> {
         let p = &self.params;
-        let mut ictx = ff::format::input(&p.path).with_context(|| format!("cannot open {}", p.path.display()))?;
-        let vstream = ictx.streams().best(ff::media::Type::Video);
+        let mut ictx = open_file(&p.path).with_context(|| format!("cannot open {}", p.path.display()))?;
+        let vstream = if self.video { ictx.streams().best(ff::media::Type::Video) } else { None };
         let astream = if self.tap.is_some() { ictx.streams().best(ff::media::Type::Audio) } else { None };
+        if !self.video && astream.is_none() {
+            // Soundtrack only, and the file has none: nothing to play here.
+            return Ok(());
+        }
         let (vidx, vtb) = match &vstream {
             Some(s) => (Some(s.index()), f64::from(s.time_base())),
             None => (None, 0.0),
@@ -318,6 +409,10 @@ impl DecodeJob {
             None => None,
         };
         if vdec.is_none() && adec.is_none() {
+            if self.video && ictx.streams().best(ff::media::Type::Audio).is_some() {
+                // A sound file on a stage: nothing to show (its sound plays in OpenQ's mixer).
+                return Ok(());
+            }
             return Err(anyhow!("no playable video or audio stream"));
         }
         let file_dur = (ictx.duration() > 0).then(|| ictx.duration() as f64 / f64::from(ff::ffi::AV_TIME_BASE));
@@ -471,11 +566,11 @@ impl DecodeJob {
             self.ctl.state.lock().prerolled = true;
             self.ctl.wake.notify_all();
         }
-        conv.convert(decoded, false)?;
+        conv.convert(decoded)?;
         if let Flow::Quit = self.wait_until(t, pending) {
             return Ok(FrameResult::Quit);
         }
-        conv.publish(&self.frame);
+        conv.publish(&self.frame, false);
         self.ctl.state.lock().position = pts;
         Ok(FrameResult::Shown)
     }
@@ -517,17 +612,17 @@ impl DecodeJob {
 
 // ---------------------------------------------------------------- players
 
-/// Turns decoded pictures into tightly packed RGBA, keeping its pixel converter and buffers
-/// between frames (a 4K frame is 33 MB; allocating it per frame showed up in profiles).
+/// Hands decoded pictures to the output: formats the shader reads (planar YUV, NV12, RGBA) go as
+/// a new reference to the decoder's buffer, so nothing is copied or converted on the CPU; others
+/// (10-bit, packed YUV, BGR...) are converted once to the nearest format it reads.
 #[derive(Default)]
 struct Converter {
     /// The converter and the input it was made for.
     scaler: Option<(ff::software::scaling::Context, u32, u32, ff::format::Pixel)>,
-    /// swscale's output, reused while the size stays the same.
-    rgba: Option<ff::util::frame::video::Video>,
-    /// The converted picture, swapped into the frame slot by [`Converter::publish`].
-    buf: Vec<u8>,
-    size: (u32, u32),
+    /// The picture to publish next.
+    next: Option<Picture>,
+    /// A converted frame no longer shown, reused as the next conversion's output.
+    spare: Option<ff::util::frame::video::Video>,
 }
 
 /// Premultiply straight RGBA in place (gamma space, as egui's colours are).
@@ -542,53 +637,123 @@ fn premultiply(rgba: &mut [u8]) {
     }
 }
 
-impl Converter {
-    /// Convert `f` (optionally mirrored left to right). Done before waiting for the frame's
-    /// presentation time, so publishing it on time costs only a buffer swap.
-    fn convert(&mut self, f: &ff::util::frame::video::Video, mirror: bool) -> anyhow::Result<()> {
-        let (w, h, fmt) = (f.width(), f.height(), f.format());
-        if self.scaler.as_ref().is_none_or(|s| s.1 != w || s.2 != h || s.3 != fmt) {
-            let ctx = ff::software::scaling::Context::get(fmt, w, h, ff::format::Pixel::RGBA, w, h, ff::software::scaling::Flags::BILINEAR)?;
-            self.scaler = Some((ctx, w, h, fmt));
-            self.rgba = None;
-        }
-        let rgba = self.rgba.get_or_insert_with(ff::util::frame::video::Video::empty);
-        self.scaler.as_mut().expect("scaler").0.run(f, rgba)?;
-        let stride = rgba.stride(0);
-        let row = w as usize * 4;
-        let src = rgba.data(0);
-        self.buf.resize(row * h as usize, 0);
-        for y in 0..h as usize {
-            let dst = &mut self.buf[y * row..(y + 1) * row];
-            dst.copy_from_slice(&src[y * stride..y * stride + row]);
-            if mirror {
-                for x in 0..w as usize / 2 {
-                    for c in 0..4 {
-                        dst.swap(x * 4 + c, (w as usize - 1 - x) * 4 + c);
-                    }
-                }
-            }
-        }
-        // Only pictures with an alpha channel need it; opaque RGBA is already premultiplied.
-        if fmt.descriptor().is_some_and(|d| matches!(d.nb_components(), 2 | 4)) {
-            premultiply(&mut self.buf);
-        }
-        self.size = (w, h);
-        Ok(())
-    }
-
-    /// Show the last converted picture in `slot` (its old pixels become the next buffer).
-    fn publish(&mut self, slot: &FrameSlot) {
-        let mut slot = slot.lock();
-        std::mem::swap(&mut slot.data, &mut self.buf);
-        (slot.width, slot.height) = self.size;
-        slot.premultiplied = true;
-        slot.generation = slot.generation.wrapping_add(1);
+/// The layout of a pixel format the shader reads as it is.
+fn native_layout(fmt: ff::format::Pixel) -> Option<PlaneLayout> {
+    use ff::format::Pixel as P;
+    match fmt {
+        P::YUV420P | P::YUVJ420P | P::YUV422P | P::YUVJ422P | P::YUV444P | P::YUVJ444P | P::YUV440P | P::YUVJ440P
+        | P::YUV410P | P::YUV411P | P::YUVJ411P => Some(PlaneLayout::Planar { alpha: false }),
+        P::YUVA420P | P::YUVA422P | P::YUVA444P => Some(PlaneLayout::Planar { alpha: true }),
+        P::NV12 => Some(PlaneLayout::Nv12),
+        P::RGBA => Some(PlaneLayout::Rgba),
+        _ => None,
     }
 }
 
-/// Per-frame cost of what a movie's decode thread does to each picture: convert a `w`×`h`
-/// picture in `format` to RGBA and publish it to a frame slot (benchmarks). One entry per frame.
+/// What a format the shader can't read is converted to: RGBA for RGB formats, else 8-bit planar
+/// YUV with the same chroma subsampling (and alpha when it has some).
+fn conversion_target(fmt: ff::format::Pixel) -> ff::format::Pixel {
+    use ff::format::Pixel as P;
+    let Some(d) = fmt.descriptor() else { return P::RGBA };
+    // SAFETY: the descriptor is a static FFmpeg table entry.
+    let rgb = unsafe { (*d.as_ptr()).flags } & ff::ffi::AV_PIX_FMT_FLAG_RGB as u64 != 0;
+    let alpha = matches!(d.nb_components(), 2 | 4);
+    if rgb || fmt == P::PAL8 {
+        return P::RGBA;
+    }
+    match (d.log2_chroma_w(), d.log2_chroma_h(), alpha) {
+        (0, 0, false) => P::YUV444P,
+        (0, 0, true) => P::YUVA444P,
+        (1, 0, false) => P::YUV422P,
+        (1, 0, true) => P::YUVA422P,
+        (_, _, false) => P::YUV420P,
+        (_, _, true) => P::YUVA420P,
+    }
+}
+
+/// The YUV → RGB matrix for a frame: its colour space (BT.601, BT.709 or BT.2020; unknown ones
+/// guessed from the picture height) and range (limited/TV or full/JPEG).
+fn yuv_matrix(f: &ff::util::frame::video::Video) -> [[f32; 4]; 3] {
+    use ff::util::color::{Range, Space};
+    use ff::format::Pixel as P;
+    let (kr, kb) = match f.color_space() {
+        Space::BT709 => (0.2126, 0.0722),
+        Space::BT470BG | Space::SMPTE170M | Space::FCC => (0.299, 0.114),
+        Space::BT2020NCL | Space::BT2020CL => (0.2627, 0.0593),
+        Space::SMPTE240M => (0.212, 0.087),
+        _ if f.height() >= 720 => (0.2126, 0.0722),
+        _ => (0.299, 0.114),
+    };
+    let full = f.color_range() == Range::JPEG
+        || matches!(f.format(), P::YUVJ420P | P::YUVJ422P | P::YUVJ444P | P::YUVJ440P | P::YUVJ411P);
+    yuv_matrix_for(kr, kb, full)
+}
+
+/// [`yuv_matrix`] for luma weights `kr`, `kb` and full or limited range.
+fn yuv_matrix_for(kr: f32, kb: f32, full: bool) -> [[f32; 4]; 3] {
+    let kg = 1.0 - kr - kb;
+    let (ys, yo, cs) = if full { (1.0, 0.0, 1.0) } else { (255.0 / 219.0, 16.0 / 255.0, 255.0 / 224.0) };
+    let co = 128.0 / 255.0;
+    // Coefficients on (Y', Cb, Cr) after range expansion.
+    let rows = [[1.0, 0.0, 2.0 * (1.0 - kr)], [1.0, -2.0 * kb * (1.0 - kb) / kg, -2.0 * kr * (1.0 - kr) / kg], [1.0, 2.0 * (1.0 - kb), 0.0]];
+    rows.map(|[a, b, c]| [a * ys, b * cs, c * cs, -(a * ys * yo) - (b + c) * cs * co])
+}
+
+/// A new reference to `f`'s buffers (no pixel copy; FFmpeg's clone copies).
+fn frame_ref(f: &ff::util::frame::video::Video) -> anyhow::Result<ff::util::frame::video::Video> {
+    let mut out = ff::util::frame::video::Video::empty();
+    // SAFETY: both pointers are valid frames; `out` is empty, as av_frame_ref requires.
+    let r = unsafe { ff::ffi::av_frame_ref(out.as_mut_ptr(), f.as_ptr()) };
+    anyhow::ensure!(r >= 0, "cannot reference a decoded frame ({r})");
+    Ok(out)
+}
+
+impl Converter {
+    /// Prepare `f` for publishing. Done before waiting for the frame's presentation time, so
+    /// publishing it on time costs only a swap.
+    fn convert(&mut self, f: &ff::util::frame::video::Video) -> anyhow::Result<()> {
+        let (w, h, fmt) = (f.width(), f.height(), f.format());
+        let matrix = yuv_matrix(f);
+        if let Some(layout) = native_layout(fmt) {
+            self.next = Some(Picture { frame: frame_ref(f)?, layout, matrix, owned: false });
+            return Ok(());
+        }
+        let target = conversion_target(fmt);
+        if self.scaler.as_ref().is_none_or(|s| s.1 != w || s.2 != h || s.3 != fmt) {
+            let ctx = ff::software::scaling::Context::get(fmt, w, h, target, w, h, ff::software::scaling::Flags::BILINEAR)?;
+            self.scaler = Some((ctx, w, h, fmt));
+        }
+        let mut out = self
+            .spare
+            .take()
+            .filter(|o| o.format() == target && o.width() == w && o.height() == h)
+            .unwrap_or_else(ff::util::frame::video::Video::empty);
+        self.scaler.as_mut().expect("scaler").0.run(f, &mut out)?;
+        let layout = native_layout(target).expect("conversion targets are native");
+        self.next = Some(Picture { frame: out, layout, matrix, owned: true });
+        Ok(())
+    }
+
+    /// Show the last prepared picture in `slot`.
+    fn publish(&mut self, slot: &FrameSlot, mirror: bool) {
+        let Some(p) = self.next.take() else { return };
+        let mut s = slot.lock();
+        (s.width, s.height) = (p.frame.width(), p.frame.height());
+        let old = std::mem::replace(&mut s.pixels, Pixels::Picture(p));
+        s.mirror = mirror;
+        s.generation = s.generation.wrapping_add(1);
+        drop(s);
+        if let Pixels::Picture(o) = old
+            && o.owned
+        {
+            self.spare = Some(o.frame);
+        }
+    }
+}
+
+/// Per-frame cost of what a movie's decode thread does to each picture: prepare a `w`×`h`
+/// picture in `format` for the output and publish it to a frame slot (benchmarks). One entry per
+/// frame.
 pub(crate) fn conversion_times(w: u32, h: u32, format: ff::format::Pixel, frames: usize) -> anyhow::Result<Vec<std::time::Duration>> {
     init()?;
     let mut src = ff::util::frame::video::Video::new(format, w, h);
@@ -602,14 +767,71 @@ pub(crate) fn conversion_times(w: u32, h: u32, format: ff::format::Pixel, frames
     let mut out = Vec::with_capacity(frames);
     for _ in 0..frames {
         let t = std::time::Instant::now();
-        conv.convert(&src, false)?;
-        conv.publish(&slot);
+        conv.convert(&src)?;
+        conv.publish(&slot, false);
         out.push(t.elapsed());
     }
     Ok(out)
 }
 
+/// Open a media file with FFmpeg, reading local files only. A path (from a show file or a
+/// replica) that names a protocol (`http:`, `tcp:`, `concat:`, `subfile:`...), or a playlist
+/// inside the file that points at the network, is refused instead of reaching out.
+fn open_file(path: &Path) -> anyhow::Result<ff::format::context::Input> {
+    super::check_local(path)?;
+    let mut opts = ff::Dictionary::new();
+    opts.set("protocol_whitelist", "file");
+    Ok(ff::format::input_with_dictionary(path, opts)?)
+}
+
 // ---------------------------------------------------------------- live cameras
+
+/// `lavfi` sources and filters a Camera cue may use: test patterns and simple layout. Other
+/// filters can read or write files (`movie`, `metadata`...), so a show file (or a replica) can't
+/// use them through a Camera cue.
+const LAVFI_ALLOWED: &[&str] = &[
+    "testsrc", "testsrc2", "smptebars", "smptehdbars", "pal75bars", "pal100bars", "rgbtestsrc", "yuvtestsrc", "colorspectrum",
+    "colorchart", "color", "mandelbrot", "allrgb", "allyuv", "gradients", "zoneplate", "nullsrc", "hstack", "vstack", "scale",
+    "format", "hflip", "vflip", "pad", "crop", "fps", "setsar",
+];
+
+/// Refuse capture sources that aren't cameras or plain test patterns: only this system's camera
+/// driver, and `lavfi` graphs made of [`LAVFI_ALLOWED`] (FFmpeg's other input devices grab the
+/// screen or the like).
+fn check_camera_source(format: &str, device: &str) -> anyhow::Result<()> {
+    if format == camera_format_name() {
+        if cfg!(target_os = "linux") && !device.starts_with("/dev/") {
+            anyhow::bail!("{device} is not a camera device");
+        }
+        return Ok(());
+    }
+    if format != "lavfi" {
+        anyhow::bail!("FFmpeg input {format} is not a camera");
+    }
+    // No quoting or escapes: every filter name is plain to see.
+    let plain = |c: char| c.is_ascii_alphanumeric() || "=:._#-/[];,+*".contains(c);
+    if let Some(c) = device.chars().find(|&c| !plain(c)) {
+        anyhow::bail!("test pattern with {c:?} is not allowed");
+    }
+    for filter in device.split([';', ',']) {
+        // `[a][b]hstack=inputs=2[out]`: drop the pad labels, keep the name before its options.
+        let mut name = String::new();
+        let mut depth = 0;
+        for c in filter.chars() {
+            match c {
+                '[' => depth += 1,
+                ']' => depth -= 1,
+                _ if depth == 0 => name.push(c),
+                _ => {}
+            }
+        }
+        let name = name.split('=').next().unwrap_or("").trim();
+        if !LAVFI_ALLOWED.contains(&name) {
+            anyhow::bail!("test pattern filter {name:?} is not allowed");
+        }
+    }
+    Ok(())
+}
 
 /// This system's camera driver in FFmpeg.
 fn camera_format_name() -> &'static str {
@@ -725,6 +947,7 @@ fn capture(c: &CameraCue, slot: &FrameSlot, quit: &std::sync::atomic::AtomicBool
     let fmt_name = c.format.clone().unwrap_or_else(|| camera_format_name().to_string());
     let fmt = find_input_format(&fmt_name).with_context(|| format!("FFmpeg has no {fmt_name} input"))?;
     let url = c.device.clone().unwrap_or_else(default_camera);
+    check_camera_source(&fmt_name, &url)?;
     let mut opts = ff::Dictionary::new();
     if let Some([w, h]) = c.size {
         opts.set("video_size", &format!("{w}x{h}"));
@@ -755,8 +978,8 @@ fn capture(c: &CameraCue, slot: &FrameSlot, quit: &std::sync::atomic::AtomicBool
         while dec.receive_frame(&mut decoded).is_ok() {
             // Paused: keep capturing (so the camera doesn't lag on resume) but hold the picture.
             if !paused.load(Ordering::Acquire) {
-                conv.convert(&decoded, c.mirror)?;
-                conv.publish(slot);
+                conv.convert(&decoded)?;
+                conv.publish(slot, c.mirror);
             }
         }
         // Test sources run as fast as they can; real cameras pace themselves.
@@ -830,6 +1053,11 @@ struct Player {
     /// Stall watchdog of a playing movie: the last frame generation seen and since when.
     stall_watch: Option<(u64, Instant)>,
     stall_reported: bool,
+    /// Pictures are decoded here (false for a soundtrack-only movie: no stall watchdog).
+    shows_video: bool,
+    /// Seconds already played before this start (a layer brought back after a restart): its
+    /// animation and still duration continue from there.
+    clock_offset: f64,
 }
 
 /// SVG rasterising scale for a layer: sharp at the largest size its geometry and animation
@@ -861,8 +1089,7 @@ fn load_still(params: &VideoCue, slot: FrameSlot) -> Arc<Mutex<Option<String>>> 
                 let mut f = slot.lock();
                 f.width = img.width;
                 f.height = img.height;
-                f.data = img.rgba;
-                f.premultiplied = true;
+                f.pixels = Pixels::Rgba { data: img.rgba, premultiplied: true };
                 f.density = img.density;
                 f.generation = f.generation.wrapping_add(1);
             }
@@ -929,10 +1156,12 @@ impl Player {
             text_look: None,
             stall_watch: None,
             stall_reported: false,
+            shows_video: true,
+            clock_offset: 0.0,
         }
     }
 
-    fn new(params: &VideoCue, order: u64, tap: Option<AudioTap>) -> anyhow::Result<Self> {
+    fn new(params: &VideoCue, order: u64, tap: Option<AudioTap>, video: bool) -> anyhow::Result<Self> {
         let frame: FrameSlot = Arc::new(Mutex::new(Frame::default()));
         let audio_feed: AudioFeed = Arc::new(Mutex::new(None));
         let audio_state = Arc::new(Mutex::new(None));
@@ -944,6 +1173,7 @@ impl Player {
             let ctl = Arc::new(MovieCtl { state: Mutex::new(MovieState::default()), wake: Condvar::new() });
             let job = DecodeJob {
                 params: params.clone(),
+                video,
                 frame: frame.clone(),
                 ctl: ctl.clone(),
                 tap,
@@ -981,12 +1211,14 @@ impl Player {
             text_look: None,
             stall_watch: None,
             stall_reported: false,
+            shows_video: video,
+            clock_offset: 0.0,
         })
     }
 
     /// Seconds the layer has been playing (its animation clock; stops while paused).
     fn anim_time(&self, now: Instant) -> f64 {
-        self.started_at.map_or(0.0, |s| self.paused_at.unwrap_or(now).saturating_duration_since(s).as_secs_f64())
+        self.clock_offset + self.started_at.map_or(0.0, |s| self.paused_at.unwrap_or(now).saturating_duration_since(s).as_secs_f64())
     }
 
     fn position(&self) -> Option<f64> {
@@ -1051,7 +1283,7 @@ impl Player {
             && matches!(self.source, Source::Still | Source::Camera(_))
         {
             let d = self.params.still_duration;
-            if d > 0.0 && self.started_at.is_some_and(|s| now.saturating_duration_since(s).as_secs_f64() >= d) {
+            if d > 0.0 && self.started_at.is_some_and(|s| self.clock_offset + now.saturating_duration_since(s).as_secs_f64() >= d) {
                 self.finished = true;
                 if !self.params.hold_last_frame {
                     *self.frame.lock() = Frame::default();
@@ -1060,6 +1292,7 @@ impl Player {
         }
         if self.playing
             && matches!(self.source, Source::Movie(_))
+            && self.shows_video
             && !self.stall_reported
         {
             // Watchdog: a movie whose picture stops changing without an error or its end (a
@@ -1144,8 +1377,11 @@ impl Player {
     }
 }
 
-/// All playing video, image and text layers.
+/// All playing video, image and text layers (in the video output process), or the soundtracks of
+/// playing movies (in OpenQ itself, see [`VideoOutput::soundtracks`]).
 pub struct VideoOutput {
+    /// Decode pictures (false: soundtracks only).
+    video: bool,
     players: HashMap<CueId, Player>,
     preloaded: HashMap<CueId, Player>,
     /// Latest render of each Text cue that is preloaded or showing (rendered in the background
@@ -1158,7 +1394,13 @@ impl VideoOutput {
     /// Initialise FFmpeg.
     pub fn new() -> anyhow::Result<Self> {
         init()?;
-        Ok(Self { players: HashMap::new(), preloaded: HashMap::new(), text_renders: HashMap::new(), order: 0 })
+        Ok(Self { video: true, players: HashMap::new(), preloaded: HashMap::new(), text_renders: HashMap::new(), order: 0 })
+    }
+
+    /// Movie soundtracks only: each started movie decodes just its audio, into the mixer (the
+    /// pictures play in the video output process). Stills, text and cameras are not used here.
+    pub fn soundtracks() -> anyhow::Result<Self> {
+        Ok(Self { video: false, ..Self::new()? })
     }
 
     /// Open these cues ahead of time so they start without delay.
@@ -1167,7 +1409,7 @@ impl VideoOutput {
         for (id, v, tap) in cues {
             if !self.preloaded.contains_key(id) {
                 self.order += 1;
-                match Player::new(v, self.order, *tap) {
+                match Player::new(v, self.order, *tap, self.video) {
                     Ok(p) => {
                         self.preloaded.insert(*id, p);
                     }
@@ -1187,7 +1429,7 @@ impl VideoOutput {
         self.order += 1;
         let mut p = match self.preloaded.remove(&cue) {
             Some(p) if p.params == *params && p.tap == tap && !p.finished => p,
-            _ => Player::new(params, self.order, tap).map_err(|e| format!("{e:#}"))?,
+            _ => Player::new(params, self.order, tap, self.video).map_err(|e| format!("{e:#}"))?,
         };
         p.order = self.order;
         p.play_at = Some(at);
@@ -1294,8 +1536,13 @@ impl VideoOutput {
 
     /// Freeze a layer (and its soundtrack).
     pub fn pause(&mut self, cue: CueId) {
+        self.pause_at(cue, Instant::now());
+    }
+
+    /// Freeze a layer as of `at` (a moment just past: the pause the engine asked for).
+    pub fn pause_at(&mut self, cue: CueId, at: Instant) {
         if let Some(p) = self.players.get_mut(&cue) {
-            p.pause(Instant::now());
+            p.pause(at.min(Instant::now()));
         }
     }
 
@@ -1337,6 +1584,23 @@ impl VideoOutput {
             p.fx_ramp = None;
             p.effects = params.video_fx.clone();
         }
+    }
+
+    /// Continue a just-started layer's clock (animation, still duration) from `secs`.
+    pub fn set_clock_offset(&mut self, cue: CueId, secs: f64) {
+        if let Some(p) = self.players.get_mut(&cue) {
+            p.clock_offset = secs.max(0.0);
+        }
+    }
+
+    /// How many pictures each layer has received so far (0 until it shows).
+    pub fn frame_counts(&self) -> Vec<(CueId, u64)> {
+        self.players.iter().map(|(id, p)| (*id, if p.playing || p.finished { p.frame.lock().generation } else { 0 })).collect()
+    }
+
+    /// The cues that have a layer.
+    pub fn cues(&self) -> Vec<CueId> {
+        self.players.keys().copied().collect()
     }
 
     /// True if the cue has a layer.
@@ -1428,7 +1692,7 @@ pub struct VideoInfo {
 /// Read a file's streams with FFmpeg.
 pub fn probe(path: &Path) -> anyhow::Result<VideoInfo> {
     init()?;
-    let ictx = ff::format::input(&path).with_context(|| format!("cannot open {}", path.display()))?;
+    let ictx = open_file(path).with_context(|| format!("cannot open {}", path.display()))?;
     let duration = (ictx.duration() > 0).then(|| ictx.duration() as f64 / f64::from(ff::ffi::AV_TIME_BASE));
     let mut info = VideoInfo { duration, ..Default::default() };
     if let Some(s) = ictx.streams().best(ff::media::Type::Video) {
@@ -1452,7 +1716,7 @@ pub fn probe(path: &Path) -> anyhow::Result<VideoInfo> {
 /// side exceeds `max_side`. Used for previews.
 /// Returns the scaled size, the pixels and the movie's own size.
 pub fn poster(path: &Path, at: f64, max_side: u32) -> anyhow::Result<(u32, u32, Vec<u8>, [u32; 2])> {
-    let mut ictx = ff::format::input(&path).with_context(|| format!("cannot open {}", path.display()))?;
+    let mut ictx = open_file(path).with_context(|| format!("cannot open {}", path.display()))?;
     let stream = ictx.streams().best(ff::media::Type::Video).context("no video stream")?;
     let (idx, tb) = (stream.index(), f64::from(stream.time_base()));
     let mut dec = ff::codec::context::Context::from_parameters(stream.parameters())?.decoder().video()?;
@@ -1618,6 +1882,38 @@ mod tests {
         }
     }
 
+    /// Camera cues open cameras and test patterns only: no screen grabbing, and no lavfi filter
+    /// that reads or writes files.
+    #[test]
+    fn camera_sources_are_checked() {
+        assert!(check_camera_source("lavfi", "testsrc2=size=1280x720:rate=30000/1001").is_ok());
+        assert!(check_camera_source("lavfi", "color=red:size=64x16[a];color=blue:size=64x16[b];[a][b]hstack").is_ok());
+        for bad in ["movie=/etc/passwd", "testsrc,metadata=mode=print:file=x", "life=f=secret", "color='red'", "testsrc;[0]sendcmd=f=x"] {
+            assert!(check_camera_source("lavfi", bad).is_err(), "{bad}");
+        }
+        assert!(check_camera_source("x11grab", ":0.0").is_err());
+        assert!(check_camera_source("fbdev", "/dev/fb0").is_err());
+        assert!(check_camera_source(camera_format_name(), if cfg!(target_os = "linux") { "/dev/video0" } else { "0" }).is_ok());
+    }
+
+    /// FFmpeg only reads local files for media cues: a URL is refused, not fetched.
+    #[test]
+    fn media_files_are_local_only() {
+        init().unwrap();
+        let dir = std::env::temp_dir().join(format!("openq-local-only-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let wav = dir.join("a.wav");
+        crate::media::decoder::tests::write_wav(&wav, 48000, 0.2);
+        assert!(open_file(&wav).is_ok());
+        // FFmpeg on its own would open these (two files joined, or a URL).
+        let joined = format!("concat:{}|{}", wav.display(), wav.display());
+        assert!(ff::format::input(&joined).is_ok(), "FFmpeg takes {joined}");
+        for url in [joined.as_str(), &format!("file:{}", wav.display()).replace("file:", "subfile:,start,0,end,0,:"), "http://127.0.0.1:9/x.wav"] {
+            assert!(open_file(Path::new(url)).is_err(), "{url}");
+        }
+        std::fs::remove_dir_all(dir).unwrap();
+    }
+
     #[test]
     fn camera_capture_publishes_mirrored_frames() {
         init().unwrap();
@@ -1635,37 +1931,77 @@ mod tests {
         let id = CueId::new_v4();
         out.start_camera(id, &c, Instant::now());
         let t0 = Instant::now();
-        let frame = loop {
+        let slot = loop {
             out.update(Instant::now());
-            let layers = out.stage_layers();
-            let f = layers.first().map(|l| l.frame.clone());
-            if let Some(f) = f {
-                let f = f.lock();
-                if f.width > 0 {
-                    break (f.width, f.data[..4].to_vec(), f.generation, f.premultiplied);
-                }
+            if let Some(l) = out.stage_layers().first()
+                && l.frame.lock().width > 0
+            {
+                break l.frame.clone();
             }
             assert!(t0.elapsed() < Duration::from_secs(5), "no camera frame");
             std::thread::sleep(Duration::from_millis(10));
         };
-        assert_eq!(frame.0, 128);
-        // Mirrored: the first pixel is blue.
-        assert!(frame.1[2] > 200 && frame.1[0] < 50, "{:?}", frame.1);
-        assert!(frame.3, "camera frames are published premultiplied");
-        // Later frames reuse the swapped buffers: still whole and still mirrored.
-        let slot = out.stage_layers()[0].frame.clone();
+        let check = |f: &Frame| {
+            assert_eq!((f.width, f.height), (128, 16));
+            // The picture is passed on as decoded; the output mirrors it.
+            assert!(f.mirror);
+            let Pixels::Picture(p) = &f.pixels else { panic!("not a decoded picture") };
+            let (left, right) = (p.rgb_at(2, 8), p.rgb_at(125, 8));
+            assert!(left[0] > 200 && left[2] < 60, "{left:?}");
+            assert!(right[2] > 200 && right[0] < 60, "{right:?}");
+        };
+        let generation = {
+            let f = slot.lock();
+            check(&f);
+            f.generation
+        };
+        // Later frames are published too.
         let t0 = Instant::now();
-        while slot.lock().generation < frame.2 + 3 {
+        while slot.lock().generation < generation + 3 {
             assert!(t0.elapsed() < Duration::from_secs(5), "no further camera frames");
             std::thread::sleep(Duration::from_millis(10));
         }
-        {
-            let f = slot.lock();
-            assert_eq!(f.data.len(), 128 * 16 * 4);
-            assert!(f.data[2] > 200 && f.data[0] < 50 && f.data[f.data.len() - 4] > 200, "{:?}", &f.data[..8]);
-        }
+        check(&slot.lock());
         out.stop(id);
         assert!(!out.has(id));
+    }
+
+    /// Formats the shader can't read are converted to the nearest one it can; the colour
+    /// matrices turn reference YUV values into the right RGB.
+    #[test]
+    fn pictures_convert_to_shader_formats() {
+        use ff::format::Pixel as P;
+        init().unwrap();
+        assert_eq!(native_layout(P::YUV420P), Some(PlaneLayout::Planar { alpha: false }));
+        assert_eq!(native_layout(P::NV12), Some(PlaneLayout::Nv12));
+        assert_eq!(conversion_target(P::YUV420P10LE), P::YUV420P);
+        assert_eq!(conversion_target(P::YUVA444P10LE), P::YUVA444P);
+        assert_eq!(conversion_target(P::YUYV422), P::YUV422P);
+        assert_eq!(conversion_target(P::BGRA), P::RGBA);
+        assert_eq!(conversion_target(P::RGB24), P::RGBA);
+        // BT.709 limited range: black, white and pure red.
+        let m = yuv_matrix_for(0.2126, 0.0722, false);
+        let rgb = |y: f32, u: f32, v: f32| m.map(|r| r[0] * y / 255.0 + r[1] * u / 255.0 + r[2] * v / 255.0 + r[3]);
+        let close = |a: [f32; 3], b: [f32; 3]| a.iter().zip(b).all(|(x, y)| (x - y).abs() < 0.01);
+        assert!(close(rgb(16.0, 128.0, 128.0), [0.0; 3]), "{:?}", rgb(16.0, 128.0, 128.0));
+        assert!(close(rgb(235.0, 128.0, 128.0), [1.0; 3]));
+        assert!(close(rgb(63.0, 102.0, 240.0), [1.0, 0.0, 0.0]), "{:?}", rgb(63.0, 102.0, 240.0));
+        // A 10-bit picture goes out as 8-bit planar YUV.
+        let mut src = ff::util::frame::video::Video::new(P::YUV420P10LE, 64, 32);
+        for plane in 0..3 {
+            let v: u16 = if plane == 0 { 940 } else { 512 }; // white
+            for px in src.data_mut(plane).as_chunks_mut::<2>().0 {
+                *px = v.to_le_bytes();
+            }
+        }
+        let mut conv = Converter::default();
+        conv.convert(&src).unwrap();
+        let slot = FrameSlot::default();
+        conv.publish(&slot, false);
+        let f = slot.lock();
+        let Pixels::Picture(p) = &f.pixels else { panic!() };
+        assert_eq!(p.frame.format(), P::YUV420P);
+        assert!(p.rgb_at(10, 10).iter().all(|c| *c > 245), "{:?}", p.rgb_at(10, 10));
     }
 
     /// A movie that stops delivering pictures without failing (a hung share) is reported once.

@@ -9,9 +9,9 @@
 //!
 //! ```text
 //!  UI (egui)  ─┐                         ┌─ media::audio   cpal mixer (EQ, routing, fades)
-//!  OSC        ─┼─ control::Command ──▶ Show ── engine ──▶ Backend ─┼─ media::video   FFmpeg layers
-//!  remote     ─┘   (Arc<Mutex<Show>>)  ▲ 1 kHz tick      └─ network       OSC out
-//!                                      └─ show::spawn_engine_thread
+//!  OSC        ─┼─ control::Command ──▶ Show ── engine ──▶ Backend ─┼─ vout::link     ══▶ openq --video-output
+//!  remote     ─┘   (Arc<Mutex<Show>>)  ▲ 1 kHz tick      └─ network       OSC out      (stage windows, wgpu,
+//!                                      └─ show::spawn_engine_thread                    FFmpeg layers)
 //! ```
 //!
 //! * [`model`] — the data: cues, settings, stages; load/save as `.openq` JSON.
@@ -35,9 +35,16 @@
 //! * [`effects`] — audio and video effect settings (effect stacks on cues); video
 //!   effects run in the stage windows' layer shader.
 //! * [`spatial`] — object audio: speakers in a room, objects placed by distance-based panning.
+//! * [`light`] — the lighting design (patch, groups, lighting cue sequences with tracking), kept
+//!   apart from the live show; Light cues target its cues.
+//! * [`surface`] — MIDI/OSC control surfaces mapped onto executors, masters and GO (learn mode).
 //! * [`osc`] — OSC input. [`remote`] — paired remote devices (encrypted, authenticated).
-//! * [`displays`] — system monitors for stage outputs. [`ui`] — the egui application, including
-//!   the stage windows (spanned surfaces, edge blending, layer [`model::BlendMode`]s).
+//! * [`displays`] — system monitors for stage outputs. [`ui`] — the egui application.
+//! * `vout` (feature `video`) — video output in its own process (`openq --video-output`): stage
+//!   windows with their own wgpu renderer (YUV converted in the shader, corner pins, spanned
+//!   surfaces, edge blending, layer [`model::BlendMode`]s), driven by cue commands on a shared
+//!   clock; a crash or hang there never stops the show (the process is restarted and its layers
+//!   brought back).
 //! * [`i18n`] — UI translations (English, Spanish, Galician): texts are looked up by their
 //!   English wording in `assets/i18n/*.json`; the language is chosen on the first run.
 //! * [`recovery`] — crash safety: panics in workers become errors, the engine thread recovers
@@ -50,9 +57,10 @@
 //! # Threads
 //!
 //! The audio callback never locks: the UI/engine talk to it through lock-free ring buffers.
-//! Decoding (audio and video) runs on one thread per playing file; live inputs, cameras and MIDI
-//! connections each run on a thread that owns them. Everything else that touches
-//! the show takes the [`show::SharedShow`] mutex briefly.
+//! Decoding (audio and movie soundtracks) runs on one thread per playing file; live inputs and
+//! MIDI connections each run on a thread that owns them. Everything else that touches
+//! the show takes the [`show::SharedShow`] mutex briefly. Pictures (movies, stills, text,
+//! cameras) are decoded and drawn by the video output process, so they never wait on the UI.
 //!
 //! # Failure handling
 //!
@@ -91,6 +99,7 @@ pub mod effects;
 pub mod engine;
 pub mod errlog;
 pub mod geometry;
+pub mod light;
 pub mod media;
 pub mod model;
 pub mod osc;
@@ -98,5 +107,8 @@ pub mod recovery;
 pub mod remote;
 pub mod show;
 pub mod spatial;
+pub mod surface;
 pub mod timecode;
 pub mod ui;
+#[cfg(feature = "video")]
+pub mod vout;

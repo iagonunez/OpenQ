@@ -141,6 +141,8 @@ struct Ctx<'a> {
     mic_level: Option<f32>,
     /// The object-audio room (the workspace's speakers or the device's default layout).
     room: Vec<crate::spatial::Speaker>,
+    /// The lighting design (Light cue targets).
+    lighting: &'a crate::light::Lighting,
 }
 
 impl Ctx<'_> {
@@ -215,6 +217,7 @@ impl App {
         let Some(mut cue) = show.ws.cue_list.find(id).cloned() else { return };
         let ctx = Ctx {
             list: &show.ws.cue_list,
+            lighting: &show.ws.lighting,
             id,
             stages: &stages,
             out_channels: show.media.audio.as_ref().map_or(2, |a| a.channels),
@@ -1252,7 +1255,14 @@ fn settings_tab(ui: &mut Ui, cue: &mut Cue, ctx: &Ctx, refresh: &mut bool) {
             cards(ui, "fade", &specs, |ui, i| match i {
                 0 => {
                     if !caps.level && !caps.picture {
-                        ui.label(RichText::new(t("The target has nothing to fade: pick a sound, video, text, camera or group cue.")).weak());
+                        // Lighting fades only through Light cues (the lighting cue's own timing).
+                        let light = f.target.and_then(|t| ctx.list.find(t)).is_some_and(|c| matches!(c.kind, CueKind::Light(_)));
+                        let why = if light {
+                            t("Lighting fades with Light cues: set the fade time on the lighting cue, or GO another lighting cue.")
+                        } else {
+                            t("The target has nothing to fade: pick a sound, video, text, camera or group cue.")
+                        };
+                        ui.label(RichText::new(why).weak());
                         return;
                     }
                     egui::Grid::new("fade-changes").num_columns(2).spacing([10.0, 6.0]).show(ui, |ui| {
@@ -1367,6 +1377,7 @@ fn settings_tab(ui: &mut Ui, cue: &mut Cue, ctx: &Ctx, refresh: &mut bool) {
         ),
         CueKind::Text(t) => text_settings(ui, t),
         CueKind::Camera(c) => camera_settings(ui, c, ctx, refresh),
+        CueKind::Light(l) => light_settings(ui, l, ctx.lighting),
         CueKind::Network(n) => {
             let specs = [Card::new(ic::SETTINGS_REMOTE, t("OSC message"), 480.0)];
             cards(ui, "net", &specs, |ui, _| {
@@ -1395,6 +1406,75 @@ fn settings_tab(ui: &mut Ui, cue: &mut Cue, ctx: &Ctx, refresh: &mut bool) {
         }
         _ => {}
     }
+}
+
+/// A Light cue: what it does and which designed lighting cue / sequence it acts on.
+fn light_settings(ui: &mut Ui, l: &mut crate::model::LightingCue, design: &crate::light::Lighting) {
+    use super::icons as ic;
+    use super::theme::{Card, cards};
+    use crate::model::LightAction;
+    let specs = [Card::new(ic::LIGHTBULB, t("Lighting"), 480.0)];
+    cards(ui, "light", &specs, |ui, _| {
+        egui::Grid::new("light").num_columns(2).spacing([10.0, 6.0]).show(ui, |ui| {
+            ui.label(t("Action"));
+            egui::ComboBox::from_id_salt("light_action").selected_text(l.action.label()).show_ui(ui, |ui| {
+                for a in LightAction::ALL {
+                    ui.selectable_value(&mut l.action, a, a.label());
+                }
+            });
+            ui.end_row();
+            match l.action {
+                LightAction::Go => {
+                    ui.label(t("Lighting cue"));
+                    let current = match l.cue {
+                        Some(c) => design.cue_label(c).unwrap_or_else(|| t("missing target").into()),
+                        None => t("— none —").into(),
+                    };
+                    egui::ComboBox::from_id_salt("light_cue").selected_text(current).width(300.0).show_ui(ui, |ui| {
+                        for s in &design.sequences {
+                            ui.label(RichText::new(design.sequence_label(s.id).unwrap_or_default()).weak().small());
+                            for c in &s.cues {
+                                let label = design.cue_label(c.id).unwrap_or_default();
+                                ui.selectable_value(&mut l.cue, Some(c.id), label);
+                            }
+                        }
+                    });
+                    ui.end_row();
+                    if let Some((s, i)) = l.cue.and_then(|c| design.find_cue(c)) {
+                        let c = &s.cues[i];
+                        ui.label(t("Timing"));
+                        let down = c.down_fade.map(|d| format!(" / ↓{d:.1} s")).unwrap_or_default();
+                        ui.label(RichText::new(tr!("fade {fade} s, delay {delay} s", fade = format!("{:.1}{down}", c.fade), delay = format!("{:.1}", c.delay))).weak());
+                        ui.end_row();
+                    }
+                }
+                LightAction::Release => {
+                    ui.label(t("Sequence"));
+                    let current = match l.sequence {
+                        Some(s) => design.sequence_label(s).unwrap_or_else(|| t("missing target").into()),
+                        None => t("All sequences").into(),
+                    };
+                    egui::ComboBox::from_id_salt("light_seq").selected_text(current).width(300.0).show_ui(ui, |ui| {
+                        ui.selectable_value(&mut l.sequence, None, t("All sequences"));
+                        for s in &design.sequences {
+                            ui.selectable_value(&mut l.sequence, Some(s.id), design.sequence_label(s.id).unwrap_or_default());
+                        }
+                    });
+                    ui.end_row();
+                    ui.label(t("Fade"));
+                    ui.add(DragValue::new(&mut l.fade).range(0.0..=600.0).speed(0.05).suffix(" s"));
+                    ui.end_row();
+                }
+            }
+        });
+        ui.add_space(4.0);
+        let help = if design.sequences.iter().all(|s| s.cues.is_empty()) {
+            t("The lighting design has no cues yet: build them in the Lighting workspace.")
+        } else {
+            t("Lighting cues are designed in the Lighting workspace; this cue only plays them.")
+        };
+        ui.label(RichText::new(help).weak().small());
+    });
 }
 
 /// A Fade cue's target video effect settings: the target's stack (taken when the option was
