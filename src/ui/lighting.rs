@@ -1898,23 +1898,31 @@ fn next_cue_number(s: &Sequence) -> String {
 impl App {
     fn programmer_page(&mut self, ui: &mut Ui, l: &mut Lighting) {
         // Presets in a column of their own (a show has many), the full height of the page.
-        // Presets and effects share a column; no divider line, a gap instead (dragging that gap,
-        // the panel's edge, still resizes it).
+        // Two containers: groups on top, then the feature filter with the presets and effects it
+        // filters. No divider line, a gap instead (dragging that gap, the panel's edge, still resizes it).
         egui::Panel::left("presets")
-            .frame(side_column(true))
+            .frame(egui::Frame::new().outer_margin(egui::Margin { left: 0, right: 10, top: 0, bottom: 0 }))
             .show_separator_line(false)
             .resizable(true)
             .default_size(250.0)
             .size_range(190.0..=480.0)
             .show(ui, |ui| {
-                self.pool_filter(ui);
-                ui.add_space(6.0);
                 let total = ui.available_height();
-                self.group_pool(ui, l, (total * 0.22).max(70.0));
+                let pane = || egui::Frame::new().fill(theme::BG_PANEL).corner_radius(8.0).inner_margin(egui::Margin::same(10));
+                pane().show(ui, |ui| {
+                    ui.set_min_width(ui.available_width());
+                    self.group_pool(ui, l, (total * 0.22).max(70.0));
+                });
                 ui.add_space(8.0);
-                self.preset_pool(ui, l, (total * 0.4).max(110.0));
-                ui.add_space(8.0);
-                self.effect_pool(ui, l);
+                pane().show(ui, |ui| {
+                    ui.set_min_width(ui.available_width());
+                    ui.set_min_height(ui.available_height() - 10.0);
+                    self.pool_filter(ui);
+                    ui.add_space(6.0);
+                    self.preset_pool(ui, l, (total * 0.4).max(110.0));
+                    ui.add_space(8.0);
+                    self.effect_pool(ui, l);
+                });
             });
         // Programmer actions.
         ui.horizontal_wrapped(|ui| {
