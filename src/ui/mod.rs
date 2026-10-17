@@ -2294,7 +2294,7 @@ impl App {
     /// Playback page with its sequence and button cards; `colour`: the
     /// programmer's Colour encoders; `plan`: the patch's top view with four fixtures selected;
     /// `types`: the fixture type editor on a type with ranges; `beam`: the Beam encoders with
-    /// range buttons for every unit with a gobo; `ofl`: the Open Fixture Library window searching
+    /// range drop-downs for every unit with a gobo; `slots`: the same with the gobo drop-down open; `ofl`: the Open Fixture Library window searching
     /// `OPENQ_SCREENSHOT_OFL`);
     /// `OPENQ_SCREENSHOT_MODE=show` starts in show mode; `OPENQ_SCREENSHOT_INLINE=1` opens an
     /// in-place pre-wait editor on the selected cue.
@@ -2373,8 +2373,11 @@ impl App {
                     self.light.types.open_ofl(std::env::var("OPENQ_SCREENSHOT_OFL").unwrap_or_default());
                 }
                 // A selection and some programmer values to look at.
-                if page == "beam" {
+                if page == "beam" || page == "slots" {
                     use crate::light::Attribute;
+                    if page == "slots" {
+                        self.light.open_slots = Some(Attribute::Gobo);
+                    }
                     let l = &show.ws.lighting;
                     self.light.feature = Some(crate::light::Feature::Beam);
                     self.light.selection = l.units().into_iter().filter(|u| l.unit_attributes(*u).contains(&Attribute::Gobo)).collect();
@@ -2386,6 +2389,12 @@ impl App {
                             if let Some(r) = chans.iter().find(|c| c.attribute == a).and_then(|c| c.ranges.get(1)) {
                                 v.insert(a, r.value().into());
                             }
+                        }
+                        // `slots`: the shutter strobing, so its speed bar shows.
+                        if page == "slots"
+                            && let Some(r) = chans.iter().find(|c| c.attribute == Attribute::Shutter).and_then(|c| c.ranges.iter().find(|r| r.is_span()))
+                        {
+                            v.insert(Attribute::Shutter, r.value().into());
                         }
                     }
                 } else if let Some(g) = {

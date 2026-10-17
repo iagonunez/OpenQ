@@ -411,9 +411,22 @@ impl ChannelRange {
         (self.from.min(self.to)..=self.from.max(self.to)).contains(&dmx)
     }
 
-    /// Covers more than one DMX value (a speed or position, not a single slot).
-    pub fn is_continuous(&self) -> bool {
-        self.from.abs_diff(self.to) > 3
+    /// A span whose place within it matters (a speed, an index angle, "strobe slow → fast"), not a
+    /// slot or state that merely takes several DMX values (a gobo, "Open"). Judged on the name
+    /// ("→", speed and rotation words), or a wide range with no picture or colour that isn't a state.
+    pub fn is_span(&self) -> bool {
+        const WORDS: [&str; 16] =
+            ["→", "->", "slow", "fast", "speed", "rotat", "spin", "index", "angle", "strobe", "pulse", "shake", "ramp", "cw", "%", "dim"];
+        let width = self.from.abs_diff(self.to);
+        if width <= 3 {
+            return false;
+        }
+        let name = self.name.to_lowercase();
+        if WORDS.iter().any(|w| name.contains(w)) {
+            return true;
+        }
+        let state = name.contains("no function") || name.split(|c: char| !c.is_alphanumeric()).any(|w| w.starts_with("open") || w.starts_with("clos") || w == "off" || w == "on");
+        width >= 63 && self.image.is_empty() && self.color.is_none() && !state
     }
 }
 
@@ -1736,6 +1749,21 @@ impl Lighting {
 mod tests {
     use super::*;
     use crate::light::library;
+
+    #[test]
+    fn spans_are_speeds_not_slots() {
+        let r = |from, to, name: &str| ChannelRange { from, to, name: name.into(), ..Default::default() };
+        assert!(r(128, 255, "Strobe slow → fast").is_span());
+        assert!(r(0, 127, "Index").is_span());
+        assert!(r(190, 220, "Rotate CCW slow -> fast").is_span());
+        assert!(!r(10, 19, "Window").is_span(), "a gobo slot");
+        assert!(!r(32, 95, "Open").is_span(), "a state");
+        assert!(!r(250, 255, "Stop").is_span());
+        assert!(!r(0, 3, "Strobe").is_span(), "too narrow");
+        assert!(r(64, 191, "Macro 1").is_span(), "wide and plain");
+        let gobo = ChannelRange { image: "gobo3.png".into(), ..r(64, 191, "Breakup") };
+        assert!(!gobo.is_span());
+    }
 
     #[test]
     fn clones_share_fixtures_and_cues() {

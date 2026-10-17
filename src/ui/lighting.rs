@@ -54,7 +54,7 @@ impl LightTab {
     /// A page by name (`OPENQ_SCREENSHOT_LIGHTING`).
     pub(crate) fn from_name(name: &str) -> Self {
         match name {
-            "programmer" | "colour" | "keypad" | "beam" => LightTab::Programmer,
+            "programmer" | "colour" | "keypad" | "beam" | "slots" => LightTab::Programmer,
             "patch" | "plan" | "types" | "ofl" => LightTab::Patch,
             "effects" => LightTab::Effects,
             "sequences" => LightTab::Sequences,
@@ -159,6 +159,8 @@ pub(crate) struct LightUi {
     step: Option<usize>,
     /// Spread tool settings.
     fan: FanTool,
+    /// Open this attribute's range drop-down on the next frame (`OPENQ_SCREENSHOT_LIGHTING=slots`).
+    pub(crate) open_slots: Option<Attribute>,
     /// Encoder page.
     pub(crate) feature: Option<Feature>,
     /// Sequence shown on the Sequences page / recorded into.
@@ -3067,7 +3069,7 @@ impl App {
         let gap = ui.spacing().item_spacing.x;
         // Room for the scroll bar on the right.
         let bar_w = ui.available_width() - 92.0 - 26.0 - 2.0 * gap - 10.0;
-        for a in page {
+        for &a in &page {
             let current = self.selection_value(l, a);
             let preset = self.selection_preset(a);
             // Extra channels go by their name in the first selected unit that has one.
@@ -3075,6 +3077,7 @@ impl App {
                 Attribute::Extra(_) => self.light.selection.iter().find(|f| attributes_of(l, **f).contains(&a)).map_or_else(|| a.label().to_string(), |f| l.attribute_label(*f, a)),
                 _ => a.label().to_string(),
             };
+            let slots = self.slot_channel(l, a);
             ui.horizontal(|ui| {
                 let (r, resp) = ui.allocate_exact_size(egui::vec2(92.0, 26.0), egui::Sense::hover());
                 let fg = if current.is_some() { theme::TEXT } else { theme::TEXT_DIM };
@@ -3082,11 +3085,16 @@ impl App {
                 if matches!(a, Attribute::Extra(_)) {
                     resp.on_hover_text(a.label());
                 }
-                let w = bar_w;
-                if let Some(v) = attr_bar(ui, current, preset, w) {
-                    self.set_selection(l, a, v);
+                match &slots {
+                    Some((chan, type_id)) => self.slot_picker(ui, l, a, chan, type_id, current, preset, bar_w),
+                    None => {
+                        if let Some(v) = attr_bar(ui, current, preset, bar_w) {
+                            self.set_selection(l, a, v);
+                        }
+                    }
                 }
-                let clear = ui.add_enabled(current.is_some(), egui::Button::new(icons::CLOSE).min_size(egui::vec2(26.0, 26.0))).on_hover_text(t("Remove from the programmer"));
+                // Only values in the programmer can be removed; the place is kept so rows line up.
+                let clear = ui.add_visible(current.is_some(), egui::Button::new(icons::CLOSE).min_size(egui::vec2(26.0, 26.0))).on_hover_text(t("Remove from the programmer"));
                 if clear.clicked() {
                     for f in &self.light.selection {
                         if let Some(vals) = self.light.programmer.get_mut(f) {
@@ -3096,111 +3104,168 @@ impl App {
                     self.light.programmer.retain(|_, v| !v.is_empty());
                 }
             });
-            self.range_row(ui, l, a, current);
-        }
-        ui.add_space(6.0);
-        ui.label(RichText::new(t("Drag a bar to set it, scroll over it for 1 % steps.")).weak().small());
-        // Fan: spread one attribute across the selection in selection order.
-        if self.light.selection.len() > 1 {
-            ui.add_space(8.0);
-            ui.separator();
-            let attrs: Vec<Attribute> = {
-                let mut v: Vec<Attribute> = self.light.selection.iter().flat_map(|f| attributes_of(l, *f)).collect();
-                v.sort();
-                v.dedup();
-                v
-            };
-            let FanTool(attr, mut a, mut b, mut centre) = self.light.fan;
-            let attr = attr.filter(|x| attrs.contains(x)).or(attrs.first().copied());
-            let mut pick = attr;
-            ui.horizontal_wrapped(|ui| {
-                ui.label(theme::caption(t("Spread")));
-                egui::ComboBox::from_id_salt("fan_attr").selected_text(pick.map_or("", |x| x.label())).width(110.0).show_ui(ui, |ui| {
-                    for x in &attrs {
-                        ui.selectable_value(&mut pick, Some(*x), x.label());
+            // A range that is a span (a speed, an index angle, "strobe slow → fast"): a bar within it.
+            if let Some((chan, _)) = &slots
+                && let Some(v) = current
+                && let Some(i) = chan.range_at(v).filter(|r| r.is_span()).and_then(|r| chan.ranges.iter().position(|x| std::ptr::eq(x, r)))
+            {
+                ui.horizontal(|ui| {
+                    ui.add_space(92.0 + gap);
+                    if let Some(x) = attr_bar(ui, Some(within_range(&chan.ranges[i], v)), None, bar_w) {
+                        self.set_selection_slot(l, a, chan, i, Some(x));
                     }
                 });
-                ui.label(t("from"));
-                ui.add(percent_drag(&mut a));
-                ui.label(t("to"));
-                ui.add(percent_drag(&mut b));
-                ui.checkbox(&mut centre, t("centre out"));
-            });
-            self.light.fan = FanTool(pick, a, b, centre);
-            if ui.button(theme::with_icon(icons::TUNE, t("Spread across the selection"))).clicked()
-                && let Some(attr) = pick
-            {
-                let who: Vec<FixtureId> = self.light.selection.iter().copied().filter(|f| attributes_of(l, *f).contains(&attr)).collect();
-                for (f, v) in who.iter().zip(fan_values(who.len(), a, b, centre)) {
-                    self.light.programmer.entry(*f).or_default().insert(attr, Value::Level(v));
-                }
             }
+            ui.add_space(2.0);
+        }
+        // Fan: spread one attribute of this page across the selection in selection order.
+        let spread: Vec<Attribute> = page.iter().copied().filter(|a| self.slot_channel(l, *a).is_none()).collect();
+        if self.light.selection.len() > 1 && !spread.is_empty() {
+            ui.add_space(8.0);
+            egui::CollapsingHeader::new(theme::caption(t("Spread"))).id_salt("fan").default_open(false).show(ui, |ui| {
+                let FanTool(attr, mut a, mut b, mut centre) = self.light.fan;
+                let mut pick = attr.filter(|x| spread.contains(x)).or(spread.first().copied());
+                ui.horizontal_wrapped(|ui| {
+                    egui::ComboBox::from_id_salt("fan_attr").selected_text(pick.map_or("", |x| x.label())).width(110.0).show_ui(ui, |ui| {
+                        for x in &spread {
+                            ui.selectable_value(&mut pick, Some(*x), x.label());
+                        }
+                    });
+                    ui.label(t("from"));
+                    ui.add(percent_drag(&mut a));
+                    ui.label(t("to"));
+                    ui.add(percent_drag(&mut b));
+                    ui.checkbox(&mut centre, t("centre out"));
+                });
+                self.light.fan = FanTool(pick.or(attr), a, b, centre);
+                if ui.button(theme::with_icon(icons::TUNE, t("Spread across the selection"))).clicked()
+                    && let Some(attr) = pick
+                {
+                    let who: Vec<FixtureId> = self.light.selection.iter().copied().filter(|f| attributes_of(l, *f).contains(&attr)).collect();
+                    for (f, v) in who.iter().zip(fan_values(who.len(), a, b, centre)) {
+                        self.light.programmer.entry(*f).or_default().insert(attr, Value::Level(v));
+                    }
+                }
+            });
         }
     }
 
-    /// Named ranges of an attribute (wheel slots, shutter states) as buttons, taken from the
-    /// first selected unit that has them; the range the value is in is lit. Long lists are a menu.
-    fn range_row(&mut self, ui: &mut Ui, l: &Lighting, a: Attribute, current: Option<f32>) {
-        let Some((chan, type_id)) = self.light.selection.iter().find_map(|f| {
-            let c = l.unit_channels(*f)?.iter().find(|c| c.attribute == a && !c.ranges.is_empty()).cloned()?;
+    /// The channel of an attribute that is a set of named ranges (wheel slots, shutter states,
+    /// macros), from the first selected unit that has one, with its fixture type. A single range
+    /// (a whole-channel "narrow → wide") isn't a choice: a plain bar.
+    fn slot_channel(&self, l: &Lighting, a: Attribute) -> Option<(crate::light::model::ChannelDef, String)> {
+        self.light.selection.iter().find_map(|f| {
+            let c = l.unit_channels(*f)?.iter().find(|c| c.attribute == a && c.ranges.len() > 1).cloned()?;
             Some((c, l.unit(*f)?.0.fixture_type.clone()))
-        }) else {
-            return;
-        };
-        let images = l.fixture_type(&type_id).map(|t| &t.images);
-        let active = current.and_then(|v| chan.range_at(v)).map(|r| r.name.clone());
-        let mut pick = None;
-        if chan.ranges.len() > 24 {
-            ui.horizontal(|ui| {
-                ui.add_space(96.0);
-                egui::ComboBox::from_id_salt(("ranges", a)).selected_text(active.clone().unwrap_or_else(|| "—".into())).width(220.0).show_ui(ui, |ui| {
-                    for r in &chan.ranges {
-                        if ui.selectable_label(active.as_deref() == Some(r.name.as_str()), format!("{} · {}–{}", r.name, r.from, r.to)).clicked() {
-                            pick = Some((r.name.clone(), r.value()));
-                        }
-                    }
-                });
-            });
-        } else {
-            ui.horizontal(|ui| {
-                ui.add_space(96.0);
-                ui.horizontal_wrapped(|ui| {
-                    ui.spacing_mut().item_spacing = egui::vec2(3.0, 3.0);
-                    for r in &chan.ranges {
-                        let on = active.as_deref() == Some(r.name.as_str());
-                        let (fill, fg) = if on { (theme::ACCENT, Color32::WHITE) } else { (theme::BG_RAISED, theme::TEXT) };
-                        let label = if r.name.is_empty() { format!("{}–{}", r.from, r.to) } else { r.name.clone() };
-                        let text = RichText::new(label).size(11.5).color(fg);
-                        let picture = images.and_then(|m| m.get(&r.image)).and_then(|data| self.gobo_texture(ui.ctx(), &type_id, &r.image, data));
-                        let b = match &picture {
-                            Some(tex) => ui.add(egui::Button::image_and_text(egui::Image::from_texture((tex.id(), egui::vec2(18.0, 18.0))), text).fill(fill).min_size(egui::vec2(0.0, 22.0))),
-                            None => ui.add(egui::Button::new(text).fill(fill).min_size(egui::vec2(0.0, 22.0))),
-                        };
-                        let b = b.on_hover_ui(|ui| {
-                            if let Some(tex) = &picture {
-                                ui.add(egui::Image::from_texture((tex.id(), egui::vec2(96.0, 96.0))));
-                            }
-                            ui.label(format!("DMX {}–{}", r.from, r.to));
-                        });
-                        if let Some([cr, cg, cb]) = r.color {
-                            let bar = egui::Rect::from_min_size(egui::pos2(b.rect.left() + 3.0, b.rect.bottom() - 4.0), egui::vec2(b.rect.width() - 6.0, 2.5));
-                            ui.painter().rect_filled(bar, 1.0, Color32::from_rgb(cr, cg, cb));
-                        }
-                        if b.clicked() {
-                            pick = Some((r.name.clone(), r.value()));
-                        }
-                    }
-                });
-            });
-        }
-        if let Some((name, value)) = pick {
-            // By name, so each fixture type gets its own value for it (falls back to the value). An
-            // unnamed range can't be found by name: its own value.
-            if name.trim().is_empty() || self.set_selection_range(l, a, &name) == 0 {
-                self.set_selection(l, a, value);
+        })
+    }
+
+    /// Drop-down of a channel's named ranges: slot number, picture (gobo image or slot colour) and
+    /// name, the DMX span on the right. A pick goes by name, so each fixture type of the selection
+    /// gets its own value for it.
+    #[allow(clippy::too_many_arguments)]
+    fn slot_picker(&mut self, ui: &mut Ui, l: &Lighting, a: Attribute, chan: &crate::light::model::ChannelDef, type_id: &str, current: Option<f32>, preset: Option<PresetId>, width: f32) {
+        let images = l.fixture_type(type_id).map(|t| &t.images);
+        let pictures: Vec<Option<egui::TextureHandle>> = chan
+            .ranges
+            .iter()
+            .map(|r| images.and_then(|m| m.get(&r.image)).and_then(|data| self.gobo_texture(ui.ctx(), type_id, &r.image, data)))
+            .collect();
+        let thumbs = pictures.iter().any(Option::is_some) || chan.ranges.iter().any(|r| r.color.is_some());
+        let active = current.and_then(|v| chan.range_at(v)).and_then(|r| chan.ranges.iter().position(|x| std::ptr::eq(x, r)));
+        let (rect, resp) = ui.allocate_exact_size(egui::vec2(width.max(60.0), 26.0), egui::Sense::click());
+        let p = ui.painter();
+        p.rect_filled(rect, 5.0, theme::BG_INPUT);
+        let stroke = if resp.hovered() { theme::TEXT_FAINT } else { theme::BORDER };
+        p.rect_stroke(rect, 5.0, egui::Stroke::new(1.0, stroke), egui::StrokeKind::Inside);
+        p.text(rect.right_center() - egui::vec2(6.0, 0.0), egui::Align2::RIGHT_CENTER, icons::EXPAND_MORE, egui::FontId::proportional(16.0), theme::TEXT_DIM);
+        let face = rect.shrink2(egui::vec2(6.0, 2.0)).with_max_x(rect.right() - 26.0);
+        match (active, current) {
+            (Some(i), _) => slot_face(ui, face, i, &chan.ranges[i], pictures[i].as_ref(), thumbs, preset),
+            // Between named ranges (a gap in the fixture's definition).
+            (None, Some(v)) => {
+                ui.painter().text(face.left_center(), egui::Align2::LEFT_CENTER, format!("DMX {}", crate::light::model::coarse(v)), theme::mono(12.0), theme::TEXT);
+            }
+            (None, None) => {
+                ui.painter().text(face.left_center(), egui::Align2::LEFT_CENTER, "—", egui::FontId::proportional(13.0), theme::TEXT_FAINT);
             }
         }
-        ui.add_space(2.0);
+        let resp = resp.on_hover_cursor(egui::CursorIcon::PointingHand);
+        if self.light.open_slots == Some(a) {
+            self.light.open_slots = None;
+            egui::Popup::open_id(ui.ctx(), egui::Popup::default_response_id(&resp));
+        }
+        let mut pick = None;
+        // The wheel over the closed drop-down steps through the ranges (down = next).
+        if resp.hovered() && !egui::Popup::is_id_open(ui.ctx(), egui::Popup::default_response_id(&resp)) {
+            let steps = wheel_steps(ui, resp.id);
+            if steps != 0 {
+                let last = chan.ranges.len() as i32 - 1;
+                pick = Some(match active {
+                    Some(i) => (i as i32 + steps).clamp(0, last),
+                    None if steps > 0 => 0,
+                    None => last,
+                } as usize)
+                .filter(|i| Some(*i) != active);
+            }
+        }
+        egui::Popup::menu(&resp).width(rect.width()).close_behavior(egui::PopupCloseBehavior::CloseOnClickOutside).show(|ui| {
+            egui::ScrollArea::vertical().max_height(380.0).show(ui, |ui| {
+                let h = if pictures.iter().any(Option::is_some) { 34.0 } else { 24.0 };
+                for (i, r) in chan.ranges.iter().enumerate() {
+                    let (row, rr) = ui.allocate_exact_size(egui::vec2(ui.available_width(), h), egui::Sense::click());
+                    if active == Some(i) {
+                        ui.painter().rect_filled(row, 4.0, theme::ACCENT.gamma_multiply(0.35));
+                    } else if rr.hovered() {
+                        ui.painter().rect_filled(row, 4.0, theme::BG_HOVER);
+                    }
+                    let span = format!("{}–{}", r.from, r.to);
+                    ui.painter().text(row.right_center() - egui::vec2(6.0, 0.0), egui::Align2::RIGHT_CENTER, &span, theme::mono(11.0), theme::TEXT_FAINT);
+                    slot_face(ui, row.shrink2(egui::vec2(6.0, 2.0)).with_max_x(row.right() - 60.0), i, r, pictures[i].as_ref(), thumbs, None);
+                    let rr = match &pictures[i] {
+                        Some(tex) => rr.on_hover_ui(|ui| {
+                            ui.add(egui::Image::from_texture((tex.id(), egui::vec2(128.0, 128.0))));
+                        }),
+                        None => rr,
+                    };
+                    if rr.clicked() {
+                        pick = Some(i);
+                        ui.close();
+                    }
+                }
+            });
+        });
+        if let Some(i) = pick
+            && self.set_selection_slot(l, a, chan, i, None) == 0
+        {
+            self.set_selection(l, a, chan.ranges[i].value());
+        }
+    }
+
+    /// Put the selection on range `i` of `chan` (its middle, or `x` (0..=1) within it): units with
+    /// the same ranges take that one (names can repeat: a shutter has several "Open"s), others the
+    /// range of that name. Returns how many units were set.
+    fn set_selection_slot(&mut self, l: &Lighting, attr: Attribute, chan: &crate::light::model::ChannelDef, i: usize, x: Option<f32>) -> usize {
+        let range = &chan.ranges[i];
+        let mut n = 0;
+        for f in &self.light.selection {
+            let Some(c) = l.unit_channels(*f).and_then(|ch| ch.iter().find(|c| c.attribute == attr)) else { continue };
+            let r = if c.ranges == chan.ranges {
+                Some(range)
+            } else if range.name.trim().is_empty() {
+                None
+            } else {
+                c.find_range(&range.name)
+            };
+            let Some(r) = r else { continue };
+            let v = match x {
+                Some(x) if r.is_span() => (r.from as f32 + x.clamp(0.0, 1.0) * (r.to as f32 - r.from as f32)) / 255.0,
+                _ => r.value(),
+            };
+            self.light.programmer.entry(*f).or_default().insert(attr, Value::Level(v));
+            n += 1;
+        }
+        n
     }
 
     /// A wheel slot picture as a texture (decoded on first use, then cached).
@@ -4086,6 +4151,65 @@ fn attr_bar(ui: &mut Ui, value: Option<f32>, preset: Option<PresetId>, width: f3
     out
 }
 
+/// Whole wheel notches turned over a hovered widget this frame (down = positive). Touchpad pixels
+/// add up per widget (`id`) until they make a notch. The panel under it doesn't scroll.
+fn wheel_steps(ui: &Ui, id: egui::Id) -> i32 {
+    const NOTCH: f32 = 50.0;
+    let (lines, points) = ui.input(|i| {
+        i.events.iter().fold((0.0, 0.0), |(l, p), e| match e {
+            // Ctrl/Cmd + wheel zooms the UI.
+            egui::Event::MouseWheel { modifiers, .. } if modifiers.command || modifiers.ctrl => (l, p),
+            egui::Event::MouseWheel { unit: egui::MouseWheelUnit::Point, delta, .. } => (l, p + delta.y),
+            egui::Event::MouseWheel { delta, .. } => (l + delta.y, p),
+            _ => (l, p),
+        })
+    });
+    ui.input_mut(|i| i.smooth_scroll_delta = egui::Vec2::ZERO);
+    let key = id.with("wheel");
+    let mut acc = ui.data(|d| d.get_temp::<f32>(key)).unwrap_or(0.0) + points / NOTCH + lines;
+    let steps = acc.trunc();
+    acc -= steps;
+    ui.data_mut(|d| d.insert_temp(key, acc));
+    -steps as i32
+}
+
+/// Where a value sits within a range, 0..=1 from its `from` end to its `to` end.
+fn within_range(r: &crate::light::model::ChannelRange, value: f32) -> f32 {
+    let span = r.to as f32 - r.from as f32;
+    if span == 0.0 { 0.0 } else { ((value * 255.0 - r.from as f32) / span).clamp(0.0, 1.0) }
+}
+
+/// One named range drawn in `rect`: slot number, picture (gobo image, else the slot colour as a
+/// dot; room kept when other slots have one) and name (after the preset it comes from, if any).
+fn slot_face(ui: &Ui, rect: egui::Rect, i: usize, r: &crate::light::model::ChannelRange, picture: Option<&egui::TextureHandle>, thumbs: bool, preset: Option<PresetId>) {
+    let p = ui.painter().with_clip_rect(rect);
+    let mut x = rect.left();
+    p.text(egui::pos2(x, rect.center().y), egui::Align2::LEFT_CENTER, (i + 1).to_string(), theme::mono(11.0), theme::TEXT_FAINT);
+    x += 20.0;
+    if thumbs {
+        let side = (rect.height() - 2.0).min(30.0);
+        let thumb = egui::Rect::from_center_size(egui::pos2(x + side / 2.0, rect.center().y), egui::vec2(side, side));
+        if let Some(tex) = picture {
+            p.circle_filled(thumb.center(), side / 2.0, Color32::BLACK);
+            p.image(tex.id(), thumb, egui::Rect::from_min_max(egui::pos2(0.0, 0.0), egui::pos2(1.0, 1.0)), Color32::WHITE);
+        } else if let Some([cr, cg, cb]) = r.color {
+            p.circle_filled(thumb.center(), side * 0.36, Color32::from_rgb(cr, cg, cb));
+            p.circle_stroke(thumb.center(), side * 0.36, egui::Stroke::new(1.0, theme::BORDER));
+        } else if r.name.trim().eq_ignore_ascii_case("open") {
+            // An open slot: the whole beam.
+            p.circle_filled(thumb.center(), side / 2.0, Color32::BLACK);
+            p.circle_filled(thumb.center(), side * 0.4, Color32::WHITE);
+        }
+        x += side + 8.0;
+    }
+    let name = if r.name.is_empty() { format!("DMX {}–{}", r.from, r.to) } else { r.name.clone() };
+    let name = match preset {
+        Some(pr) => format!("P{pr} · {name}"),
+        None => name,
+    };
+    p.text(egui::pos2(x, rect.center().y), egui::Align2::LEFT_CENTER, name, egui::FontId::proportional(13.0), theme::TEXT);
+}
+
 /// A horizontal level (0..=1) set by clicking or dragging, with the percentage on it.
 pub(super) fn level_bar(ui: &mut Ui, value: &mut f32, color: Color32) -> egui::Response {
     level_bar_sized(ui, value, color, 22.0)
@@ -4156,6 +4280,25 @@ fn add_fixtures(l: &mut Lighting, ty: &FixtureType, form: &mut AddForm) -> u32 {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// Wheel lines are notches; touchpad pixels add up to them; Ctrl + wheel is left to zoom.
+    #[test]
+    fn wheel_notches() {
+        let ctx = egui::Context::default();
+        let id = egui::Id::new("slots");
+        let frame = |unit, y: f32, ctrl: bool| {
+            let modifiers = egui::Modifiers { ctrl, ..Default::default() };
+            let ev = egui::Event::MouseWheel { unit, delta: egui::vec2(0.0, y), phase: egui::TouchPhase::Move, modifiers };
+            let mut got = 0;
+            let _ = ctx.run_ui(egui::RawInput { events: vec![ev], ..Default::default() }, |ui| got = wheel_steps(ui, id));
+            got
+        };
+        assert_eq!(frame(egui::MouseWheelUnit::Line, -1.0, false), 1, "down = next");
+        assert_eq!(frame(egui::MouseWheelUnit::Line, 2.0, false), -2);
+        assert_eq!(frame(egui::MouseWheelUnit::Line, -1.0, true), 0);
+        assert_eq!(frame(egui::MouseWheelUnit::Point, -30.0, false), 0);
+        assert_eq!(frame(egui::MouseWheelUnit::Point, -30.0, false), 1, "pixels add up");
+    }
 
     /// A formula's first effect lands in the effect it belongs to; extra effects join the pool.
     #[test]
