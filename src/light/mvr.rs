@@ -333,7 +333,7 @@ mod tests {
     fn shapes_become_truss_and_scene_objects() {
         let mut l = library::bench_rig(1, 1, 1);
         // A bar 4 m long across the stage at 6 m, 2 m upstage (OpenQ z = −2); a 2 × 1 m riser.
-        l.shapes.push(PlotShape { id: 1, kind: ShapeKind::Bar, name: "LX1".into(), a: [-2.0, -2.0], b: [2.0, -2.0], height: 6.0 });
+        l.shapes.push(PlotShape { id: 1, kind: ShapeKind::Bar, name: "LX1".into(), a: [-2.0, -2.0], b: [2.0, -2.0], height: 6.0, label: [0.0, 0.0] });
         l.shapes.push(PlotShape { id: 2, kind: ShapeKind::Rect, a: [0.0, 0.0], b: [2.0, 1.0], height: 0.4, ..Default::default() });
         let x = scene(&l, "Show");
         assert!(x.contains("<Truss name=\"LX1\""), "{x}");

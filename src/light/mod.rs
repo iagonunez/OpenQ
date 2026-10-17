@@ -31,6 +31,7 @@ pub mod effects;
 pub mod engine;
 pub mod enttec;
 pub mod fixlib;
+pub mod colour;
 pub mod folder;
 pub mod gdtf;
 pub mod gobo;

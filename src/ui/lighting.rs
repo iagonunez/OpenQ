@@ -110,6 +110,9 @@ pub(crate) struct LightUi {
     add: AddForm,
     /// Programmer selection, in selection order.
     pub(crate) selection: Vec<FixtureId>,
+    /// Fixture tiles: a drag selecting a band of tiles (where it started, in tile-grid
+    /// coordinates, and the selection before it).
+    band: Option<(egui::Pos2, Vec<FixtureId>)>,
     /// Programmer values (override playback while set; recorded into cues).
     pub(crate) programmer: crate::light::model::Shared<Look>,
     /// Effects running from the programmer (recorded into cues).
@@ -161,8 +164,6 @@ pub(crate) struct LightUi {
     cue: Option<LightCueId>,
     /// Number for the next recorded cue (empty = after the last).
     record_number: String,
-    /// Feature stored by "New preset" (None = every attribute).
-    preset_feature: Option<Feature>,
     /// Universe shown in the DMX monitor.
     monitor_universe: u16,
     /// Art-Net nodes / serial ports found in the background.
@@ -180,6 +181,8 @@ pub(crate) struct LightUi {
     plan_tool: PlanTool,
     pub(crate) shape_sel: Option<u32>,
     plan_drag: Option<PlanDrag>,
+    /// Where the Plan view drew each shape's label last frame (shape, screen rect): to drag them.
+    plan_labels: Vec<(u32, egui::Rect)>,
     /// Effect scripts: the sandbox host (started when an effect script is first shown).
     python: Option<Python>,
     /// Script being edited: (effect, text); written into the effect when run or left.
@@ -195,7 +198,7 @@ pub(crate) struct LightUi {
     fx_results: std::sync::Arc<parking_lot::Mutex<Vec<Result<String, String>>>>,
     /// Patch sheet column widths and the texts they were measured for (hash).
     sheet_widths: Option<(u64, [f32; 10])>,
-    /// Feature the presets panel shows (None = all).
+    /// Feature the presets and effects panels show, and "new preset" stores (None = all).
     preset_filter: Option<Feature>,
     /// Playback page and window.
     pub(crate) playback: super::light_playback::PlaybackUi,
@@ -392,12 +395,12 @@ impl App {
         }
         ui.horizontal(|ui| {
             ui.spacing_mut().item_spacing.x = 4.0;
+            theme::tab(ui, &mut self.light.tab, LightTab::Outputs, icons::ROUTER, t("Outputs"));
             theme::tab(ui, &mut self.light.tab, LightTab::Patch, icons::CABLE, t("Patch"));
             theme::tab(ui, &mut self.light.tab, LightTab::Programmer, icons::TUNE, t("Programmer"));
-            theme::tab(ui, &mut self.light.tab, LightTab::Effects, icons::AUTO_FIX_HIGH, t("Effects"));
             theme::tab(ui, &mut self.light.tab, LightTab::Sequences, icons::PLAY_CIRCLE, t("Sequences"));
+            theme::tab(ui, &mut self.light.tab, LightTab::Effects, icons::AUTO_FIX_HIGH, t("Effects"));
             theme::tab(ui, &mut self.light.tab, LightTab::Playback, icons::TOUCH_APP, t("Playback"));
-            theme::tab(ui, &mut self.light.tab, LightTab::Outputs, icons::ROUTER, t("Outputs"));
             theme::tab(ui, &mut self.light.tab, LightTab::Monitor, icons::GRID_VIEW, t("DMX monitor"));
         });
         ui.separator();
@@ -499,6 +502,52 @@ impl App {
         static GENERICS: std::sync::LazyLock<Vec<FixtureType>> = std::sync::LazyLock::new(crate::light::library::generics);
         // Borrowed, not cloned: this runs every frame under the show lock.
         let (types, in_show, in_lib) = super::fixture_types::available_types(l, &library.items, &GENERICS);
+        ui.horizontal(|ui| {
+            ui.spacing_mut().item_spacing.x = 4.0;
+            theme::tab(ui, &mut self.light.patch_view, PatchView::Sheet, icons::NOTES, t("Sheet"));
+            theme::tab(ui, &mut self.light.patch_view, PatchView::Plan, icons::OPEN_WITH, t("Plan"));
+            theme::tab(ui, &mut self.light.patch_view, PatchView::Types, icons::CATEGORY, t("Fixture types"));
+            ui.add_space(8.0);
+            // Imports on the sheet and the plan, exports on the plan only.
+            let view = self.light.patch_view;
+            if view != PatchView::Types
+                && ui
+                .button(theme::with_icon(icons::UPLOAD_FILE, t("Import fixture…")))
+                .on_hover_text(t("Open Fixture Library (.json), GDTF (.gdtf), QLC+ (.qxf) or OpenQ (.oqfixture) files"))
+                .clicked()
+            {
+                self.deferred.push(super::Deferred::ImportFixture);
+            }
+            if cfg!(feature = "fixture-download")
+                && view != PatchView::Types
+                && ui.button(theme::with_icon(icons::DOWNLOAD, t("Open Fixture Library…"))).on_hover_text(t("Search and download fixtures from open-fixture-library.org")).clicked() {
+                self.light.patch_view = PatchView::Types;
+                self.light.types.ofl_open = true;
+                self.light.types.ofl_focus = true;
+            }
+            if view != PatchView::Plan {
+                return;
+            }
+            if ui
+                .add_enabled(!l.fixtures.is_empty(), egui::Button::new(theme::with_icon(icons::DOWNLOAD, t("Export MVR…"))))
+                .on_hover_text(t("The patch with positions as an MVR file, for visualisers"))
+                .clicked()
+            {
+                self.deferred.push(super::Deferred::ExportPatch(false));
+            }
+            if ui
+                .add_enabled(!l.fixtures.is_empty(), egui::Button::new(theme::with_icon(icons::DOWNLOAD, t("Export plot…"))))
+                .on_hover_text(t("The plan as a PDF (A3, to scale) or SVG drawing"))
+                .clicked()
+            {
+                self.deferred.push(super::Deferred::ExportPatch(true));
+            }
+        });
+        if self.light.patch_view == PatchView::Types {
+            ui.add_space(4.0);
+            self.types_view(ui, l);
+            return;
+        }
         // Add fixtures.
         let form = &mut self.light.add;
         let mut short = None;
@@ -584,45 +633,6 @@ impl App {
                 ui.label(RichText::new(format!("{} {}{more}", icons::WARNING, issue_text(first))).color(theme::AMBER));
             }
         });
-        ui.horizontal(|ui| {
-            ui.spacing_mut().item_spacing.x = 4.0;
-            theme::tab(ui, &mut self.light.patch_view, PatchView::Sheet, icons::NOTES, t("Sheet"));
-            theme::tab(ui, &mut self.light.patch_view, PatchView::Plan, icons::OPEN_WITH, t("Plan"));
-            theme::tab(ui, &mut self.light.patch_view, PatchView::Types, icons::CATEGORY, t("Fixture types"));
-            ui.add_space(8.0);
-            if ui
-                .button(theme::with_icon(icons::UPLOAD_FILE, t("Import fixture…")))
-                .on_hover_text(t("Open Fixture Library (.json), GDTF (.gdtf), QLC+ (.qxf) or OpenQ (.oqfixture) files"))
-                .clicked()
-            {
-                self.deferred.push(super::Deferred::ImportFixture);
-            }
-            if cfg!(feature = "fixture-download")
-                && ui.button(theme::with_icon(icons::DOWNLOAD, t("Open Fixture Library…"))).on_hover_text(t("Search and download fixtures from open-fixture-library.org")).clicked() {
-                self.light.patch_view = PatchView::Types;
-                self.light.types.ofl_open = true;
-                self.light.types.ofl_focus = true;
-            }
-            if ui
-                .add_enabled(!l.fixtures.is_empty(), egui::Button::new(theme::with_icon(icons::DOWNLOAD, t("Export MVR…"))))
-                .on_hover_text(t("The patch with positions as an MVR file, for visualisers"))
-                .clicked()
-            {
-                self.deferred.push(super::Deferred::ExportPatch(false));
-            }
-            if ui
-                .add_enabled(!l.fixtures.is_empty(), egui::Button::new(theme::with_icon(icons::DOWNLOAD, t("Export plot…"))))
-                .on_hover_text(t("The plan as a PDF (A3, to scale) or SVG drawing"))
-                .clicked()
-            {
-                self.deferred.push(super::Deferred::ExportPatch(true));
-            }
-        });
-        if self.light.patch_view == PatchView::Types {
-            ui.add_space(4.0);
-            self.types_view(ui, l);
-            return;
-        }
         self.arrange_bar(ui, l);
         if self.light.patch_view == PatchView::Plan {
             self.shape_bar(ui, l);
@@ -681,6 +691,9 @@ impl App {
                 {
                     hang = Some(s.clone());
                 }
+            }
+            if s.label != [0.0, 0.0] && ui.small_button(icons::REPLAY).on_hover_text(t("Put the label back in its place")).clicked() {
+                s.label = [0.0, 0.0];
             }
             delete = ui.small_button(icons::DELETE).on_hover_text(t("Delete (or press Delete over the plan)")).clicked();
         });
@@ -1357,7 +1370,8 @@ fn effect_preview(ui: &mut Ui, e: &Effect, n: usize, labels: &[FixtureId], bpm: 
 
 /// Top view of the patch (x right, z towards the audience at the bottom): click selects
 /// (Ctrl/Shift adds), dragging a selected fixture moves the selection (snapped to 5 cm), dragging
-/// empty space pans, scrolling zooms, double-click recentres.
+/// empty space pans, scrolling zooms, double-click recentres; a bar's or rectangle's label drags
+/// on its own ([`PlotShape::label`]).
 /// Tool of the Plan view: select and move, or draw a shape by dragging.
 #[derive(Clone, Copy, PartialEq, Eq, Default)]
 pub(crate) enum PlanTool {
@@ -1386,6 +1400,8 @@ pub(crate) enum PlanDrag {
     Pan,
     Fixtures { from: egui::Pos2, start: Vec<(FixtureId, [f32; 3])> },
     Shape { id: u32, handle: Handle, from: egui::Pos2, start: PlotShape, new: bool },
+    /// A shape's label (its offset at the start).
+    Label { id: u32, from: egui::Pos2, start: [f32; 2] },
 }
 
 /// Plan positions snap to 5 cm.
@@ -1505,6 +1521,7 @@ fn plan_view(ui: &mut Ui, light: &mut LightUi, l: &mut Lighting, issues: &[Patch
     let pointer = resp.interact_pointer_pos();
     let m = ui.input(|i| i.modifiers);
     let drawing = light.plan_tool != PlanTool::Select;
+    let hit_label = |pos: egui::Pos2, labels: &[(u32, egui::Rect)]| labels.iter().rev().find(|(_, r)| r.expand(2.0).contains(pos)).map(|x| x.0);
     if resp.clicked()
         && let Some(pos) = pointer
         && !drawing
@@ -1520,7 +1537,7 @@ fn plan_view(ui: &mut Ui, light: &mut LightUi, l: &mut Lighting, issues: &[Patch
             } else {
                 *sel = [id].into_iter().collect();
             }
-        } else if let Some(id) = hit_shape(pos, l) {
+        } else if let Some(id) = hit_label(pos, &light.plan_labels).or_else(|| hit_shape(pos, l)) {
             light.shape_sel = Some(id);
         } else if !(m.command || m.shift) {
             sel.clear();
@@ -1541,7 +1558,7 @@ fn plan_view(ui: &mut Ui, light: &mut LightUi, l: &mut Lighting, issues: &[Patch
                 ShapeKind::Rect => String::new(),
             };
             let height = if kind == ShapeKind::Bar { 6.0 } else { 0.0 };
-            let s = PlotShape { id, kind, name, a: at, b: at, height };
+            let s = PlotShape { id, kind, name, a: at, b: at, height, label: [0.0, 0.0] };
             l.shapes.push(s.clone());
             light.shape_sel = Some(id);
             PlanDrag::Shape { id, handle: Handle::B, from: pos, start: s, new: true }
@@ -1554,6 +1571,10 @@ fn plan_view(ui: &mut Ui, light: &mut LightUi, l: &mut Lighting, issues: &[Patch
             }
             let start = l.fixtures.iter().filter(|f| light.patch_sel.contains(&f.id)).map(|f| (f.id, f.position)).collect();
             PlanDrag::Fixtures { from: pos, start }
+        } else if let Some(id) = hit_label(pos, &light.plan_labels) {
+            light.shape_sel = Some(id);
+            let start = l.shapes.iter().find(|s| s.id == id).map_or([0.0, 0.0], |s| s.label);
+            PlanDrag::Label { id, from: pos, start }
         } else if let Some(id) = hit_shape(pos, l) {
             light.shape_sel = Some(id);
             let start = l.shapes.iter().find(|s| s.id == id).cloned().unwrap_or_default();
@@ -1580,6 +1601,12 @@ fn plan_view(ui: &mut Ui, light: &mut LightUi, l: &mut Lighting, issues: &[Patch
                     *s = moved(start, *handle, d);
                 }
             }
+            Some(PlanDrag::Label { id, from, start }) => {
+                let d = (pointer.unwrap_or(*from) - *from) / zoom;
+                if let Some(s) = l.shapes.iter_mut().find(|s| s.id == *id) {
+                    s.label = [snap(start[0] + d.x), snap(start[1] + d.y)];
+                }
+            }
             None => {}
         }
     }
@@ -1598,19 +1625,22 @@ fn plan_view(ui: &mut Ui, light: &mut LightUi, l: &mut Lighting, issues: &[Patch
         l.shapes.retain(|s| Some(s.id) != light.shape_sel);
         light.shape_sel = None;
     }
-    // Rectangles under bars under fixtures.
+    // Rectangles under bars under fixtures. Labels sit where the user dragged them (`label`).
     let label_font = egui::FontId::proportional(11.0);
+    light.plan_labels.clear();
     for kind in [ShapeKind::Rect, ShapeKind::Bar] {
         for s in l.shapes.iter().filter(|s| s.kind == kind) {
             let selected = light.shape_sel == Some(s.id);
             let (a, b) = (to_screen(s.a[0], s.a[1]), to_screen(s.b[0], s.b[1]));
             let colour = if selected { theme::ACCENT } else { theme::TEXT_DIM };
+            let moved = egui::vec2(s.label[0], s.label[1]) * zoom;
             match kind {
                 ShapeKind::Rect => {
                     let r = egui::Rect::from_two_pos(a, b);
                     p.rect(r, 0.0, theme::BG_RAISED.gamma_multiply(0.6), egui::Stroke::new(if selected { 2.0 } else { 1.5 }, colour), egui::StrokeKind::Middle);
                     if !s.name.is_empty() {
-                        p.text(r.left_top() + egui::vec2(6.0, 4.0), egui::Align2::LEFT_TOP, &s.name, label_font.clone(), colour);
+                        let at = p.text(r.left_top() + egui::vec2(6.0, 4.0) + moved, egui::Align2::LEFT_TOP, &s.name, label_font.clone(), colour);
+                        light.plan_labels.push((s.id, at));
                     }
                 }
                 ShapeKind::Bar => {
@@ -1618,7 +1648,8 @@ fn plan_view(ui: &mut Ui, light: &mut LightUi, l: &mut Lighting, issues: &[Patch
                     let label = if s.name.is_empty() { format!("{:.2} m", s.height) } else { format!("{} · {:.2} m", s.name, s.height) };
                     // At the left end, just above the bar.
                     let left = if a.x <= b.x { a } else { b };
-                    p.text(left - egui::vec2(0.0, bar_width / 2.0 + 3.0), egui::Align2::LEFT_BOTTOM, label, label_font.clone(), colour);
+                    let at = p.text(left - egui::vec2(0.0, bar_width / 2.0 + 3.0) + moved, egui::Align2::LEFT_BOTTOM, label, label_font.clone(), colour);
+                    light.plan_labels.push((s.id, at));
                 }
             }
             if selected {
@@ -1645,7 +1676,13 @@ fn plan_view(ui: &mut Ui, light: &mut LightUi, l: &mut Lighting, issues: &[Patch
         ui.ctx().set_cursor_icon(egui::CursorIcon::Crosshair);
     }
     if let Some(pos) = resp.hover_pos() {
-        if let Some(f) = hit_fixture(pos, l).and_then(|id| l.fixture(id)) {
+        let on_label = !drawing && hit_fixture(pos, l).is_none() && hit_label(pos, &light.plan_labels).is_some();
+        if on_label {
+            ui.ctx().set_cursor_icon(if light.plan_drag.is_some() { egui::CursorIcon::Grabbing } else { egui::CursorIcon::Grab });
+        }
+        if on_label {
+            resp.on_hover_text(t("Drag to move the label"));
+        } else if let Some(f) = hit_fixture(pos, l).and_then(|id| l.fixture(id)) {
             let [x, y, z] = f.position;
             let name = if f.name.is_empty() { f.fixture_type.clone() } else { f.name.clone() };
             resp.on_hover_text(format!("{} {name}\nx {x:.2} · y {y:.2} · z {z:.2} m", f.id));
@@ -1864,63 +1901,22 @@ impl App {
         // Presets and effects share a column; no divider line, a gap instead (dragging that gap,
         // the panel's edge, still resizes it).
         egui::Panel::left("presets")
-            .frame(
-                egui::Frame::new()
-                    .fill(theme::BG_PANEL)
-                    .corner_radius(8.0)
-                    .inner_margin(egui::Margin::same(10))
-                    .outer_margin(egui::Margin { left: 0, right: 10, top: 0, bottom: 0 }),
-            )
+            .frame(side_column(true))
             .show_separator_line(false)
             .resizable(true)
             .default_size(250.0)
             .size_range(190.0..=480.0)
             .show(ui, |ui| {
-                self.preset_pool(ui, l);
+                self.pool_filter(ui);
+                ui.add_space(6.0);
+                let total = ui.available_height();
+                self.group_pool(ui, l, (total * 0.22).max(70.0));
+                ui.add_space(8.0);
+                self.preset_pool(ui, l, (total * 0.4).max(110.0));
                 ui.add_space(8.0);
                 self.effect_pool(ui, l);
             });
-        // Groups pool and programmer actions; groups scroll past two rows.
-        egui::ScrollArea::vertical().id_salt("groups_pool").max_height(66.0).show(ui, |ui| ui.horizontal_wrapped(|ui| {
-            ui.label(theme::caption(t("Groups")));
-            let mut remove = None;
-            for g in &l.groups {
-                let label = if g.name.is_empty() { g.id.to_string() } else { format!("{} {}", g.id, g.name) };
-                let r = ui.button(label);
-                if r.clicked() {
-                    let add = ui.input(|i| i.modifiers.command || i.modifiers.shift);
-                    if !add {
-                        self.light.selection.clear();
-                    }
-                    let mut have: HashSet<FixtureId> = self.light.selection.iter().copied().collect();
-                    self.light.selection.extend(g.fixtures.iter().copied().filter(|f| have.insert(*f)));
-                }
-                r.context_menu(|ui| {
-                    if ui.button(theme::with_icon(icons::SAVE, t("Store the selection here"))).clicked() {
-                        remove = Some((g.id, false));
-                    }
-                    if ui.button(theme::with_icon(icons::DELETE, t("Delete group"))).clicked() {
-                        remove = Some((g.id, true));
-                    }
-                });
-            }
-            match remove {
-                Some((id, true)) => l.groups.retain(|g| g.id != id),
-                Some((id, false)) => {
-                    if let Some(g) = l.groups.iter_mut().find(|g| g.id == id) {
-                        g.fixtures = self.light.selection.clone();
-                    }
-                }
-                None => {}
-            }
-            ui.add_enabled_ui(!self.light.selection.is_empty(), |ui| {
-                if ui.button(theme::with_icon(icons::ADD, t("Group from selection"))).on_hover_text(t("Right-click a group to overwrite or delete it")).clicked() {
-                    let id = l.groups.iter().map(|g| g.id).max().unwrap_or(0) + 1;
-                    l.groups.push(Group { id, name: String::new(), fixtures: self.light.selection.clone() });
-                }
-            });
-        }));
-        ui.add_space(4.0);
+        // Programmer actions.
         ui.horizontal_wrapped(|ui| {
             let n = self.light.selection.len();
             ui.label(RichText::new(tr!("{n} selected", n = n.to_string())).color(theme::TEXT_DIM));
@@ -1979,7 +1975,8 @@ impl App {
         ui.separator();
         // Encoders in a side panel of their own (resizable, scrolls), tiles fill the rest.
         egui::Panel::right("encoders")
-            .frame(egui::Frame::new().fill(theme::BG_PANEL).corner_radius(8.0).inner_margin(egui::Margin::same(10)))
+            .frame(side_column(false))
+            .show_separator_line(false)
             .resizable(true)
             .default_size(420.0)
             .size_range(320.0..=640.0)
@@ -1990,48 +1987,106 @@ impl App {
         self.fixture_tiles(ui, l);
     }
 
-    /// Presets panel: a feature filter, "new preset", then the presets as cards. Click applies one
-    /// to the selection (as references), right-click overwrites/deletes.
-    fn preset_pool(&mut self, ui: &mut Ui, l: &mut Lighting) {
-        ui.horizontal(|ui| {
-            ui.label(theme::caption(t("Presets")));
-            ui.label(RichText::new(l.presets.len().to_string()).font(theme::semibold(10.5)).color(theme::TEXT_DIM));
-        });
-        // Filter by feature (only those that have presets).
+    /// Feature filter of the presets and effects (also the feature "new preset" stores).
+    fn pool_filter(&mut self, ui: &mut Ui) {
         ui.horizontal_wrapped(|ui| {
             ui.spacing_mut().item_spacing = egui::vec2(2.0, 2.0);
             let f = &mut self.light.preset_filter;
-            if ui.selectable_label(f.is_none(), t("All")).clicked() {
+            if ui.selectable_label(f.is_none(), t("All")).on_hover_text(t("Every preset and effect")).clicked() {
                 *f = None;
             }
             for feat in Feature::ALL {
-                if !l.presets.iter().any(|p| p.feature == Some(feat)) {
-                    continue;
-                }
                 let r = ui.selectable_label(*f == Some(feat), RichText::new(feature_icon(feat)).font(theme::icon_font(16.0))).on_hover_text(feat.label());
                 if r.clicked() {
                     *f = if *f == Some(feat) { None } else { Some(feat) };
                 }
             }
         });
-        ui.add_space(4.0);
+    }
+
+    /// Groups as cards: click selects the group (Ctrl/Shift adds it), right-click overwrites or
+    /// deletes; + makes one from the selection.
+    fn group_pool(&mut self, ui: &mut Ui, l: &mut Lighting, max_h: f32) {
         ui.horizontal(|ui| {
-            let label = self.light.preset_feature.map_or_else(|| t("All attributes").to_string(), |f| f.label().to_string());
-            egui::ComboBox::from_id_salt("preset_feature").selected_text(label).width(ui.available_width() - 56.0).show_ui(ui, |ui| {
-                ui.selectable_value(&mut self.light.preset_feature, None, t("All attributes"));
-                for f in Feature::ALL {
-                    ui.selectable_value(&mut self.light.preset_feature, Some(f), f.label());
+            ui.label(theme::caption(t("Groups")));
+            ui.label(RichText::new(l.groups.len().to_string()).font(theme::semibold(10.5)).color(theme::TEXT_DIM));
+            ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                if ui
+                    .add_enabled(!self.light.selection.is_empty(), egui::Button::new(icons::ADD))
+                    .on_hover_text(t("Group from selection; right-click a group to overwrite or delete it"))
+                    .clicked()
+                {
+                    let id = l.groups.iter().map(|g| g.id).max().unwrap_or(0) + 1;
+                    l.groups.push(Group { id, name: String::new(), fixtures: self.light.selection.clone() });
                 }
             });
-            let values = self.programmer_values(l, self.light.preset_feature);
-            if ui
-                .add_enabled(!values.is_empty(), egui::Button::new(icons::ADD))
-                .on_hover_text(t("Preset from programmer: stores the selected fixtures' programmer values; right-click a preset to overwrite or delete it"))
-                .clicked()
-            {
-                let id = l.presets.iter().map(|p| p.id).max().unwrap_or(0) + 1;
-                l.presets.push(Preset { id, name: String::new(), feature: self.light.preset_feature, values: values.into() });
+        });
+        ui.add_space(4.0);
+        let mut remove = None;
+        let mut pick = None;
+        let selected: HashSet<FixtureId> = self.light.selection.iter().copied().collect();
+        egui::ScrollArea::vertical().id_salt("group_cards").max_height(max_h).auto_shrink([false, true]).show(ui, |ui| {
+            card_grid(ui, &l.groups, |ui, g, size| {
+                let on = !g.fixtures.is_empty() && g.fixtures.iter().all(|f| selected.contains(f));
+                let name = if g.name.is_empty() { tr!("{n} fixtures", n = g.fixtures.len().to_string()) } else { g.name.clone() };
+                let r = pool_card(ui, size, icons::SELECT_ALL, g.id, &name, if on { CardLook::On } else { CardLook::Off }, None);
+                let r = r.on_hover_text(format!("{} {} · {}", g.id, g.name, tr!("{n} fixtures", n = g.fixtures.len().to_string())));
+                if r.clicked() {
+                    pick = Some(g.id);
+                }
+                r.context_menu(|ui| {
+                    if ui.button(theme::with_icon(icons::SAVE, t("Store the selection here"))).clicked() {
+                        remove = Some((g.id, false));
+                    }
+                    if ui.button(theme::with_icon(icons::DELETE, t("Delete group"))).clicked() {
+                        remove = Some((g.id, true));
+                    }
+                });
+            });
+            if l.groups.is_empty() {
+                ui.label(RichText::new(t("Select fixtures, then make a group of them with +.")).color(theme::TEXT_DIM));
             }
+        });
+        if let Some(g) = pick.and_then(|id| l.groups.iter().find(|g| g.id == id)) {
+            if !ui.input(|i| i.modifiers.command || i.modifiers.shift) {
+                self.light.selection.clear();
+            }
+            let mut have: HashSet<FixtureId> = self.light.selection.iter().copied().collect();
+            self.light.selection.extend(g.fixtures.iter().copied().filter(|f| have.insert(*f)));
+        }
+        match remove {
+            Some((id, true)) => l.groups.retain(|g| g.id != id),
+            Some((id, false)) => {
+                if let Some(g) = l.groups.iter_mut().find(|g| g.id == id) {
+                    g.fixtures = self.light.selection.clone();
+                }
+            }
+            None => {}
+        }
+    }
+
+    /// Presets panel: "new preset" (of the filter's feature), then the presets as cards. Click
+    /// applies one to the selection (as references), right-click overwrites/deletes.
+    fn preset_pool(&mut self, ui: &mut Ui, l: &mut Lighting, max_h: f32) {
+        let feature = self.light.preset_filter;
+        ui.horizontal(|ui| {
+            ui.label(theme::caption(t("Presets")));
+            ui.label(RichText::new(l.presets.len().to_string()).font(theme::semibold(10.5)).color(theme::TEXT_DIM));
+            ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                let values = self.programmer_values(l, feature);
+                let what = feature.map_or_else(|| t("All attributes").to_string(), |f| f.label().to_string());
+                if ui
+                    .add_enabled(!values.is_empty(), egui::Button::new(icons::ADD))
+                    .on_hover_text(tr!(
+                        "Preset from programmer ({what}): stores the selected fixtures' programmer values; right-click a preset to overwrite or delete it",
+                        what = what
+                    ))
+                    .clicked()
+                {
+                    let id = l.presets.iter().map(|p| p.id).max().unwrap_or(0) + 1;
+                    l.presets.push(Preset { id, name: String::new(), feature, values: values.into() });
+                }
+            });
         });
         ui.add_space(4.0);
         enum Act {
@@ -2054,54 +2109,29 @@ impl App {
                 Value::Level(_) => None,
             })
             .collect();
-        const GAP: f32 = 6.0;
-        const H: f32 = 44.0;
-        // Presets take at most 60 % of the column; effects get the rest.
-        let presets_h = (ui.available_height() * 0.6).max(120.0);
-        egui::ScrollArea::vertical().id_salt("preset_cards").max_height(presets_h).auto_shrink([false, true]).show(ui, |ui| {
-            // Clear of the scroll bar, or the panel would grow a little every frame.
-            let avail = ui.available_width() - 14.0;
-            let cols = ((avail + GAP) / (76.0 + GAP)).floor().max(1.0);
-            let w = ((avail + GAP) / cols - GAP).floor();
-            ui.spacing_mut().item_spacing = egui::vec2(GAP, GAP);
-            for row in shown.chunks(cols as usize) {
-                ui.horizontal(|ui| {
-                    for p in row {
-                        let (rect, r) = ui.allocate_exact_size(egui::vec2(w, H), egui::Sense::click());
-                        let on = used.contains(&p.id);
-                        let painter = ui.painter();
-                        let fill = if on { theme::accent_bg() } else if r.hovered() { theme::BG_HOVER } else { theme::BG_RAISED };
-                        painter.rect_filled(rect, 6.0, fill);
-                        painter.rect_stroke(rect, 6.0, egui::Stroke::new(1.0, if on { theme::BLUE } else { theme::BORDER }), egui::StrokeKind::Inside);
-                        let inner = rect.shrink2(egui::vec2(8.0, 6.0));
-                        let glyph = p.feature.map_or(icons::CATEGORY, feature_icon);
-                        painter.text(inner.left_top(), egui::Align2::LEFT_TOP, glyph, theme::icon_font(14.0), theme::TEXT_DIM);
-                        painter.text(inner.right_top(), egui::Align2::RIGHT_TOP, p.id.to_string(), theme::mono(10.5), theme::TEXT_FAINT);
-                        let name = if p.name.is_empty() { p.feature.map_or_else(|| t("All attributes").to_string(), |f| f.label().to_string()) } else { p.name.clone() };
-                        painter.with_clip_rect(inner).text(inner.left_bottom(), egui::Align2::LEFT_BOTTOM, name, egui::FontId::proportional(12.5), theme::TEXT);
-                        // A colour preset shows its colour (from its first fixture).
-                        if p.feature == Some(Feature::Colour)
-                            && let Some(v) = p.values.values().next()
-                            && let (Some(r_), Some(g), Some(b)) = (v.get(&Attribute::Red), v.get(&Attribute::Green), v.get(&Attribute::Blue))
-                        {
-                            let bar = egui::Rect::from_min_size(egui::pos2(rect.left() + 4.0, rect.bottom() - 4.0), egui::vec2(rect.width() - 8.0, 2.5));
-                            painter.rect_filled(bar, 1.0, to_c32([*r_, *g, *b]));
-                        }
-                        let r = r.on_hover_text(format!("{} {} · {}", p.id, p.name, p.feature.map_or_else(|| t("All attributes").to_string(), |f| f.label().to_string())));
-                        if r.clicked() {
-                            action = Some(Act::Apply(p.id));
-                        }
-                        r.context_menu(|ui| {
-                            if ui.button(theme::with_icon(icons::SAVE, t("Store the programmer here"))).clicked() {
-                                action = Some(Act::Store(p.id));
-                            }
-                            if ui.button(theme::with_icon(icons::DELETE, t("Delete preset"))).clicked() {
-                                action = Some(Act::Delete(p.id));
-                            }
-                        });
+        egui::ScrollArea::vertical().id_salt("preset_cards").max_height(max_h).auto_shrink([false, true]).show(ui, |ui| {
+            card_grid(ui, &shown, |ui, p, size| {
+                let glyph = p.feature.map_or(icons::CATEGORY, feature_icon);
+                let name = if p.name.is_empty() { p.feature.map_or_else(|| t("All attributes").to_string(), |f| f.label().to_string()) } else { p.name.clone() };
+                // A colour preset shows its colour (from its first fixture).
+                let colour = (p.feature == Some(Feature::Colour))
+                    .then(|| p.values.values().next())
+                    .flatten()
+                    .and_then(|v| Some(to_c32([*v.get(&Attribute::Red)?, *v.get(&Attribute::Green)?, *v.get(&Attribute::Blue)?])));
+                let r = pool_card(ui, size, glyph, p.id, &name, if used.contains(&p.id) { CardLook::On } else { CardLook::Off }, colour);
+                let r = r.on_hover_text(format!("{} {} · {}", p.id, p.name, p.feature.map_or_else(|| t("All attributes").to_string(), |f| f.label().to_string())));
+                if r.clicked() {
+                    action = Some(Act::Apply(p.id));
+                }
+                r.context_menu(|ui| {
+                    if ui.button(theme::with_icon(icons::SAVE, t("Store the programmer here"))).clicked() {
+                        action = Some(Act::Store(p.id));
+                    }
+                    if ui.button(theme::with_icon(icons::DELETE, t("Delete preset"))).clicked() {
+                        action = Some(Act::Delete(p.id));
                     }
                 });
-            }
+            });
             if l.presets.is_empty() {
                 ui.label(RichText::new(t("Set values in the programmer, then store them as a preset with +.")).color(theme::TEXT_DIM));
             }
@@ -2131,47 +2161,30 @@ impl App {
             ui.label(RichText::new(l.effects.len().to_string()).font(theme::semibold(10.5)).color(theme::TEXT_DIM));
         });
         ui.add_space(4.0);
-        const GAP: f32 = 6.0;
-        const H: f32 = 44.0;
+        let filter = self.light.preset_filter.map(FxFilter::Feature);
+        let shown: Vec<&Effect> = l.effects.iter().filter(|e| fx_matches(e, "", filter)).collect();
         egui::ScrollArea::vertical().id_salt("effect_cards").auto_shrink(false).show(ui, |ui| {
-            let avail = ui.available_width() - 14.0;
-            let cols = ((avail + GAP) / (76.0 + GAP)).floor().max(1.0);
-            let w = ((avail + GAP) / cols - GAP).floor();
-            ui.spacing_mut().item_spacing = egui::vec2(GAP, GAP);
-            for row in l.effects.chunks(cols as usize) {
-                ui.horizontal(|ui| {
-                    for e in row {
-                        let stopping = self.light.programmer_effects.iter().any(|r| r.effect == e.id && r.stop);
-                        let running = self.light.programmer_effects.iter().any(|r| r.effect == e.id && !r.stop);
-                        let (rect, r) = ui.allocate_exact_size(egui::vec2(w, H), egui::Sense::click());
-                        let painter = ui.painter();
-                        let fill = if running { theme::RED.gamma_multiply(0.6) } else if r.hovered() { theme::BG_HOVER } else { theme::BG_RAISED };
-                        let border = if running || stopping { theme::RED } else { theme::BORDER };
-                        painter.rect_filled(rect, 6.0, fill);
-                        painter.rect_stroke(rect, 6.0, egui::Stroke::new(1.0, border), egui::StrokeKind::Inside);
-                        let inner = rect.shrink2(egui::vec2(8.0, 6.0));
-                        let fg = if running { Color32::WHITE } else if stopping { theme::RED } else { theme::TEXT };
-                        painter.text(inner.left_top(), egui::Align2::LEFT_TOP, icons::AUTO_FIX_HIGH, theme::icon_font(14.0), if running { Color32::WHITE } else { theme::TEXT_DIM });
-                        painter.text(inner.right_top(), egui::Align2::RIGHT_TOP, e.id.to_string(), theme::mono(10.5), theme::TEXT_FAINT);
-                        let name = if e.name.is_empty() { e.shape.label().to_string() } else { e.name.clone() };
-                        painter.with_clip_rect(inner).text(inner.left_bottom(), egui::Align2::LEFT_BOTTOM, name, egui::FontId::proportional(12.5), fg);
-                        let r = r.on_hover_text(format!("{} {} · {} · {}", e.id, e.name, e.attribute.label(), e.shape.label()));
-                        if r.clicked() {
-                            if running || stopping {
-                                self.light.programmer_effects.retain(|r| r.effect != e.id);
-                            } else if !self.light.selection.is_empty() {
-                                self.light.programmer_effects.push(EffectRun { effect: e.id, fixtures: self.light.selection.clone(), stop: false });
-                            }
-                        }
-                        r.context_menu(|ui| {
-                            if ui.button(theme::with_icon(icons::STOP, t("Stop it in the recorded cue"))).clicked() {
-                                self.light.programmer_effects.retain(|r| r.effect != e.id);
-                                self.light.programmer_effects.push(EffectRun { effect: e.id, fixtures: Vec::new(), stop: true });
-                            }
-                        });
+            card_grid(ui, &shown, |ui, e, size| {
+                let stopping = self.light.programmer_effects.iter().any(|r| r.effect == e.id && r.stop);
+                let running = self.light.programmer_effects.iter().any(|r| r.effect == e.id && !r.stop);
+                let look = if running { CardLook::Running } else if stopping { CardLook::Stopping } else { CardLook::Off };
+                let name = if e.name.is_empty() { e.shape.label().to_string() } else { e.name.clone() };
+                let r = pool_card(ui, size, icons::AUTO_FIX_HIGH, e.id, &name, look, None);
+                let r = r.on_hover_text(format!("{} {} · {} · {}", e.id, e.name, e.attribute.label(), e.shape.label()));
+                if r.clicked() {
+                    if running || stopping {
+                        self.light.programmer_effects.retain(|r| r.effect != e.id);
+                    } else if !self.light.selection.is_empty() {
+                        self.light.programmer_effects.push(EffectRun { effect: e.id, fixtures: self.light.selection.clone(), stop: false });
+                    }
+                }
+                r.context_menu(|ui| {
+                    if ui.button(theme::with_icon(icons::STOP, t("Stop it in the recorded cue"))).clicked() {
+                        self.light.programmer_effects.retain(|r| r.effect != e.id);
+                        self.light.programmer_effects.push(EffectRun { effect: e.id, fixtures: Vec::new(), stop: true });
                     }
                 });
-            }
+            });
             if l.effects.is_empty() {
                 ui.label(RichText::new(t("Build effects on the Effects page.")).color(theme::TEXT_DIM));
             }
@@ -2522,6 +2535,11 @@ impl App {
                     ui.end_row();
                 }
             });
+            let clear = egui::Button::new(RichText::new(theme::with_icon(icons::CLOSE, t("Clear line"))).font(theme::semibold(15.0))).min_size(egui::vec2(4.0 * 66.0 + 3.0 * 4.0, 40.0));
+            if ui.add_enabled(!self.light.cmd_line.is_empty(), clear).on_hover_text(t("Empty the command line")).clicked() {
+                self.light.cmd_line.clear();
+                self.light.cmd_back = None;
+            }
         });
         self.light.keypad = open;
         if run {
@@ -2659,7 +2677,7 @@ impl App {
                     done = tr!("recorded group {g}", g = g.to_string());
                 }
                 Cmd::Record(Target::Preset(p)) => {
-                    let feature = l.preset(p).map_or(self.light.preset_feature, |x| x.feature);
+                    let feature = l.preset(p).map_or(self.light.preset_filter, |x| x.feature);
                     let values = self.programmer_values(l, feature);
                     match l.presets.iter_mut().find(|x| x.id == p) {
                         Some(x) => x.values = values.into(),
@@ -2809,25 +2827,41 @@ impl App {
         true
     }
 
-    /// Fixture tiles: click to select (Ctrl/Shift adds). Each shows its number, name, type, the
-    /// programmer intensity (bar) and colour (swatch), and the selection order.
+    /// Fixture tiles: a click adds a fixture to the selection (or takes it out), a drag adds every
+    /// tile of the band it covers, a right-click selects only that fixture. Each shows its number,
+    /// name, type, the programmer intensity (bar) and colour (swatch), and the selection order.
     fn fixture_tiles(&mut self, ui: &mut Ui, l: &Lighting) {
         const GAP: f32 = 6.0;
         // Tiles stretch so a row fills the width exactly.
         let avail = ui.available_width() - 14.0;
         let per_row = ((avail + GAP) / (132.0 + GAP)).floor().max(1.0);
         let tile = egui::vec2(((avail + GAP) / per_row - GAP).floor(), 86.0);
+        let pitch = tile + egui::vec2(GAP, GAP);
         // Only the visible rows are laid out: a pixel rig has thousands of units.
         let units = l.units();
         let per_row = per_row as usize;
         let rows = units.len().div_ceil(per_row);
+        // Empty space between and after the tiles starts a band too (the tiles are on top of it).
+        let area = ui.available_rect_before_wrap();
+        let back = ui.interact(area, ui.id().with("tiles_back"), egui::Sense::click_and_drag());
+        let mut started = back.drag_started();
+        let mut clicked: Option<(FixtureId, bool)> = None;
+        // Screen position of the grid's top-left corner (scrolls with it).
+        let mut origin: Option<egui::Pos2> = None;
         ui.scope(|ui| {
             ui.spacing_mut().item_spacing = egui::vec2(GAP, GAP);
             egui::ScrollArea::vertical().id_salt("tiles").auto_shrink(false).show_rows(ui, tile.y, rows, |ui, visible| {
                 for row in visible {
                     ui.horizontal(|ui| {
-                        for &id in &units[row * per_row..((row + 1) * per_row).min(units.len())] {
-                            let (rect, r) = ui.allocate_exact_size(tile, egui::Sense::click());
+                        for (col, &id) in units[row * per_row..((row + 1) * per_row).min(units.len())].iter().enumerate() {
+                            let (rect, r) = ui.allocate_exact_size(tile, egui::Sense::click_and_drag());
+                            origin.get_or_insert(rect.min - egui::vec2(col as f32 * pitch.x, row as f32 * pitch.y));
+                            started |= r.drag_started();
+                            if r.clicked() {
+                                clicked = Some((id, false));
+                            } else if r.secondary_clicked() {
+                                clicked = Some((id, true));
+                            }
                             let Some((f, cell)) = l.unit(id) else { continue };
                             let order = self.light.selection.iter().position(|x| *x == id);
                             let prog = self.light.programmer.get(&id);
@@ -2873,22 +2907,55 @@ impl App {
                                     p.circle_stroke(at, 7.0, egui::Stroke::new(1.0, theme::BORDER));
                                 }
                             }
-                            if r.clicked() {
-                                let add = ui.input(|i| i.modifiers.command || i.modifiers.shift);
-                                let sel = &mut self.light.selection;
-                                match (add, order) {
-                                    (true, Some(i)) => {
-                                        sel.remove(i);
-                                    }
-                                    (true, None) => sel.push(id),
-                                    (false, _) => *sel = vec![id],
-                                }
-                            }
                         }
                     });
                 }
             });
         });
+        let sel = &mut self.light.selection;
+        match clicked {
+            Some((id, true)) => *sel = vec![id],
+            Some((id, false)) => match sel.iter().position(|x| *x == id) {
+                Some(i) => {
+                    sel.remove(i);
+                }
+                None => sel.push(id),
+            },
+            None => {}
+        }
+        // The band, kept in grid coordinates so scrolling while dragging works.
+        let Some(origin) = origin else { return };
+        let (press, pointer, down) = ui.input(|i| (i.pointer.press_origin(), i.pointer.latest_pos(), i.pointer.primary_down()));
+        if started
+            && let Some(p) = press
+        {
+            self.light.band = Some((egui::pos2(p.x - origin.x, p.y - origin.y), self.light.selection.clone()));
+        }
+        if !down {
+            self.light.band = None;
+        }
+        let (Some((start, base)), Some(pointer)) = (&self.light.band, pointer) else { return };
+        let now = pointer - origin.to_vec2();
+        let band = egui::Rect::from_two_pos(*start, now);
+        // Tiles the band touches: columns and rows of the grid.
+        let first = |v: f32, step: f32| ((v / step).floor().max(0.0)) as usize;
+        let (c0, c1) = (first(band.left(), pitch.x), first(band.right(), pitch.x).min(per_row - 1));
+        let (r0, r1) = (first(band.top(), pitch.y), first(band.bottom(), pitch.y));
+        let mut sel = base.clone();
+        let mut have: HashSet<FixtureId> = sel.iter().copied().collect();
+        for r in r0..=r1.min(rows.saturating_sub(1)) {
+            for c in c0..=c1 {
+                if let Some(&id) = units.get(r * per_row + c)
+                    && have.insert(id)
+                {
+                    sel.push(id);
+                }
+            }
+        }
+        self.light.selection = sel;
+        let shown = band.translate(origin.to_vec2()).intersect(area);
+        ui.painter().rect(shown, 2.0, theme::ACCENT.gamma_multiply(0.15), egui::Stroke::new(1.0, theme::ACCENT), egui::StrokeKind::Inside);
+        ui.ctx().request_repaint();
     }
 
     /// Value of an attribute for the selection (the first selected fixture that has it).
@@ -2987,7 +3054,7 @@ impl App {
                     }
                 });
             }
-            Feature::Colour => self.colour_picker(ui, l, &page),
+            Feature::Colour => self.colour_picker(ui, l),
             Feature::Position if page.contains(&Attribute::Pan) && page.contains(&Attribute::Tilt) => self.pan_tilt_pad(ui, l),
             _ => {}
         }
@@ -3145,29 +3212,59 @@ impl App {
             .clone()
     }
 
-    /// RGB/CMY picker for the selection.
-    fn colour_picker(&mut self, ui: &mut Ui, l: &Lighting, page: &[Attribute]) {
-        let rgb = page.contains(&Attribute::Red) && page.contains(&Attribute::Green) && page.contains(&Attribute::Blue);
-        let cmy = page.contains(&Attribute::Cyan) && page.contains(&Attribute::Magenta) && page.contains(&Attribute::Yellow);
-        if !rgb && !cmy {
-            return;
-        }
-        let get = |a| self.selection_value(l, a).unwrap_or(0.0);
-        let c = if rgb {
-            [get(Attribute::Red), get(Attribute::Green), get(Attribute::Blue)]
-        } else {
-            [1.0 - get(Attribute::Cyan), 1.0 - get(Attribute::Magenta), 1.0 - get(Attribute::Yellow)]
-        };
-        if let Some(new) = colour_field(ui, c) {
-            if rgb {
-                self.set_selection(l, Attribute::Red, new[0]);
-                self.set_selection(l, Attribute::Green, new[1]);
-                self.set_selection(l, Attribute::Blue, new[2]);
+    /// Colour picker for the selection: the colours the first selected fixture can make (its
+    /// gamut, from the type's emitter colours or typical ones) on a CIE xy diagram. A pick is
+    /// mixed by each fixture with its own emitters (brightest at full).
+    fn colour_picker(&mut self, ui: &mut Ui, l: &Lighting) {
+        use crate::light::colour;
+        let mixer_of = |f: FixtureId| colour::mixer(l.unit(f).and_then(|(fx, _)| l.fixture_type(&fx.fixture_type)), &attributes_of(l, f));
+        let Some((first, mixer)) = self.light.selection.iter().find_map(|f| Some((*f, mixer_of(*f)?))) else { return };
+        let level = |a: Attribute| self.light.programmer.get(&first).and_then(|v| v.get(&a)).and_then(|v| l.resolve(first, a, *v));
+        let current = mixer.chromaticity(level);
+        let gamut = mixer.gamut();
+        let mut pick = None;
+        // Swatches, brought into the gamut; those it can't make are struck through.
+        ui.horizontal(|ui| {
+            ui.spacing_mut().item_spacing.x = 4.0;
+            let n = SWATCHES.len() as f32;
+            let side = ((ui.available_width() - 4.0 * (n - 1.0)) / n).clamp(16.0, 30.0);
+            for sw in SWATCHES {
+                let Some(xy) = colour::srgb_to_xy(sw) else { continue };
+                let inside = colour::clamp_into(&gamut, xy);
+                let off = (inside[0] - xy[0]).hypot(inside[1] - xy[1]) > 0.01;
+                let (r, resp) = ui.allocate_exact_size(egui::vec2(side, side), egui::Sense::click());
+                ui.painter().rect_filled(r, 4.0, to_c32(sw));
+                let stroke = if resp.hovered() { egui::Stroke::new(2.0, Color32::WHITE) } else { egui::Stroke::new(1.0, theme::BORDER) };
+                ui.painter().rect_stroke(r, 4.0, stroke, egui::StrokeKind::Inside);
+                if off {
+                    ui.painter().line_segment([r.left_bottom() + egui::vec2(3.0, -3.0), r.right_top() + egui::vec2(-3.0, 3.0)], egui::Stroke::new(1.5, Color32::BLACK));
+                }
+                let resp = if off { resp.on_hover_text(t("Out of this fixture's range: the nearest colour it can make")) } else { resp };
+                if resp.clicked() {
+                    pick = Some(inside);
+                }
             }
-            if cmy {
-                self.set_selection(l, Attribute::Cyan, 1.0 - new[0]);
-                self.set_selection(l, Attribute::Magenta, 1.0 - new[1]);
-                self.set_selection(l, Attribute::Yellow, 1.0 - new[2]);
+        });
+        ui.add_space(6.0);
+        if let Some(xy) = cie_field(ui, &gamut, current) {
+            pick = Some(xy);
+        }
+        let note = if mixer.subtractive {
+            t("Approximate range of CMY colour mixing")
+        } else if mixer.measured {
+            t("Colours this fixture type can make (its emitter colours)")
+        } else {
+            t("Approximate range (the fixture type has no emitter colours)")
+        };
+        ui.label(RichText::new(note).weak().small());
+        if let Some(xy) = pick {
+            let sel = self.light.selection.clone();
+            for f in sel {
+                let Some(m) = mixer_of(f) else { continue };
+                let vals = self.light.programmer.entry(f).or_default();
+                for (a, v) in m.levels(xy) {
+                    vals.insert(a, Value::Level(v));
+                }
             }
         }
         ui.add_space(4.0);
@@ -3210,7 +3307,8 @@ impl App {
         let l = &mut show.ws.lighting;
         let light = &show.media.light;
         egui::Panel::right("cue_details")
-            .frame(egui::Frame::new().fill(theme::BG_PANEL).corner_radius(8.0).inner_margin(egui::Margin::same(10)))
+            .frame(side_column(false))
+            .show_separator_line(false)
             .resizable(true)
             .default_size(330.0)
             .size_range(280.0..=480.0)
@@ -3317,6 +3415,10 @@ impl App {
                                 egui::FontId::proportional(13.0),
                                 if selected { theme::BLUE } else { theme::TEXT },
                             );
+                            if c.block {
+                                ui.painter().text(rect.right_center() - egui::vec2(6.0, 0.0), egui::Align2::RIGHT_CENTER, icons::LOCK, theme::icon_font(14.0), theme::ACCENT);
+                            }
+                            let r = if c.block { r.on_hover_text(t("Blocked")) } else { r };
                             if r.clicked() {
                                 self.light.cue = Some(c.id);
                             }
@@ -3340,14 +3442,20 @@ impl App {
         let Some(s) = seq.and_then(|id| l.sequences.iter_mut().find(|s| s.id == id)) else { return };
         let index = self.light.cue.and_then(|c| s.index_of(c));
         if let Some(i) = index {
-            let mut block = false;
+            let mut block = None;
             let c = &mut s.cues[i];
             ui.label(theme::caption(&tr!("Cue {n}", n = c.number.clone())));
             ui.add(egui::TextEdit::singleline(&mut c.name).hint_text(t("Name")).desired_width(f32::INFINITY));
             ui.add_space(4.0);
             ui.checkbox(&mut c.cue_only, t("Cue only")).on_hover_text(t("Its changes don't track: the next cue goes back to what was there before"));
-            if ui.button(theme::with_icon(icons::LOCK, t("Block"))).on_hover_text(t("Store every tracked value in this cue, so edits to earlier cues no longer change it")).clicked() {
-                block = true;
+            // Lit while the cue is a block; pressing it again lets its values track again.
+            let (glyph, label, fill, fg, tip) = if c.block {
+                (icons::LOCK, t("Blocked"), theme::ACCENT, Color32::WHITE, t("Every tracked value is stored in this cue. Click to let values that are the same as before it track again"))
+            } else {
+                (icons::LOCK_OPEN, t("Block"), theme::BG_RAISED, theme::TEXT, t("Store every tracked value in this cue, so edits to earlier cues no longer change it"))
+            };
+            if ui.add(egui::Button::new(RichText::new(theme::with_icon(glyph, label)).color(fg)).fill(fill)).on_hover_text(tip).clicked() {
+                block = Some(!c.block);
             }
             ui.add_space(8.0);
             ui.label(theme::caption(t("Timing per feature")));
@@ -3395,8 +3503,10 @@ impl App {
                     c.effects.remove(k);
                 }
             }
-            if block {
-                s.block(i);
+            match block {
+                Some(true) => s.block(i),
+                Some(false) => s.unblock(i),
+                None => {}
             }
             ui.add_space(8.0);
             ui.separator();
@@ -3775,12 +3885,70 @@ impl App {
                 if starts.contains_key(&slot) {
                     p.line_segment([r.left_top(), r.left_bottom()], egui::Stroke::new(2.0, theme::AMBER));
                 }
-                p.text(r.left_top() + egui::vec2(4.0, 2.0), egui::Align2::LEFT_TOP, slot.to_string(), egui::FontId::proportional(9.5), theme::TEXT_FAINT);
+                p.text(r.left_top() + egui::vec2(4.0, 2.0), egui::Align2::LEFT_TOP, slot.to_string(), egui::FontId::proportional(9.5), Color32::WHITE);
                 let size = (cell.y * 0.38).clamp(11.0, 16.0);
                 p.text(r.right_bottom() - egui::vec2(4.0, 3.0), egui::Align2::RIGHT_BOTTOM, v.to_string(), theme::mono(size), if *v > 0 { Color32::WHITE } else { theme::TEXT_FAINT });
             }
         });
     }
+}
+
+/// How a pool card is lit: idle, in use by the selection, a running effect, an effect stopped by
+/// the programmer.
+#[derive(Clone, Copy, PartialEq)]
+enum CardLook {
+    Off,
+    On,
+    Running,
+    Stopping,
+}
+
+/// Lay `items` out as cards in rows filling the width (clear of the scroll bar, or the panel
+/// would grow a little every frame); `card` draws one at the size given.
+fn card_grid<T>(ui: &mut Ui, items: &[T], mut card: impl FnMut(&mut Ui, &T, egui::Vec2)) {
+    const GAP: f32 = 6.0;
+    let avail = ui.available_width() - 14.0;
+    let cols = ((avail + GAP) / (76.0 + GAP)).floor().max(1.0);
+    let size = egui::vec2(((avail + GAP) / cols - GAP).floor(), 44.0);
+    ui.spacing_mut().item_spacing = egui::vec2(GAP, GAP);
+    for row in items.chunks(cols as usize) {
+        ui.horizontal(|ui| {
+            for item in row {
+                card(ui, item, size);
+            }
+        });
+    }
+}
+
+/// A card of the programmer's pools (groups, presets, effects): icon, number at the top right,
+/// name at the bottom, and a colour bar (colour presets).
+fn pool_card(ui: &mut Ui, size: egui::Vec2, glyph: &str, number: u32, name: &str, look: CardLook, colour: Option<Color32>) -> egui::Response {
+    let (rect, r) = ui.allocate_exact_size(size, egui::Sense::click());
+    let painter = ui.painter();
+    let (fill, border, fg, icon) = match look {
+        CardLook::On => (theme::accent_bg(), theme::BLUE, theme::TEXT, theme::TEXT_DIM),
+        CardLook::Running => (theme::RED.gamma_multiply(0.6), theme::RED, Color32::WHITE, Color32::WHITE),
+        CardLook::Stopping => (if r.hovered() { theme::BG_HOVER } else { theme::BG_RAISED }, theme::RED, theme::RED, theme::TEXT_DIM),
+        CardLook::Off => (if r.hovered() { theme::BG_HOVER } else { theme::BG_RAISED }, theme::BORDER, theme::TEXT, theme::TEXT_DIM),
+    };
+    painter.rect_filled(rect, 6.0, fill);
+    painter.rect_stroke(rect, 6.0, egui::Stroke::new(1.0, border), egui::StrokeKind::Inside);
+    let inner = rect.shrink2(egui::vec2(8.0, 6.0));
+    painter.text(inner.left_top(), egui::Align2::LEFT_TOP, glyph, theme::icon_font(14.0), icon);
+    painter.text(inner.right_top(), egui::Align2::RIGHT_TOP, number.to_string(), theme::mono(10.5), theme::TEXT_FAINT);
+    painter.with_clip_rect(inner).text(inner.left_bottom(), egui::Align2::LEFT_BOTTOM, name, egui::FontId::proportional(12.5), fg);
+    if let Some(c) = colour {
+        let bar = egui::Rect::from_min_size(egui::pos2(rect.left() + 4.0, rect.bottom() - 4.0), egui::vec2(rect.width() - 8.0, 2.5));
+        painter.rect_filled(bar, 1.0, c);
+    }
+    r
+}
+
+/// Frame of a side column of a page (presets, encoders, cue details): a rounded panel with a gap
+/// towards the page instead of a divider line (dragging the gap, the panel's edge, resizes it).
+fn side_column(left: bool) -> egui::Frame {
+    let gap = egui::Margin { left: if left { 0 } else { 10 }, right: if left { 10 } else { 0 }, top: 0, bottom: 0 };
+    egui::Frame::new().fill(theme::BG_PANEL).corner_radius(8.0).inner_margin(egui::Margin::same(10)).outer_margin(gap)
 }
 
 /// Colour presets (RGB) for the swatch row: white, warm white, then round the hue circle.
@@ -3803,106 +3971,77 @@ pub(super) fn to_c32(c: [f32; 3]) -> Color32 {
     Color32::from_rgb((c[0].clamp(0.0, 1.0) * 255.0) as u8, (c[1].clamp(0.0, 1.0) * 255.0) as u8, (c[2].clamp(0.0, 1.0) * 255.0) as u8)
 }
 
-/// Colour picker sized to the width it gets: preset swatches, a saturation (x) / brightness (y)
-/// field and a hue strip. Returns the new RGB when the user changed it.
-fn colour_field(ui: &mut Ui, rgb: [f32; 3]) -> Option<[f32; 3]> {
-    use egui::ecolor::Hsva;
-    let id = ui.id().with("colour_field_hue");
-    let mut hsv = Hsva::from_rgb(rgb);
-    // Keep the hue while saturation or brightness is 0 (it can't be read back from the colour).
-    let stored: Option<f32> = ui.data(|d| d.get_temp(id));
-    if (hsv.s < 0.01 || hsv.v < 0.01) && let Some(h) = stored {
-        hsv.h = h;
+/// CIE 1931 xy diagram sized to the width it gets: every visible colour (the spectral locus), the
+/// colours of `gamut` bright and the rest dimmed, the gamut's outline and corners (the emitters),
+/// and the current colour. Returns the colour picked (clamped into the gamut).
+fn cie_field(ui: &mut Ui, gamut: &[[f32; 2]], current: Option<[f32; 2]>) -> Option<[f32; 2]> {
+    use crate::light::colour::{self, LOCUS, WHITE_POINT};
+    // x 0..0.8, y 0..0.9 at one scale.
+    let w = ui.available_width();
+    let h = (w * 0.9 / 0.8).clamp(140.0, 320.0);
+    let (rect, r) = ui.allocate_exact_size(egui::vec2(w, h), egui::Sense::click_and_drag());
+    let scale = (w / 0.8).min(h / 0.9);
+    let off = egui::vec2((w - 0.8 * scale) / 2.0, (h - 0.9 * scale) / 2.0);
+    let to_screen = |p: [f32; 2]| egui::pos2(rect.left() + off.x + p[0] * scale, rect.bottom() - off.y - p[1] * scale);
+    let to_xy = |p: egui::Pos2| [(p.x - rect.left() - off.x) / scale, (rect.bottom() - off.y - p.y) / scale];
+    let painter = ui.painter_at(rect);
+    painter.rect_filled(rect, 6.0, theme::BG_INPUT);
+    // The edge of the visible colours, with the purple line from 700 nm back to 380 nm.
+    let mut edge: Vec<[f32; 2]> = LOCUS.to_vec();
+    let (end, start) = (LOCUS[LOCUS.len() - 1], LOCUS[0]);
+    for k in 1..12 {
+        let u = k as f32 / 12.0;
+        edge.push([end[0] + (start[0] - end[0]) * u, end[1] + (start[1] - end[1]) * u]);
+    }
+    let inside = |p: [f32; 2]| {
+        let q = colour::clamp_into(gamut, p);
+        (q[0] - p[0]).hypot(q[1] - p[1]) < 0.002
+    };
+    let shade = |p: [f32; 2]| {
+        let c = to_c32(colour::display(p));
+        if inside(p) { c } else { c.gamma_multiply(0.22) }
+    };
+    // Rings of quads from the white point out to the edge.
+    const RINGS: usize = 8;
+    let mut mesh = egui::Mesh::default();
+    let n = edge.len();
+    for i in 0..n {
+        let (a, b) = (edge[i], edge[(i + 1) % n]);
+        for k in 0..RINGS {
+            let lerp = |e: [f32; 2], u: f32| [WHITE_POINT[0] + (e[0] - WHITE_POINT[0]) * u, WHITE_POINT[1] + (e[1] - WHITE_POINT[1]) * u];
+            let (u0, u1) = (k as f32 / RINGS as f32, (k + 1) as f32 / RINGS as f32);
+            let quad = [lerp(a, u0), lerp(b, u0), lerp(b, u1), lerp(a, u1)];
+            let base = mesh.vertices.len() as u32;
+            for p in quad {
+                mesh.colored_vertex(to_screen(p), shade(p));
+            }
+            mesh.add_triangle(base, base + 1, base + 2);
+            mesh.add_triangle(base, base + 2, base + 3);
+        }
+    }
+    painter.add(mesh);
+    if gamut.len() >= 2 {
+        let mut outline: Vec<egui::Pos2> = gamut.iter().map(|p| to_screen(*p)).collect();
+        outline.push(outline[0]);
+        painter.add(egui::Shape::line(outline, egui::Stroke::new(1.5, Color32::WHITE)));
+        for p in gamut {
+            painter.circle(to_screen(*p), 3.5, to_c32(colour::display(*p)), egui::Stroke::new(1.0, Color32::WHITE));
+        }
+    }
+    if let Some(c) = current {
+        let dot = to_screen(c);
+        painter.circle_stroke(dot, 6.0, egui::Stroke::new(2.0, Color32::WHITE));
+        painter.circle_stroke(dot, 7.5, egui::Stroke::new(1.0, Color32::BLACK));
     }
     let mut out = None;
-    let w = ui.available_width();
-    // Swatches.
-    ui.horizontal(|ui| {
-        ui.spacing_mut().item_spacing.x = 4.0;
-        let n = SWATCHES.len() as f32;
-        let side = ((w - 4.0 * (n - 1.0)) / n).clamp(16.0, 30.0);
-        for sw in SWATCHES {
-            let (r, resp) = ui.allocate_exact_size(egui::vec2(side, side), egui::Sense::click());
-            ui.painter().rect_filled(r, 4.0, to_c32(sw));
-            let stroke = if resp.hovered() { egui::Stroke::new(2.0, Color32::WHITE) } else { egui::Stroke::new(1.0, theme::BORDER) };
-            ui.painter().rect_stroke(r, 4.0, stroke, egui::StrokeKind::Inside);
-            if resp.clicked() {
-                out = Some(sw);
-            }
-        }
-    });
-    ui.add_space(6.0);
-    // Saturation / brightness field for the current hue (bilinear in s and v, so a grid of
-    // vertex-coloured quads draws it exactly enough).
-    let (field, fr) = ui.allocate_exact_size(egui::vec2(w, (w * 0.45).clamp(110.0, 170.0)), egui::Sense::click_and_drag());
-    let mut mesh = egui::Mesh::default();
-    const N: usize = 8;
-    for yi in 0..=N {
-        for xi in 0..=N {
-            let (sx, vy) = (xi as f32 / N as f32, 1.0 - yi as f32 / N as f32);
-            let c = Hsva::new(hsv.h, sx, vy, 1.0).to_rgb();
-            let pos = egui::pos2(field.left() + sx * field.width(), field.top() + (1.0 - vy) * field.height());
-            mesh.colored_vertex(pos, to_c32(c));
-        }
-    }
-    for yi in 0..N {
-        for xi in 0..N {
-            let a = (yi * (N + 1) + xi) as u32;
-            let b = a + 1;
-            let c = a + (N + 1) as u32;
-            mesh.add_triangle(a, b, c);
-            mesh.add_triangle(b, c + 1, c);
-        }
-    }
-    let p = ui.painter();
-    p.add(mesh);
-    p.rect_stroke(field, 4.0, egui::Stroke::new(1.0, theme::BORDER), egui::StrokeKind::Inside);
-    let dot = egui::pos2(field.left() + hsv.s * field.width(), field.top() + (1.0 - hsv.v) * field.height());
-    p.circle_stroke(dot, 6.0, egui::Stroke::new(2.0, Color32::WHITE));
-    p.circle_stroke(dot, 7.5, egui::Stroke::new(1.0, Color32::BLACK));
-    if let Some(pos) = fr.interact_pointer_pos()
-        && (fr.dragged() || fr.clicked())
+    if let Some(pos) = r.interact_pointer_pos()
+        && (r.dragged() || r.clicked())
     {
-        let s = ((pos.x - field.left()) / field.width()).clamp(0.0, 1.0);
-        let v = 1.0 - ((pos.y - field.top()) / field.height()).clamp(0.0, 1.0);
-        out = Some(Hsva::new(hsv.h, s, v, 1.0).to_rgb());
+        out = Some(colour::clamp_into(gamut, to_xy(pos)));
     }
-    ui.add_space(4.0);
-    // Hue strip.
-    let (strip, sr) = ui.allocate_exact_size(egui::vec2(w, 18.0), egui::Sense::click_and_drag());
-    let mut mesh = egui::Mesh::default();
-    const H: usize = 24;
-    for i in 0..=H {
-        let h = i as f32 / H as f32;
-        let c = to_c32(Hsva::new(h, 1.0, 1.0, 1.0).to_rgb());
-        let x = strip.left() + h * strip.width();
-        mesh.colored_vertex(egui::pos2(x, strip.top()), c);
-        mesh.colored_vertex(egui::pos2(x, strip.bottom()), c);
-    }
-    for i in 0..H as u32 {
-        let a = i * 2;
-        mesh.add_triangle(a, a + 1, a + 2);
-        mesh.add_triangle(a + 1, a + 3, a + 2);
-    }
-    let p = ui.painter();
-    p.add(mesh);
-    let x = strip.left() + hsv.h * strip.width();
-    p.rect_stroke(egui::Rect::from_center_size(egui::pos2(x, strip.center().y), egui::vec2(6.0, 22.0)), 2.0, egui::Stroke::new(2.0, Color32::WHITE), egui::StrokeKind::Middle);
-    if let Some(pos) = sr.interact_pointer_pos()
-        && (sr.dragged() || sr.clicked())
-    {
-        let h = ((pos.x - strip.left()) / strip.width()).clamp(0.0, 0.999);
-        ui.data_mut(|d| d.insert_temp(id, h));
-        // A hue pick on a grey/black colour makes it fully saturated and bright enough to see.
-        let sat = if hsv.s < 0.01 { 1.0 } else { hsv.s };
-        let val = if hsv.v < 0.01 { 1.0 } else { hsv.v };
-        out = Some(Hsva::new(h, sat, val, 1.0).to_rgb());
-    }
-    if let Some(c) = out {
-        let h = Hsva::from_rgb(c);
-        if h.s > 0.01 && h.v > 0.01 {
-            ui.data_mut(|d| d.insert_temp(id, h.h));
-        }
+    if let Some(pos) = r.hover_pos() {
+        let [x, y] = to_xy(pos);
+        r.on_hover_text(format!("x {x:.3} · y {y:.3}"));
     }
     out
 }

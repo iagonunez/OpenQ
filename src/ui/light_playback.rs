@@ -339,13 +339,14 @@ impl App {
                     });
                     ui.end_row();
                     ui.label(t("Fixtures"));
-                    ui.horizontal_wrapped(|ui| {
+                    // One line: the window grows to fit it.
+                    ui.horizontal(|ui| {
                         ui.label(RichText::new(tr!("{n} fixtures", n = b.fixtures.len().to_string())).color(theme::TEXT_DIM));
                         if !b.fixtures.is_empty() && ui.small_button(icons::CLOSE).on_hover_text(t("No fixtures")).clicked() {
                             b.fixtures.clear();
                         }
                         let sel = &self.light.selection;
-                        if ui.add_enabled(!sel.is_empty(), egui::Button::new(t("Use the selection"))).on_hover_text(t("The fixtures selected in the programmer")).clicked() {
+                        if ui.add_enabled(!sel.is_empty(), egui::Button::new(t("Use selected"))).on_hover_text(t("The fixtures selected in the programmer")).clicked() {
                             b.fixtures = sel.clone();
                         }
                         ui.menu_button(t("Group"), |ui| {

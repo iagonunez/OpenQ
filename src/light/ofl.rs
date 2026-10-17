@@ -455,6 +455,7 @@ pub fn import(json: &str, manufacturer: &str) -> anyhow::Result<Imported> {
         beam_min: deg(0).unwrap_or(d.beam_min),
         beam_max: deg(1).or(deg(0)).unwrap_or(d.beam_max),
         moving: moving || modes.iter().any(|m| m.channel(Attribute::Pan).is_some() && m.channel(Attribute::Tilt).is_some()),
+        emitters: Vec::new(),
     };
     let id = type_id("ofl", &manufacturer, name);
     let images = embedded_images(wheels, &mut notes);

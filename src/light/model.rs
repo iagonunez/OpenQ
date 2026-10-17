@@ -654,11 +654,36 @@ pub struct Physical {
     pub beam_max: f32,
     /// Moving head (has a yoke).
     pub moving: bool,
+    /// Measured colours of the colour emitters (from GDTF files); empty = typical values
+    /// ([`crate::light::colour`]).
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub emitters: Vec<Emitter>,
 }
 
 impl Default for Physical {
     fn default() -> Self {
-        Self { pan_range: 540.0, tilt_range: 270.0, beam_min: 25.0, beam_max: 25.0, moving: false }
+        Self { pan_range: 540.0, tilt_range: 270.0, beam_min: 25.0, beam_max: 25.0, moving: false, emitters: Vec::new() }
+    }
+}
+
+/// The colour of an emitter (an LED colour) at full: CIE 1931 xy and its luminance (any unit,
+/// relative to the type's other emitters).
+#[derive(Serialize, Deserialize, Clone, Copy, PartialEq, Debug)]
+pub struct Emitter {
+    /// The attribute driving it (Red, Green, Blue, White, Amber, Lime).
+    pub attribute: Attribute,
+    /// Chromaticity x.
+    pub x: f32,
+    /// Chromaticity y.
+    pub y: f32,
+    /// Luminance at full.
+    pub luminance: f32,
+}
+
+impl Emitter {
+    /// Usable: finite, inside the xy triangle, not black.
+    pub fn is_valid(&self) -> bool {
+        self.x.is_finite() && self.y.is_finite() && self.luminance.is_finite() && self.x >= 0.0 && self.y > 0.0 && self.x + self.y <= 1.0 && self.luminance > 0.0
     }
 }
 
@@ -1020,6 +1045,10 @@ pub struct LightCue {
     pub feature_times: BTreeMap<Feature, FeatureTime>,
     /// The values this cue sets don't track on: the next cue goes back to what was there before.
     pub cue_only: bool,
+    /// A block: every value tracked into it was stored in it ([`Sequence::block`]), so edits to
+    /// earlier cues don't change it. Shown on the cue; [`Sequence::unblock`] undoes it.
+    #[serde(skip_serializing_if = "std::ops::Not::not")]
+    pub block: bool,
     /// Effects this cue starts or stops (running effects track on).
     pub effects: Vec<super::effects::EffectRun>,
 }
@@ -1067,6 +1096,7 @@ impl Default for LightCue {
             values: Default::default(),
             feature_times: BTreeMap::new(),
             cue_only: false,
+            block: false,
             effects: Vec::new(),
         }
     }
@@ -1103,8 +1133,46 @@ impl Sequence {
     pub fn block(&mut self, index: usize) {
         if index < self.cues.len() {
             let t = self.tracked(index);
-            self.cues[index].values = t.into();
+            let cue = &mut self.cues[index];
+            cue.values = t.into();
+            cue.block = true;
         }
+    }
+
+    /// Undo a block: values of cue `index` that are the same as what tracks into it are taken
+    /// out (they track again).
+    pub fn unblock(&mut self, index: usize) {
+        if index >= self.cues.len() {
+            return;
+        }
+        let before = self.state_before(index);
+        let cue = &mut self.cues[index];
+        cue.block = false;
+        let mut values = (*cue.values).clone();
+        for (f, vals) in values.iter_mut() {
+            if let Some(prev) = before.get(f) {
+                vals.retain(|a, v| prev.get(a) != Some(v));
+            }
+        }
+        values.retain(|_, v| !v.is_empty());
+        if values != *cue.values {
+            cue.values = values.into();
+        }
+    }
+
+    /// What tracks into cue `index` (the state before it runs).
+    fn state_before(&self, index: usize) -> Look {
+        let mut look = Look::new();
+        for cue in self.cues.iter().take(index) {
+            let before = cue.cue_only.then(|| look.clone());
+            for (fixture, values) in &cue.values {
+                look.entry(*fixture).or_default().extend(values.iter().map(|(a, v)| (*a, *v)));
+            }
+            if let Some(b) = before {
+                look = b;
+            }
+        }
+        look
     }
 
     /// Full state at cue `index`: every value set by it or tracked from an earlier cue
@@ -1197,6 +1265,13 @@ pub struct PlotShape {
     pub b: [f32; 2],
     /// Height (y) in metres: a bar's trim, the top of a riser.
     pub height: f32,
+    /// Where the user moved the label to, metres (x, z) from its usual place.
+    #[serde(skip_serializing_if = "is_origin")]
+    pub label: [f32; 2],
+}
+
+fn is_origin(v: &[f32; 2]) -> bool {
+    *v == [0.0, 0.0]
 }
 
 impl PlotShape {
@@ -1788,8 +1863,15 @@ mod tests {
         assert_eq!(s.tracked(2)[&1][&Attribute::Dimmer], Value::Level(1.0), "cue only doesn't track");
         s.block(2);
         assert_eq!(s.cues[2].values.len(), 2);
+        assert!(s.cues[2].block);
         s.cues[0].values.get_mut(&1).unwrap().insert(Attribute::Dimmer, Value::Level(0.3));
         assert_eq!(s.tracked(2)[&1][&Attribute::Dimmer], Value::Level(1.0), "blocked");
+        // Unblocked: the values equal to what tracks in go (fixture 1's dimmer), the rest stays.
+        s.cues[0].values.get_mut(&1).unwrap().insert(Attribute::Dimmer, Value::Level(1.0));
+        s.unblock(2);
+        assert!(!s.cues[2].block);
+        assert_eq!(s.cues[2].values.keys().copied().collect::<Vec<_>>(), [2]);
+        assert_eq!(s.tracked(2)[&1][&Attribute::Dimmer], Value::Level(1.0), "tracks again");
     }
 
     #[test]

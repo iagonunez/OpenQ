@@ -15,7 +15,7 @@
 //! * Not read: 3D models, virtual channels, macros.
 
 use super::import::{attribute_from_name, place, type_id, Imported};
-use super::model::{Attribute, ChannelDef, ChannelRange, FixtureMode, FixtureType, Head, Physical};
+use super::model::{Attribute, ChannelDef, ChannelRange, Emitter, FixtureMode, FixtureType, Head, Physical};
 use roxmltree::{Document, Node};
 use std::collections::HashMap;
 
@@ -137,6 +137,38 @@ pub fn cie_to_srgb(s: &str) -> Option<[u8; 3]> {
         (c * 255.0).round().clamp(0.0, 255.0) as u8
     };
     Some([g(lin[0]), g(lin[1]), g(lin[2])])
+}
+
+/// Colours of the colour emitters (`<Emitter Color="x,y,Y">`), tied to attributes by the channel
+/// functions that drive them (`Emitter="…"`), else by their name.
+fn emitters(ft: Node) -> Vec<Emitter> {
+    let mut driven: HashMap<&str, Attribute> = HashMap::new();
+    for f in ft.descendants().filter(|n| n.has_tag_name("ChannelFunction")) {
+        if let (Some(e), Some(a)) = (attr(f, "Emitter"), attr(f, "Attribute").and_then(attribute))
+            && a.is_emitter()
+        {
+            driven.entry(e).or_insert(a);
+        }
+    }
+    let mut out: Vec<Emitter> = Vec::new();
+    for e in ft.descendants().filter(|n| n.has_tag_name("Emitter")) {
+        let name = attr(e, "Name").unwrap_or("");
+        let by_name = || {
+            let n = name.to_lowercase();
+            [("red", Attribute::Red), ("green", Attribute::Green), ("blue", Attribute::Blue), ("white", Attribute::White), ("amber", Attribute::Amber), ("lime", Attribute::Lime)]
+                .into_iter()
+                .find(|(k, _)| n.contains(k))
+                .map(|x| x.1)
+        };
+        let Some(a) = driven.get(name).copied().or_else(by_name) else { continue };
+        let v: Vec<f32> = attr(e, "Color").unwrap_or("").split(',').filter_map(|x| x.trim().parse().ok()).collect();
+        let (Some(&x), Some(&y)) = (v.first(), v.get(1)) else { continue };
+        let em = Emitter { attribute: a, x, y, luminance: v.get(2).copied().filter(|l| *l > 0.0).unwrap_or(1.0) };
+        if em.is_valid() && !out.iter().any(|o| o.attribute == a) {
+            out.push(em);
+        }
+    }
+    out
 }
 
 fn attr<'a>(n: Node<'a, '_>, k: &str) -> Option<&'a str> {
@@ -371,6 +403,7 @@ pub fn import_xml(text: &str) -> anyhow::Result<Imported> {
     }
     let beam: Vec<f32> = ft.descendants().filter(|n| n.has_tag_name("Beam")).filter_map(|b| attr(b, "BeamAngle")?.parse().ok()).collect();
     let d = Physical::default();
+    let emitters = emitters(ft);
     let moving = modes.iter().any(|m| m.channel(Attribute::Pan).is_some() && m.channel(Attribute::Tilt).is_some());
     let physical = Physical {
         pan_range: pan_range.unwrap_or(d.pan_range),
@@ -378,6 +411,7 @@ pub fn import_xml(text: &str) -> anyhow::Result<Imported> {
         beam_min: if beam.is_empty() { d.beam_min } else { beam.iter().cloned().fold(f32::MAX, f32::min) },
         beam_max: if beam.is_empty() { d.beam_max } else { beam.iter().cloned().fold(0.0, f32::max) },
         moving,
+        emitters,
     };
     let fixture = FixtureType { id: type_id("gdtf", &manufacturer, &name), manufacturer, name, modes, physical, images: Default::default() };
     Ok(Imported { fixture: super::fixlib::sanitize(fixture)?, notes })
@@ -507,6 +541,21 @@ mod tests {
         assert_eq!(offs(&m.heads[0]), [1, 2, 3]);
         assert_eq!(offs(&m.heads[1]), [4, 5, 6]);
         assert_eq!(m.footprint(), 7);
+    }
+
+    #[test]
+    fn emitter_colours() {
+        let xml = BAR
+            .replace("<Geometries>", r#"<PhysicalDescriptions><Emitters>
+              <Emitter Name="R" Color="0.69,0.30,30.5"/><Emitter Name="Deep Blue" Color="0.14,0.05,6"/><Emitter Name="G" Color="0.2,0.7,0"/>
+              <Emitter Name="Bad" Color="nan,0.3,1"/></Emitters></PhysicalDescriptions><Geometries>"#)
+            .replace(r#"<ChannelFunction Attribute="ColorAdd_R"/>"#, r#"<ChannelFunction Attribute="ColorAdd_R" Emitter="R"/>"#)
+            .replace(r#"<ChannelFunction Attribute="ColorAdd_G"/>"#, r#"<ChannelFunction Attribute="ColorAdd_G" Emitter="G"/>"#);
+        let e = import_xml(&xml).unwrap().fixture.physical.emitters;
+        assert_eq!(e.len(), 3, "{e:?}");
+        assert_eq!((e[0].attribute, e[0].x, e[0].luminance), (Attribute::Red, 0.69, 30.5));
+        assert_eq!(e[1].attribute, Attribute::Blue, "by name");
+        assert_eq!((e[2].attribute, e[2].luminance), (Attribute::Green, 1.0), "no luminance: 1");
     }
 
     #[test]

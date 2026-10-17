@@ -156,6 +156,8 @@ pub fn sanitize(mut t: FixtureType) -> anyhow::Result<FixtureType> {
     for v in [&mut p.pan_range, &mut p.tilt_range, &mut p.beam_min, &mut p.beam_max] {
         *v = if v.is_finite() { v.clamp(0.0, 3600.0) } else { 0.0 };
     }
+    p.emitters.retain(|e| e.is_valid() && e.attribute.is_emitter());
+    p.emitters.truncate(16);
     Ok(t)
 }
 

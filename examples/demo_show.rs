@@ -1650,10 +1650,10 @@ impl Rig {
 
     fn patch(&mut self) {
         let generic = |id: &str| openq::light::library::generic(id).expect("generic type");
-        let bar = |id, name: &str, a: [f32; 2], b: [f32; 2], h| PlotShape { id, kind: ShapeKind::Bar, name: name.into(), a, b, height: h };
+        let bar = |id, name: &str, a: [f32; 2], b: [f32; 2], h| PlotShape { id, kind: ShapeKind::Bar, name: name.into(), a, b, height: h, label: [0.0, 0.0] };
         self.l.shapes = vec![
-            PlotShape { id: 1, kind: ShapeKind::Rect, name: "Stage".into(), a: [-6.0, -4.0], b: [6.0, 4.0], height: 0.0 },
-            PlotShape { id: 2, kind: ShapeKind::Rect, name: "Lighthouse riser".into(), a: [2.0, -3.5], b: [4.5, -1.5], height: 1.2 },
+            PlotShape { id: 1, kind: ShapeKind::Rect, name: "Stage".into(), a: [-6.0, -4.0], b: [6.0, 4.0], height: 0.0, label: [0.0, 0.0] },
+            PlotShape { id: 2, kind: ShapeKind::Rect, name: "Lighthouse riser".into(), a: [2.0, -3.5], b: [4.5, -1.5], height: 1.2, label: [0.0, 0.0] },
             bar(3, "FOH bridge", [-6.0, 9.0], [6.0, 9.0], 8.0),
             bar(4, "LX1", [-6.0, 2.0], [6.0, 2.0], 7.0),
             bar(5, "LX2", [-6.0, -0.5], [6.0, -0.5], 7.0),
@@ -2415,7 +2415,7 @@ fn profile_type() -> FixtureType {
         manufacturer: "OpenQ Demo".into(),
         name: "Profile 575".into(),
         modes: vec![extended, basic],
-        physical: Physical { pan_range: 540.0, tilt_range: 270.0, beam_min: 12.0, beam_max: 38.0, moving: true },
+        physical: Physical { pan_range: 540.0, tilt_range: 270.0, beam_min: 12.0, beam_max: 38.0, moving: true, ..Default::default() },
         images,
     }
 }
@@ -2456,7 +2456,19 @@ fn hybrid_type() -> FixtureType {
         manufacturer: "OpenQ Demo".into(),
         name: "Beam hybrid".into(),
         modes: vec![m],
-        physical: Physical { pan_range: 540.0, tilt_range: 270.0, beam_min: 2.0, beam_max: 20.0, moving: true },
+        // Measured pixel colours (as a GDTF file gives them): the colour picker shows this gamut.
+        physical: Physical {
+            pan_range: 540.0,
+            tilt_range: 270.0,
+            beam_min: 2.0,
+            beam_max: 20.0,
+            moving: true,
+            emitters: vec![
+                openq::light::model::Emitter { attribute: A::Red, x: 0.692, y: 0.307, luminance: 0.25 },
+                openq::light::model::Emitter { attribute: A::Green, x: 0.192, y: 0.718, luminance: 0.68 },
+                openq::light::model::Emitter { attribute: A::Blue, x: 0.141, y: 0.046, luminance: 0.07 },
+            ],
+        },
         images: BTreeMap::new(),
     }
 }

@@ -4,7 +4,9 @@
 //! and lighting bars are drawn under the fixtures. Each fixture is a symbol (a circle for moving
 //! heads, a rectangle for the rest) turned by its heading, with its number inside, its patch
 //! (universe.address) above and its distance from the centre line below; a legend lists the
-//! fixture types.
+//! fixture types. Labels never land on each other or on a symbol: a crowded one moves out of the
+//! way (`Labels`); bar and rectangle names stay where the user dragged them in the Plan view
+//! ([`super::model::PlotShape::label`]).
 //!
 //! One drawing routine (`draw`) paints onto a `Canvas`; the SVG is drawn at a fixed 60 px per
 //! metre on a page of its own size, the PDF on an A3 landscape sheet at the largest standard
@@ -127,22 +129,26 @@ fn draw(l: &Lighting, lay: &Layout, fr: &Frame, c: &mut dyn Canvas) {
         let y = oy + i as f32 * fr.scale;
         c.line([ox, y], [ox + w, y], 1.0, 221, false, false);
     }
+    // Labels are placed after everything else is drawn, so none lands on another (see `Labels`).
+    let mut labels = Labels { area: [ox, oy, ox + w, oy + h], ..Default::default() };
     for kind in [ShapeKind::Rect, ShapeKind::Bar] {
         for sh in l.shapes.iter().filter(|x| x.kind == kind) {
             let (ax, ay, bx, by) = (px(sh.a[0]), pz(sh.a[1]), px(sh.b[0]), pz(sh.b[1]));
+            // Where the user moved the label to.
+            let moved = [sh.label[0] * fr.scale, sh.label[1] * fr.scale];
             match kind {
                 ShapeKind::Rect => {
                     let (x, y) = (ax.min(bx), ay.min(by));
                     c.rect([x, y], [(bx - ax).abs(), (by - ay).abs()], 0.0, Some(242), 102, 1.5);
                     if !sh.name.is_empty() {
-                        c.text([x + 6.0, y + 16.0 * s], 12.0 * s, false, 102, Anchor::Start, &sh.name);
+                        labels.add(Label::new([x + 6.0 + moved[0], y + 16.0 * s + moved[1]], 12.0 * s, false, 102, Anchor::Start, sh.name.clone()), sh.label != [0.0, 0.0], 2);
                     }
                 }
                 ShapeKind::Bar => {
                     c.line([ax, ay], [bx, by], 5.0 * s, 51, false, true);
                     let (lx, ly) = if ax <= bx { (ax, ay) } else { (bx, by) };
                     let label = if sh.name.is_empty() { format!("{:.2} m", sh.height) } else { format!("{} · {:.2} m", sh.name, sh.height) };
-                    c.text([lx, ly - 22.0 * s], 11.0 * s, false, 51, Anchor::Start, &label);
+                    labels.add(Label::new([lx + moved[0], ly - 22.0 * s + moved[1]], 11.0 * s, false, 51, Anchor::Start, label), sh.label != [0.0, 0.0], 2);
                 }
             }
         }
@@ -165,14 +171,16 @@ fn draw(l: &Lighting, lay: &Layout, fr: &Frame, c: &mut dyn Canvas) {
             c.line([-10.0 * s, 10.0 * s], [10.0 * s, 10.0 * s], 1.0, 0, false, false);
         }
         c.pop();
+        labels.obstacles.push([cx - 14.0 * s, cy - 14.0 * s, cx + 14.0 * s, cy + 14.0 * s]);
         // The number fits inside the symbol (smaller for long numbers).
         let number = f.id.to_string();
         let size = (17.0 * s / (text_width(&number, 1.0) + 0.01)).min(11.0 * s);
         c.text([cx, cy + size * 0.36], size, true, 0, Anchor::Middle, &number);
         let patch = if f.address > 0 { format!("{}.{}", f.universe, f.address) } else { "—".to_string() };
-        c.text([cx, cy - 20.0 * s], 10.0 * s, true, 51, Anchor::Middle, &patch);
-        c.text([cx, cy + 27.0 * s], 9.0 * s, false, 102, Anchor::Middle, &centre_distance(f.position[0]));
+        labels.add(Label::new([cx, cy - 20.0 * s], 10.0 * s, true, 51, Anchor::Middle, patch), false, 0);
+        labels.add(Label::new([cx, cy + 27.0 * s], 9.0 * s, false, 102, Anchor::Middle, centre_distance(f.position[0])), false, 1);
     }
+    labels.draw(c);
     let rows = lay.types.len().div_ceil(fr.legend_cols.max(1)).max(1);
     for (i, (name, moving, n)) in lay.types.iter().enumerate() {
         let x = fr.legend_x + (i / rows) as f32 * fr.legend_col_w;
@@ -183,6 +191,104 @@ fn draw(l: &Lighting, lay: &Layout, fr: &Frame, c: &mut dyn Canvas) {
             c.rect([x + 11.0, y - 10.0], [10.0, 12.0], 0.0, None, 0, 1.0);
         }
         c.text([x + 30.0, y], 12.0, false, 0, Anchor::Start, &format!("{n} × {name}"));
+    }
+}
+
+/// A text of the plot that may move to stay clear of the others.
+struct Label {
+    at: [f32; 2],
+    size: f32,
+    bold: bool,
+    grey: u8,
+    anchor: Anchor,
+    text: String,
+}
+
+impl Label {
+    fn new(at: [f32; 2], size: f32, bold: bool, grey: u8, anchor: Anchor, text: String) -> Self {
+        Self { at, size, bold, grey, anchor, text }
+    }
+
+    /// Box (left, top, right, bottom) of the text at `at` + `d`, from the baseline and an
+    /// approximate width (with some room: an SVG viewer may use a wider font than Helvetica).
+    fn bounds(&self, d: [f32; 2]) -> [f32; 4] {
+        let w = text_width(&self.text, self.size) * 1.1 + 2.0;
+        let left = self.at[0] + d[0] - if self.anchor == Anchor::Middle { w / 2.0 } else { 0.0 };
+        let base = self.at[1] + d[1];
+        [left, base - self.size * 0.8, left + w, base + self.size * 0.25]
+    }
+}
+
+/// The plot's labels, placed so that no two overlap: each in turn takes its own place when it's
+/// free, else the nearest free one moving away from its fixture (patch labels up, distance labels
+/// down, bar and rectangle names either way, then sideways). Labels the user placed stay put.
+#[derive(Default)]
+struct Labels {
+    /// (label, the user placed it, kind: 0 above a fixture, 1 below, 2 a shape's name).
+    list: Vec<(Label, bool, u8)>,
+    /// Fixture symbols, which labels keep off too.
+    obstacles: Vec<[f32; 4]>,
+    /// The grid: a label moved out of the way stays on it.
+    area: [f32; 4],
+}
+
+fn overlaps(a: &[f32; 4], b: &[f32; 4]) -> bool {
+    a[0] < b[2] && b[0] < a[2] && a[1] < b[3] && b[1] < a[3]
+}
+
+impl Labels {
+    fn add(&mut self, label: Label, user: bool, kind: u8) {
+        if !label.text.is_empty() {
+            self.list.push((label, user, kind));
+        }
+    }
+
+    /// Where each label goes: the offset from its own place.
+    fn place(&self) -> Vec<[f32; 2]> {
+        let mut out = vec![[0.0, 0.0]; self.list.len()];
+        let mut taken: Vec<[f32; 4]> = Vec::new();
+        // The user's placements first, then fixtures' labels, then the shapes' names.
+        let mut order: Vec<usize> = (0..self.list.len()).collect();
+        order.sort_by_key(|&i| (!self.list[i].1, self.list[i].2));
+        for i in order {
+            let (label, user, kind) = &self.list[i];
+            let a = &self.area;
+            let free = |d: [f32; 2]| {
+                let b = label.bounds(d);
+                !taken.iter().chain(&self.obstacles).any(|o| overlaps(o, &b))
+            };
+            let on_grid = |d: [f32; 2]| {
+                let b = label.bounds(d);
+                b[0] >= a[0] && b[1] >= a[1] && b[2] <= a[2] && b[3] <= a[3]
+            };
+            let step = label.size * 1.1;
+            let width = text_width(&label.text, label.size);
+            let dirs: &[[f32; 2]] = match kind {
+                0 => &[[0.0, -1.0], [-1.0, 0.0], [1.0, 0.0]],
+                1 => &[[0.0, 1.0], [-1.0, 0.0], [1.0, 0.0]],
+                _ => &[[0.0, -1.0], [0.0, 1.0], [1.0, 0.0], [-1.0, 0.0]],
+            };
+            let mut d = [0.0, 0.0];
+            if !*user && !free(d) {
+                // Up to 12 steps out (sideways in steps of the label's width).
+                let found = (1..=12).flat_map(|k| dirs.iter().map(move |v| (k, v))).map(|(k, v)| {
+                    let unit = if v[0] != 0.0 { width * 0.5 + 2.0 } else { step };
+                    [v[0] * unit * k as f32, v[1] * unit * k as f32]
+                });
+                if let Some(f) = found.into_iter().find(|d| on_grid(*d) && free(*d)) {
+                    d = f;
+                }
+            }
+            taken.push(label.bounds(d));
+            out[i] = d;
+        }
+        out
+    }
+
+    fn draw(&self, c: &mut dyn Canvas) {
+        for ((l, _, _), d) in self.list.iter().zip(self.place()) {
+            c.text([l.at[0] + d[0], l.at[1] + d[1]], l.size, l.bold, l.grey, l.anchor, &l.text);
+        }
     }
 }
 
@@ -490,8 +596,8 @@ mod tests {
 
     fn rig() -> Lighting {
         let mut l = library::bench_rig(6, 1, 1);
-        l.shapes.push(crate::light::model::PlotShape { id: 1, kind: ShapeKind::Bar, name: "LX1".into(), a: [-4.0, -2.0], b: [4.0, -2.0], height: 6.0 });
-        l.shapes.push(crate::light::model::PlotShape { id: 2, kind: ShapeKind::Rect, name: "Stage".into(), a: [-6.0, -5.0], b: [6.0, 1.0], height: 0.0 });
+        l.shapes.push(crate::light::model::PlotShape { id: 1, kind: ShapeKind::Bar, name: "LX1".into(), a: [-4.0, -2.0], b: [4.0, -2.0], height: 6.0, label: [0.0, 0.0] });
+        l.shapes.push(crate::light::model::PlotShape { id: 2, kind: ShapeKind::Rect, name: "Stage".into(), a: [-6.0, -5.0], b: [6.0, 1.0], height: 0.0, label: [0.0, 0.0] });
         for (i, f) in l.fixtures.iter_mut().enumerate() {
             f.position = [i as f32 - 3.0, 5.0, -2.0];
         }
@@ -547,6 +653,45 @@ mod tests {
         big.fixtures[0].position = [400.0, 0.0, 300.0];
         let p = pdf(&big, "Big");
         assert!(!p.is_empty());
+    }
+
+    /// Texts drawn, as boxes.
+    struct Texts(Vec<(String, [f32; 4])>);
+
+    impl Canvas for Texts {
+        fn line(&mut self, _: [f32; 2], _: [f32; 2], _: f32, _: u8, _: bool, _: bool) {}
+        fn rect(&mut self, _: [f32; 2], _: [f32; 2], _: f32, _: Option<u8>, _: u8, _: f32) {}
+        fn circle(&mut self, _: [f32; 2], _: f32, _: Option<u8>, _: u8, _: f32) {}
+        fn text(&mut self, at: [f32; 2], size: f32, bold: bool, grey: u8, anchor: Anchor, text: &str) {
+            self.0.push((text.to_string(), Label::new(at, size, bold, grey, anchor, text.to_string()).bounds([0.0, 0.0])));
+        }
+        fn push(&mut self, _: [f32; 2], _: f32) {}
+        fn pop(&mut self) {}
+    }
+
+    /// Fixtures packed tight along a bar: their labels and the bar's name still don't overlap,
+    /// and a label the user moved is drawn where they put it.
+    #[test]
+    fn labels_never_overlap() {
+        let mut l = rig();
+        for (i, f) in l.fixtures.iter_mut().enumerate() {
+            f.position = [i as f32 * 0.3 - 4.0, 6.0, -2.0];
+        }
+        l.shapes[1].label = [1.0, 0.5];
+        let lay = Layout::of(&l);
+        let fr = Frame { origin: [0.0, 50.0], scale: SCALE, sym: 1.0, title: String::new(), subtitle: String::new(), legend_x: 0.0, legend_cols: 1, legend_col_w: 100.0 };
+        let mut c = Texts(Vec::new());
+        draw(&l, &lay, &fr, &mut c);
+        let ours: Vec<&(String, [f32; 4])> = c.0.iter().filter(|(t, _)| t.contains('.') || t == "Stage" || t.starts_with("LX1")).collect();
+        assert!(ours.len() >= 13, "{ours:?}");
+        for (i, a) in ours.iter().enumerate() {
+            for b in &ours[i + 1..] {
+                assert!(!overlaps(&a.1, &b.1), "{a:?} and {b:?}");
+            }
+        }
+        // The stage's corner (-6, -5) is at the grid origin + 1 m margin; moved 1 m right, 0.5 m down.
+        let stage = c.0.iter().find(|(t, _)| t == "Stage").unwrap();
+        assert!((stage.1[0] - (SCALE + 6.0 + SCALE)).abs() < 0.01, "{stage:?}");
     }
 
     #[test]

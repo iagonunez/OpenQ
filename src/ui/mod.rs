@@ -2363,7 +2363,13 @@ impl App {
                             }
                         }
                     }
-                } else if let Some(g) = show.ws.lighting.groups.first() {
+                } else if let Some(g) = {
+                    // The colour page: the first group of colour-mixing fixtures.
+                    let l = &show.ws.lighting;
+                    let mixes = |f: &crate::light::model::FixtureId| l.unit_attributes(*f).contains(&crate::light::Attribute::Red);
+                    let colour = l.groups.iter().find(|g| g.fixtures.first().is_some_and(mixes));
+                    if page == "colour" { colour.or(l.groups.first()) } else { l.groups.first() }
+                } {
                     self.light.selection = g.fixtures.clone();
                     for f in g.fixtures.iter().take(4) {
                         let v = self.light.programmer.entry(*f).or_default();
