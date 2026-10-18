@@ -19,6 +19,7 @@ mod lighting;
 mod manual;
 #[cfg(target_os = "macos")]
 mod native_menu;
+mod openvis;
 mod outputs;
 mod plot_editor;
 #[cfg(all(test, feature = "video"))]
@@ -80,6 +81,8 @@ enum Deferred {
     ImportUsitt,
     /// Save the design as a USITT ASCII file.
     ExportUsitt,
+    /// Save the patch for OpenVis and start it ([`openvis`]).
+    OpenVis,
     /// Close the window (asks about unsaved changes first).
     Quit,
 }
@@ -203,6 +206,8 @@ pub struct App {
     show_list_timecode: bool,
     show_about: bool,
     remote: remote::RemoteUi,
+    /// OpenVis started from here (View → Open in OpenVis).
+    openvis: openvis::OpenVis,
     #[cfg(feature = "video")]
     posters: Arc<media::Posters>,
     #[cfg(feature = "video")]
@@ -299,6 +304,7 @@ impl App {
             show_list_timecode: false,
             show_about: false,
             remote: Default::default(),
+            openvis: Default::default(),
             #[cfg(feature = "video")]
             posters: media::Posters::new(),
             #[cfg(feature = "video")]
@@ -1076,6 +1082,12 @@ impl App {
                 #[cfg(feature = "video")]
                 ui.checkbox(&mut self.show_preview, wi(I::PREVIEW, t("Geometry preview")));
                 ui.checkbox(&mut self.show_log, wi(I::RECEIPT_LONG, t("Engine log")));
+                if lighting::ENABLED {
+                    ui.separator();
+                    if ui.button(wi(I::VIEW_IN_AR, t("Open in OpenVis"))).on_hover_text(t("Show the patch in the OpenVis 3D visualiser, following this show")).clicked() {
+                        self.deferred.push(Deferred::OpenVis);
+                    }
+                }
             });
             ui.menu_button(t("Help"), |ui| {
                 if ui.add(egui::Button::new(wi(I::NOTES, t("User manual"))).shortcut_text("F1")).clicked() {
@@ -2224,6 +2236,7 @@ impl App {
                 Deferred::ImportMvr => self.import_mvr(ctx),
                 Deferred::ImportUsitt => self.import_usitt(ctx),
                 Deferred::ExportUsitt => self.export_usitt(),
+                Deferred::OpenVis => self.open_openvis(),
                 Deferred::New => {
                     if self.may_discard(Discarding::New) {
                         self.show

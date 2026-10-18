@@ -43,6 +43,7 @@ enum Action {
     Disconnect,
     Preview,
     Log,
+    OpenVis,
     Manual,
     ErrorLog,
     About,
@@ -71,7 +72,7 @@ impl Action {
         use Action::*;
         [
             New, Open, Save, SaveAs, Import, Quit, Undo, Redo, Duplicate, Delete, Group, Renumber, Settings, Go, Stop, Pause,
-            Resume, ToggleMode, Stages, Share, Connect, Disconnect, Preview, Log, Manual, ErrorLog, About,
+            Resume, ToggleMode, Stages, Share, Connect, Disconnect, Preview, Log, OpenVis, Manual, ErrorLog, About,
         ]
         .into_iter()
         .find(|a| a.id() == id)
@@ -246,6 +247,10 @@ impl NativeMenu {
             let _ = view.append(&preview);
         }
         let _ = view.append(&log);
+        if super::lighting::ENABLED {
+            let _ = view.append(&sep());
+            let _ = view.append(&item(Action::OpenVis, t("Open in OpenVis")));
+        }
 
         let window = submenu(
             t("Window"),
@@ -382,6 +387,7 @@ impl App {
             Action::Disconnect => self.disconnect(show),
             Action::Preview => self.show_preview = !self.show_preview,
             Action::Log => self.show_log = !self.show_log,
+            Action::OpenVis => self.deferred.push(super::Deferred::OpenVis),
             Action::Manual => self.open_manual(),
             Action::ErrorLog => self.open_error_log(),
             Action::About => self.show_about = true,

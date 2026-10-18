@@ -549,6 +549,13 @@ impl App {
                 self.deferred.push(super::Deferred::ExportPatch(false));
             }
             if ui
+                .add_enabled(!l.fixtures.is_empty(), egui::Button::new(theme::with_icon(icons::VIEW_IN_AR, t("Open in OpenVis"))))
+                .on_hover_text(t("Show the patch in the OpenVis 3D visualiser, following this show"))
+                .clicked()
+            {
+                self.deferred.push(super::Deferred::OpenVis);
+            }
+            if ui
                 .add_enabled(!l.fixtures.is_empty(), egui::Button::new(theme::with_icon(icons::EDIT, t("Plot…"))))
                 .on_hover_text(t("Arrange the plan as a drawing (move items, change texts), then save it as a PDF (A3, to scale) or SVG"))
                 .clicked()
