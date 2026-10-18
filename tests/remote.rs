@@ -114,6 +114,21 @@ fn pair_sync_control_and_revoke() {
         })
     });
 
+    // Show mode on the main device: nobody edits, an Edit-role device acts as Control (its
+    // stored role stays Edit) and gets it back in edit mode.
+    server.set_show_mode(true);
+    wait_for("show mode role", || link.drain().into_iter().find_map(|m| matches!(m, ServerMsg::Role(Role::Control)).then_some(())));
+    let mut locked = show.lock().ws.clone();
+    locked.cue_list.cues[1].name = "During the show".into();
+    link.send(ClientMsg::Edit(Box::new(locked)));
+    wait_for("show mode refusal", || {
+        link.drain().into_iter().find_map(|m| matches!(m, ServerMsg::Refused(why) if why.contains("show mode")).then_some(()))
+    });
+    assert_eq!(show.lock().ws.cue_list.cues[1].name, "From the tablet");
+    assert_eq!(server_cfg.lock().devices[0].role, Role::Edit);
+    server.set_show_mode(false);
+    wait_for("edit role back", || link.drain().into_iter().find_map(|m| matches!(m, ServerMsg::Role(Role::Edit)).then_some(())));
+
     // Lighting: design edits on the main device go as a lighting patch (not the whole show),
     // replica edits come back as one, a cue list reshape keeps the design out of the message,
     // and masters are mirrored in the live state.

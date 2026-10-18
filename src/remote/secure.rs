@@ -391,11 +391,15 @@ pub fn client_handshake(
     Ok((tx, rx, server))
 }
 
-/// Server side. `secret_for` looks up the secret for the hello (or refuses it).
+/// Server side. `secret_for` looks up the secret for the hello (or refuses it). `may_check` runs
+/// once the client's proof has arrived, right before it is checked (the only point where a guess
+/// is tested): refusing there checks nothing, so the server can count guesses exactly (pairing
+/// attempts) without peers that never send a proof holding attempts.
 pub fn server_handshake(
     mut stream: TcpStream,
     server: &ServerInfo,
     secret_for: impl FnOnce(&Hello) -> Result<Vec<u8>, String>,
+    may_check: impl FnOnce(&Hello) -> Result<(), String>,
 ) -> Result<(Sender, Receiver, Hello), HandshakeError> {
     let deadline = Instant::now() + HANDSHAKE_TIME;
     let timeout = stream.read_timeout()?;
@@ -429,6 +433,10 @@ pub fn server_handshake(
         .into();
     let keys = derive(&key, &transcript);
     let confirm = read_frame_by(&mut stream, deadline)?;
+    if let Err(why) = may_check(&hello) {
+        let _ = write_frame(&mut stream, &serde_json::to_vec(&Verdict::Refused(why.clone())).unwrap_or_default());
+        return Err(HandshakeError::Refused(why));
+    }
     if !mac_ok(&keys.confirm_client, &transcript, &confirm) {
         let why = if hello.pairing { "Wrong pairing code" } else { "Authentication failed: pair this device again" };
         let _ = write_frame(&mut stream, &serde_json::to_vec(&Verdict::Refused(why.into())).unwrap_or_default());
@@ -452,7 +460,7 @@ mod tests {
         let server = std::thread::spawn(move || {
             let (s, _) = listener.accept().unwrap();
             let info = ServerInfo { id: Uuid::new_v4(), name: "main".into() };
-            match server_handshake(s, &info, |_| Ok(server_secret.to_vec())) {
+            match server_handshake(s, &info, |_| Ok(server_secret.to_vec()), |_| Ok(())) {
                 Ok((mut tx, mut rx, hello)) => {
                     let got: String = rx.recv().unwrap();
                     tx.send(&format!("{got} from {}", hello.client_name)).unwrap();
@@ -488,7 +496,7 @@ mod tests {
         let server = std::thread::spawn(move || {
             let (s, _) = listener.accept().unwrap();
             let info = ServerInfo { id: Uuid::new_v4(), name: "main".into() };
-            let (mut tx, mut rx, _) = server_handshake(s, &info, |_| Ok(b"K".to_vec())).unwrap();
+            let (mut tx, mut rx, _) = server_handshake(s, &info, |_| Ok(b"K".to_vec()), |_| Ok(())).unwrap();
             tx.send(&big).unwrap();
             tx.send(&"small".to_string()).unwrap();
             let back: Vec<u32> = rx.recv().unwrap();
@@ -538,7 +546,7 @@ mod tests {
         let server = std::thread::spawn(move || {
             let (s, _) = listener.accept().unwrap();
             let info = ServerInfo { id: Uuid::new_v4(), name: "main".into() };
-            let (_tx, mut rx, _) = server_handshake(s, &info, |_| Ok(b"K".to_vec())).unwrap();
+            let (_tx, mut rx, _) = server_handshake(s, &info, |_| Ok(b"K".to_vec()), |_| Ok(())).unwrap();
             rx.set_limit(1000);
             let small: String = rx.recv().unwrap();
             let big = rx.recv::<String>().is_err();

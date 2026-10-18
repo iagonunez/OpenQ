@@ -791,7 +791,7 @@ fn open_file(path: &Path) -> anyhow::Result<ff::format::context::Input> {
 /// use them through a Camera cue.
 const LAVFI_ALLOWED: &[&str] = &[
     "testsrc", "testsrc2", "smptebars", "smptehdbars", "pal75bars", "pal100bars", "rgbtestsrc", "yuvtestsrc", "colorspectrum",
-    "colorchart", "color", "mandelbrot", "allrgb", "allyuv", "gradients", "zoneplate", "nullsrc", "hstack", "vstack", "scale",
+    "colorchart", "color", "allrgb", "allyuv", "gradients", "zoneplate", "nullsrc", "hstack", "vstack", "scale",
     "format", "hflip", "vflip", "pad", "crop", "fps", "setsar",
 ];
 
@@ -800,7 +800,9 @@ const LAVFI_ALLOWED: &[&str] = &[
 /// screen or the like).
 fn check_camera_source(format: &str, device: &str) -> anyhow::Result<()> {
     if format == camera_format_name() {
-        if cfg!(target_os = "linux") && !device.starts_with("/dev/") {
+        // `..` would leave /dev (e.g. for a FIFO, whose opening blocks).
+        let escapes = Path::new(device).components().any(|c| c == std::path::Component::ParentDir);
+        if cfg!(target_os = "linux") && (!device.starts_with("/dev/") || escapes) {
             anyhow::bail!("{device} is not a camera device");
         }
         return Ok(());
@@ -812,6 +814,9 @@ fn check_camera_source(format: &str, device: &str) -> anyhow::Result<()> {
     let plain = |c: char| c.is_ascii_alphanumeric() || "=:._#-/[];,+*".contains(c);
     if let Some(c) = device.chars().find(|&c| !plain(c)) {
         anyhow::bail!("test pattern with {c:?} is not allowed");
+    }
+    if device.split([';', ',']).count() > MAX_LAVFI_FILTERS {
+        anyhow::bail!("test pattern with more than {MAX_LAVFI_FILTERS} filters is not allowed");
     }
     for filter in device.split([';', ',']) {
         // `[a][b]hstack=inputs=2[out]`: drop the pad labels, keep the name before its options.
@@ -825,9 +830,41 @@ fn check_camera_source(format: &str, device: &str) -> anyhow::Result<()> {
                 _ => {}
             }
         }
-        let name = name.split('=').next().unwrap_or("").trim();
+        let (name, options) = name.split_once('=').unwrap_or((&name, ""));
+        let name = name.trim();
         if !LAVFI_ALLOWED.contains(&name) {
             anyhow::bail!("test pattern filter {name:?} is not allowed");
+        }
+        check_lavfi_options(name, options)?;
+    }
+    Ok(())
+}
+
+/// Most filters in a Camera cue's `lavfi` graph.
+const MAX_LAVFI_FILTERS: usize = 16;
+
+/// Keep a `lavfi` filter's options to plain values of sane size, so a show (or a replica) can't
+/// make the video process allocate gigabytes per picture (`testsrc2=size=30000x30000`) or grow
+/// pictures through expressions (`scale=iw*100:ih*100`). Rates and aspect ratios (`30000/1001`)
+/// and colours (`0xRRGGBB`) are left alone.
+fn check_lavfi_options(filter: &str, options: &str) -> anyhow::Result<()> {
+    const RATES: &[&str] = &["rate", "r", "fps", "frame_rate", "sar", "dar"];
+    if matches!(filter, "fps" | "setsar" | "format") {
+        return Ok(());
+    }
+    let max = crate::limits::CAMERA_SIDE.1 as u64;
+    for opt in options.split(':') {
+        let (key, value) = opt.split_once('=').map_or(("", opt), |(k, v)| (k.trim(), v.trim()));
+        let lower = value.to_ascii_lowercase();
+        if RATES.contains(&key) || lower.starts_with("0x") || lower.starts_with('#') {
+            continue;
+        }
+        if value.contains(['*', '+', '/']) {
+            anyhow::bail!("test pattern option {opt:?}: expressions are not allowed");
+        }
+        let too_big = value.split(|c: char| !c.is_ascii_digit()).filter(|d| !d.is_empty()).any(|d| !d.parse::<u64>().is_ok_and(|n| n <= max));
+        if too_big {
+            anyhow::bail!("test pattern option {opt:?}: sizes and counts go up to {max}");
         }
     }
     Ok(())
@@ -1888,12 +1925,30 @@ mod tests {
     fn camera_sources_are_checked() {
         assert!(check_camera_source("lavfi", "testsrc2=size=1280x720:rate=30000/1001").is_ok());
         assert!(check_camera_source("lavfi", "color=red:size=64x16[a];color=blue:size=64x16[b];[a][b]hstack").is_ok());
-        for bad in ["movie=/etc/passwd", "testsrc,metadata=mode=print:file=x", "life=f=secret", "color='red'", "testsrc;[0]sendcmd=f=x"] {
+        assert!(check_camera_source("lavfi", "color=c=0x336699:s=640x360,pad=w=1280:h=720:x=-1:y=-1,fps=30000/1001").is_ok());
+        for bad in [
+            "movie=/etc/passwd",
+            "testsrc,metadata=mode=print:file=x",
+            "life=f=secret",
+            "color='red'",
+            "testsrc;[0]sendcmd=f=x",
+            // Pictures of gigabytes, or grown through expressions.
+            "testsrc2=size=30000x30000",
+            "testsrc2=99999x99999",
+            "testsrc,scale=iw*100:ih*100",
+            "testsrc,scale=w=iw/0.001:h=-1",
+            "testsrc,pad=w=100000:h=720",
+            "mandelbrot=maxiter=100000",
+            "testsrc,hflip,hflip,hflip,hflip,hflip,hflip,hflip,hflip,hflip,hflip,hflip,hflip,hflip,hflip,hflip,hflip",
+        ] {
             assert!(check_camera_source("lavfi", bad).is_err(), "{bad}");
         }
         assert!(check_camera_source("x11grab", ":0.0").is_err());
         assert!(check_camera_source("fbdev", "/dev/fb0").is_err());
         assert!(check_camera_source(camera_format_name(), if cfg!(target_os = "linux") { "/dev/video0" } else { "0" }).is_ok());
+        if cfg!(target_os = "linux") {
+            assert!(check_camera_source(camera_format_name(), "/dev/../home/x/fifo").is_err());
+        }
     }
 
     /// FFmpeg only reads local files for media cues: a URL is refused, not fetched.

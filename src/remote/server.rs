@@ -26,6 +26,11 @@ const MAX_CONNECTIONS: usize = 32;
 /// Connections from one address at a time (a replica needs one; this leaves room for a few
 /// instances on one computer while one host can't take every slot).
 const MAX_PER_ADDRESS: usize = 8;
+/// Handshakes in progress at a time, and from one address. A real handshake takes milliseconds,
+/// so these only bite peers that connect and stall: they can't hold the slots authenticated
+/// devices use, and one host can't keep the others from logging in.
+const MAX_HANDSHAKES: usize = 16;
+const MAX_HANDSHAKES_PER_ADDRESS: usize = 2;
 /// Addresses remembered for failed logins (the oldest is forgotten first).
 const MAX_FAILURE_ENTRIES: usize = 4096;
 /// Largest message taken from a device that can't edit (commands, selections, pings).
@@ -76,6 +81,10 @@ struct Shared {
     failures: Mutex<HashMap<IpAddr, Failures>>,
     /// Open connections per address.
     per_address: Mutex<HashMap<IpAddr, usize>>,
+    /// Handshakes in progress per address.
+    handshaking: Mutex<HashMap<IpAddr, usize>>,
+    /// The main device is in show mode: nobody edits, Edit-role devices act as Control.
+    show_mode: AtomicBool,
     events: Mutex<VecDeque<String>>,
     stop: Arc<AtomicBool>,
     next_conn: AtomicU64,
@@ -119,6 +128,11 @@ impl Shared {
         e.last = Instant::now();
     }
 
+    /// `role` as it applies now: in show mode nobody edits.
+    fn effective(&self, role: Role) -> Role {
+        if role == Role::Edit && self.show_mode.load(Ordering::Acquire) { Role::Control } else { role }
+    }
+
     fn meters(&self) -> Vec<f32> {
         let mut m = self.meters.lock();
         if m.0.elapsed() >= Duration::from_millis(40) {
@@ -158,6 +172,8 @@ impl Server {
             clients: Mutex::new(Vec::new()),
             failures: Mutex::new(HashMap::new()),
             per_address: Mutex::new(HashMap::new()),
+            handshaking: Mutex::new(HashMap::new()),
+            show_mode: AtomicBool::new(false),
             events: Mutex::new(VecDeque::new()),
             stop: stop.clone(),
             next_conn: AtomicU64::new(1),
@@ -205,6 +221,15 @@ impl Server {
         p.as_ref().map(|p| (p.code.clone(), p.expires.saturating_duration_since(Instant::now()), p.attempts_left))
     }
 
+    /// Tell the server whether the main device is in show mode. While it is, no device may edit:
+    /// Edit-role devices are told they are Control until it leaves show mode (their stored role
+    /// stays Edit).
+    pub fn set_show_mode(&self, on: bool) {
+        if self.shared.show_mode.swap(on, Ordering::AcqRel) != on {
+            self.shared.event(if on { "Show mode: editing from devices is off".into() } else { "Edit mode: devices with the edit role may edit".into() });
+        }
+    }
+
     /// Devices connected right now.
     pub fn connected(&self) -> Vec<Connected> {
         self.shared.clients.lock().clone()
@@ -231,6 +256,7 @@ fn accept_loop(shared: Arc<Shared>, listener: TcpListener) {
                 if shared.blocked(ip) || active.load(Ordering::Relaxed) as usize >= MAX_CONNECTIONS {
                     continue; // dropping the stream closes it
                 }
+                let Some(slot) = HandshakeSlot::take(&shared, ip) else { continue };
                 {
                     let mut per = shared.per_address.lock();
                     let n = per.entry(ip).or_insert(0);
@@ -244,7 +270,7 @@ fn accept_loop(shared: Arc<Shared>, listener: TcpListener) {
                 let spawned = std::thread::Builder::new().name("openq-remote-conn".into()).spawn(move || {
                     // Even a connection that fails in an unexpected way gives its slot back,
                     // or the server would end up refusing everyone.
-                    if let Err(e) = crate::recovery::catch(|| serve(&sh, stream, addr)) {
+                    if let Err(e) = crate::recovery::catch(|| serve(&sh, stream, addr, slot)) {
                         log::debug!("remote connection {addr}: {e:#}");
                     }
                     act.fetch_sub(1, Ordering::Relaxed);
@@ -261,6 +287,43 @@ fn accept_loop(shared: Arc<Shared>, listener: TcpListener) {
                 std::thread::sleep(Duration::from_millis(200));
             }
         }
+    }
+}
+
+/// A handshake in progress ([`MAX_HANDSHAKES`], [`MAX_HANDSHAKES_PER_ADDRESS`]); given back when
+/// released or dropped (also if the connection's thread fails).
+struct HandshakeSlot {
+    shared: Arc<Shared>,
+    ip: IpAddr,
+    held: bool,
+}
+
+impl HandshakeSlot {
+    fn take(shared: &Arc<Shared>, ip: IpAddr) -> Option<Self> {
+        let mut h = shared.handshaking.lock();
+        if h.values().sum::<usize>() >= MAX_HANDSHAKES || h.get(&ip).is_some_and(|n| *n >= MAX_HANDSHAKES_PER_ADDRESS) {
+            return None;
+        }
+        *h.entry(ip).or_insert(0) += 1;
+        Some(Self { shared: shared.clone(), ip, held: true })
+    }
+
+    fn release(&mut self) {
+        if std::mem::take(&mut self.held) {
+            let mut h = self.shared.handshaking.lock();
+            if let Some(n) = h.get_mut(&self.ip) {
+                *n = n.saturating_sub(1);
+                if *n == 0 {
+                    h.remove(&self.ip);
+                }
+            }
+        }
+    }
+}
+
+impl Drop for HandshakeSlot {
+    fn drop(&mut self) {
+        self.release();
     }
 }
 
@@ -281,7 +344,7 @@ fn title_of(path: &Option<PathBuf>) -> String {
     path.as_ref().and_then(|p| p.file_stem()).map_or_else(|| "Untitled".into(), |s| s.to_string_lossy().into_owned())
 }
 
-fn serve(shared: &Arc<Shared>, stream: TcpStream, addr: SocketAddr) -> anyhow::Result<()> {
+fn serve(shared: &Arc<Shared>, stream: TcpStream, addr: SocketAddr, mut slot: HandshakeSlot) -> anyhow::Result<()> {
     stream.set_nonblocking(false)?;
     stream.set_nodelay(true)?;
     stream.set_read_timeout(Some(Duration::from_secs(10)))?;
@@ -291,19 +354,13 @@ fn serve(shared: &Arc<Shared>, stream: TcpStream, addr: SocketAddr) -> anyhow::R
         ServerInfo { id: c.instance_id, name: c.instance_name.clone() }
     };
 
-    // A pairing attempt is reserved up front so parallel connections can't exceed the limit.
-    let reserved = std::cell::Cell::new(false);
+    const NOT_OPEN: &str = "Pairing isn't open on the main device. Open it there (Remote → Pair a device) and try again.";
+    let open = |p: &Pairing| p.expires > Instant::now() && p.attempts_left > 0;
     let secret_for = |hello: &Hello| -> Result<Vec<u8>, String> {
         if hello.pairing {
-            let mut p = shared.pairing.lock();
-            match p.as_mut() {
-                Some(pr) if pr.expires > Instant::now() && pr.attempts_left > 0 => {
-                    // Every completed attempt counts, right or wrong; success closes pairing.
-                    pr.attempts_left -= 1;
-                    reserved.set(true);
-                    Ok(normalize_code(&pr.code).into_bytes())
-                }
-                _ => Err("Pairing isn't open on the main device. Open it there (Remote → Pair a device) and try again.".into()),
+            match shared.pairing.lock().as_ref() {
+                Some(pr) if open(pr) => Ok(normalize_code(&pr.code).into_bytes()),
+                _ => Err(NOT_OPEN.into()),
             }
         } else {
             shared
@@ -317,7 +374,24 @@ fn serve(shared: &Arc<Shared>, stream: TcpStream, addr: SocketAddr) -> anyhow::R
         }
     };
 
-    let (mut tx, mut rx, hello) = match secure::server_handshake(stream, &info, secret_for) {
+    // A pairing attempt is used up when the proof arrives, under the lock, so parallel
+    // connections can't test more codes than allowed, and peers that stall before proving
+    // anything hold no attempts.
+    let may_check = |hello: &Hello| -> Result<(), String> {
+        if hello.pairing {
+            let mut p = shared.pairing.lock();
+            match p.as_mut() {
+                // Every checked attempt counts, right or wrong; success closes pairing.
+                Some(pr) if open(pr) => pr.attempts_left -= 1,
+                _ => return Err(NOT_OPEN.into()),
+            }
+        }
+        Ok(())
+    };
+
+    let handshake = secure::server_handshake(stream, &info, secret_for, may_check);
+    slot.release();
+    let (mut tx, mut rx, hello) = match handshake {
         Ok(ok) => ok,
         Err(HandshakeError::Auth(why)) => {
             shared.record_failure(addr.ip());
@@ -342,13 +416,6 @@ fn serve(shared: &Arc<Shared>, stream: TcpStream, addr: SocketAddr) -> anyhow::R
             if secure::is_timeout(&e) {
                 shared.record_failure(addr.ip());
                 shared.event(format!("Dropped {addr}: the handshake took too long"));
-            }
-            // Gone before sending its proof: it learned nothing about the code, so the try
-            // doesn't count.
-            if reserved.get()
-                && let Some(p) = shared.pairing.lock().as_mut()
-            {
-                p.attempts_left = (p.attempts_left + 1).min(PAIRING_ATTEMPTS);
             }
             return Err(e);
         }
@@ -378,7 +445,7 @@ fn serve(shared: &Arc<Shared>, stream: TcpStream, addr: SocketAddr) -> anyhow::R
         let dev = c.devices.iter_mut().find(|d| d.id == hello.client_id).expect("device exists after auth");
         dev.last_seen = now;
         dev.name = device_name.clone();
-        let role = dev.role;
+        let role = shared.effective(dev.role);
         if let Err(e) = c.save() {
             log::warn!("cannot save remote config: {e:#}");
         }
@@ -429,8 +496,19 @@ struct Flags {
     dmx: AtomicBool,
 }
 
+/// The role `device` acts with now (its own role, but no editing in show mode); None if removed.
 fn role_of(shared: &Shared, device: Uuid) -> Option<Role> {
-    shared.config.lock().devices.iter().find(|d| d.id == device).map(|d| d.role)
+    let role = shared.config.lock().devices.iter().find(|d| d.id == device).map(|d| d.role)?;
+    Some(shared.effective(role))
+}
+
+/// Why an edit from a device that may not edit now is refused.
+fn edit_refusal(shared: &Shared) -> String {
+    if shared.show_mode.load(Ordering::Acquire) {
+        "The main device is in show mode: editing is off until it goes back to edit mode".into()
+    } else {
+        "This device can't edit the show".into()
+    }
 }
 
 fn receive_loop(
@@ -478,7 +556,7 @@ fn receive_loop(
             }
             ClientMsg::Patch { mut cues, mut lighting } => {
                 if !role.can_edit() {
-                    let _ = notices.send(ServerMsg::Refused("This device can't edit the show".into()));
+                    refuse_edit(shared, flags, notices, edit_refusal(shared));
                     continue;
                 }
                 let mut show = shared.show.lock();
@@ -505,7 +583,7 @@ fn receive_loop(
             }
             ClientMsg::Reshape { mut ws, mut lighting } => {
                 if !role.can_edit() {
-                    let _ = notices.send(ServerMsg::Refused("This device can't edit the show".into()));
+                    refuse_edit(shared, flags, notices, edit_refusal(shared));
                     continue;
                 }
                 let mut show = shared.show.lock();
@@ -546,7 +624,7 @@ fn receive_loop(
                     drop(show);
                     (shared.repaint)();
                 } else {
-                    let _ = notices.send(ServerMsg::Refused("This device can't edit the show".into()));
+                    refuse_edit(shared, flags, notices, edit_refusal(shared));
                 }
             }
             ClientMsg::Waveform(path) => {

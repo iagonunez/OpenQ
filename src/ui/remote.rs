@@ -185,6 +185,10 @@ impl App {
                 self.remote.start_server(ctx, self.show.clone());
             }
         }
+        // Devices may edit only while this main device is in edit mode.
+        if let Some(server) = &self.remote.server {
+            server.set_show_mode(self.mode == Mode::Show);
+        }
         let Some(link) = &self.remote.link else { return };
         match link.state() {
             LinkState::Connecting => {}

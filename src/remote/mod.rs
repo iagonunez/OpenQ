@@ -5,15 +5,19 @@
 //! * A device pairs once, with a short code shown on the main device while pairing is open.
 //!   Pairing stays open for 5 minutes and closes after 5 wrong attempts. The code is checked
 //!   with SPAKE2, so someone listening on the network can't test guesses offline: each guess
-//!   needs a live connection and uses up one attempt.
+//!   needs a live connection and uses up one attempt (counted when the guess's proof arrives, so
+//!   connections that stall before it hold no attempts).
 //! * Pairing gives the device a random 256-bit token, and later connections authenticate with
 //!   that token. Tokens are kept in the per-user config file (mode 0600), never in workspaces.
 //! * Both sides prove they know the secret. Everything after the handshake is encrypted and
 //!   authenticated with ChaCha20-Poly1305, using separate keys per direction.
 //! * The main device gives each paired device a role (view / control / edit) and enforces it on
-//!   every message. Removing a device drops its connection at once.
+//!   every message. Removing a device drops its connection at once. While the main device is in
+//!   show mode nobody edits: Edit-role devices act as Control ([`server::Server::set_show_mode`]).
 //! * Repeated failures from one address block it for a while; so do handshakes that don't finish
-//!   within [`secure::HANDSHAKE_TIME`]. One address holds at most a few connections at a time.
+//!   within [`secure::HANDSHAKE_TIME`]. One address holds at most a few connections at a time,
+//!   and only two unfinished handshakes (16 in all), so stalled peers can't keep paired devices
+//!   from logging in.
 //! * Devices that can't edit may only send small messages. Edits are checked by [`vet`] before
 //!   they are taken: no new media paths (a replica can't reach files the show doesn't already
 //!   use), finite numbers of sane size, unique cue ids. Stage outputs (displays) stay the main
