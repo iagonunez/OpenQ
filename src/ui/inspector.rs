@@ -252,11 +252,11 @@ impl App {
         if !tabs.iter().any(|t| t.0 == self.inspector_tab) {
             self.inspector_tab = Tab::Basics;
         }
-        ui.horizontal(|ui| {
+        // Tabs wrap to a second line on a narrow window (a wider row would widen the cards below too).
+        super::theme::wrapped_row(ui, |ui| {
             ui.label(super::theme::icon(super::theme::kind_icon(cue.kind.tag()), 18.0).color(super::theme::TEXT_DIM));
-            ui.label(RichText::new(format!("{}  {}", cue.number, cue.display_name())).font(super::theme::semibold(14.0)));
-            ui.separator();
-            for (t, label) in tabs {
+            ui.add(egui::Label::new(RichText::new(format!("{}  {}", cue.number, cue.display_name())).font(super::theme::semibold(14.0))).truncate());
+            for (i, (t, label)) in tabs.iter().enumerate() {
                 let glyph = match t {
                     Tab::Basics => super::icons::INFO,
                     Tab::Time => super::icons::TIMER,
@@ -270,7 +270,12 @@ impl App {
                     Tab::AudioFx => super::icons::INSTANT_MIX,
                     Tab::VideoFx => super::icons::AUTO_FIX_HIGH,
                 };
-                super::theme::tab(ui, &mut self.inspector_tab, *t, glyph, crate::i18n::t(label));
+                let mut tab = |ui: &mut Ui| super::theme::tab(ui, &mut self.inspector_tab, *t, glyph, crate::i18n::t(label));
+                if i == 0 {
+                    super::theme::separated(ui, "first_tab", tab);
+                } else {
+                    tab(ui);
+                }
             }
             if self.selection.len() > 1 {
                 ui.label(RichText::new(tr!("({n} selected — editing the last)", n = self.selection.len())).weak());

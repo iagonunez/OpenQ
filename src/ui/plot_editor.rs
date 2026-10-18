@@ -226,7 +226,7 @@ fn symbol_picker(ui: &mut Ui, st: &mut PlotUi, l: &mut Lighting) {
     }
     ui.add_space(6.0);
     ui.label(theme::caption(t("Symbol")));
-    ui.horizontal_wrapped(|ui| {
+    theme::wrapped_row(ui, |ui| {
         ui.spacing_mut().item_spacing = vec2(3.0, 3.0);
         for sym in PlotSymbol::ALL {
             let on = targets.iter().all(|t| t.1 == sym);
@@ -253,7 +253,7 @@ fn symbol_picker(ui: &mut Ui, st: &mut PlotUi, l: &mut Lighting) {
         && let Some(f) = l.fixture(*id)
     {
         let (id, now, name) = (*id, *now, plot::type_name(l, f));
-        ui.horizontal_wrapped(|ui| {
+        theme::wrapped_row(ui, |ui| {
             if ui.button(t("Use for the whole type")).on_hover_text(tr!("Every {name} gets this symbol", name = name.clone())).clicked() {
                 let usual = plot::type_symbol(l, &name).map_or(now, |t| t.1);
                 l.plot.edit_mut(&PlotItem::LegendRow(name.clone())).symbol = (now != usual).then_some(now);

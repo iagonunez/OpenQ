@@ -58,6 +58,13 @@ pub(crate) struct PlaybackUi {
     shared: Arc<Mutex<WindowState>>,
 }
 
+impl PlaybackUi {
+    /// Opens the settings window of a playback button (`OPENQ_SCREENSHOT_LIGHTING=executor`).
+    pub(crate) fn open_editor(&mut self, id: Option<ButtonId>) {
+        self.edit = id;
+    }
+}
+
 /// The Playback window's own state (its page and held buttons are its own, apart from the page's).
 #[derive(Default)]
 struct WindowState {
@@ -201,25 +208,28 @@ impl App {
     /// The Playback page: window/display controls, then the grid.
     pub(super) fn playback_page(&mut self, ui: &mut Ui, show: &mut Show) {
         self.light.playback.keep_place();
-        ui.horizontal_wrapped(|ui| {
+        theme::wrapped_row(ui, |ui| {
             let open = self.light.playback.window;
             let label = if open { t("Close the playback window") } else { t("Open in a window") };
             if ui.button(theme::with_icon(icons::OPEN_IN_NEW, label)).on_hover_text(t("Sequences and executors in a window of their own, e.g. on a touch screen")).clicked() {
                 self.light.playback.window = !open;
             }
-            ui.label(t("Display"));
-            self.playback_display_choice(ui);
+            theme::keep_together(ui, "display", |ui| {
+                ui.label(t("Display"));
+                self.playback_display_choice(ui);
+            });
             // Card size of the executors (saved with the show, so the window looks the same everywhere).
             if self.can_design() {
-                ui.separator();
-                ui.label(t("Executor size"));
-                let l = &mut show.ws.lighting;
-                let mut v = l.button_scale;
-                let r = ui.add(egui::Slider::new(&mut v, 0.6..=2.5).step_by(0.05).custom_formatter(|v, _| format!("{:.0} %", v * 100.0)));
-                if r.changed() {
-                    l.button_scale = v;
-                    show.edited();
-                }
+                theme::separated(ui, "executor_size", |ui| {
+                    ui.label(t("Executor size"));
+                    let l = &mut show.ws.lighting;
+                    let mut v = l.button_scale;
+                    let r = ui.add(egui::Slider::new(&mut v, 0.6..=2.5).step_by(0.05).custom_formatter(|v, _| format!("{:.0} %", v * 100.0)));
+                    if r.changed() {
+                        l.button_scale = v;
+                        show.edited();
+                    }
+                });
             }
         });
         ui.add_space(6.0);
@@ -407,15 +417,18 @@ impl App {
                     });
                     ui.end_row();
                     ui.label(t("Values"));
-                    ui.horizontal_wrapped(|ui| {
-                        let n: usize = b.values.values().map(|v| v.len()).sum();
-                        let text = tr!("{n} values", n = n.to_string());
-                        let text = if b.effects.is_empty() { text } else { format!("{text} · {}", tr!("{n} effects", n = b.effects.len().to_string())) };
-                        ui.label(RichText::new(text).color(theme::TEXT_DIM));
-                        if (n > 0 || !b.effects.is_empty()) && ui.small_button(icons::CLOSE).on_hover_text(t("Clear the values")).clicked() {
-                            b.values = Default::default();
-                            b.effects.clear();
-                        }
+                    // Two fixed lines: a wrapping row in a grid cell doesn't make the grid row taller (it overlapped Fade).
+                    ui.vertical(|ui| {
+                        ui.horizontal(|ui| {
+                            let n: usize = b.values.values().map(|v| v.len()).sum();
+                            let text = tr!("{n} values", n = n.to_string());
+                            let text = if b.effects.is_empty() { text } else { format!("{text} · {}", tr!("{n} effects", n = b.effects.len().to_string())) };
+                            ui.label(RichText::new(text).color(theme::TEXT_DIM));
+                            if (n > 0 || !b.effects.is_empty()) && ui.small_button(icons::CLOSE).on_hover_text(t("Clear the values")).clicked() {
+                                b.values = Default::default();
+                                b.effects.clear();
+                            }
+                        });
                         let busy = !self.light.programmer.is_empty() || !self.light.programmer_effects.is_empty();
                         if ui
                             .add_enabled(busy, egui::Button::new(theme::with_icon(icons::SAVE, t("Store the programmer"))))
@@ -437,7 +450,8 @@ impl App {
                     });
                     ui.end_row();
                 });
-                ui.add_space(6.0);
+                ui.add_space(2.0);
+                ui.separator();
                 ui.horizontal(|ui| {
                     if ui.button(theme::with_icon(icons::DELETE, t("Delete executor"))).clicked() {
                         delete = true;
@@ -504,7 +518,7 @@ fn executors(ui: &mut Ui, show: &mut Show, pad: Pad, mut edit: Option<Editing>, 
     ui.ctx().request_repaint_after(std::time::Duration::from_millis(100));
     ui.label(theme::caption(t("Masters")));
     ui.add_space(2.0);
-    ui.horizontal_wrapped(|ui| masters_controls(ui, show, pad.taps, true, cmds));
+    theme::wrapped_row(ui, |ui| masters_controls(ui, show, pad.taps, true, cmds));
     ui.add_space(12.0);
     let status = show.media.light.status();
     let masters = show.media.light.masters().clone();
@@ -537,7 +551,7 @@ fn executors(ui: &mut Ui, show: &mut Show, pad: Pad, mut edit: Option<Editing>, 
     let page = (*pad.page).min(pages - 1);
     *pad.page = page;
     if pages > 1 || editing {
-        ui.horizontal_wrapped(|ui| {
+        theme::wrapped_row(ui, |ui| {
             ui.spacing_mut().item_spacing.x = 4.0;
             for k in 0..pages {
                 let name = l.button_pages.get(k as usize).filter(|n| !n.trim().is_empty()).cloned().unwrap_or_else(|| tr!("Page {n}", n = (k + 1).to_string()));

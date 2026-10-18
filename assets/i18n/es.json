@@ -1360,5 +1360,9 @@
  "UDP port of the OSC app that last sent a control (its levels and lights are sent back there)": "Puerto UDP de la app OSC que envió el último control (sus niveles y luces se le devuelven ahí)",
  "no playback button": "sin botón de reproducción",
  "page {n} of {total}": "página {n} de {total}",
- "{n} executors": "{n} ejecutores"
+ "{n} executors": "{n} ejecutores",
+ "Interface scale": "Escala de la interfaz",
+ "Interface scale {scale}": "Escala de la interfaz {scale}",
+ "Cannot save the interface scale: {e}": "No se puede guardar la escala de la interfaz: {e}",
+ "Ctrl + / Ctrl − change it too": "Ctrl + / Ctrl − también la cambian"
 }

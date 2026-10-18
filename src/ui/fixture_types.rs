@@ -405,7 +405,7 @@ impl App {
         let mut use_show = false;
         let mut export = false;
         // Header.
-        ui.horizontal_wrapped(|ui| {
+        theme::wrapped_row(ui, |ui| {
             ui.label(t("Manufacturer"));
             ui.add(egui::TextEdit::singleline(&mut e.ty.manufacturer).desired_width(160.0));
             ui.label(t("Name"));
@@ -419,7 +419,7 @@ impl App {
             let id = if e.ty.id.is_empty() { "—".to_string() } else { e.ty.id.clone() };
             ui.label(RichText::new(format!("{id} · {origin}")).color(theme::TEXT_FAINT).small());
         });
-        ui.horizontal_wrapped(|ui| {
+        theme::wrapped_row(ui, |ui| {
             if ui.button(theme::with_icon(icons::SAVE, t("Save to library"))).clicked() {
                 save_lib = true;
             }
@@ -444,7 +444,7 @@ impl App {
         }
         ui.add_space(4.0);
         // Physical.
-        ui.horizontal_wrapped(|ui| {
+        theme::wrapped_row(ui, |ui| {
             let p = &mut e.ty.physical;
             ui.label(theme::caption(t("Physical")));
             ui.label(t("Pan range"));
@@ -461,17 +461,19 @@ impl App {
         // Modes.
         e.mode = e.mode.min(e.ty.modes.len().saturating_sub(1));
         let mut mode_action = None;
-        ui.horizontal_wrapped(|ui| {
-            ui.label(theme::caption(t("Mode")));
-            let names: Vec<String> = e.ty.modes.iter().map(|m| m.name.clone()).collect();
-            egui::ComboBox::from_id_salt("type_mode").selected_text(names.get(e.mode).cloned().unwrap_or_default()).width(160.0).show_ui(ui, |ui| {
-                for (i, n) in names.iter().enumerate() {
-                    if ui.selectable_label(e.mode == i, n).clicked() && e.mode != i {
-                        e.mode = i;
-                        e.unit = None;
-                        e.channel = None;
+        theme::wrapped_row(ui, |ui| {
+            theme::keep_together(ui, "type_mode", |ui| {
+                ui.label(theme::caption(t("Mode")));
+                let names: Vec<String> = e.ty.modes.iter().map(|m| m.name.clone()).collect();
+                egui::ComboBox::from_id_salt("type_mode").selected_text(names.get(e.mode).cloned().unwrap_or_default()).width(160.0).show_ui(ui, |ui| {
+                    for (i, n) in names.iter().enumerate() {
+                        if ui.selectable_label(e.mode == i, n).clicked() && e.mode != i {
+                            e.mode = i;
+                            e.unit = None;
+                            e.channel = None;
+                        }
                     }
-                }
+                });
             });
             if let Some(m) = e.ty.modes.get_mut(e.mode) {
                 ui.label(t("Name"));
@@ -760,7 +762,7 @@ fn unit_bar(ui: &mut Ui, e: &mut TypeEdit) {
         e.unit = None;
     }
     let mut action = None;
-    ui.horizontal_wrapped(|ui| {
+    theme::wrapped_row(ui, |ui| {
         ui.label(theme::caption(t("Channels of")));
         if ui.selectable_label(e.unit.is_none(), t("Master")).on_hover_text(t("Channels of the whole fixture")).clicked() {
             e.unit = None;
@@ -775,13 +777,15 @@ fn unit_bar(ui: &mut Ui, e: &mut TypeEdit) {
             }
         } else {
             let text = e.unit.map_or_else(|| t("choose a cell").to_string(), |i| tr!("Cell {name}", name = m.heads[i].name.clone()));
-            egui::ComboBox::from_id_salt("type_cell").selected_text(text).show_ui(ui, |ui| {
-                for (i, h) in m.heads.iter().enumerate() {
-                    if ui.selectable_label(e.unit == Some(i), tr!("Cell {name}", name = h.name.clone())).clicked() {
-                        e.unit = Some(i);
-                        e.channel = None;
+            theme::keep_together(ui, "type_cell", |ui| {
+                egui::ComboBox::from_id_salt("type_cell").selected_text(text).show_ui(ui, |ui| {
+                    for (i, h) in m.heads.iter().enumerate() {
+                        if ui.selectable_label(e.unit == Some(i), tr!("Cell {name}", name = h.name.clone())).clicked() {
+                            e.unit = Some(i);
+                            e.channel = None;
+                        }
                     }
-                }
+                });
             });
         }
         if ui.small_button(icons::ADD).on_hover_text(t("Add a cell (a copy of the last one, after it)")).clicked() {
@@ -795,11 +799,12 @@ fn unit_bar(ui: &mut Ui, e: &mut TypeEdit) {
             }
         }
         if !m.heads.is_empty() {
-            ui.separator();
-            ui.add(DragValue::new(&mut e.make_cells).range(1..=MAX_CELLS));
-            if ui.button(t("cells like cell 1")).on_hover_text(t("Repeat cell 1's channels, one cell after another")).clicked() {
-                action = Some(2);
-            }
+            theme::separated(ui, "make_cells", |ui| {
+                ui.add(DragValue::new(&mut e.make_cells).range(1..=MAX_CELLS));
+                if ui.button(t("cells like cell 1")).on_hover_text(t("Repeat cell 1's channels, one cell after another")).clicked() {
+                    action = Some(2);
+                }
+            });
         }
     });
     match action {
@@ -989,7 +994,7 @@ fn range_editor(ui: &mut Ui, e: &mut TypeEdit) {
     if let Some(i) = delete {
         c.ranges.remove(i);
     }
-    ui.horizontal_wrapped(|ui| {
+    theme::wrapped_row(ui, |ui| {
         if ui.button(theme::with_icon(icons::ADD, t("Add range"))).clicked() {
             let from = c.ranges.iter().map(|r| r.from.max(r.to) as u16 + 1).max().unwrap_or(0).min(255) as u8;
             c.ranges.push(ChannelRange { from, to: 255, name: tr!("Slot {n}", n = (c.ranges.len() + 1).to_string()), ..Default::default() });
@@ -997,11 +1002,12 @@ fn range_editor(ui: &mut Ui, e: &mut TypeEdit) {
         if ui.button(t("Sort")).clicked() {
             c.ranges.sort_by_key(|r| r.from.min(r.to));
         }
-        ui.separator();
-        ui.add(DragValue::new(&mut e.split).range(1..=256));
-        if ui.button(t("equal slots")).on_hover_text(t("Replace the ranges by equal slots over 0–255")).clicked() {
-            c.ranges = split_ranges(e.split);
-        }
+        theme::separated(ui, "split", |ui| {
+            ui.add(DragValue::new(&mut e.split).range(1..=256));
+            if ui.button(t("equal slots")).on_hover_text(t("Replace the ranges by equal slots over 0–255")).clicked() {
+                c.ranges = split_ranges(e.split);
+            }
+        });
     });
 }
 

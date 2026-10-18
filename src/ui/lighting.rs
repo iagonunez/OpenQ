@@ -58,7 +58,7 @@ impl LightTab {
             "patch" | "plan" | "plot" | "types" | "ofl" => LightTab::Patch,
             "effects" => LightTab::Effects,
             "sequences" => LightTab::Sequences,
-            "playback" => LightTab::Playback,
+            "playback" | "executor" => LightTab::Playback,
             "outputs" => LightTab::Outputs,
             "monitor" => LightTab::Monitor,
             _ => LightTab::Patch,
@@ -510,7 +510,7 @@ impl App {
         static GENERICS: std::sync::LazyLock<Vec<FixtureType>> = std::sync::LazyLock::new(crate::light::library::generics);
         // Borrowed, not cloned: this runs every frame under the show lock.
         let (types, in_show, in_lib) = super::fixture_types::available_types(l, &library.items, &GENERICS);
-        ui.horizontal(|ui| {
+        theme::wrapped_row(ui, |ui| {
             ui.spacing_mut().item_spacing.x = 4.0;
             theme::tab(ui, &mut self.light.patch_view, PatchView::Sheet, icons::NOTES, t("Sheet"));
             theme::tab(ui, &mut self.light.patch_view, PatchView::Plan, icons::OPEN_WITH, t("Plan"));
@@ -566,42 +566,44 @@ impl App {
         let mut short = None;
         let mut add = false;
         let ty = types.iter().find(|t| t.id == form.type_id).or(types.first()).copied();
-        ui.horizontal_wrapped(|ui| {
-            ui.label(theme::caption(t("Add fixtures")));
-            let label = |t: &FixtureType| format!("{} {}", t.manufacturer, t.name);
-            egui::ComboBox::from_id_salt("patch_type")
-                .selected_text(ty.map(label).unwrap_or_default())
-                .width(200.0)
-                .height(480.0)
-                .show_ui(ui, |ui| {
-                    for (i, ty) in types.iter().enumerate() {
-                        let head = if i == 0 && in_show > 0 {
-                            Some(t("In this show"))
-                        } else if i == in_show && in_lib > 0 {
-                            Some(t("Library"))
-                        } else if i == in_show + in_lib {
-                            Some(t("Built-in"))
-                        } else {
-                            None
-                        };
-                        if let Some(h) = head {
-                            ui.label(theme::caption(h));
+        theme::wrapped_row(ui, |ui| {
+            theme::keep_together(ui, "patch_type", |ui| {
+                ui.label(theme::caption(t("Add fixtures")));
+                let label = |t: &FixtureType| format!("{} {}", t.manufacturer, t.name);
+                egui::ComboBox::from_id_salt("patch_type")
+                    .selected_text(ty.map(label).unwrap_or_default())
+                    .width(200.0)
+                    .height(480.0)
+                    .show_ui(ui, |ui| {
+                        for (i, ty) in types.iter().enumerate() {
+                            let head = if i == 0 && in_show > 0 {
+                                Some(t("In this show"))
+                            } else if i == in_show && in_lib > 0 {
+                                Some(t("Library"))
+                            } else if i == in_show + in_lib {
+                                Some(t("Built-in"))
+                            } else {
+                                None
+                            };
+                            if let Some(h) = head {
+                                ui.label(theme::caption(h));
+                            }
+                            let mut text = label(ty);
+                            if let Some(m) = ty.modes.iter().find(|m| !m.heads.is_empty()) {
+                                text = format!("{text} · {}", tr!("{n} cells", n = m.heads.len().to_string()));
+                            }
+                            ui.selectable_value(&mut form.type_id, ty.id.clone(), text);
                         }
-                        let mut text = label(ty);
-                        if let Some(m) = ty.modes.iter().find(|m| !m.heads.is_empty()) {
-                            text = format!("{text} · {}", tr!("{n} cells", n = m.heads.len().to_string()));
+                    });
+                if let Some(ty) = ty {
+                    let mode = ty.mode(&form.mode).map(|m| m.name.clone()).unwrap_or_default();
+                    egui::ComboBox::from_id_salt("patch_mode").selected_text(&mode).show_ui(ui, |ui| {
+                        for m in &ty.modes {
+                            ui.selectable_value(&mut form.mode, m.name.clone(), &m.name);
                         }
-                        ui.selectable_value(&mut form.type_id, ty.id.clone(), text);
-                    }
-                });
-            if let Some(ty) = ty {
-                let mode = ty.mode(&form.mode).map(|m| m.name.clone()).unwrap_or_default();
-                egui::ComboBox::from_id_salt("patch_mode").selected_text(&mode).show_ui(ui, |ui| {
-                    for m in &ty.modes {
-                        ui.selectable_value(&mut form.mode, m.name.clone(), &m.name);
-                    }
-                });
-            }
+                    });
+                }
+            });
             ui.label(t("Count"));
             ui.add(DragValue::new(&mut form.count).range(1..=512));
             ui.label(t("First number"));
@@ -663,7 +665,7 @@ impl App {
         let light = &mut self.light;
         let mut hang = None;
         let mut delete = false;
-        ui.horizontal_wrapped(|ui| {
+        theme::wrapped_row(ui, |ui| {
             ui.label(theme::caption(t("Draw")));
             for (tool, glyph, label, tip) in [
                 (PlanTool::Bar, icons::REMOVE, t("Bar"), t("Drag on the plan to draw a lighting bar (pipe, truss)")),
@@ -676,13 +678,14 @@ impl App {
             }
             let Some(s) = light.shape_sel.and_then(|id| l.shapes.iter_mut().find(|s| s.id == id)) else {
                 if !l.shapes.is_empty() {
-                    ui.label(RichText::new(t("Click a bar or the outline of a rectangle to edit it.")).color(theme::TEXT_DIM));
+                    ui.add(egui::Label::new(RichText::new(t("Click a bar or the outline of a rectangle to edit it.")).color(theme::TEXT_DIM)).wrap());
                 }
                 return;
             };
-            ui.separator();
-            ui.label(RichText::new(if s.kind == ShapeKind::Bar { t("Bar") } else { t("Rectangle") }).color(theme::TEXT_DIM));
-            ui.add(egui::TextEdit::singleline(&mut s.name).hint_text(t("Name")).desired_width(90.0));
+            theme::separated(ui, "shape_name", |ui| {
+                ui.label(RichText::new(if s.kind == ShapeKind::Bar { t("Bar") } else { t("Rectangle") }).color(theme::TEXT_DIM));
+                ui.add(egui::TextEdit::singleline(&mut s.name).hint_text(t("Name")).desired_width(90.0));
+            });
             let xz = |ui: &mut Ui, v: &mut [f32; 2]| {
                 for c in v.iter_mut() {
                     let m = crate::limits::MAX_DISTANCE;
@@ -740,13 +743,15 @@ impl App {
             }
         };
         let mut apply = false;
-        ui.horizontal_wrapped(|ui| {
-            ui.label(theme::caption(t("Arrange")));
-            let kinds = [t("Line"), t("Arc"), t("Grid")];
-            egui::ComboBox::from_id_salt("arrange_kind").selected_text(kinds[a.kind as usize % 3]).show_ui(ui, |ui| {
-                for (i, k) in kinds.iter().enumerate() {
-                    ui.selectable_value(&mut a.kind, i as u8, *k);
-                }
+        theme::wrapped_row(ui, |ui| {
+            theme::keep_together(ui, "arrange_kind", |ui| {
+                ui.label(theme::caption(t("Arrange")));
+                let kinds = [t("Line"), t("Arc"), t("Grid")];
+                egui::ComboBox::from_id_salt("arrange_kind").selected_text(kinds[a.kind as usize % 3]).show_ui(ui, |ui| {
+                    for (i, k) in kinds.iter().enumerate() {
+                        ui.selectable_value(&mut a.kind, i as u8, *k);
+                    }
+                });
             });
             match a.kind {
                 1 => {
@@ -1931,7 +1936,7 @@ impl App {
                 });
             });
         // Programmer actions.
-        ui.horizontal_wrapped(|ui| {
+        theme::wrapped_row(ui, |ui| {
             let n = self.light.selection.len();
             ui.label(RichText::new(tr!("{n} selected", n = n.to_string())).color(theme::TEXT_DIM));
             if ui.button(theme::with_icon(icons::SELECT_ALL, t("Select all"))).clicked() {
@@ -1940,10 +1945,9 @@ impl App {
             if ui.button(theme::with_icon(icons::DESELECT, t("Select none"))).clicked() {
                 self.light.selection.clear();
             }
-            ui.separator();
             let busy = !self.light.programmer.is_empty() || !self.light.programmer_effects.is_empty();
-            ui.add_enabled_ui(busy, |ui| {
-                if ui.button(theme::with_icon(icons::CLOSE, t("Clear programmer"))).clicked() {
+            theme::separated(ui, "clear", |ui| {
+                if ui.add_enabled(busy, egui::Button::new(theme::with_icon(icons::CLOSE, t("Clear programmer")))).clicked() {
                     self.light.programmer.clear();
                     self.light.programmer_effects.clear();
                 }
@@ -1960,36 +1964,37 @@ impl App {
                 let n: usize = self.light.programmer.values().map(|v| v.len()).sum();
                 ui.label(RichText::new(tr!("{n} values in the programmer", n = n.to_string())).color(theme::RED));
             }
-            ui.separator();
-            let toggle = |ui: &mut Ui, on: &mut bool, glyph: &str, label: &str, tip: &str, color: Color32| {
-                let (fill, fg) = if *on { (color, Color32::WHITE) } else { (theme::BG_RAISED, theme::TEXT) };
-                if ui.add(egui::Button::new(RichText::new(theme::with_icon(glyph, label)).color(fg)).fill(fill)).on_hover_text(tip).clicked() {
-                    *on = !*on;
+            theme::separated(ui, "look", |ui| {
+                let toggle = |ui: &mut Ui, on: &mut bool, glyph: &str, label: &str, tip: &str, color: Color32| {
+                    let (fill, fg) = if *on { (color, Color32::WHITE) } else { (theme::BG_RAISED, theme::TEXT) };
+                    if ui.add(egui::Button::new(RichText::new(theme::with_icon(glyph, label)).color(fg)).fill(fill)).on_hover_text(tip).clicked() {
+                        *on = !*on;
+                    }
+                };
+                toggle(ui, &mut self.light.blind, icons::VISIBILITY, t("Blind"), t("Program without changing the output"), theme::ACCENT);
+                toggle(ui, &mut self.light.highlight, icons::HIGHLIGHT, t("Highlight"), t("Selected fixtures at open white, full (not recorded)"), theme::AMBER);
+                if self.light.highlight && self.light.selection.len() > 1 {
+                    let n = self.light.selection.len();
+                    if ui.button(icons::ARROW_RIGHT).on_hover_text(t("Next fixture of the selection")).clicked() {
+                        self.light.step = Some(self.light.step.map_or(0, |i| (i + 1) % n));
+                    }
+                    if ui.button(icons::SELECT_ALL).on_hover_text(t("Whole selection")).clicked() {
+                        self.light.step = None;
+                    }
+                    if let Some(i) = self.light.step
+                        && let Some(f) = self.light.selection.get(i % n)
+                    {
+                        ui.label(RichText::new(tr!("fixture {f}", f = fixture_label(*f))).color(theme::AMBER));
+                    }
                 }
-            };
-            toggle(ui, &mut self.light.blind, icons::VISIBILITY, t("Blind"), t("Program without changing the output"), theme::ACCENT);
-            toggle(ui, &mut self.light.highlight, icons::HIGHLIGHT, t("Highlight"), t("Selected fixtures at open white, full (not recorded)"), theme::AMBER);
-            if self.light.highlight && self.light.selection.len() > 1 {
-                let n = self.light.selection.len();
-                if ui.button(icons::ARROW_RIGHT).on_hover_text(t("Next fixture of the selection")).clicked() {
-                    self.light.step = Some(self.light.step.map_or(0, |i| (i + 1) % n));
-                }
-                if ui.button(icons::SELECT_ALL).on_hover_text(t("Whole selection")).clicked() {
-                    self.light.step = None;
-                }
-                if let Some(i) = self.light.step
-                    && let Some(f) = self.light.selection.get(i % n)
-                {
-                    ui.label(RichText::new(tr!("fixture {f}", f = fixture_label(*f))).color(theme::AMBER));
-                }
-            }
-            ui.separator();
+            });
             self.record_controls(ui, l);
         });
         ui.separator();
         // Encoders in a side panel of their own (resizable, scrolls), tiles fill the rest.
+        // No outer gap: the tiles' scroll-bar gutter makes it, as wide as the presets column's.
         egui::Panel::right("encoders")
-            .frame(side_column(false))
+            .frame(side_column(false).outer_margin(egui::Margin::ZERO))
             .show_separator_line(false)
             .resizable(true)
             .default_size(420.0)
@@ -2003,8 +2008,8 @@ impl App {
 
     /// Feature filter of the presets and effects (also the feature "new preset" stores).
     fn pool_filter(&mut self, ui: &mut Ui) {
-        ui.horizontal_wrapped(|ui| {
-            ui.spacing_mut().item_spacing = egui::vec2(2.0, 2.0);
+        theme::wrapped_row(ui, |ui| {
+            ui.spacing_mut().item_spacing.x = 2.0;
             let f = &mut self.light.preset_filter;
             if ui.selectable_label(f.is_none(), t("All")).on_hover_text(t("Every preset and effect")).clicked() {
                 *f = None;
@@ -2320,7 +2325,7 @@ impl App {
                         theme::card_header(ui, icons::TUNE, t("Settings"));
                         effect_editor(ui, e, audio);
                         ui.add_space(8.0);
-                        ui.horizontal_wrapped(|ui| {
+                        theme::wrapped_row(ui, |ui| {
                             *export = ui.button(theme::with_icon(icons::DOWNLOAD, t("Export effect file…"))).clicked();
                             *save = ui
                                 .button(theme::with_icon(icons::SAVE, t("Save to library")))
@@ -2447,10 +2452,13 @@ impl App {
     /// The command line: Enter runs it, Up/Down walk the history, Esc clears.
     fn command_bar(&mut self, ui: &mut Ui, show: &mut Show) {
         let id = egui::Id::new("light_command_line");
-        ui.horizontal(|ui| {
+        // Wraps on narrow windows: the masters move to a line of their own and the command line takes the
+        // first line's width.
+        theme::wrapped_row(ui, |ui| {
             ui.label(RichText::new(icons::KEYBOARD).font(theme::icon_font(18.0)).color(theme::TEXT_DIM));
             // Room for Run, Keypad, the result and the masters.
-            let w = ui.available_width() - 330.0 - 470.0;
+            let avail = ui.available_width() - 330.0;
+            let w = if avail - 470.0 >= 200.0 { avail - 470.0 } else { avail };
             let r = ui.add(
                 egui::TextEdit::singleline(&mut self.light.cmd_line)
                     .id(id)
@@ -2499,8 +2507,7 @@ impl App {
                 None => {}
             }
             // A copy of the masters, at hand on every page.
-            ui.separator();
-            self.masters_strip(ui, show, false);
+            theme::separated(ui, "masters", |ui| self.masters_strip(ui, show, false));
         });
     }
 
@@ -2743,15 +2750,18 @@ impl App {
     /// Record / update controls (programmer → a sequence).
     fn record_controls(&mut self, ui: &mut Ui, l: &mut Lighting) {
         let seq_id = self.light.sequence.filter(|s| l.sequence(*s).is_some()).or(l.sequences.first().map(|s| s.id));
-        egui::ComboBox::from_id_salt("rec_seq")
-            .selected_text(seq_id.and_then(|s| l.sequence_label(s)).unwrap_or_else(|| t("new sequence").into()))
-            .show_ui(ui, |ui| {
-                for s in &l.sequences {
-                    ui.selectable_value(&mut self.light.sequence, Some(s.id), l.sequence_label(s.id).unwrap_or_default());
-                }
-            });
+        // Sequence and number stay together when the row wraps.
         let hint = seq_id.and_then(|s| l.sequence(s)).map_or_else(|| "1".to_string(), next_cue_number);
-        ui.add(egui::TextEdit::singleline(&mut self.light.record_number).hint_text(hint.clone()).desired_width(50.0));
+        theme::separated(ui, "rec_seq", |ui| {
+            egui::ComboBox::from_id_salt("rec_seq")
+                .selected_text(seq_id.and_then(|s| l.sequence_label(s)).unwrap_or_else(|| t("new sequence").into()))
+                .show_ui(ui, |ui| {
+                    for s in &l.sequences {
+                        ui.selectable_value(&mut self.light.sequence, Some(s.id), l.sequence_label(s.id).unwrap_or_default());
+                    }
+                });
+            ui.add(egui::TextEdit::singleline(&mut self.light.record_number).hint_text(hint.clone()).desired_width(50.0));
+        });
         let can = !self.light.programmer.is_empty() || !self.light.programmer_effects.is_empty();
         if ui.add_enabled(can, egui::Button::new(theme::with_icon(icons::FIBER_MANUAL_RECORD, t("Record cue")))).clicked() {
             let number = Some(self.light.record_number.trim().to_string()).filter(|n| !n.is_empty()).unwrap_or(hint.clone());
@@ -2852,10 +2862,11 @@ impl App {
     /// name, type, the programmer intensity (bar) and colour (swatch), and the selection order.
     fn fixture_tiles(&mut self, ui: &mut Ui, l: &Lighting) {
         const GAP: f32 = 6.0;
-        // Tiles stretch so a row fills the width exactly.
-        let avail = ui.available_width() - 14.0;
+        // Tiles stretch so a row fills the width exactly, short of a gutter for the (floating)
+        // scroll bar; that gutter is also the gap to the encoders column.
+        let avail = ui.available_width() - (ui.spacing().scroll.bar_width + 4.0);
         let per_row = ((avail + GAP) / (132.0 + GAP)).floor().max(1.0);
-        let tile = egui::vec2(((avail + GAP) / per_row - GAP).floor(), 86.0);
+        let tile = egui::vec2((avail + GAP) / per_row - GAP, 86.0);
         let pitch = tile + egui::vec2(GAP, GAP);
         // Only the visible rows are laid out: a pixel rig has thousands of units.
         let units = l.units();
@@ -3138,11 +3149,13 @@ impl App {
             egui::CollapsingHeader::new(theme::caption(t("Spread"))).id_salt("fan").default_open(false).show(ui, |ui| {
                 let FanTool(attr, mut a, mut b, mut centre) = self.light.fan;
                 let mut pick = attr.filter(|x| spread.contains(x)).or(spread.first().copied());
-                ui.horizontal_wrapped(|ui| {
-                    egui::ComboBox::from_id_salt("fan_attr").selected_text(pick.map_or("", |x| x.label())).width(110.0).show_ui(ui, |ui| {
-                        for x in &spread {
-                            ui.selectable_value(&mut pick, Some(*x), x.label());
-                        }
+                theme::wrapped_row(ui, |ui| {
+                    theme::keep_together(ui, "fan_attr", |ui| {
+                        egui::ComboBox::from_id_salt("fan_attr").selected_text(pick.map_or("", |x| x.label())).width(110.0).show_ui(ui, |ui| {
+                            for x in &spread {
+                                ui.selectable_value(&mut pick, Some(*x), x.label());
+                            }
+                        });
                     });
                     ui.label(t("from"));
                     ui.add(percent_drag(&mut a));
@@ -3437,15 +3450,16 @@ impl App {
                 }
             });
             ui.separator();
-            // Cues of the chosen sequence.
+            // Cues of the chosen sequence; nothing drawn under the details column on a narrow window.
             ui.vertical(|ui| {
+                ui.set_clip_rect(ui.clip_rect().intersect(ui.max_rect()));
                 let Some(seq) = self.light.sequence.filter(|s| l.sequence(*s).is_some()).or(l.sequences.first().map(|s| s.id)) else {
                     ui.label(RichText::new(t("No sequences yet: record a cue from the Programmer.")).color(theme::TEXT_DIM));
                     return;
                 };
                 let current = status.iter().find(|x| x.id == seq).and_then(|x| x.cue);
                 let now = std::time::Instant::now();
-                ui.horizontal(|ui| {
+                theme::wrapped_row(ui, |ui| {
                     if ui.button(theme::with_icon(icons::PLAY_ARROW, t("GO next"))).clicked() {
                         light.go(seq, None, now);
                     }
@@ -3453,31 +3467,34 @@ impl App {
                         light.release(seq, 1.0, now);
                     }
                     let sel = self.light.cue.filter(|c| l.sequence(seq).is_some_and(|s| s.index_of(*c).is_some()));
-                    ui.add_enabled_ui(sel.is_some(), |ui| {
-                        if ui.button(theme::with_icon(icons::PLAY_CIRCLE, t("GO selected"))).clicked()
-                            && let Some(c) = sel
-                        {
-                            light.go(seq, Some(c), now);
-                        }
-                        if ui.button(theme::with_icon(icons::UPLOAD_FILE, t("Load into programmer"))).clicked()
-                            && let Some(c) = sel.and_then(|c| l.find_cue(c))
-                        {
-                            self.light.programmer = c.0.cues[c.1].values.clone();
-                            self.light.programmer_effects = c.0.cues[c.1].effects.iter().filter(|r| !r.stop).cloned().collect();
-                            self.light.selection = self.light.programmer.keys().copied().collect();
-                        }
-                        if ui.button(theme::with_icon(icons::DELETE, t("Delete cue"))).clicked()
-                            && let Some(s) = l.sequences.iter_mut().find(|s| s.id == seq)
-                        {
-                            s.cues.retain(|c| Some(c.id) != sel);
-                        }
-                    });
+                    let on = sel.is_some();
+                    if ui.add_enabled(on, egui::Button::new(theme::with_icon(icons::PLAY_CIRCLE, t("GO selected")))).clicked()
+                        && let Some(c) = sel
+                    {
+                        light.go(seq, Some(c), now);
+                    }
+                    if ui.add_enabled(on, egui::Button::new(theme::with_icon(icons::UPLOAD_FILE, t("Load into programmer")))).clicked()
+                        && let Some(c) = sel.and_then(|c| l.find_cue(c))
+                    {
+                        self.light.programmer = c.0.cues[c.1].values.clone();
+                        self.light.programmer_effects = c.0.cues[c.1].effects.iter().filter(|r| !r.stop).cloned().collect();
+                        self.light.selection = self.light.programmer.keys().copied().collect();
+                    }
+                    if ui.add_enabled(on, egui::Button::new(theme::with_icon(icons::DELETE, t("Delete cue")))).clicked()
+                        && let Some(s) = l.sequences.iter_mut().find(|s| s.id == seq)
+                    {
+                        s.cues.retain(|c| Some(c.id) != sel);
+                    }
                 });
                 ui.add_space(4.0);
                 let Some(s) = l.sequences.iter_mut().find(|s| s.id == seq) else { return };
-                const W: [f32; 6] = [24.0, 60.0, 220.0, 80.0, 80.0, 80.0];
+                // The name column gives up width (down to 80) on a narrow window; 60 for the fixture count.
+                let mut w: [f32; 6] = [24.0, 60.0, 220.0, 80.0, 80.0, 80.0];
+                let others: f32 = w.iter().sum::<f32>() - w[2] + 6.0 * ui.spacing().item_spacing.x + 60.0;
+                w[2] = (ui.available_width() - others).clamp(80.0, w[2]);
+                let w = w;
                 ui.horizontal(|ui| {
-                    for (h, w) in ["", t("No."), t("Name"), t("Fade"), t("Down"), t("Delay")].iter().zip(W) {
+                    for (h, w) in ["", t("No."), t("Name"), t("Fade"), t("Down"), t("Delay")].iter().zip(w) {
                         ui.allocate_ui_with_layout(egui::vec2(w, 18.0), egui::Layout::left_to_right(egui::Align::Center), |ui| {
                             ui.set_width(w);
                             ui.label(theme::caption(h));
@@ -3491,10 +3508,10 @@ impl App {
                         ui.horizontal(|ui| {
                             let live = current == Some(c.id);
                             let mark = if live { RichText::new(icons::PLAY_ARROW).color(theme::GREEN) } else { RichText::new("") };
-                            ui.add_sized([W[0], 20.0], egui::Label::new(mark.font(theme::icon_font(14.0))));
-                            ui.add(egui::TextEdit::singleline(&mut c.number).desired_width(W[1] - 8.0));
+                            ui.add_sized([w[0], 20.0], egui::Label::new(mark.font(theme::icon_font(14.0))));
+                            ui.add(egui::TextEdit::singleline(&mut c.number).desired_width(w[1] - 8.0));
                             let name = if c.name.is_empty() { "—" } else { c.name.as_str() };
-                            let (rect, r) = ui.allocate_exact_size(egui::vec2(W[2], 22.0), egui::Sense::click());
+                            let (rect, r) = ui.allocate_exact_size(egui::vec2(w[2], 22.0), egui::Sense::click());
                             let fill = if selected { theme::accent_bg() } else if r.hovered() { theme::BG_HOVER } else { Color32::TRANSPARENT };
                             ui.painter().rect_filled(rect, 4.0, fill);
                             ui.painter().with_clip_rect(rect).text(
@@ -3511,12 +3528,12 @@ impl App {
                             if r.clicked() {
                                 self.light.cue = Some(c.id);
                             }
-                            ui.add_sized([W[3], 20.0], DragValue::new(&mut c.fade).range(0.0..=600.0).speed(0.05).suffix(" s"));
+                            ui.add_sized([w[3], 20.0], DragValue::new(&mut c.fade).range(0.0..=600.0).speed(0.05).suffix(" s"));
                             let mut down = c.down_fade.unwrap_or(c.fade);
-                            if ui.add_sized([W[4], 20.0], DragValue::new(&mut down).range(0.0..=600.0).speed(0.05).suffix(" s")).changed() {
+                            if ui.add_sized([w[4], 20.0], DragValue::new(&mut down).range(0.0..=600.0).speed(0.05).suffix(" s")).changed() {
                                 c.down_fade = Some(down);
                             }
-                            ui.add_sized([W[5], 20.0], DragValue::new(&mut c.delay).range(0.0..=600.0).speed(0.05).suffix(" s"));
+                            ui.add_sized([w[5], 20.0], DragValue::new(&mut c.delay).range(0.0..=600.0).speed(0.05).suffix(" s"));
                             ui.label(RichText::new(c.values.len().to_string()).color(theme::TEXT_DIM));
                         });
                     }
@@ -3795,7 +3812,7 @@ impl App {
                             remove = Some(i);
                         }
                     });
-                    ui.horizontal_wrapped(|ui| {
+                    theme::wrapped_row(ui, |ui| {
                         ui.label(t("Universes"));
                         let mut drop = None;
                         for (ri, r) in o.routes.iter_mut().enumerate() {
@@ -3897,7 +3914,7 @@ impl App {
                             remove = Some(i);
                         }
                     });
-                    ui.horizontal_wrapped(|ui| {
+                    theme::wrapped_row(ui, |ui| {
                         ui.label(t("Universes"));
                         let mut drop = None;
                         for (ri, r) in input.routes.iter_mut().enumerate() {

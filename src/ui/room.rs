@@ -62,7 +62,13 @@ pub(super) fn room_view(
     let id = ui.id().with(salt);
     for (i, s) in speakers.iter_mut().enumerate() {
         let p = to_screen(s.x, s.y);
-        let r = Rect::from_center_size(p, vec2(26.0, 18.0));
+        // As wide as the name, and kept inside the view (a corner speaker's name was cut at the edge).
+        let name = painter.layout_no_wrap(s.name.clone(), theme::semibold(10.0), theme::TEXT);
+        let r = Rect::from_center_size(p, vec2((name.size().x + 10.0).max(26.0), 18.0));
+        let r = r.translate(vec2(
+            (rect.left() - r.left()).max(0.0) + (rect.right() - r.right()).min(0.0),
+            (rect.top() - r.top()).max(0.0) + (rect.bottom() - r.bottom()).min(0.0),
+        ));
         if move_speakers {
             let resp = ui.interact(r, id.with(("spk", i)), Sense::drag());
             if resp.dragged()
@@ -78,7 +84,7 @@ pub(super) fn room_view(
         let lit = Color32::from_rgb(0x2e, 0x30, 0x37).lerp_to_gamma(theme::GREEN, drive[i].clamp(0.0, 1.0) * 0.8);
         painter.rect_filled(r, 4.0, lit);
         painter.rect_stroke(r, 4.0, Stroke::new(1.0, theme::TEXT_FAINT), egui::StrokeKind::Inside);
-        painter.text(p, egui::Align2::CENTER_CENTER, &s.name, theme::semibold(10.0), theme::TEXT);
+        painter.galley(r.center() - name.size() / 2.0, name, theme::TEXT);
         painter.text(r.center_bottom() + vec2(0.0, 2.0), egui::Align2::CENTER_TOP, tr!("out {n}", n = s.output + 1), egui::FontId::proportional(9.0), theme::TEXT_FAINT);
     }
     for (i, o) in objects.iter_mut().enumerate() {
@@ -168,7 +174,7 @@ pub(super) fn speaker_editor(ui: &mut Ui, speakers: &mut Vec<Speaker>, channels:
         ui.label(theme::with_icon(ic::SURROUND_SOUND, t("Room for object audio")));
         ui.label(RichText::new(if custom { t("custom layout") } else { t("default layout for this device") }).weak());
     });
-    ui.horizontal(|ui| {
+    theme::wrapped_row(ui, |ui| {
         ui.label(t("Preset"));
         for (label, layout) in [
             (t("Stereo"), crate::spatial::default_room(2)),
@@ -187,8 +193,11 @@ pub(super) fn speaker_editor(ui: &mut Ui, speakers: &mut Vec<Speaker>, channels:
         }
     });
     ui.horizontal_top(|ui| {
+        // The speaker list keeps the width its columns need (names readable); the room view gets the rest.
+        const LIST_W: f32 = 320.0;
+        let room_w = (ui.available_width() - LIST_W - ui.spacing().item_spacing.x).clamp(180.0, 300.0);
         ui.vertical(|ui| {
-            ui.set_width(300.0);
+            ui.set_width(room_w);
             edited |= room_view(ui, "settings-room", &mut shown, true, &mut []);
         });
         ui.vertical(|ui| {
@@ -201,7 +210,8 @@ pub(super) fn speaker_editor(ui: &mut Ui, speakers: &mut Vec<Speaker>, channels:
                 ui.label("");
                 ui.end_row();
                 for (i, s) in shown.iter_mut().enumerate() {
-                    edited |= ui.add(egui::TextEdit::singleline(&mut s.name).desired_width(50.0)).changed();
+                    // Sized: in a grid cell a TextEdit stays as narrow as the column was last frame.
+                    edited |= ui.add_sized([90.0, ui.spacing().interact_size.y], egui::TextEdit::singleline(&mut s.name).vertical_align(egui::Align::Center)).changed();
                     let mut out = s.output + 1;
                     if ui.add(DragValue::new(&mut out).range(1..=crate::model::MAX_OUT_CHANNELS as u16)).changed() {
                         s.output = out - 1;

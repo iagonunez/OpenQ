@@ -97,6 +97,8 @@ pub fn icon_button(ui: &mut Ui, glyph: &str, tooltip: &str) -> Response {
 }
 
 pub fn install(ctx: &egui::Context) {
+    // OpenQ handles Ctrl + / Ctrl − itself (saved interface scale); egui's Ctrl+0 would take a cue shortcut.
+    ctx.options_mut(|o| o.zoom_with_keyboard = false);
     let mut fonts = FontDefinitions::default();
     let add = |fonts: &mut FontDefinitions, name: &str, bytes: &'static [u8], tweak: FontTweak| {
         fonts.font_data.insert(
@@ -340,6 +342,57 @@ pub fn tab<T: PartialEq + Copy>(ui: &mut Ui, current: &mut T, value: T, glyph: &
     resp
 }
 
+/// Gap between the lines of a [`wrapped_row`].
+pub const ROW_GAP: f32 = 6.0;
+
+/// A row of widgets that moves whole widgets to the next line when it runs out of width, with
+/// [`ROW_GAP`] between the lines. Plain `horizontal_wrapped` wraps the text inside a button or a
+/// label instead (a button three lines tall, a label's second line glued to the next row's widgets).
+/// Not in an `egui::Grid` cell: the grid keeps the row one line tall and the next row overlaps the
+/// second line (stack fixed lines with `vertical` there).
+pub fn wrapped_row<R>(ui: &mut Ui, add: impl FnOnce(&mut Ui) -> R) -> egui::InnerResponse<R> {
+    ui.horizontal_wrapped(|ui| {
+        ui.style_mut().wrap_mode = Some(egui::TextWrapMode::Extend);
+        ui.spacing_mut().item_spacing.y = ROW_GAP;
+        add(ui)
+    })
+}
+
+/// Widgets that a [`wrapped_row`] moves to the next line as one block (e.g. a caption with its
+/// controls). egui places a nested group before knowing its size, so the block's width from the
+/// last frame decides.
+pub fn keep_together<R>(ui: &mut Ui, salt: &str, add: impl FnOnce(&mut Ui) -> R) -> R {
+    block(ui, salt, false, add)
+}
+
+/// [`keep_together`] after a separator, which is left out when the block starts a line (no
+/// separator dangling at the end of a line or opening the next).
+pub fn separated<R>(ui: &mut Ui, salt: &str, add: impl FnOnce(&mut Ui) -> R) -> R {
+    block(ui, salt, true, add)
+}
+
+fn block<R>(ui: &mut Ui, salt: &str, separator: bool, add: impl FnOnce(&mut Ui) -> R) -> R {
+    let id = ui.id().with(salt);
+    let width = ui.data(|d| d.get_temp::<f32>(id)).unwrap_or(0.0);
+    // A separator is 6 points wide (egui's default spacing) plus the gap after it.
+    let sep = if separator { 6.0 + ui.spacing().item_spacing.x } else { 0.0 };
+    let mut line_start = ui.cursor().left() <= ui.max_rect().left();
+    if !line_start && width + sep > ui.available_size_before_wrap().x {
+        ui.end_row();
+        line_start = true;
+    }
+    if separator && !line_start {
+        ui.separator();
+    }
+    let r = ui.horizontal(add);
+    let now = r.response.rect.width();
+    if (now - width).abs() > 0.5 {
+        ui.data_mut(|d| d.insert_temp(id, now));
+        ui.ctx().request_repaint();
+    }
+    r.inner
+}
+
 /// One card in a [`cards`] layout: an icon, a title and the width it wants.
 pub struct Card<'a> {
     /// Icon glyph shown before the title.
@@ -403,7 +456,8 @@ pub fn cards(ui: &mut Ui, salt: &str, specs: &[Card], mut add: impl FnMut(&mut U
             ui.data_mut(|d| d.insert_temp(h_id, tallest));
             ui.ctx().request_repaint();
         }
-        ui.add_space(GAP);
+        // Rows as far apart as the cards in a row.
+        ui.add_space(GAP - ui.spacing().item_spacing.y);
     }
 }
 

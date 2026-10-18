@@ -28,6 +28,7 @@ mod preview;
 mod recovery;
 mod remote;
 mod room;
+mod scale;
 #[cfg(feature = "video")]
 mod stage;
 mod surfaces;
@@ -223,6 +224,10 @@ pub struct App {
     show_settings: bool,
     /// The first-run language picker is open ([`App::ask_language`]).
     ask_language: bool,
+    /// Interface scale (egui zoom factor), saved per computer (`scale.rs`).
+    ui_scale: f32,
+    /// The saved scale was applied (first frame).
+    scale_applied: bool,
     show_log: bool,
     scroll_to: Option<CueId>,
     title: String,
@@ -310,6 +315,8 @@ impl App {
             log_tail: (0, String::new(), Instant::now()),
             show_settings: false,
             ask_language: false,
+            ui_scale: scale::load(),
+            scale_applied: false,
             show_log: false,
             scroll_to: None,
             title: String::new(),
@@ -601,6 +608,13 @@ impl App {
         }
         if ctx.input_mut(|i| i.consume_shortcut(&sc(cmd, Key::E))) {
             self.toggle_mode();
+        }
+        // Interface scale (egui's own zoom keys are off: its Ctrl+0 would take the Goto cue shortcut).
+        if ctx.input_mut(|i| i.consume_shortcut(&sc(cmd, Key::Plus)) || i.consume_shortcut(&sc(cmd, Key::Equals))) {
+            self.step_ui_scale(ctx, true);
+        }
+        if ctx.input_mut(|i| i.consume_shortcut(&sc(cmd, Key::Minus))) {
+            self.step_ui_scale(ctx, false);
         }
         if ctx.input_mut(|i| i.consume_key(Modifiers::NONE, Key::F1)) {
             self.open_manual();
@@ -1835,6 +1849,9 @@ impl App {
             ui.label(theme::with_icon(icons::LANGUAGE, t("Language")));
             self.language_setting(ui);
             ui.end_row();
+            ui.label(theme::with_icon(icons::ZOOM_IN, t("Interface scale")));
+            self.ui_scale_setting(ui);
+            ui.end_row();
             ui.label(t("Stop-all fade time"));
             widgets::time_edit(ui, &mut show.ws.settings.panic_fade);
             ui.end_row();
@@ -2309,12 +2326,12 @@ impl App {
     /// (`OPENQ_SCREENSHOT_ANIM_TIME` sets the Animation tab playhead);
     /// `OPENQ_SCREENSHOT_LIGHTING=<page>` opens the Lighting workspace on a page (`playback`: the
     /// Playback page with its sequence and button cards; `colour`: the
-    /// programmer's Colour encoders; `plan`: the patch's top view with four fixtures selected; `plot`: the plot editor with three fixtures selected;
+    /// programmer's Colour encoders; `executor`: the Playback page with the first executor's settings window; `plan`: the patch's top view with four fixtures selected; `plot`: the plot editor with three fixtures selected;
     /// `types`: the fixture type editor on a type with ranges; `beam`: the Beam encoders with
     /// range drop-downs for every unit with a gobo; `slots`: the same with the gobo drop-down open; `ofl`: the Open Fixture Library window searching
     /// `OPENQ_SCREENSHOT_OFL`);
     /// `OPENQ_SCREENSHOT_MODE=show` starts in show mode; `OPENQ_SCREENSHOT_INLINE=1` opens an
-    /// in-place pre-wait editor on the selected cue.
+    /// in-place pre-wait editor on the selected cue. `OPENQ_SCREENSHOT_ZOOM=<factor>` zooms the UI (narrow layouts).
     /// `OPENQ_SCREENSHOT_STAGE=<n>` also saves stage n's output (1 = the first), as the video
     /// output process draws it, next to the capture (`<path>.stage.png`;
     /// `OPENQ_SCREENSHOT_MAPPING=1` turns on the first stage's mapping test pattern).
@@ -2323,6 +2340,13 @@ impl App {
             return;
         };
         self.frame_count += 1;
+        // Optional: UI zoom, for narrow layouts under a tiling compositor (it sets the window size). Set on every
+        // frame: the window's scale factor can arrive after the first ones and reset it.
+        if let Some(z) = std::env::var("OPENQ_SCREENSHOT_ZOOM").ok().and_then(|z| z.parse::<f32>().ok()).filter(|z| (0.5..=4.0).contains(z))
+            && ctx.zoom_factor() != z
+        {
+            ctx.set_zoom_factor(z);
+        }
         if self.frame_count == 1 {
             // Optional: select cue N and an inspector tab (time|levels|eq|geometry|animation|settings).
             if let Ok(n) = std::env::var("OPENQ_SCREENSHOT_CUE") {
@@ -2364,6 +2388,9 @@ impl App {
             if let Ok(page) = std::env::var("OPENQ_SCREENSHOT_LIGHTING") {
                 self.view = lighting::View::Lighting;
                 self.light.tab = lighting::LightTab::from_name(&page);
+                if page == "executor" {
+                    self.light.playback.open_editor(show.ws.lighting.buttons.first().map(|b| b.id));
+                }
                 if page == "colour" {
                     self.light.feature = Some(crate::light::Feature::Colour);
                 }
@@ -2723,6 +2750,7 @@ impl App {
             let show: &mut Show = &mut guard;
             self.remote_tick(&ctx, show);
             self.sync_playhead(show);
+            self.sync_ui_scale(&ctx);
             self.handle_keys(&ctx, show);
             self.handle_dropped_files(&ctx, show);
             self.debug_screenshot(&ctx, show);
