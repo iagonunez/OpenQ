@@ -1364,15 +1364,5 @@
  "Interface scale": "Escala da interface",
  "Interface scale {scale}": "Escala da interface {scale}",
  "Cannot save the interface scale: {e}": "Non se pode gardar a escala da interface: {e}",
- "Ctrl + / Ctrl − change it too": "Ctrl + / Ctrl − tamén a cambian",
- "Open in OpenVis": "Abrir en OpenVis",
- "Show the patch in the OpenVis 3D visualiser, following this show": "Ver o patch no visualizador 3D OpenVis, seguindo esta función",
- "Patch some fixtures first: OpenVis shows the patch": "Primeiro engade aparatos ao patch: OpenVis mostra o patch",
- "No config folder: can't save the rig for OpenVis": "Non hai cartafol de configuración: non se pode gardar o rig para OpenVis",
- "Rig sent to OpenVis": "Rig enviado a OpenVis",
- "Can't start OpenVis: {e}": "Non se pode iniciar OpenVis: {e}",
- "Where is OpenVis?": "Onde está OpenVis?",
- "OpenVis not found: install it or pick the program": "Non se atopa OpenVis: instálao ou escolle o programa",
- "OpenVis started: it follows this show": "OpenVis iniciado: segue esta función",
- "OpenVis started with the rig. Turn on sharing (Remote → Share this OpenQ) so it follows the show live": "OpenVis iniciado co rig. Activa compartir (Remoto → Compartir este OpenQ) para que siga a función en directo"
+ "Ctrl + / Ctrl − change it too": "Ctrl + / Ctrl − tamén a cambian"
 }

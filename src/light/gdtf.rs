@@ -364,9 +364,16 @@ pub fn import_xml(text: &str) -> anyhow::Result<Imported> {
             } else {
                 Vec::new()
             };
-            let default = functions
-                .iter()
-                .find_map(|f| attr(*f, "Default"))
+            // The resting value is the channel's initial function's ("Geometry_Attribute.Channel.Function"; files whose
+            // functions have no names name one of its channel sets): "Shutter Open", not the first function's "Closed".
+            let initial = attr(c, "InitialFunction").and_then(|s| s.rsplit('.').next()).map(str::trim).filter(|n| !n.is_empty()).and_then(|n| {
+                functions.iter().find(|f| attr(**f, "Name").is_some_and(|x| x.trim() == n)).or_else(|| {
+                    functions.iter().find(|f| children(**f, "ChannelSet").any(|s| attr(s, "Name").is_some_and(|x| x.trim() == n)))
+                })
+            });
+            let default = initial
+                .and_then(|f| attr(*f, "Default").or_else(|| attr(*f, "DMXFrom")))
+                .or_else(|| functions.iter().find_map(|f| attr(*f, "Default")))
                 .or(attr(c, "Default"))
                 .and_then(dmx_value)
                 .map(|v| v as f32);
@@ -654,10 +661,12 @@ fn cell_layouts(t: &FixtureType) -> Vec<Layout> {
         use Attribute::*;
         a.is_emitter() || matches!(a, ColorWheel | ColorWheel2 | Gobo | Gobo2 | Prism | Prism2 | Iris | Focus | Cyan | Magenta | Yellow)
     };
+    // A type with nothing but controls (a hazer: fog, fan) gives no light: no beam a visualiser would draw lit.
+    let gives_light = t.modes.iter().any(|m| m.all_channels().any(|c| c.attribute.feature() != crate::light::model::Feature::Control));
     let mut out = Vec::new();
     for (mi, m) in t.modes.iter().enumerate() {
         if m.heads.is_empty() {
-            out.push(Layout { suffix: String::new(), main_beam: true, cells: Vec::new() });
+            out.push(Layout { suffix: String::new(), main_beam: gives_light, cells: Vec::new() });
             continue;
         }
         let root = unique(format!("Body ({})", modes[mi]), &mut taken);
@@ -1027,6 +1036,45 @@ mod tests {
         assert_eq!(m.footprint_of(1), 1);
         assert!(r.notes.is_empty(), "{:?}", r.notes);
         assert!(!f.physical.moving, "no tilt channel");
+    }
+
+    #[test]
+    fn a_hazer_has_no_beam() {
+        use crate::light::model::FixtureMode;
+        let ch = |attribute, offset| ChannelDef { attribute, offset, ..Default::default() };
+        let mut t = FixtureType { id: "t/hazer".into(), manufacturer: "Acme".into(), name: "Hazer".into(), ..Default::default() };
+        t.modes.push(FixtureMode { name: "2ch".into(), channels: vec![ch(Attribute::Fog, 0), ch(Attribute::Fan, 1)], ..Default::default() });
+        let xml = String::from_utf8(crate::light::zipread::read(&export(&t).unwrap(), "description.xml", 1 << 20).unwrap()).unwrap();
+        assert!(!xml.contains("<Beam "), "{xml}");
+        t.modes[0].channels.push(ch(Attribute::Dimmer, 2));
+        let xml = String::from_utf8(crate::light::zipread::read(&export(&t).unwrap(), "description.xml", 1 << 20).unwrap()).unwrap();
+        assert!(xml.contains("<Beam "), "{xml}");
+    }
+
+    #[test]
+    fn default_is_the_initial_functions() {
+        // As GLP files have it: functions without names, the initial function named by its channel set.
+        let shutter = r#"<DMXChannel DMXBreak="1" Offset="7" Geometry="Head" InitialFunction="Head_Shutter1.Shutter1.Shutter Open">
+            <LogicalChannel Attribute="Shutter1">
+              <ChannelFunction Attribute="Shutter1" DMXFrom="0/1" Default="0/1"><ChannelSet Name="Shutter Closed" DMXFrom="0/1"/></ChannelFunction>
+              <ChannelFunction Attribute="Shutter1Strobe" DMXFrom="64/1" Default="64/1"><ChannelSet Name="Strobe" DMXFrom="64/1"/></ChannelFunction>
+              <ChannelFunction Attribute="Shutter1" DMXFrom="240/1" Default="240/1"><ChannelSet Name="Shutter Open" DMXFrom="240/1"/></ChannelFunction>
+            </LogicalChannel>
+          </DMXChannel>
+          <DMXChannel DMXBreak="1" Offset="8" Geometry="Head" InitialFunction="Head_Focus1.Focus1.Far">
+            <LogicalChannel Attribute="Focus1">
+              <ChannelFunction Name="Near" Attribute="Focus1" DMXFrom="0/1" Default="0/1"/>
+              <ChannelFunction Name="Far" Attribute="Focus1" DMXFrom="128/1"/>
+            </LogicalChannel>
+          </DMXChannel>
+        </DMXChannels>"#;
+        let r = import_xml(&SPOT.replacen("</DMXChannels>", shutter, 1)).unwrap();
+        let m = &r.fixture.modes[0];
+        assert_eq!(m.channel(Attribute::Shutter).unwrap().default, Some(240.0 / 255.0));
+        // No Default on the initial function: where it starts.
+        assert_eq!(m.channel(Attribute::Focus).unwrap().default, Some(128.0 / 255.0));
+        // No initial function: the first function's default, as before.
+        assert!((m.channel(Attribute::Pan).unwrap().default.unwrap() - 0.5).abs() < 0.001);
     }
 
     #[test]

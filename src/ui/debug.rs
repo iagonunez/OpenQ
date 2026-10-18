@@ -4,7 +4,8 @@
 //! start-up: `go`, `stop`, `panic`, `close` (close every stage window), `select:<cue number>`,
 //! `tab:<inspector tab>`, `preview` (toggle the geometry preview), `scrub` / `noscrub` (move the
 //! Animation tab playhead every frame), `drag` / `nodrag` (edit the selected cue's first keyframe
-//! every frame, like dragging it on the timeline), `quit`.
+//! every frame, like dragging it on the timeline), `cmd:<lighting command line>` (`cmd:go 1`),
+//! `gm:<0..1>`, `blackout` / `noblackout`, `quit`.
 //! `OPENQ_DEBUG_FRAMES=<file>` writes one CSV line per frame (seconds since start, time spent in
 //! `App::ui` in ms, time since the previous frame in ms, the previous frame's whole CPU time in ms
 //! including tessellation and painting) when the script quits.
@@ -77,6 +78,18 @@ impl App {
                         _ => inspector::Tab::Basics,
                     }
                 }
+                // Masters, as the header's controls send them.
+                "gm" => {
+                    if let Ok(v) = arg.parse::<f32>() {
+                        self.control(show, Command::Light(crate::control::LightControl::GrandMaster(v)));
+                    }
+                }
+                "blackout" | "noblackout" => self.control(show, Command::Light(crate::control::LightControl::Blackout(verb == "blackout"))),
+                // A lighting command line ("go 1", "1 thru 10 at 50").
+                "cmd" => match crate::light::command::parse(arg).and_then(|c| self.run_commands(show, &c)) {
+                    Ok(m) => log::info!("debug script: {arg}: {m}"),
+                    Err(e) => log::warn!("debug script: {arg}: {e}"),
+                },
                 "quit" => {
                     self.write_frames();
                     std::process::exit(0);

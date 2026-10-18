@@ -126,34 +126,6 @@ impl RemoteUi {
         })
     }
 
-    /// A login for a program started on this computer (OpenVis): this OpenQ's loopback address, a device id and
-    /// its token. `device` is reused while it is still trusted, else a device named `name` (Control role) is
-    /// added. `None` while sharing is off.
-    pub(super) fn local_login(&self, device: Option<uuid::Uuid>, name: &str) -> Option<(String, uuid::Uuid, String)> {
-        let port = self.server.as_ref()?.port();
-        let mut c = self.config.lock();
-        let (id, token) = match device.and_then(|id| c.devices.iter().find(|d| d.id == id)) {
-            Some(d) => (d.id, d.token.clone()),
-            None => {
-                let now = crate::remote::unix_now();
-                let d = crate::remote::TrustedDevice {
-                    id: uuid::Uuid::new_v4(),
-                    name: name.to_string(),
-                    token: crate::remote::new_token(),
-                    role: Role::Control,
-                    paired_at: now,
-                    last_seen: 0,
-                };
-                let pair = (d.id, d.token.clone());
-                c.devices.push(d);
-                drop(c);
-                self.save_config();
-                pair
-            }
-        };
-        Some((format!("127.0.0.1:{port}"), id, token))
-    }
-
     fn save_config(&self) {
         if let Err(e) = self.config.lock().save() {
             log::warn!("cannot save remote config: {e:#}");

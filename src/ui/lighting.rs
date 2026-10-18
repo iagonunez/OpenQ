@@ -549,13 +549,6 @@ impl App {
                 self.deferred.push(super::Deferred::ExportPatch(false));
             }
             if ui
-                .add_enabled(!l.fixtures.is_empty(), egui::Button::new(theme::with_icon(icons::VIEW_IN_AR, t("Open in OpenVis"))))
-                .on_hover_text(t("Show the patch in the OpenVis 3D visualiser, following this show"))
-                .clicked()
-            {
-                self.deferred.push(super::Deferred::OpenVis);
-            }
-            if ui
                 .add_enabled(!l.fixtures.is_empty(), egui::Button::new(theme::with_icon(icons::EDIT, t("Plot…"))))
                 .on_hover_text(t("Arrange the plan as a drawing (move items, change texts), then save it as a PDF (A3, to scale) or SVG"))
                 .clicked()
@@ -2595,7 +2588,7 @@ impl App {
         self.light.cmd_result = Some(r);
     }
 
-    fn run_commands(&mut self, show: &mut Show, cmds: &[crate::light::command::Cmd]) -> Result<String, String> {
+    pub(super) fn run_commands(&mut self, show: &mut Show, cmds: &[crate::light::command::Cmd]) -> Result<String, String> {
         use crate::control::{Command, LightControl};
         use crate::light::command::{Cmd, SelOp, SelSet, Target};
         let design = self.can_design();
@@ -3109,6 +3102,8 @@ impl App {
                 _ => a.label().to_string(),
             };
             let slots = self.slot_channel(l, a);
+            // Continuous attributes keep their slider; their named ranges go on a line below.
+            let continuous = a.is_continuous();
             ui.horizontal(|ui| {
                 let (r, resp) = ui.allocate_exact_size(egui::vec2(92.0, 26.0), egui::Sense::hover());
                 let fg = if current.is_some() { theme::TEXT } else { theme::TEXT_DIM };
@@ -3117,8 +3112,8 @@ impl App {
                     resp.on_hover_text(a.label());
                 }
                 match &slots {
-                    Some((chan, type_id)) => self.slot_picker(ui, l, a, chan, type_id, current, preset, bar_w),
-                    None => {
+                    Some((chan, type_id)) if !continuous => self.slot_picker(ui, l, a, chan, type_id, current, preset, bar_w),
+                    _ => {
                         if let Some(v) = attr_bar(ui, current, preset, bar_w) {
                             self.set_selection(l, a, v);
                         }
@@ -3135,8 +3130,15 @@ impl App {
                     self.light.programmer.retain(|_, v| !v.is_empty());
                 }
             });
+            if continuous && let Some((chan, type_id)) = &slots {
+                ui.horizontal(|ui| {
+                    ui.add_space(92.0 + gap);
+                    self.slot_picker(ui, l, a, chan, type_id, current, preset, bar_w);
+                });
+            }
             // A range that is a span (a speed, an index angle, "strobe slow → fast"): a bar within it.
             if let Some((chan, _)) = &slots
+                && !continuous
                 && let Some(v) = current
                 && let Some(i) = chan.range_at(v).filter(|r| r.is_span()).and_then(|r| chan.ranges.iter().position(|x| std::ptr::eq(x, r)))
             {
@@ -3150,7 +3152,7 @@ impl App {
             ui.add_space(2.0);
         }
         // Fan: spread one attribute of this page across the selection in selection order.
-        let spread: Vec<Attribute> = page.iter().copied().filter(|a| self.slot_channel(l, *a).is_none()).collect();
+        let spread: Vec<Attribute> = page.iter().copied().filter(|a| a.is_continuous() || self.slot_channel(l, *a).is_none()).collect();
         if self.light.selection.len() > 1 && !spread.is_empty() {
             ui.add_space(8.0);
             egui::CollapsingHeader::new(theme::caption(t("Spread"))).id_salt("fan").default_open(false).show(ui, |ui| {

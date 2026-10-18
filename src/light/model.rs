@@ -276,6 +276,17 @@ impl Attribute {
         self == Attribute::Dimmer
     }
 
+    /// A level across the whole channel (intensity, colour mixing, position, zoom...): the programmer always gives
+    /// it a slider, even when the fixture file also names ranges of it. Wheels, shutters, macros and controls are
+    /// picked by their named ranges instead.
+    pub fn is_continuous(self) -> bool {
+        use Attribute::*;
+        matches!(
+            self,
+            Dimmer | Red | Green | Blue | White | Amber | Lime | Uv | Cyan | Magenta | Yellow | Cto | Pan | Tilt | PanTiltSpeed | Zoom | Focus | Iris | Frost | Frost2 | Fog | Fan
+        )
+    }
+
     /// Colour emitters scaled by the virtual dimmer of fixtures without a dimmer channel.
     pub fn is_emitter(self) -> bool {
         use Attribute::*;
