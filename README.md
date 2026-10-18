@@ -22,6 +22,8 @@ one, whether it's music, a sound effect, a movie on a projector, a title on a sc
 message to the lighting desk. It is an open-source application written in Rust with
 [egui](https://github.com/emilk/egui), and it's free to use, including for commercial productions.
 
+NOTE: Seeing the hype around REA and cloned apps, I have to say here that this is a project started from scratch, not a clone of QLab. I have my own ideas and roadmap for it, so there are things that are similar and things that will be very different.
+
 ### 📖 The story behind OpenQ
 I first started working on live shows as a teenager and always admired the work of the people at Figure 53 with QLab as the industry standard for any live production. Later I studied Electrical Engineering and began working as a Software Engineer. I have always had this project on the back of my mind as the perfect hobby project, so I finally decided to start working on it.
 
