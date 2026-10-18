@@ -12,6 +12,8 @@
 //! * [`mvr`] — MVR import and export of the patch with positions (visualisers, other desks).
 //! * [`usitt`] — USITT ASCII import and export (patch, cues, groups and submasters; intensity only).
 //! * [`plot`] — light plot (top view) as SVG or PDF.
+//! * [`focus`] — focus points: aiming fixtures at places on stage, and correcting points or the
+//!   rig from fixtures aimed by hand.
 //! * [`place`] — fixture placement layouts (line, arc, grid) for the patch's Arrange tool.
 //! * [`patch`] — design deltas ([`patch::LightingPatch`]) sent between remote devices.
 //! * [`playback`] — the compiled show and the playback state machine (fades, HTP/LTP, masters).
@@ -32,6 +34,7 @@ pub mod effects;
 pub mod engine;
 pub mod enttec;
 pub mod fixlib;
+pub mod focus;
 pub mod colour;
 pub mod folder;
 pub mod gdtf;

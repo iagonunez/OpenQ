@@ -79,7 +79,7 @@ pub const EQ_FREQ: (f32, f32) = (20.0, 20_000.0);
 pub const EQ_Q: (f32, f32) = (0.1, 18.0);
 /// Playback rate (varispeed).
 pub const RATE: (f32, f32) = (0.25, 4.0);
-/// Farthest a fixture, a plot shape or a label sits from the plot's origin, metres.
+/// Farthest a fixture, a focus point, a plot shape or a label sits from the plot's origin, metres.
 pub const MAX_DISTANCE: f32 = 200.0;
 /// Farthest the plot editor moves a title or the legend, page units (the SVG of a 400 m plot is 24 000 px wide).
 pub const MAX_PLOT_PAGE: f32 = 30_000.0;
@@ -135,6 +135,8 @@ pub const MAX_FIXTURE_ANGLE: f32 = 3_600.0;
 pub const BUTTON_SCALE: (f32, f32) = (0.25, 4.0);
 /// Playback button pages.
 pub const MAX_BUTTON_PAGES: usize = 100;
+/// Focus points of a lighting design.
+pub const MAX_POINTS: usize = 1_000;
 /// Longest playback button page name, characters.
 pub const MAX_PAGE_NAME: usize = 64;
 
@@ -482,6 +484,12 @@ pub fn lighting(l: &mut Lighting) {
             f32_in(v, -MAX_DISTANCE, MAX_DISTANCE);
         }
         f32_in(&mut s.height, -MAX_DISTANCE, MAX_DISTANCE);
+    }
+    l.points.truncate(MAX_POINTS);
+    for p in &mut l.points {
+        for v in &mut p.position {
+            f32_in(v, -MAX_DISTANCE, MAX_DISTANCE);
+        }
     }
     plot(&mut l.plot);
     for seq in &mut l.sequences {

@@ -5,6 +5,7 @@
 //! 101.1 thru 101.12 at 80  cells 1..12 of multi-cell fixture 101
 //! group 2 + 7 - 3 @ full   group 2 plus 7 minus 3, full
 //! 101 > 104 preset 3       ">" is thru; apply preset 3
+//! 201 thru 208 point 2     aim the selection at focus point 2 (also "at point 2")
 //! all at out               "out" = 0
 //! effect 2                 run effect 2 on the selection
 //! gobo star | wheel 3      pick a named range of a channel by name (prefix) or number;
@@ -19,7 +20,7 @@
 //! Keywords can be abbreviated to any unique prefix of at least two letters (`th`, `gr`,
 //! `rec`). Parsing is pure; the UI applies the commands.
 
-use super::model::{Attribute, FixtureId, GroupId, PresetId, SequenceId};
+use super::model::{Attribute, FixtureId, GroupId, PointId, PresetId, SequenceId};
 
 /// How a selection term changes the selection.
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
@@ -65,6 +66,8 @@ pub enum Cmd {
     At(f32),
     /// Apply a preset to the selection.
     Preset(PresetId),
+    /// Aim the selection at a focus point.
+    Point(PointId),
     /// Run an effect on the selection.
     Effect(u32),
     /// Set an attribute of the selection to one of its named ranges (name, prefix or number).
@@ -87,8 +90,8 @@ pub enum Cmd {
     Highlight,
 }
 
-const KEYWORDS: [&str; 17] =
-    ["thru", "at", "full", "out", "group", "all", "preset", "effect", "clear", "record", "update", "delete", "cue", "go", "release", "blind", "highlight"];
+const KEYWORDS: [&str; 18] =
+    ["thru", "at", "full", "out", "group", "all", "preset", "point", "effect", "clear", "record", "update", "delete", "cue", "go", "release", "blind", "highlight"];
 
 /// Range words: the attribute each picks a named range of.
 const RANGE_WORDS: [(&str, Attribute); 17] = [
@@ -325,6 +328,10 @@ pub fn parse(line: &str) -> Result<Vec<Cmd>, String> {
                 p.pos += 1;
                 out.push(Cmd::Preset(p.int()?));
             }
+            Some("point") => {
+                p.pos += 1;
+                out.push(Cmd::Point(p.int()?));
+            }
             Some("effect") => {
                 p.pos += 1;
                 out.push(Cmd::Effect(p.int()?));
@@ -374,10 +381,13 @@ pub fn parse(line: &str) -> Result<Vec<Cmd>, String> {
     Ok(out)
 }
 
-/// After `at`: a level or `preset N`.
+/// After `at`: a level, `preset N` or `point N`.
 fn at(p: &mut Parser) -> Result<Cmd, String> {
     if p.eat("preset") {
         return Ok(Cmd::Preset(p.int()?));
+    }
+    if p.eat("point") {
+        return Ok(Cmd::Point(p.int()?));
     }
     Ok(Cmd::At(p.level()?))
 }
@@ -403,6 +413,8 @@ mod tests {
         assert_eq!(parse("g2@0").unwrap(), [Select(Replace, Group(2)), At(0.0)]);
         assert_eq!(parse("all at out").unwrap(), [Select(Replace, All), At(0.0)]);
         assert_eq!(parse("5 th 8 at preset 3").unwrap(), [Select(Replace, Range(5, 8)), Preset(3)]);
+        assert_eq!(parse("201 > 208 point 2").unwrap(), [Select(Replace, Range(201, 208)), Point(2)]);
+        assert_eq!(parse("1 at po 4").unwrap(), [Select(Replace, Fixture(1)), Point(4)]);
         assert_eq!(parse("AT 33.5").unwrap(), [At(0.335)]);
         use crate::light::model::cell_id;
         assert_eq!(parse("101.1 thru 101.12 at 80").unwrap(), [Select(Replace, Range(cell_id(101, 1), cell_id(101, 12))), At(0.8)]);

@@ -1,8 +1,8 @@
 //! Fixture placement helpers: positions along a line, an arc or a grid, for the Arrange tool.
 //!
 //! Positions are metres in the patch's space (x right, y up, z towards the audience); the plan
-//! view looks down on x/z. They are used by visualisers (a separate program) and plots, not by
-//! playback.
+//! view looks down on x/z. They are used by visualisers (a separate program), plots and focus
+//! points ([`super::focus`]: fixtures aim at points from their positions).
 
 /// How to lay out a set of fixtures.
 #[derive(Clone, Copy, Debug, PartialEq)]

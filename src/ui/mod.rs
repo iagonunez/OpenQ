@@ -15,6 +15,7 @@ mod inspector;
 mod language;
 mod light_files;
 mod light_playback;
+mod light_points;
 mod lighting;
 mod manual;
 #[cfg(target_os = "macos")]
@@ -2328,7 +2329,8 @@ impl App {
     /// Playback page with its sequence and button cards; `colour`: the
     /// programmer's Colour encoders; `executor`: the Playback page with the first executor's settings window; `plan`: the patch's top view with four fixtures selected; `plot`: the plot editor with three fixtures selected;
     /// `types`: the fixture type editor on a type with ranges; `beam`: the Beam encoders with
-    /// range drop-downs for every unit with a gobo; `slots`: the same with the gobo drop-down open; `ofl`: the Open Fixture Library window searching
+    /// range drop-downs for every unit with a gobo; `slots`: the same with the gobo drop-down open; `points`: the
+    /// Position encoders with fixtures aimed at the second focus point, one nudged by hand (rig correction); `ofl`: the Open Fixture Library window searching
     /// `OPENQ_SCREENSHOT_OFL`);
     /// `OPENQ_SCREENSHOT_MODE=show` starts in show mode; `OPENQ_SCREENSHOT_INLINE=1` opens an
     /// in-place pre-wait editor on the selected cue. `OPENQ_SCREENSHOT_ZOOM=<factor>` zooms the UI (narrow layouts).
@@ -2422,7 +2424,20 @@ impl App {
                     self.light.types.open_ofl(std::env::var("OPENQ_SCREENSHOT_OFL").unwrap_or_default());
                 }
                 // A selection and some programmer values to look at.
-                if page == "beam" || page == "slots" {
+                if page == "points" {
+                    use crate::light::Attribute;
+                    let l = show.ws.lighting.clone();
+                    self.light.feature = Some(crate::light::Feature::Position);
+                    self.light.selection = l.units().into_iter().filter(|u| l.unit_attributes(*u).contains(&Attribute::Pan)).take(3).collect();
+                    if let Some(p) = l.points.get(1) {
+                        self.apply_point(&l, p.id);
+                    }
+                    if let Some(f) = self.light.selection.first()
+                        && let Some(pan) = l.resolve(*f, Attribute::Pan, crate::light::model::Value::Point { point: l.points.get(1).map_or(0, |p| p.id) })
+                    {
+                        self.light.programmer.entry(*f).or_default().insert(Attribute::Pan, (pan + 0.01).into());
+                    }
+                } else if page == "beam" || page == "slots" {
                     use crate::light::Attribute;
                     if page == "slots" {
                         self.light.open_slots = Some(Attribute::Gobo);

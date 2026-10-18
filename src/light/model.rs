@@ -751,6 +751,19 @@ pub struct DmxAddress {
     pub address: u16,
 }
 
+/// A position or rotation in the patch's axes (x right, y up, z towards the audience: how
+/// positions are stored) → stage axes, what the UI shows and takes: x across (right as seen from
+/// the audience), y depth (+ upstage), z height, as in MVR (DIN SPEC 15801). A rotation's three
+/// angles are about those axes.
+pub fn to_stage(v: [f32; 3]) -> [f32; 3] {
+    [v[0], 0.0 - v[2], v[1]] // 0 − v: no "-0" shown for 0
+}
+
+/// Stage axes ([`to_stage`]) → the patch's axes.
+pub fn from_stage(v: [f32; 3]) -> [f32; 3] {
+    [v[0], v[2], 0.0 - v[1]]
+}
+
 /// A patched fixture.
 #[derive(Serialize, Deserialize, Clone, PartialEq, Debug)]
 #[serde(default)]
@@ -767,7 +780,8 @@ pub struct Fixture {
     pub universe: u16,
     /// Start address (1..=512), 0 = not patched (no output, still programmable).
     pub address: u16,
-    /// Position in metres (x right, y up, z towards the audience).
+    /// Position in metres (x right, y up, z towards the audience; the UI shows stage axes,
+    /// [`to_stage`]).
     pub position: [f32; 3],
     /// Rotation in degrees about x, y and z, applied as heading (y) · tilt (x) · roll (z).
     pub rotation: [f32; 3],
@@ -824,8 +838,10 @@ pub struct Group {
 /// User-facing preset number.
 pub type PresetId = u32;
 
-/// A value in a cue or the programmer: a level, or a reference to a preset (so editing the
-/// preset changes every cue that uses it). Saved as a bare number or `{"preset": n}`.
+/// A value in a cue or the programmer: a level, a reference to a preset (so editing the
+/// preset changes every cue that uses it), or, for pan and tilt, a focus point the fixture aims
+/// at (so moving the point or the fixture re-aims every cue). Saved as a bare number,
+/// `{"preset": n}` or `{"point": n}`.
 #[derive(Serialize, Deserialize, Clone, Copy, PartialEq, Debug)]
 #[serde(untagged)]
 pub enum Value {
@@ -836,6 +852,29 @@ pub enum Value {
         /// Preset number.
         preset: PresetId,
     },
+    /// Pan or tilt aiming the fixture at a focus point ([`super::focus::aim`]).
+    Point {
+        /// Focus point number.
+        point: PointId,
+    },
+}
+
+/// User-facing focus point number.
+pub type PointId = u32;
+
+/// A named place on stage that moving lights aim at ("Centre", "DSL", "Drum riser"). Cues refer
+/// to it ([`Value::Point`]), so in a new venue the point (or the rig) is corrected once from a
+/// fixture aimed by hand and every cue follows ([`super::focus`]).
+#[derive(Serialize, Deserialize, Clone, PartialEq, Debug, Default)]
+#[serde(default)]
+pub struct FocusPoint {
+    /// Point number.
+    pub id: PointId,
+    /// Name.
+    pub name: String,
+    /// Where it is, metres (x right, y up, z towards the audience; shown in stage axes,
+    /// [`to_stage`]), like fixture positions.
+    pub position: [f32; 3],
 }
 
 impl From<f32> for Value {
@@ -1228,9 +1267,18 @@ impl Sequence {
 
 /// Replace references to preset `id` in `look` by the levels they stand for (dropped if none).
 pub fn unlink_preset(l: &Lighting, id: PresetId, look: &mut Look) {
+    unlink(l, Value::Preset { preset: id }, look);
+}
+
+/// Replace references to focus point `id` in `look` by the pan and tilt they stand for.
+pub fn unlink_point(l: &Lighting, id: PointId, look: &mut Look) {
+    unlink(l, Value::Point { point: id }, look);
+}
+
+fn unlink(l: &Lighting, id: Value, look: &mut Look) {
     for (f, values) in look.iter_mut() {
         values.retain(|a, v| {
-            if *v != (Value::Preset { preset: id }) {
+            if *v != id {
                 return true;
             }
             match l.resolve(*f, *a, *v) {
@@ -1545,6 +1593,9 @@ pub struct Lighting {
     pub plot: PlotLayout,
     /// Presets (palettes).
     pub presets: Vec<Preset>,
+    /// Focus points moving lights aim at.
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub points: Vec<FocusPoint>,
     /// Effects pool.
     pub effects: Vec<super::effects::Effect>,
     /// Playback buttons (Playback window).
@@ -1601,6 +1652,7 @@ impl Default for Lighting {
             shapes: Vec::new(),
             plot: PlotLayout::default(),
             presets: Vec::new(),
+            points: Vec::new(),
             effects: Vec::new(),
             buttons: Vec::new(),
             button_pages: Vec::new(),
@@ -1621,6 +1673,7 @@ impl Lighting {
             && self.shapes.is_empty()
             && self.plot.is_empty()
             && self.presets.is_empty()
+            && self.points.is_empty()
             && self.effects.is_empty()
             && self.buttons.is_empty()
     }
@@ -1760,11 +1813,58 @@ impl Lighting {
         self.presets.iter().find(|p| p.id == id)
     }
 
+    /// A focus point by number.
+    pub fn point(&self, id: PointId) -> Option<&FocusPoint> {
+        self.points.iter().find(|p| p.id == id)
+    }
+
+    /// Delete a focus point; cues that aimed at it keep the pan and tilt it gave them.
+    pub fn delete_point(&mut self, id: PointId) {
+        let mut cues: Vec<LightCue> = self.sequences.iter().flat_map(|s| s.cues.iter().cloned()).collect();
+        for c in &mut cues {
+            unlink_point(self, id, &mut c.values);
+        }
+        let mut it = cues.into_iter();
+        for c in self.sequences.iter_mut().flat_map(|s| s.cues.iter_mut()) {
+            let new = it.next().expect("same cues");
+            if new != *c {
+                *c = new;
+            }
+        }
+        let looks: Vec<Option<Look>> = self
+            .buttons
+            .iter()
+            .map(|b| {
+                b.values.values().any(|v| v.values().any(|x| *x == Value::Point { point: id })).then(|| {
+                    let mut look = (*b.values).clone();
+                    unlink_point(self, id, &mut look);
+                    look
+                })
+            })
+            .collect();
+        for (b, look) in self.buttons.iter_mut().zip(looks) {
+            if let Some(look) = look {
+                b.values = look.into();
+            }
+        }
+        self.points.retain(|p| p.id != id);
+    }
+
     /// The level a value stands for on a fixture attribute (None: a preset that doesn't exist
-    /// or has nothing for this fixture/attribute).
+    /// or has nothing for this fixture/attribute; a point that doesn't exist, on an attribute
+    /// other than pan/tilt, or on a fixture that can't aim).
     pub fn resolve(&self, fixture: FixtureId, attr: Attribute, value: Value) -> Option<f32> {
         match value {
             Value::Level(v) => Some(v),
+            Value::Point { point } => {
+                if !matches!(attr, Attribute::Pan | Attribute::Tilt) {
+                    return None;
+                }
+                let target = self.point(point)?.position;
+                let (f, _) = self.unit(fixture)?;
+                let (pan, tilt) = super::focus::aim(f, &self.fixture_type(&f.fixture_type)?.physical, target)?;
+                Some(if attr == Attribute::Pan { pan } else { tilt })
+            }
             Value::Preset { preset } => {
                 let p = self.preset(preset)?;
                 if let Some(v) = p.values.get(&fixture).and_then(|v| v.get(&attr)) {

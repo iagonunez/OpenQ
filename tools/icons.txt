@@ -121,3 +121,4 @@ format_color_text
 format_size
 chevron_left
 drag_indicator
+my_location

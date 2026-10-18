@@ -8,7 +8,7 @@
 use super::{App, Mode, icons, theme};
 use crate::i18n::t;
 use crate::light::model::{
-    fixture_label, Attribute, Feature, FixtureId, FixtureType, Group, LightCue, LightCueId, Lighting, Look, PatchIssue, PlotShape, Preset, PresetId, ShapeKind, Sequence, SequenceId, Value,
+    fixture_label, from_stage, to_stage, Attribute, Feature, FixtureId, FixtureType, Group, LightCue, LightCueId, Lighting, Look, PatchIssue, PlotShape, Preset, PresetId, ShapeKind, Sequence, SequenceId, Value,
 };
 use crate::light::effects::{Effect, EffectId, EffectRun, EffectTable, Shape};
 use crate::light::formula;
@@ -54,7 +54,7 @@ impl LightTab {
     /// A page by name (`OPENQ_SCREENSHOT_LIGHTING`).
     pub(crate) fn from_name(name: &str) -> Self {
         match name {
-            "programmer" | "colour" | "keypad" | "beam" | "slots" => LightTab::Programmer,
+            "programmer" | "colour" | "keypad" | "beam" | "slots" | "points" => LightTab::Programmer,
             "patch" | "plan" | "plot" | "types" | "ofl" => LightTab::Patch,
             "effects" => LightTab::Effects,
             "sequences" => LightTab::Sequences,
@@ -209,6 +209,12 @@ pub(crate) struct LightUi {
     preset_filter: Option<Feature>,
     /// Playback page and window.
     pub(crate) playback: super::light_playback::PlaybackUi,
+    /// Units aimed at a focus point from the points pool, while their pan/tilt is in the
+    /// programmer (for calibration, [`super::light_points`]).
+    pub(super) aims: std::collections::BTreeMap<FixtureId, crate::light::model::PointId>,
+    /// Rig correction: the group that moves (None = the aimed fixtures) and along which axes.
+    pub(super) fix_group: Option<crate::light::model::GroupId>,
+    pub(super) fix_axes: crate::light::focus::Axes,
 }
 
 /// Arrange tool: a layout kind and the settings of each.
@@ -458,6 +464,10 @@ impl App {
             l.programmer.clear();
             l.programmer_effects.clear();
         }
+        if !self.light.aims.is_empty() {
+            self.prune_aims();
+        }
+        let l = &mut self.light;
         let design = &show.ws.lighting;
         let effects: Vec<(Effect, Vec<FixtureId>)> = if l.blind {
             Vec::new()
@@ -686,10 +696,13 @@ impl App {
                 ui.label(RichText::new(if s.kind == ShapeKind::Bar { t("Bar") } else { t("Rectangle") }).color(theme::TEXT_DIM));
                 ui.add(egui::TextEdit::singleline(&mut s.name).hint_text(t("Name")).desired_width(90.0));
             });
+            // Stored as (x, towards the audience); shown as stage x and y (depth).
             let xz = |ui: &mut Ui, v: &mut [f32; 2]| {
-                for c in v.iter_mut() {
-                    let m = crate::limits::MAX_DISTANCE;
-                    ui.add(DragValue::new(c).range(-m..=m).speed(0.05).max_decimals(2).suffix(" m"));
+                let m = crate::limits::MAX_DISTANCE;
+                ui.add(DragValue::new(&mut v[0]).range(-m..=m).speed(0.05).max_decimals(2).prefix("x ").suffix(" m"));
+                let mut depth = 0.0 - v[1];
+                if ui.add(DragValue::new(&mut depth).range(-m..=m).speed(0.05).max_decimals(2).prefix("y ").suffix(" m")).changed() {
+                    v[1] = 0.0 - depth;
                 }
             };
             ui.label(t("From"));
@@ -737,9 +750,15 @@ impl App {
         }
         let a = &mut self.light.arrange;
         let m = crate::limits::MAX_DISTANCE;
-        let xyz = |ui: &mut Ui, v: &mut [f32; 3]| {
-            for c in v.iter_mut() {
-                ui.add(DragValue::new(c).range(-m..=m).speed(0.05).max_decimals(2).suffix(" m"));
+        // Stage axes: x across, y depth, z height.
+        let xyz = |ui: &mut Ui, stored: &mut [f32; 3]| {
+            let mut v = to_stage(*stored);
+            let mut changed = false;
+            for (c, axis) in v.iter_mut().zip(["x ", "y ", "z "]) {
+                changed |= ui.add(DragValue::new(c).range(-m..=m).speed(0.05).max_decimals(2).prefix(axis).suffix(" m")).changed();
+            }
+            if changed {
+                *stored = from_stage(v);
             }
         };
         let mut apply = false;
@@ -770,8 +789,11 @@ impl App {
                     ui.label(t("Columns"));
                     ui.add(DragValue::new(&mut a.cols).range(1..=512));
                     ui.label(t("Spacing"));
-                    for c in a.spacing.iter_mut() {
-                        ui.add(DragValue::new(c).range(-m..=m).speed(0.05).max_decimals(2).suffix(" m"));
+                    // Stored as (x, towards the audience); shown as (x, depth).
+                    ui.add(DragValue::new(&mut a.spacing[0]).range(-m..=m).speed(0.05).max_decimals(2).prefix("x ").suffix(" m"));
+                    let mut depth = 0.0 - a.spacing[1];
+                    if ui.add(DragValue::new(&mut depth).range(-m..=m).speed(0.05).max_decimals(2).prefix("y ").suffix(" m")).changed() {
+                        a.spacing[1] = 0.0 - depth;
                     }
                 }
                 _ => {
@@ -809,7 +831,7 @@ impl App {
             })
             .collect();
         let header =
-            [t("No."), t("Name"), t("Type"), t("Mode"), t("Universe"), t("Address"), t("Slots"), t("Position (m)"), t("Rotation (°)"), t("Invert")];
+            [t("No."), t("Name"), t("Type"), t("Mode"), t("Universe"), t("Address"), t("Slots"), t("Position x y z (m)"), t("Rotation x y z (°)"), t("Invert")];
         // Fitted widths, measured again only when the texts change.
         let key = {
             use std::hash::{Hash, Hasher};
@@ -931,16 +953,22 @@ impl App {
                         }
                     });
                     // Three values per cell, each a third of it.
-                    let triple = |ui: &mut Ui, w: f32, v: &mut [f32; 3], rotation: bool| {
+                    // Shown in stage axes (x across, y depth, z height).
+                    let triple = |ui: &mut Ui, w: f32, stored: &mut [f32; 3], rotation: bool| {
                         sheet_cell(ui, w, h, |ui| {
                             let each = (w - 8.0) / 3.0;
                             let top = ui.max_rect().left_top();
+                            let mut v = to_stage(*stored);
+                            let before = v;
                             for (i, x) in v.iter_mut().enumerate() {
                                 let d = if rotation { DragValue::new(x).range(-360.0..=360.0).speed(1.0).max_decimals(1) } else {
                                     let m = crate::limits::MAX_DISTANCE;
                                     DragValue::new(x).range(-m..=m).speed(0.05).max_decimals(2)
                                 };
                                 ui.put(egui::Rect::from_min_size(top + egui::vec2(i as f32 * (each + 4.0), 0.0), egui::vec2(each, h)), d);
+                            }
+                            if v != before {
+                                *stored = from_stage(v);
                             }
                         });
                     };
@@ -1391,7 +1419,7 @@ fn effect_preview(ui: &mut Ui, e: &Effect, n: usize, labels: &[FixtureId], bpm: 
     ui.add(egui::Label::new(RichText::new(how).small().color(theme::TEXT_DIM)).wrap());
 }
 
-/// Top view of the patch (x right, z towards the audience at the bottom): click selects
+/// Top view of the patch (stage x across, y depth: upstage at the top, the audience at the bottom): click selects
 /// (Ctrl/Shift adds), dragging a selected fixture moves the selection (snapped to 5 cm), dragging
 /// empty space pans, scrolling zooms, double-click recentres; a bar's or rectangle's label drags
 /// on its own ([`PlotShape::label`]).
@@ -1425,6 +1453,8 @@ pub(crate) enum PlanDrag {
     Shape { id: u32, handle: Handle, from: egui::Pos2, start: PlotShape, new: bool },
     /// A shape's label (its offset at the start).
     Label { id: u32, from: egui::Pos2, start: [f32; 2] },
+    /// A focus point (its position at the start).
+    Point { id: crate::light::model::PointId, from: egui::Pos2, start: [f32; 3] },
 }
 
 /// Plan positions snap to 5 cm and stay within [`crate::limits::MAX_DISTANCE`] of the origin.
@@ -1544,6 +1574,7 @@ fn plan_view(ui: &mut Ui, light: &mut LightUi, l: &mut Lighting, issues: &[Patch
             })
             .map(|s| s.id)
     };
+    let hit_point = |pos: egui::Pos2, l: &Lighting| l.points.iter().rev().find(|p| to_screen(p.position[0], p.position[2]).distance(pos) <= 8.0).map(|p| p.id);
     let hit_handle = |pos: egui::Pos2, l: &Lighting, sel: Option<u32>| {
         let s = l.shapes.iter().find(|s| Some(s.id) == sel)?;
         handles(s).into_iter().find(|(_, w)| to_screen(w[0], w[1]).distance(pos) <= 8.0).map(|(h, _)| (s.id, h))
@@ -1595,6 +1626,8 @@ fn plan_view(ui: &mut Ui, light: &mut LightUi, l: &mut Lighting, issues: &[Patch
         } else if let Some((id, handle)) = hit_handle(pos, l, light.shape_sel) {
             let start = l.shapes.iter().find(|s| s.id == id).cloned().unwrap_or_default();
             PlanDrag::Shape { id, handle, from: pos, start, new: false }
+        } else if let Some(id) = hit_point(pos, l) {
+            PlanDrag::Point { id, from: pos, start: l.point(id).map_or([0.0; 3], |p| p.position) }
         } else if let Some(id) = hit_fixture(pos, l) {
             if !light.patch_sel.contains(&id) {
                 light.patch_sel = [id].into_iter().collect();
@@ -1635,6 +1668,12 @@ fn plan_view(ui: &mut Ui, light: &mut LightUi, l: &mut Lighting, issues: &[Patch
                 let d = (pointer.unwrap_or(*from) - *from) / zoom;
                 if let Some(s) = l.shapes.iter_mut().find(|s| s.id == *id) {
                     s.label = [snap(start[0] + d.x), snap(start[1] + d.y)];
+                }
+            }
+            Some(PlanDrag::Point { id, from, start }) => {
+                let d = (pointer.unwrap_or(*from) - *from) / zoom;
+                if let Some(p) = l.points.iter_mut().find(|p| p.id == *id) {
+                    p.position = [snap(start[0] + d.x), start[1], snap(start[2] + d.y)];
                 }
             }
             None => {}
@@ -1702,6 +1741,19 @@ fn plan_view(ui: &mut Ui, light: &mut LightUi, l: &mut Lighting, issues: &[Patch
         p.line_segment([c, c + egui::vec2(a.sin(), a.cos()) * (radius + 5.0)], egui::Stroke::new(1.5, theme::TEXT_DIM));
         p.text(c, egui::Align2::CENTER_CENTER, f.id.to_string(), egui::FontId::proportional(10.0), if selected { Color32::WHITE } else { theme::TEXT });
     }
+    // Focus points: a ring with a cross, and the name.
+    for pt in &l.points {
+        let c = to_screen(pt.position[0], pt.position[2]);
+        if !rect.expand(40.0).contains(c) {
+            continue;
+        }
+        let stroke = egui::Stroke::new(1.5, theme::GREEN);
+        p.circle_stroke(c, 6.0, stroke);
+        p.line_segment([c - egui::vec2(9.0, 0.0), c + egui::vec2(9.0, 0.0)], stroke);
+        p.line_segment([c - egui::vec2(0.0, 9.0), c + egui::vec2(0.0, 9.0)], stroke);
+        let name = if pt.name.is_empty() { tr!("Point {n}", n = pt.id.to_string()) } else { pt.name.clone() };
+        p.text(c + egui::vec2(9.0, 3.0), egui::Align2::LEFT_TOP, name, label_font.clone(), theme::GREEN);
+    }
     if drawing {
         ui.ctx().set_cursor_icon(egui::CursorIcon::Crosshair);
     }
@@ -1712,8 +1764,11 @@ fn plan_view(ui: &mut Ui, light: &mut LightUi, l: &mut Lighting, issues: &[Patch
         }
         if on_label {
             resp.on_hover_text(t("Drag to move the label"));
+        } else if let Some(pt) = hit_point(pos, l).and_then(|id| l.point(id)) {
+            let [x, y, z] = to_stage(pt.position);
+            resp.on_hover_text(format!("{} {}\nx {x:.2} · y {y:.2} · z {z:.2} m\n{}", pt.id, pt.name, t("Drag to move the focus point; cues aimed at it follow")));
         } else if let Some(f) = hit_fixture(pos, l).and_then(|id| l.fixture(id)) {
-            let [x, y, z] = f.position;
+            let [x, y, z] = to_stage(f.position);
             let name = if f.name.is_empty() { f.fixture_type.clone() } else { f.name.clone() };
             resp.on_hover_text(format!("{} {name}\nx {x:.2} · y {y:.2} · z {z:.2} m", f.id));
         } else if let Some(s) = hit_shape(pos, l).and_then(|id| l.shapes.iter().find(|s| s.id == id)) {
@@ -1931,6 +1986,10 @@ impl App {
                     self.pool_filter(ui);
                     ui.add_space(6.0);
                     self.preset_pool(ui, l, (total * 0.4).max(110.0));
+                    if self.light.preset_filter.is_none_or(|f| f == Feature::Position) {
+                        ui.add_space(8.0);
+                        self.point_pool(ui, l, (total * 0.18).max(56.0));
+                    }
                     ui.add_space(8.0);
                     self.effect_pool(ui, l);
                 });
@@ -2125,7 +2184,7 @@ impl App {
             .flat_map(|v| v.values())
             .filter_map(|v| match v {
                 Value::Preset { preset } => Some(*preset),
-                Value::Level(_) => None,
+                Value::Level(_) | Value::Point { .. } => None,
             })
             .collect();
         egui::ScrollArea::vertical().id_salt("preset_cards").max_height(max_h).auto_shrink([false, true]).show(ui, |ui| {
@@ -2652,6 +2711,16 @@ impl App {
                     self.apply_preset(&snapshot, p);
                     done = tr!("preset {p}", p = p.to_string());
                 }
+                Cmd::Point(p) => {
+                    if l.point(p).is_none() {
+                        return Err(tr!("no point {p}", p = p.to_string()));
+                    }
+                    let snapshot = l.clone();
+                    if self.apply_point(&snapshot, p) == 0 {
+                        return Err(t("nothing selected can pan or tilt").to_string());
+                    }
+                    done = tr!("point {p}", p = p.to_string());
+                }
                 Cmd::PickRange(attr, name) => {
                     if self.light.selection.is_empty() {
                         return Err(t("Nothing selected").into());
@@ -2998,7 +3067,7 @@ impl App {
     fn selection_preset(&self, attr: Attribute) -> Option<PresetId> {
         self.light.selection.iter().find_map(|f| match self.light.programmer.get(f)?.get(&attr)? {
             Value::Preset { preset } => Some(*preset),
-            Value::Level(_) => None,
+            Value::Level(_) | Value::Point { .. } => None,
         })
     }
 
@@ -4017,7 +4086,7 @@ impl App {
 /// How a pool card is lit: idle, in use by the selection, a running effect, an effect stopped by
 /// the programmer.
 #[derive(Clone, Copy, PartialEq)]
-enum CardLook {
+pub(super) enum CardLook {
     Off,
     On,
     Running,
@@ -4026,7 +4095,7 @@ enum CardLook {
 
 /// Lay `items` out as cards in rows filling the width (clear of the scroll bar, or the panel
 /// would grow a little every frame); `card` draws one at the size given.
-fn card_grid<T>(ui: &mut Ui, items: &[T], mut card: impl FnMut(&mut Ui, &T, egui::Vec2)) {
+pub(super) fn card_grid<T>(ui: &mut Ui, items: &[T], mut card: impl FnMut(&mut Ui, &T, egui::Vec2)) {
     const GAP: f32 = 6.0;
     let avail = ui.available_width() - 14.0;
     let cols = ((avail + GAP) / (76.0 + GAP)).floor().max(1.0);
@@ -4043,7 +4112,7 @@ fn card_grid<T>(ui: &mut Ui, items: &[T], mut card: impl FnMut(&mut Ui, &T, egui
 
 /// A card of the programmer's pools (groups, presets, effects): icon, number at the top right,
 /// name at the bottom, and a colour bar (colour presets).
-fn pool_card(ui: &mut Ui, size: egui::Vec2, glyph: &str, number: u32, name: &str, look: CardLook, colour: Option<Color32>) -> egui::Response {
+pub(super) fn pool_card(ui: &mut Ui, size: egui::Vec2, glyph: &str, number: u32, name: &str, look: CardLook, colour: Option<Color32>) -> egui::Response {
     let (rect, r) = ui.allocate_exact_size(size, egui::Sense::click());
     let painter = ui.painter();
     let (fill, border, fg, icon) = match look {

@@ -1,5 +1,5 @@
 //! Lighting design deltas for remote devices: [`diff`] two designs into a [`LightingPatch`] that
-//! holds only what changed (fixtures, types, groups, presets, effects by id; sequences down to
+//! holds only what changed (fixtures, types, groups, presets, focus points, effects by id; sequences down to
 //! their cues), [`apply`] it to a copy of the old design.
 //!
 //! A drag on an encoder changes one cue or one programmer-stored preset, so the patch is a few
@@ -10,7 +10,7 @@
 use super::dmx::OutputConfig;
 use super::dmxin::InputConfig;
 use super::effects::Effect;
-use super::model::{Fixture, FixtureType, Group, LightCue, Lighting, PlotShape, Preset, Sequence};
+use super::model::{Fixture, FixtureType, FocusPoint, Group, LightCue, Lighting, PlotShape, Preset, Sequence};
 use serde::{Deserialize, Serialize};
 use std::collections::{HashMap, HashSet};
 use std::hash::Hash;
@@ -221,6 +221,8 @@ pub struct LightingPatch {
     pub plot: Option<super::model::PlotLayout>,
     /// Presets.
     pub presets: Option<ListPatch<super::model::PresetId, Preset>>,
+    /// Focus points.
+    pub points: Option<ListPatch<super::model::PointId, FocusPoint>>,
     /// Effects pool.
     pub effects: Option<ListPatch<super::effects::EffectId, Effect>>,
     /// Playback buttons.
@@ -248,6 +250,7 @@ pub fn diff(old: &Lighting, new: &Lighting) -> Option<LightingPatch> {
         shapes: diff_list(&old.shapes, &new.shapes, |s| s.id),
         plot: changed(old.plot != new.plot).map(|_| new.plot.clone()),
         presets: diff_list(&old.presets, &new.presets, |p| p.id),
+        points: diff_list(&old.points, &new.points, |p| p.id),
         effects: diff_list(&old.effects, &new.effects, |e| e.id),
         buttons: diff_list(&old.buttons, &new.buttons, |b| b.id),
         button_pages: changed(old.button_pages != new.button_pages).map(|_| new.button_pages.clone()),
@@ -267,6 +270,7 @@ pub fn apply(l: &mut Lighting, p: &LightingPatch) -> bool {
         && p.groups.as_ref().is_none_or(|x| apply_list(&mut n.groups, x, |g| g.id))
         && p.sequences.as_ref().is_none_or(|x| apply_sequences(&mut n.sequences, x))
         && p.presets.as_ref().is_none_or(|x| apply_list(&mut n.presets, x, |p| p.id))
+        && p.points.as_ref().is_none_or(|x| apply_list(&mut n.points, x, |p| p.id))
         && p.effects.as_ref().is_none_or(|x| apply_list(&mut n.effects, x, |e| e.id))
         && p.buttons.as_ref().is_none_or(|x| apply_list(&mut n.buttons, x, |b| b.id))
         && p.shapes.as_ref().is_none_or(|x| apply_list(&mut n.shapes, x, |s| s.id));
@@ -339,6 +343,7 @@ mod tests {
         new.groups[0].name = "Everything".into();
         new.outputs.push(Default::default());
         new.release_fade = 3.0;
+        new.points.push(FocusPoint { id: 1, name: "Centre".into(), position: [0.0, 0.0, 1.0] });
         roundtrip(&old, &new);
     }
 
@@ -382,6 +387,7 @@ mod tests {
         let mut l = rig();
         l.inputs.push(Default::default());
         l.shapes.push(PlotShape { id: 1, ..Default::default() });
+        l.points.push(FocusPoint { id: 1, ..Default::default() });
         let v = serde_json::to_value(&l).unwrap();
         let fields: Vec<&String> = v.as_object().unwrap().keys().collect();
         let p = serde_json::to_value(LightingPatch::default()).unwrap();

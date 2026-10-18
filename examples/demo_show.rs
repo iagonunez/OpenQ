@@ -4,7 +4,7 @@
 //! aside): every cue type, group mode, continue mode, audio/video effect, blend mode and fade kind,
 //! slices with devamps, object audio, animation, several cue lists with a timecode list, stages
 //! with a spanned and edge-blended surface, control surfaces, and a lighting design with custom
-//! fixture types (named ranges, gobo pictures, cells, a second DMX break), presets, effects of
+//! fixture types (named ranges, gobo pictures, cells, a second DMX break), presets, focus points, effects of
 //! every shape (a formula one, an audio-reactive one, a tempo-synced one), tracking, cue-only
 //! cues, a blocked cue, feature timing, move in black, DMX outputs and an input.
 //!
@@ -20,7 +20,7 @@ use openq::light::effects::{AudioReact, Effect, EffectRun, Shape};
 use openq::light::model::{
     LightButton, Look,
     cell_id, Attribute as A, ChannelDef, ChannelRange, DmxAddress, Feature, FeatureTime, Fixture, FixtureId, FixtureMode, FixtureType, Group,
-    Head, LightCue, Lighting, Physical, PlotItem, PlotNote, PlotShape, PlotSymbol, Preset, Sequence, ShapeKind, Value,
+    FocusPoint, Head, LightCue, Lighting, Physical, PlotItem, PlotNote, PlotShape, PlotSymbol, Preset, Sequence, ShapeKind, Value,
 };
 use openq::model::{
     AudioCue, BlendMode, CameraCue, ContinueMode, Cue, CueColor, CueId, CueKind, CueList, EqBand, EqKind, FadeCue, FadeCurve, Geometry, GroupMode,
@@ -1583,6 +1583,11 @@ const P_LEAVES: u32 = 22;
 const P_TIGHT: u32 = 23;
 const P_FLOOD: u32 = 24;
 const P_FULL: u32 = 31;
+// Focus points.
+const PT_CENTRE: u32 = 1;
+const PT_DSL: u32 = 2;
+const PT_DSR: u32 = 3;
+const PT_RISER: u32 = 4;
 
 // Effect numbers.
 const FX_CANDLE: u32 = 1;
@@ -1601,6 +1606,7 @@ impl Rig {
         r.patch();
         r.groups();
         r.presets();
+        r.points();
         r.effects();
         r.sequences();
         r.buttons();
@@ -1678,8 +1684,8 @@ impl Rig {
         self.l.plot.edit_mut(&PlotItem::LegendRow("Generic RGBAW+UV".into())).symbol = Some(PlotSymbol::Par);
         let shape = |s: &[PlotShape], name: &str| s.iter().find(|x| x.name == name).expect("shape").clone();
         let shapes = self.l.shapes.clone();
+        // No rotation = hanging with the beam down (GDTF/MVR), moving heads included.
         let down = [0.0, 0.0, 0.0];
-        let hung = [180.0, 0.0, 0.0];
 
         let dimmer = generic("generic/dimmer");
         for (i, p) in shape(&shapes, "FOH bridge").hang(12).into_iter().enumerate() {
@@ -1725,13 +1731,13 @@ impl Rig {
         for (k, bar) in ["LX1", "LX3"].iter().enumerate() {
             for (i, p) in shape(&shapes, bar).hang(3).into_iter().enumerate() {
                 let n = (k * 3 + i) as u32;
-                let id = self.add(101 + n, format!("Spot {}", n + 1), &spot, 2, p, hung);
+                let id = self.add(101 + n, format!("Spot {}", n + 1), &spot, 2, p, down);
                 self.spots.push(id);
             }
         }
         let wash = generic("generic/wash");
         for (i, p) in shape(&shapes, "LX2").hang(8).into_iter().enumerate() {
-            let id = self.add(111 + i as u32, format!("Wash {}", i + 1), &wash, 2, p, hung);
+            let id = self.add(111 + i as u32, format!("Wash {}", i + 1), &wash, 2, p, down);
             self.washes.push(id);
         }
         let batten = batten_type();
@@ -1777,6 +1783,17 @@ impl Rig {
             g(12, "Followspots", &self.follow),
             g(13, "Spots (odd)", &spots_sl),
             g(14, "Batten cells (odd)", &odd_cells),
+        ];
+    }
+
+    /// Focus points: the "Specials up" cues aim the spots at DSL/DSR through them.
+    fn points(&mut self) {
+        let pt = |id, name: &str, position| FocusPoint { id, name: name.into(), position };
+        self.l.points = vec![
+            pt(PT_CENTRE, "Centre", [0.0, 0.0, 0.0]),
+            pt(PT_DSL, "DSL", [-3.5, 0.0, 2.5]),
+            pt(PT_DSR, "DSR", [3.5, 0.0, 2.5]),
+            pt(PT_RISER, "Lighthouse riser", [3.25, 1.2, -2.5]),
         ];
     }
 
@@ -2170,8 +2187,10 @@ impl Rig {
                 c.fade = 3.0;
                 for (i, f) in self.spots.iter().enumerate() {
                     set(&mut c, *f, A::Dimmer, if i < 4 { 0.85 } else { 0.0 });
-                    setp(&mut c, *f, A::Pan, if i % 2 == 0 { P_DSL } else { P_DSR });
-                    setp(&mut c, *f, A::Tilt, if i % 2 == 0 { P_DSL } else { P_DSR });
+                    let point = if i % 2 == 0 { PT_DSL } else { PT_DSR };
+                    for a in [A::Pan, A::Tilt] {
+                        c.values.entry(*f).or_default().insert(a, Value::Point { point });
+                    }
                     setp(&mut c, *f, A::Gobo, gobo);
                     setp(&mut c, *f, A::Zoom, gobo);
                     setp(&mut c, *f, A::Iris, gobo);

@@ -123,3 +123,4 @@ pub const FORMAT_COLOR_TEXT: &str = "\u{e23c}";
 pub const FORMAT_SIZE: &str = "\u{e245}";
 pub const CHEVRON_LEFT: &str = "\u{e5cb}";
 pub const DRAG_INDICATOR: &str = "\u{e945}";
+pub const MY_LOCATION: &str = "\u{e55c}";

@@ -274,7 +274,7 @@ impl LightShow {
         show.universes.dedup();
         // Same patch = same slots, so an unchanged sequence compiles to the same thing.
         let reuse = prev.filter(|(pl, ps)| {
-            pl.sequences.len() + pl.buttons.len() == ps.sequences.len() && same_patch(pl, l) && pl.presets == l.presets && pl.effects == l.effects
+            pl.sequences.len() + pl.buttons.len() == ps.sequences.len() && same_patch(pl, l) && same_aims(pl, l) && pl.presets == l.presets && pl.effects == l.effects
         });
         for s in &l.sequences {
             let kept = reuse.and_then(|(pl, ps)| {
@@ -297,10 +297,10 @@ impl LightShow {
     }
 
     /// Whether two designs compile to the same show: only what [`LightShow::compile`] reads is
-    /// compared (not fixture names or positions, groups, plot shapes, outputs...), so edits that
-    /// don't change playback don't recompile.
+    /// compared (not fixture names, groups, plot shapes, outputs..., nor positions while there
+    /// are no focus points), so edits that don't change playback don't recompile.
     pub fn same_input(a: &Lighting, b: &Lighting) -> bool {
-        same_patch(a, b) && a.sequences == b.sequences && a.presets == b.presets && a.effects == b.effects && a.buttons == b.buttons
+        same_patch(a, b) && same_aims(a, b) && a.sequences == b.sequences && a.presets == b.presets && a.effects == b.effects && a.buttons == b.buttons
     }
 
     fn compile_sequence(&self, l: &Lighting, s: &super::model::Sequence) -> CompiledSequence {
@@ -444,6 +444,15 @@ impl LightShow {
     pub fn find_cue(&self, cue: LightCueId) -> Option<(usize, usize)> {
         self.sequences.iter().enumerate().find_map(|(si, s)| s.cues.iter().position(|c| c.id == cue).map(|ci| (si, ci)))
     }
+}
+
+/// Same focus points and, when there are any, the same fixture positions and rotations (what
+/// [`super::model::Value::Point`] values are worked out from).
+fn same_aims(a: &Lighting, b: &Lighting) -> bool {
+    a.points == b.points
+        && (a.points.is_empty()
+            || super::model::Shared::ptr_eq(&a.fixtures, &b.fixtures)
+            || a.fixtures.iter().zip(&b.fixtures).all(|(x, y)| x.position == y.position && x.rotation == y.rotation))
 }
 
 /// Same fixture types and patch (what slot numbers and outputs come from).
@@ -1374,6 +1383,14 @@ mod tests {
         assert!(LightShow::same_input(&l, &moved));
         moved.fixtures[0].address = 300;
         assert!(!LightShow::same_input(&l, &moved));
+        // ...unless there are focus points: cues aimed at them follow the fixture.
+        l.points.push(Default::default());
+        let mut moved = l.clone();
+        moved.fixtures[0].position[1] += 1.0;
+        assert!(!LightShow::same_input(&l, &moved));
+        let prev = l.clone();
+        let d = LightShow::compile_from(&moved, Some((&prev, &c)));
+        assert!(!Arc::ptr_eq(&c.sequences[0], &d.sequences[0]), "recompiled");
     }
 
     /// A quick second GO doesn't cut the effects still fading out from the GO before it.

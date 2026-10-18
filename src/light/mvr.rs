@@ -649,6 +649,16 @@ mod tests {
     use crate::light::library;
 
     #[test]
+    fn stage_axes_are_mvr_axes() {
+        // What the UI shows (model::to_stage) is the MVR position, in metres.
+        let f = Fixture { position: [1.5, 6.0, -2.0], ..Default::default() };
+        assert!(matrix(&f).ends_with("{1500,2000,6000}"), "{}", matrix(&f));
+        assert_eq!(crate::light::model::to_stage(f.position), [1.5, 2.0, 6.0]);
+        assert_eq!(crate::light::model::from_stage([1.5, 2.0, 6.0]), f.position);
+        assert!(crate::light::model::to_stage([0.0; 3])[1].is_sign_positive(), "no -0 shown");
+    }
+
+    #[test]
     fn transform_axes() {
         let mut f = Fixture { position: [1.0, 6.0, -2.0], ..Default::default() };
         assert_eq!(matrix(&f), "{1,0,0}{0,1,0}{0,0,1}{1000,2000,6000}");
