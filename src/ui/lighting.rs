@@ -209,9 +209,8 @@ pub(crate) struct LightUi {
     preset_filter: Option<Feature>,
     /// Playback page and window.
     pub(crate) playback: super::light_playback::PlaybackUi,
-    /// Units aimed at a focus point from the points pool, while their pan/tilt is in the
-    /// programmer (for calibration, [`super::light_points`]).
-    pub(super) aims: std::collections::BTreeMap<FixtureId, crate::light::model::PointId>,
+    /// Focus point whose settings show under the points pool.
+    pub(super) point_sel: Option<crate::light::model::PointId>,
     /// Rig correction: the group that moves (None = the aimed fixtures) and along which axes.
     pub(super) fix_group: Option<crate::light::model::GroupId>,
     pub(super) fix_axes: crate::light::focus::Axes,
@@ -463,9 +462,6 @@ impl App {
         if !designing && (!l.programmer.is_empty() || !l.programmer_effects.is_empty()) {
             l.programmer.clear();
             l.programmer_effects.clear();
-        }
-        if !self.light.aims.is_empty() {
-            self.prune_aims();
         }
         let l = &mut self.light;
         let design = &show.ws.lighting;
@@ -1074,15 +1070,15 @@ fn highlight_value(chans: &[crate::light::model::ChannelDef], a: Attribute) -> O
     }
     // A wheel or shutter with an "Open" range: open it.
     if let Some(r) = chan.and_then(|c| c.ranges.iter().find(|r| r.name.eq_ignore_ascii_case("open")))
-        && matches!(a, Attribute::ColorWheel | Attribute::Gobo | Attribute::Gobo2 | Attribute::Prism | Attribute::Shutter | Attribute::Frost)
+        && matches!(a, Attribute::ColorWheel | Attribute::Gobo | Attribute::Gobo2 | Attribute::Prism | Attribute::Shutter | Attribute::Frost | Attribute::Iris)
     {
         return Some(r.value());
     }
     use Attribute::*;
     match a {
         Dimmer | Red | Green | Blue | White => Some(1.0),
-        Amber | Lime | Uv | Cyan | Magenta | Yellow | Cto | ColorWheel | ColorMacro | Gobo | Gobo2 | Prism | Frost => Some(0.0),
-        Shutter | Iris => Some(1.0),
+        Amber | Lime | Uv | Cyan | Magenta | Yellow | Cto | ColorWheel | ColorMacro | Gobo | Gobo2 | Prism | Frost | Iris => Some(0.0),
+        Shutter => Some(1.0),
         _ => None,
     }
 }
@@ -1964,7 +1960,7 @@ fn next_cue_number(s: &Sequence) -> String {
 impl App {
     fn programmer_page(&mut self, ui: &mut Ui, l: &mut Lighting) {
         // Presets in a column of their own (a show has many), the full height of the page.
-        // Two containers: groups on top, then the feature filter with the presets and effects it
+        // Two containers: groups and focus points on top, then the feature filter with the presets and effects it
         // filters. No divider line, a gap instead (dragging that gap, the panel's edge, still resizes it).
         egui::Panel::left("presets")
             .frame(egui::Frame::new().outer_margin(egui::Margin { left: 0, right: 10, top: 0, bottom: 0 }))
@@ -1978,6 +1974,8 @@ impl App {
                 pane().show(ui, |ui| {
                     ui.set_min_width(ui.available_width());
                     self.group_pool(ui, l, (total * 0.22).max(70.0));
+                    ui.add_space(8.0);
+                    self.point_pool(ui, l, (total * 0.14).max(56.0));
                 });
                 ui.add_space(8.0);
                 pane().show(ui, |ui| {
@@ -1986,10 +1984,6 @@ impl App {
                     self.pool_filter(ui);
                     ui.add_space(6.0);
                     self.preset_pool(ui, l, (total * 0.4).max(110.0));
-                    if self.light.preset_filter.is_none_or(|f| f == Feature::Position) {
-                        ui.add_space(8.0);
-                        self.point_pool(ui, l, (total * 0.18).max(56.0));
-                    }
                     ui.add_space(8.0);
                     self.effect_pool(ui, l);
                 });
@@ -3111,11 +3105,16 @@ impl App {
         n
     }
 
-    /// Set an attribute on every selected fixture that has it.
+    /// Set an attribute on every selected fixture that has it. Pan or tilt of a fixture aimed
+    /// from a focus point moves the place it aims at, still measured from the point.
     fn set_selection(&mut self, l: &Lighting, attr: Attribute, value: f32) {
+        let value = value.clamp(0.0, 1.0);
         for f in &self.light.selection {
             if attributes_of(l, *f).contains(&attr) {
-                self.light.programmer.entry(*f).or_default().insert(attr, Value::Level(value.clamp(0.0, 1.0)));
+                let values = self.light.programmer.entry(*f).or_default();
+                if !crate::light::focus::move_from_point(l, *f, values, attr, value) {
+                    values.insert(attr, Value::Level(value));
+                }
             }
         }
     }
@@ -3155,7 +3154,12 @@ impl App {
                 });
             }
             Feature::Colour => self.colour_picker(ui, l),
-            Feature::Position if page.contains(&Attribute::Pan) && page.contains(&Attribute::Tilt) => self.pan_tilt_pad(ui, l),
+            Feature::Position => {
+                if page.contains(&Attribute::Pan) && page.contains(&Attribute::Tilt) {
+                    self.pan_tilt_pad(ui, l);
+                }
+                self.point_offsets(ui, l);
+            }
             _ => {}
         }
         ui.add_space(4.0);

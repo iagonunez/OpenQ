@@ -17,7 +17,7 @@
 //! [`export`] writes a fixture type back as a GDTF file (MVR exports carry them).
 
 use super::import::{attribute_from_name, place, type_id, Imported};
-use super::model::{Attribute, ChannelDef, ChannelRange, Emitter, FixtureMode, FixtureType, Head, Physical};
+use super::model::{Attribute, ChannelDef, ChannelRange, Emitter, FixtureMode, FixtureType, Head, MovingParts, Physical, Placement, UNTURNED};
 use roxmltree::{Document, Node};
 use std::collections::HashMap;
 
@@ -206,6 +206,106 @@ fn children<'a, 'i>(n: Node<'a, 'i>, tag: &'a str) -> impl Iterator<Item = Node<
 /// A wheel slot: (name, colour, image).
 type Slot = (String, Option<[u8; 3]>, String);
 
+/// The physical values of `functions[i]` at the lowest and the highest DMX value of its channel:
+/// `PhysicalFrom`/`PhysicalTo` across the function's DMX span (up to one step before the next
+/// function), carried on in a straight line. None without physical values or with an empty span.
+fn angles(functions: &[Node], i: usize) -> Option<[f32; 2]> {
+    let f = functions[i];
+    let num = |k: &str| attr(f, k).and_then(|x| x.trim().parse::<f64>().ok()).filter(|x| x.is_finite());
+    let (from, to) = (num("PhysicalFrom")?, num("PhysicalTo")?);
+    let d0 = attr(f, "DMXFrom").and_then(dmx_value).unwrap_or(0.0);
+    // One step before the next function's start, in that value's resolution.
+    let before = |s: &str| {
+        let (v, bytes) = s.split_once('/').map_or((s, "1"), |(v, b)| (v, b));
+        let max = (1u64 << (8 * bytes.trim().parse::<u32>().ok()?.clamp(1, 4))) as f64 - 1.0;
+        Some(((v.trim().parse::<f64>().ok()? - 1.0) / max).clamp(0.0, 1.0))
+    };
+    let d1 = functions.get(i + 1).and_then(|n| attr(*n, "DMXFrom")).and_then(before).unwrap_or(1.0);
+    if d1 - d0 < 1e-6 || from == to {
+        return None;
+    }
+    let at = |d: f64| (from + (d - d0) / (d1 - d0) * (to - from)) as f32;
+    Some([at(0.0), at(1.0)])
+}
+
+/// A geometry's `Position` (rows, translation in the last column; a translation in the bottom
+/// row is moved there). The unturned placement when missing or broken.
+fn placement(n: Node) -> Placement {
+    let Some(text) = attr(n, "Position") else { return UNTURNED };
+    let rows: Vec<Vec<f32>> = text
+        .split('}')
+        .map(|p| p.trim().trim_start_matches('{'))
+        .filter(|p| !p.is_empty())
+        .map(|p| p.split(',').map(|v| v.trim().parse::<f32>().unwrap_or(f32::NAN)).collect())
+        .collect();
+    if rows.len() < 3 || rows.iter().take(4).any(|r| r.len() < 3 || r.iter().any(|v| !v.is_finite())) {
+        return UNTURNED;
+    }
+    let mut m = UNTURNED;
+    for (i, row) in m.iter_mut().enumerate() {
+        for (j, v) in row.iter_mut().enumerate() {
+            *v = rows[i].get(j).copied().unwrap_or(0.0);
+        }
+    }
+    if let Some(bottom) = rows.get(3)
+        && m.iter().all(|r| r[3] == 0.0)
+    {
+        for (r, v) in m.iter_mut().zip(bottom) {
+            r[3] = *v;
+        }
+    }
+    m
+}
+
+/// ` Position="…"` for a placement that isn't the unturned one (nothing for that).
+fn position_attr(m: &Placement) -> String {
+    if *m == UNTURNED {
+        return String::new();
+    }
+    let row = |r: &[f32; 4]| format!("{{{},{},{},{}}}", r[0], r[1], r[2], r[3]);
+    format!(" Position=\"{}{}{}{{0,0,0,1}}\"", row(&m[0]), row(&m[1]), row(&m[2]))
+}
+
+/// `a` then `b` (`b` placed inside `a`).
+#[allow(clippy::needless_range_loop)] // matrix maths reads best with indices
+fn compose(a: &Placement, b: &Placement) -> Placement {
+    let mut m = [[0.0; 4]; 3];
+    for i in 0..3 {
+        for j in 0..4 {
+            m[i][j] = (0..3).map(|k| a[i][k] * b[k][j]).sum::<f32>() + if j == 3 { a[i][3] } else { 0.0 };
+        }
+    }
+    m
+}
+
+/// Placement of geometry `to` in `from` (the product of the Positions below `from` down to `to`
+/// itself; from the top of the tree when `from` is None). None if `to` isn't inside `from`.
+fn placement_in(from: Option<Node>, to: Node) -> Option<Placement> {
+    let mut path = Vec::new();
+    for n in std::iter::once(to).chain(to.ancestors().skip(1)) {
+        if from == Some(n) {
+            return Some(path.iter().rev().fold(UNTURNED, |m, x| compose(&m, &placement(*x))));
+        }
+        if n.has_tag_name("Geometries") || !n.is_element() {
+            break;
+        }
+        path.push(n);
+    }
+    from.is_none().then(|| path.iter().rev().fold(UNTURNED, |m, x| compose(&m, &placement(*x))))
+}
+
+/// A moving head's parts from the geometries its pan and tilt channels turn ([`MovingParts`]);
+/// the beam is the first `Beam` inside the tilt geometry. None when they aren't nested that way or
+/// everything sits unturned at the origin.
+fn moving_parts(geoms: &HashMap<&str, Node>, pan: &str, tilt: &str) -> Option<MovingParts> {
+    let (p, t) = (*geoms.get(pan)?, *geoms.get(tilt)?);
+    let yoke = placement_in(None, p)?;
+    let head = if p == t { UNTURNED } else { placement_in(Some(p), t)? };
+    let beam = t.descendants().skip(1).find(|n| n.has_tag_name("Beam")).and_then(|b| placement_in(Some(t), b)).unwrap_or(UNTURNED);
+    let parts = MovingParts { yoke, head, beam };
+    (parts != MovingParts::default()).then_some(parts)
+}
+
 /// Every geometry node (anything named under `Geometries`) by name.
 fn geometries<'a, 'i>(root: Node<'a, 'i>) -> HashMap<&'a str, Node<'a, 'i>> {
     root.descendants()
@@ -292,8 +392,12 @@ pub fn import_xml(text: &str) -> anyhow::Result<Imported> {
         let n = geoms.get(g)?;
         n.ancestors().take_while(|a| !a.has_tag_name("Geometries")).filter_map(|a| attr(a, "Name")).find(|a| refs.contains_key(a)).map(str::to_string)
     };
-    let mut pan_range = None;
-    let mut tilt_range = None;
+    // Pan/tilt angles at the lowest and highest DMX value, the geometries they turn, and the zoom's beam angles.
+    let mut pan_angles: Option<[f32; 2]> = None;
+    let mut tilt_angles: Option<[f32; 2]> = None;
+    let mut zoom_angles: Option<[f32; 2]> = None;
+    let mut pan_geometry: Option<String> = None;
+    let mut tilt_geometry: Option<String> = None;
     let mut modes = Vec::new();
     for m in ft.descendants().filter(|n| n.has_tag_name("DMXMode")) {
         let mname = attr(m, "Name").unwrap_or("Mode").to_string();
@@ -378,13 +482,16 @@ pub fn import_xml(text: &str) -> anyhow::Result<Imported> {
                 .and_then(dmx_value)
                 .map(|v| v as f32);
             let highlight = attr(c, "Highlight").filter(|h| *h != "None").and_then(dmx_value).map(|v| v as f32);
-            // Pan/tilt range from the physical values of the first function.
-            if let Some(f) = functions.iter().find(|f| attribute(gattr(f)) == Some(a))
-                && let (Some(from), Some(to)) = (attr(*f, "PhysicalFrom").and_then(|x| x.parse::<f32>().ok()), attr(*f, "PhysicalTo").and_then(|x| x.parse::<f32>().ok()))
+            // Pan/tilt/zoom angles from the physical values of the attribute's function, stretched
+            // over the whole channel (the function's own DMX span gives the scale).
+            if matches!(a, Attribute::Pan | Attribute::Tilt | Attribute::Zoom)
+                && let Some(fi) = functions.iter().position(|f| attribute(gattr(f)) == Some(a))
+                && let Some(span) = angles(&functions, fi)
             {
                 match a {
-                    Attribute::Pan => pan_range = pan_range.or(Some((to - from).abs())),
-                    Attribute::Tilt => tilt_range = tilt_range.or(Some((to - from).abs())),
+                    Attribute::Pan if pan_angles.is_none() => (pan_angles, pan_geometry) = (Some(span), Some(geometry.clone())),
+                    Attribute::Tilt if tilt_angles.is_none() => (tilt_angles, tilt_geometry) = (Some(span), Some(geometry.clone())),
+                    Attribute::Zoom if zoom_angles.is_none() && span.iter().all(|x| (0.1..180.0).contains(x)) => zoom_angles = Some(span),
                     _ => {}
                 }
             }
@@ -459,17 +566,28 @@ pub fn import_xml(text: &str) -> anyhow::Result<Imported> {
     if modes.is_empty() {
         anyhow::bail!("no usable DMX modes");
     }
-    let beam: Vec<f32> = ft.descendants().filter(|n| n.has_tag_name("Beam")).filter_map(|b| attr(b, "BeamAngle")?.parse().ok()).collect();
+    let mut beam: Vec<f32> = ft.descendants().filter(|n| n.has_tag_name("Beam")).filter_map(|b| attr(b, "BeamAngle")?.parse().ok()).collect();
+    // The zoom's angles are the beam's range (either way round: "44 → 10" zooms in).
+    beam.extend(zoom_angles.iter().flatten());
     let d = Physical::default();
     let emitters = emitters(ft);
     let moving = modes.iter().any(|m| m.channel(Attribute::Pan).is_some() && m.channel(Attribute::Tilt).is_some());
+    let parts = match (&pan_geometry, &tilt_geometry) {
+        (Some(p), Some(t)) if moving => moving_parts(&geoms, p, t),
+        _ => None,
+    };
+    let range = |a: Option<[f32; 2]>, d: f32| a.map_or(d, |[x, y]| (y - x).abs());
     let physical = Physical {
-        pan_range: pan_range.unwrap_or(d.pan_range),
-        tilt_range: tilt_range.unwrap_or(d.tilt_range),
+        pan_range: range(pan_angles, d.pan_range),
+        tilt_range: range(tilt_angles, d.tilt_range),
         beam_min: if beam.is_empty() { d.beam_min } else { beam.iter().cloned().fold(f32::MAX, f32::min) },
         beam_max: if beam.is_empty() { d.beam_max } else { beam.iter().cloned().fold(0.0, f32::max) },
         moving,
         emitters,
+        pan_angles,
+        tilt_angles,
+        zoom_angles,
+        parts,
     };
     let fixture = FixtureType { id: type_id("gdtf", &manufacturer, &name), manufacturer, name, modes, physical, images: Default::default() };
     Ok(Imported { fixture: super::fixlib::sanitize(fixture)?, notes })
@@ -810,7 +928,11 @@ pub fn export(t: &FixtureType) -> anyhow::Result<Vec<u8>> {
     // template geometry of its own holding the cell's beam. Its main beam is left out when the
     // cells make all the light.
     let layouts = cell_layouts(t);
-    let beam = |indent: &str, name: &str| format!("{indent}<Beam Name=\"{}\" BeamAngle=\"{}\" FieldAngle=\"{}\"/>\n", e(name), p.beam_max, p.beam_max);
+    // A moving head's parts where its GDTF file had them (else unturned at the origin).
+    let parts = p.parts.filter(|_| p.moving).unwrap_or_default();
+    let beam = |indent: &str, name: &str, at: &Placement| {
+        format!("{indent}<Beam Name=\"{}\" BeamAngle=\"{}\" FieldAngle=\"{}\"{}/>\n", e(name), p.beam_max, p.beam_max, position_attr(at))
+    };
     x.push_str("    <Geometries>\n");
     let mut written: Vec<&str> = Vec::new();
     for l in &layouts {
@@ -822,7 +944,7 @@ pub fn export(t: &FixtureType) -> anyhow::Result<Vec<u8>> {
         let mut inner = String::new();
         let indent = if p.moving { "            " } else { "        " };
         if l.main_beam {
-            inner.push_str(&beam(indent, &format!("Beam{s}")));
+            inner.push_str(&beam(indent, &format!("Beam{s}"), &parts.beam));
         }
         for c in &l.cells {
             let breaks: String = c.breaks.iter().map(|(b, off)| format!("<Break DMXBreak=\"{}\" DMXOffset=\"{off}\"/>", b + 1)).collect();
@@ -836,14 +958,20 @@ pub fn export(t: &FixtureType) -> anyhow::Result<Vec<u8>> {
         }
         x.push_str(&format!("      <Geometry Name=\"Body{}\">\n", e(s)));
         if p.moving {
-            x.push_str(&format!("        <Axis Name=\"Yoke{}\">\n          <Axis Name=\"Head{}\">\n{inner}          </Axis>\n        </Axis>\n", e(s), e(s)));
+            x.push_str(&format!(
+                "        <Axis Name=\"Yoke{}\"{}>\n          <Axis Name=\"Head{}\"{}>\n{inner}          </Axis>\n        </Axis>\n",
+                e(s),
+                position_attr(&parts.yoke),
+                e(s),
+                position_attr(&parts.head)
+            ));
         } else {
             x.push_str(&inner);
         }
         x.push_str("      </Geometry>\n");
     }
     for c in layouts.iter().flat_map(|l| &l.cells) {
-        let b = if c.beam { beam("        ", &format!("{} Beam", c.template)) } else { String::new() };
+        let b = if c.beam { beam("        ", &format!("{} Beam", c.template), &UNTURNED) } else { String::new() };
         x.push_str(&format!("      <Geometry Name=\"{}\">\n{b}      </Geometry>\n", e(&c.template)));
     }
     x.push_str("    </Geometries>\n    <DMXModes>\n");
@@ -886,13 +1014,15 @@ pub fn export(t: &FixtureType) -> anyhow::Result<Vec<u8>> {
                     dmx_text(0.0, fine),
                     dmx_text(c.default_value(), fine)
                 );
-                let range = match c.attribute {
-                    Attribute::Pan => Some(p.pan_range),
-                    Attribute::Tilt => Some(p.tilt_range),
+                // Angles at the lowest and highest value, over the whole channel (one function).
+                let span = match c.attribute {
+                    Attribute::Pan => Some(p.pan_span()),
+                    Attribute::Tilt => Some(p.tilt_span()),
+                    Attribute::Zoom if p.zoom_span()[0] != p.zoom_span()[1] => Some(p.zoom_span()),
                     _ => None,
                 };
-                if let Some(r) = range {
-                    f.push_str(&format!(" PhysicalFrom=\"{}\" PhysicalTo=\"{}\"", -r / 2.0, r / 2.0));
+                if let Some([from, to]) = span {
+                    f.push_str(&format!(" PhysicalFrom=\"{from}\" PhysicalTo=\"{to}\""));
                 }
                 if c.attribute.is_emitter() && p.emitters.iter().any(|em| em.attribute == c.attribute) {
                     f.push_str(&format!(" Emitter=\"{}\"", c.attribute.name()));
@@ -981,6 +1111,59 @@ mod tests {
     </DMXModes>
   </FixtureType>
 </GDTF>"#;
+
+    /// A head as manufacturers' files have it: pan turning the other way, tilt on two functions
+    /// (the second a reset), the parts below the hanging point, the head turned a quarter round,
+    /// zoom narrowing as the value rises.
+    const MOVER: &str = r#"<GDTF DataVersion="1.2"><FixtureType Name="Mover" Manufacturer="Acme">
+    <Geometries>
+      <Geometry Name="Base" Position="{1,0,0,0}{0,1,0,0}{0,0,1,0}{0,0,0,1}">
+        <Axis Name="Yoke" Position="{1,0,0,0}{0,1,0,0}{0,0,1,-0.1}{0,0,0,1}">
+          <Axis Name="Head" Position="{0,1,0,0}{-1,0,0,0}{0,0,1,-0.3}{0,0,0,1}">
+            <Beam Name="Beam" BeamAngle="20" Position="{1,0,0,0}{0,1,0,0}{0,0,1,-0.2}{0,0,0,1}"/>
+          </Axis>
+        </Axis>
+      </Geometry>
+    </Geometries>
+    <DMXModes><DMXMode Name="Std" Geometry="Base"><DMXChannels>
+      <DMXChannel DMXBreak="1" Offset="1,2" Geometry="Yoke"><LogicalChannel Attribute="Pan">
+        <ChannelFunction Name="Pan" Attribute="Pan" DMXFrom="0/2" PhysicalFrom="270" PhysicalTo="-270"/>
+      </LogicalChannel></DMXChannel>
+      <DMXChannel DMXBreak="1" Offset="3" Geometry="Head"><LogicalChannel Attribute="Tilt">
+        <ChannelFunction Name="Tilt" Attribute="Tilt" DMXFrom="0/1" PhysicalFrom="-120" PhysicalTo="120"/>
+        <ChannelFunction Name="Reset" Attribute="Control1" DMXFrom="255/1"/>
+      </LogicalChannel></DMXChannel>
+      <DMXChannel DMXBreak="1" Offset="4" Geometry="Head"><LogicalChannel Attribute="Zoom">
+        <ChannelFunction Name="Zoom" Attribute="Zoom" DMXFrom="0/1" PhysicalFrom="44" PhysicalTo="10"/>
+      </LogicalChannel></DMXChannel>
+      <DMXChannel DMXBreak="1" Offset="5" Geometry="Head"><LogicalChannel Attribute="Dimmer">
+        <ChannelFunction Name="Dimmer" Attribute="Dimmer" DMXFrom="0/1"/>
+      </LogicalChannel></DMXChannel>
+    </DMXChannels></DMXMode></DMXModes>
+  </FixtureType></GDTF>"#;
+
+    #[test]
+    fn moving_heads_move_as_their_file_says() {
+        let r = import_xml(MOVER).unwrap();
+        let p = &r.fixture.physical;
+        assert_eq!(p.pan_angles, Some([270.0, -270.0]), "pan turns the other way");
+        assert_eq!(p.pan_range, 540.0);
+        // Tilt's function ends at 254 of 255: carried on over the channel.
+        let [t0, t1] = p.tilt_angles.unwrap();
+        assert!((t0 + 120.0).abs() < 1e-3 && (t1 - (-120.0 + 240.0 * 255.0 / 254.0)).abs() < 1e-3, "{t0} {t1}");
+        assert_eq!(p.zoom_angles, Some([44.0, 10.0]));
+        assert_eq!((p.beam_min, p.beam_max), (10.0, 44.0));
+        let parts = p.parts.expect("parts");
+        assert_eq!(parts.yoke[2][3], -0.1);
+        assert_eq!((parts.head[0], parts.head[2][3]), ([0.0, 1.0, 0.0, 0.0], -0.3));
+        assert_eq!(parts.beam[2][3], -0.2);
+        // Exported and read back: the same.
+        let back = import(&export(&r.fixture).unwrap()).unwrap().fixture.physical;
+        assert_eq!((back.pan_angles, back.zoom_angles, back.parts), (p.pan_angles, p.zoom_angles, p.parts));
+        assert!(back.tilt_angles.unwrap().iter().zip(p.tilt_angles.unwrap()).all(|(a, b)| (a - b).abs() < 1e-3));
+        // An unturned fixture at the origin keeps no parts.
+        assert_eq!(import_xml(SPOT).unwrap().fixture.physical.parts, None);
+    }
 
     const BAR: &str = r#"<GDTF DataVersion="1.2"><FixtureType Name="Bar" Manufacturer="Acme">
     <Geometries>

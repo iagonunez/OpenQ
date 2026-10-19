@@ -3,25 +3,32 @@
 //!
 //! A [`FocusPoint`](super::model::FocusPoint) is a named place in the patch's space (metres, x
 //! right, y up, z towards the audience). Cues, presets and the programmer refer to it with
-//! [`Value::Point`](super::model::Value::Point); compiling turns that into pan and tilt for each
+//! [`Value::Point`]; compiling turns that into pan and tilt for each
 //! fixture from the fixture's position, rotation and pan/tilt ranges ([`aim`]), so moving a point
 //! or a fixture re-aims every cue that uses it.
 //!
-//! Angles follow GDTF/MVR (what visualisers draw): with no rotation and pan/tilt in the middle of
-//! their DMX range the beam points straight down; pan turns about the fixture's vertical axis, tilt
-//! about the yoke's x axis, both right-handed, and the physical range ([`Physical::pan_range`],
-//! [`Physical::tilt_range`]) is centred on the middle of the DMX range. Inverted pan/tilt
-//! ([`Fixture::invert_pan`]) flips the DMX value.
+//! Heads move as their GDTF file says (and as visualisers draw it): a DMX value is an angle from
+//! [`Physical::pan_span`]/[`Physical::tilt_span`] (the file's `PhysicalFrom` → `PhysicalTo`, so
+//! "270 → −270" turns the other way and the middle needn't be 0; without a file, the range centred
+//! on the DMX middle); pan turns the yoke geometry about its z axis and tilt the head geometry
+//! about its x axis, right-handed, each where the file places it ([`Physical::parts`]), and the
+//! beam leaves the lens along its −z. With no parts the axes and lens sit at the fixture's origin
+//! and, at 0°, the beam points straight down. Inverted pan/tilt ([`Fixture::invert_pan`]) flips the
+//! DMX value. [`aim`] solves the tilt for the beam's height in the yoke in closed form, the pan
+//! from the rest, then repeats a few times for the lens sitting off the axes.
 //!
-//! Calibration, from fixtures the operator aimed by hand at the real places ([`Aim`]):
-//! * [`locate`] — where a point really is: where the beams cross (two beams or more), or where
-//!   one beam meets the point's height.
+//! Calibration, from fixtures the operator aimed by hand at the real places ([`Aim`]): points stay
+//! where the operator put them (they only move when dragged on the plan), and the rig is corrected
+//! instead.
 //! * [`rig_offset`] — how far a group of fixtures (a truss) really is from where the patch has
 //!   it, along the chosen [`Axes`]. One beam gives two equations, so height and depth come from
 //!   one fixture aimed off the centre line; all three axes need two beams (another fixture of the
 //!   group, or another point). [`shift`] then moves the fixtures (and the plot bar they hang on).
+//!   The caller names the group: which fixtures share a truss is never guessed.
+//! * [`locate`] — where beams meet (two beams or more cross, or one meets a height): where a new
+//!   point goes when the operator makes one from aimed fixtures.
 
-use super::model::{Fixture, FixtureId, Lighting, Physical, ShapeKind};
+use super::model::{Attribute, Fixture, FixtureId, Lighting, Physical, PointId, ShapeKind, Value};
 
 type V = [f64; 3];
 type M = [[f64; 3]; 3];
@@ -71,69 +78,291 @@ fn rotation(deg: [f32; 3]) -> M {
     mul(&ry, &mul(&rx, &rz))
 }
 
+/// A placement in f64: rotation rows with the translation in the last column.
+type P = [[f64; 4]; 3];
+
+const UNTURNED: P = [[1.0, 0.0, 0.0, 0.0], [0.0, 1.0, 0.0, 0.0], [0.0, 0.0, 1.0, 0.0]];
+
+fn p64(p: &super::model::Placement) -> P {
+    p.map(|r| r.map(f64::from))
+}
+
+/// `a` then `b` (`b` placed inside `a`).
+fn then(a: &P, b: &P) -> P {
+    let mut m = [[0.0; 4]; 3];
+    for i in 0..3 {
+        for j in 0..4 {
+            m[i][j] = (0..3).map(|k| a[i][k] * b[k][j]).sum::<f64>() + if j == 3 { a[i][3] } else { 0.0 };
+        }
+    }
+    m
+}
+
+fn at(p: &P, v: V) -> V {
+    [0, 1, 2].map(|i| p[i][0] * v[0] + p[i][1] * v[1] + p[i][2] * v[2] + p[i][3])
+}
+
+fn turned(p: &P, v: V) -> V {
+    [0, 1, 2].map(|i| p[i][0] * v[0] + p[i][1] * v[1] + p[i][2] * v[2])
+}
+
+/// Turn about z (pan), degrees.
+fn rz(deg: f64) -> P {
+    let (s, c) = deg.to_radians().sin_cos();
+    [[c, -s, 0.0, 0.0], [s, c, 0.0, 0.0], [0.0, 0.0, 1.0, 0.0]]
+}
+
+/// Turn about x (tilt), degrees.
+fn rx(deg: f64) -> P {
+    let (s, c) = deg.to_radians().sin_cos();
+    [[1.0, 0.0, 0.0, 0.0], [0.0, c, -s, 0.0], [0.0, s, c, 0.0]]
+}
+
+/// The inverse of a placement (None if its rotation part is singular).
+fn inverse(p: &P) -> Option<P> {
+    let r = [0, 1, 2].map(|i| [p[i][0], p[i][1], p[i][2]]);
+    let cross = |a: V, b: V| [a[1] * b[2] - a[2] * b[1], a[2] * b[0] - a[0] * b[2], a[0] * b[1] - a[1] * b[0]];
+    // The adjugate's columns: row i · column j = det when i = j, else 0.
+    let c = [cross(r[1], r[2]), cross(r[2], r[0]), cross(r[0], r[1])];
+    let det = dot(r[0], c[0]);
+    if !det.is_finite() || det.abs() < 1e-9 {
+        return None;
+    }
+    let mut inv = [0, 1, 2].map(|i| [c[0][i] / det, c[1][i] / det, c[2][i] / det, 0.0]);
+    let t = turned(&inv, [p[0][3], p[1][3], p[2][3]]);
+    for (row, t) in inv.iter_mut().zip(t) {
+        row[3] = -t;
+    }
+    Some(inv)
+}
+
+/// GDTF axes (x, y, z up) → the patch's axes (x, y up, z towards the audience).
+fn to_patch(v: V) -> V {
+    [v[0], v[2], -v[1]]
+}
+
+/// The patch's axes → GDTF axes.
+fn from_patch(v: V) -> V {
+    [v[0], -v[2], v[1]]
+}
+
+/// A moving head's parts ([`MovingParts`](super::model::MovingParts)) in f64.
+struct Parts {
+    yoke: P,
+    head: P,
+    beam: P,
+}
+
+fn parts(p: &Physical) -> Parts {
+    match &p.parts {
+        Some(m) => Parts { yoke: p64(&m.yoke), head: p64(&m.head), beam: p64(&m.beam) },
+        None => Parts { yoke: UNTURNED, head: UNTURNED, beam: UNTURNED },
+    }
+}
+
+/// Pan and tilt angle at the lowest and the highest DMX value (None if a span is empty or not a
+/// number).
+fn spans(p: &Physical) -> Option<([f64; 2], [f64; 2])> {
+    let ok = |s: [f32; 2]| (s.iter().all(|x| x.is_finite()) && (s[1] - s[0]).abs() > 1e-3).then(|| s.map(f64::from));
+    Some((ok(p.pan_span())?, ok(p.tilt_span())?))
+}
+
 /// Stored value (0..=1) → physical angle, degrees.
-fn to_angle(v: f32, range: f32, invert: bool) -> f64 {
+fn to_angle(v: f32, span: [f64; 2], invert: bool) -> f64 {
     let d = if invert { 1.0 - v } else { v } as f64;
-    (d - 0.5) * range as f64
+    span[0] + d * (span[1] - span[0])
 }
 
 /// Physical angle → stored value.
-fn from_angle(a: f64, range: f32, invert: bool) -> f32 {
-    let d = (a / range as f64 + 0.5).clamp(0.0, 1.0) as f32;
+fn from_angle(a: f64, span: [f64; 2], invert: bool) -> f32 {
+    let d = ((a - span[0]) / (span[1] - span[0])).clamp(0.0, 1.0) as f32;
     if invert { 1.0 - d } else { d }
 }
 
-fn ranges(p: &Physical) -> Option<(f32, f32)> {
-    let ok = |r: f32| r.is_finite() && r > 0.0;
-    (ok(p.pan_range) && ok(p.tilt_range)).then_some((p.pan_range, p.tilt_range))
+/// Where the beam leaves and which way it goes, in the fixture's GDTF axes, with pan and tilt at
+/// physical angles `pan`, `tilt` (degrees).
+fn local_beam(k: &Parts, pan: f64, tilt: f64) -> (V, V) {
+    let m = then(&then(&then(&then(&k.yoke, &rz(pan)), &k.head), &rx(tilt)), &k.beam);
+    let d = turned(&m, [0.0, 0.0, -1.0]);
+    let len = norm(d);
+    (at(&m, [0.0; 3]), d.map(|x| x / len))
+}
+
+/// The beam of fixture `f` (type data `p`) with pan and tilt at `pan`, `tilt` (0..=1, as stored):
+/// where it leaves the fixture and its direction (unit vector), patch space. None if the type has
+/// no pan/tilt angles.
+pub fn ray(f: &Fixture, p: &Physical, pan: f32, tilt: f32) -> Option<([f64; 3], [f64; 3])> {
+    let (ps, ts) = spans(p)?;
+    let (o, d) = local_beam(&parts(p), to_angle(pan, ps, f.invert_pan), to_angle(tilt, ts, f.invert_tilt));
+    let r = rotation(f.rotation);
+    let o = mat_vec(&r, to_patch(o));
+    let pos = v64(f.position);
+    Some(([pos[0] + o[0], pos[1] + o[1], pos[2] + o[2]], mat_vec(&r, to_patch(d))))
 }
 
 /// Pan and tilt (0..=1, as stored) that aim fixture `f` (of a type with physical data `p`) at
-/// `target`. None if the type has no pan/tilt range or the target is where the fixture is. A
-/// target out of reach gets the nearest aim within the ranges. Of the ways to reach a target
-/// (the head turned over, pan a full turn round) the one with pan nearest the middle wins, then
-/// the one with less tilt, so neighbouring points give neighbouring aims.
+/// `target`, the way its GDTF file moves it ([`Physical::pan_angles`], [`Physical::parts`]).
+/// None if the type has no pan/tilt angles or the target is where the beam starts. A target out
+/// of reach gets the nearest aim within the ranges.
+///
+/// A head reaches most places two ways: tilted one way, or panned half a turn and tilted the
+/// other way (and pan may go a full turn round). The one with pan nearest the middle of its range
+/// wins, then the one with tilt nearest the middle; `flip` takes the best of the other way
+/// instead (the head turned over).
 pub fn aim(f: &Fixture, p: &Physical, target: [f32; 3]) -> Option<(f32, f32)> {
-    let (pr, tr) = ranges(p)?;
-    let d = mat_t_vec(&rotation(f.rotation), sub(v64(target), v64(f.position)));
-    let len = norm(d);
-    if len.is_nan() || len <= 1e-6 {
+    aim_with(f, p, target, false)
+}
+
+/// [`aim`], or with `flip` the head turned over (the other way to reach the target).
+pub fn aim_with(f: &Fixture, p: &Physical, target: [f32; 3], flip: bool) -> Option<(f32, f32)> {
+    let (ps, ts) = spans(p)?;
+    let k = parts(p);
+    // The target in the yoke's own axes (where pan turns about z).
+    let local = from_patch(mat_t_vec(&rotation(f.rotation), sub(v64(target), v64(f.position))));
+    if !local.iter().all(|x| x.is_finite()) {
         return None;
     }
-    let d = d.map(|x| x / len);
-    // Beam = (−sin T sin P, −cos T, −sin T cos P) in the fixture's axes.
-    let t0 = (-d[1]).clamp(-1.0, 1.0).acos().to_degrees();
-    let p0 = if d[0].hypot(d[2]) < 1e-9 { 0.0 } else { (-d[0]).atan2(-d[2]).to_degrees() };
-    let (hp, ht) = (pr as f64 / 2.0, tr as f64 / 2.0);
-    let mut best: Option<(f64, f64, f64)> = None;
-    for (pan, tilt) in [(p0, t0), (p0 + 180.0, -t0)] {
-        for k in -3..=3 {
-            let pan = pan + 360.0 * k as f64;
-            let excess = (pan.abs() - hp).max(0.0) + (tilt.abs() - ht).max(0.0);
-            let score = excess * 1e6 + pan.abs() + tilt.abs() * 1e-3;
-            if best.is_none_or(|b| score < b.0 - 1e-9) {
-                best = Some((score, pan.clamp(-hp, hp), tilt.clamp(-ht, ht)));
+    let q = at(&inverse(&k.yoke)?, local);
+    // After tilt the beam's height part (z, in the yoke) doesn't depend on pan:
+    // z(T) = C + A cos T + B sin T with the head's z row h and the beam b0 in the head.
+    let h = [k.head[2][0], k.head[2][1], k.head[2][2]];
+    let b0 = turned(&k.beam, [0.0, 0.0, -1.0]);
+    let b0 = b0.map(|x| x / norm(b0));
+    let (c0, a0, s0) = (h[0] * b0[0], h[1] * b0[1] + h[2] * b0[2], h[2] * b0[1] - h[1] * b0[2]);
+    let r = a0.hypot(s0);
+    if r < 1e-9 {
+        return None; // tilt can't raise or lower the beam
+    }
+    let phi = s0.atan2(a0);
+    let wrap = |a: f64| (a + 180.0).rem_euclid(360.0) - 180.0;
+    let mid = |s: [f64; 2]| (s[0] + s[1]) / 2.0;
+    let bounds = |s: [f64; 2]| (s[0].min(s[1]), s[0].max(s[1]));
+    // The head and lens in the yoke, before pan.
+    let inner = Parts { yoke: UNTURNED, head: k.head, beam: k.beam };
+    let mut candidates: Vec<(f64, usize, f64, f64)> = Vec::new();
+    for way in 0..2 {
+        // The lens sits off the axes: aim from where it ends up, a few times over.
+        let (mut pan, mut tilt) = (mid(ps), 0.0);
+        let mut ok = true;
+        for _ in 0..12 {
+            let (o, _) = local_beam(&inner, pan, tilt);
+            let d = sub(q, o);
+            let len = norm(d);
+            if len.is_nan() || len <= 1e-6 {
+                ok = false;
+                break;
+            }
+            let d = d.map(|x| x / len);
+            let c = ((d[2] - c0) / r).clamp(-1.0, 1.0);
+            let t = if way == 0 { phi + c.acos() } else { phi - c.acos() };
+            let u = turned(&then(&k.head, &rx(t.to_degrees())), b0);
+            let (dxy, uxy) = (d[0].hypot(d[1]), u[0].hypot(u[1]));
+            let next_pan = if dxy < 1e-9 || uxy < 1e-9 { pan } else { (d[1].atan2(d[0]) - u[1].atan2(u[0])).to_degrees() };
+            let (np, nt) = (wrap(next_pan), wrap(t.to_degrees()));
+            let done = (np - wrap(pan)).abs() < 1e-7 && (nt - tilt).abs() < 1e-7;
+            (pan, tilt) = (np, nt);
+            if done {
+                break;
+            }
+        }
+        if !ok {
+            continue;
+        }
+        // Every pan and tilt a full turn round, near the ranges.
+        let (pl, ph) = bounds(ps);
+        let (tl, th) = bounds(ts);
+        for kp in -3..=3 {
+            for kt in -1..=1 {
+                let (pa, ta) = (pan + 360.0 * kp as f64, tilt + 360.0 * kt as f64);
+                let excess = (pl - pa).max(0.0) + (pa - ph).max(0.0) + (tl - ta).max(0.0) + (ta - th).max(0.0);
+                let score = excess * 1e6 + (pa - mid(ps)).abs() + (ta - mid(ts)).abs() * 1e-3;
+                candidates.push((score, way, pa.clamp(pl, ph), ta.clamp(tl, th)));
             }
         }
     }
-    let (_, pan, tilt) = best?;
-    Some((from_angle(pan, pr, f.invert_pan), from_angle(tilt, tr, f.invert_tilt)))
+    let best = |way: Option<usize>| candidates.iter().filter(|c| way.is_none_or(|w| c.1 == w)).min_by(|a, b| a.0.total_cmp(&b.0)).copied();
+    let first = best(None)?;
+    let (_, _, pan, tilt) = if flip { best(Some(1 - first.1)).unwrap_or(first) } else { first };
+    Some((from_angle(pan, ps, f.invert_pan), from_angle(tilt, ts, f.invert_tilt)))
 }
 
 /// The direction (unit vector, patch space) of fixture `f`'s beam with pan and tilt at `pan` and
-/// `tilt` (0..=1, as stored). None if the type has no pan/tilt range.
+/// `tilt` (0..=1, as stored). None if the type has no pan/tilt angles.
 pub fn beam(f: &Fixture, p: &Physical, pan: f32, tilt: f32) -> Option<[f64; 3]> {
-    let (pr, tr) = ranges(p)?;
-    let (pa, ta) = (to_angle(pan, pr, f.invert_pan).to_radians(), to_angle(tilt, tr, f.invert_tilt).to_radians());
-    let local = [-ta.sin() * pa.sin(), -ta.cos(), -ta.sin() * pa.cos()];
-    Some(mat_vec(&rotation(f.rotation), local))
+    ray(f, p, pan, tilt).map(|r| r.1)
+}
+
+/// Where fixture `f`'s beam (pan and tilt at `pan`, `tilt`, as stored) meets the level plane at
+/// `height` (y, patch space). None if the type has no pan/tilt angles, or the beam runs (nearly)
+/// level, away from the plane or further than [`MAX_DISTANCE`](crate::limits::MAX_DISTANCE).
+pub fn reach(f: &Fixture, p: &Physical, pan: f32, tilt: f32, height: f32) -> Option<[f32; 3]> {
+    let (from, dir) = ray(f, p, pan, tilt)?;
+    let t = (height as f64 - from[1]) / dir[1];
+    if !t.is_finite() || t <= 0.0 || dir[1].abs() < 1e-3 || t > crate::limits::MAX_DISTANCE as f64 {
+        return None;
+    }
+    Some([0, 1, 2].map(|i| (from[i] + t * dir[i]) as f32))
+}
+
+/// The focus point and offset of a unit's pan/tilt (pan first), if they refer to one.
+pub fn reference(values: &std::collections::BTreeMap<Attribute, Value>) -> Option<(PointId, [f32; 3])> {
+    [Attribute::Pan, Attribute::Tilt].iter().find_map(|a| match values.get(a)? {
+        Value::Point { point, offset, .. } => Some((*point, *offset)),
+        _ => None,
+    })
+}
+
+/// Pan or tilt (`attr`) of unit `f` set to `value` by hand while it aims from a focus point: the
+/// reference stays and the offset becomes where the beam now meets the height it aimed at, with
+/// `flip` set when the head is the other way round from [`aim`]'s choice (so the fixture stays
+/// where the operator put it). A beam that meets no such plane (aimed up or level) drops the
+/// reference (pan and tilt become levels). False if `values` don't refer to a point or `attr`
+/// isn't pan/tilt (nothing changed).
+pub fn move_from_point(l: &Lighting, f: FixtureId, values: &mut std::collections::BTreeMap<Attribute, Value>, attr: Attribute, value: f32) -> bool {
+    if !matches!(attr, Attribute::Pan | Attribute::Tilt) {
+        return false;
+    }
+    let Some((point, offset)) = reference(values) else { return false };
+    let resolve = |a: Attribute| values.get(&a).and_then(|v| l.resolve(f, a, *v));
+    let (mut pan, mut tilt) = (resolve(Attribute::Pan), resolve(Attribute::Tilt));
+    if attr == Attribute::Pan {
+        pan = Some(value);
+    } else {
+        tilt = Some(value);
+    }
+    let base = l.point(point).map(|p| p.position);
+    let hit = (|| {
+        let (fixture, _) = l.unit(f)?;
+        let physical = &l.fixture_type(&fixture.fixture_type)?.physical;
+        let base = base?;
+        let (pan, tilt) = (pan?, tilt?);
+        let m = crate::limits::MAX_DISTANCE;
+        let hit = reach(fixture, physical, pan, tilt, base[1] + offset[1])?;
+        let offset = [0, 1, 2].map(|i| (((hit[i] - base[i]) * 1000.0).round() / 1000.0).clamp(-m, m));
+        // The way round that keeps the head where it was put.
+        let target = [0, 1, 2].map(|i| base[i] + offset[i]);
+        let gap = |w: Option<(f32, f32)>| w.map_or(f32::INFINITY, |(p, t)| (p - pan).abs() + (t - tilt).abs());
+        let flip = gap(aim_with(fixture, physical, target, true)) < gap(aim_with(fixture, physical, target, false));
+        Some((offset, flip))
+    })();
+    for (a, v) in [(Attribute::Pan, pan), (Attribute::Tilt, tilt)] {
+        if values.contains_key(&a)
+            && let Some(v) = v
+        {
+            values.insert(a, hit.map_or(Value::Level(v), |(offset, flip)| Value::Point { point, offset, flip }));
+        }
+    }
+    if hit.is_none() {
+        values.insert(attr, Value::Level(value));
+    }
+    true
 }
 
 /// A fixture aimed by hand at a known place: its beam (from where the patch has the fixture) and
 /// the place it really lights.
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct Aim {
-    /// The fixture's position in the patch.
+    /// Where the beam leaves the fixture, as the patch has it.
     pub from: [f64; 3],
     /// Its beam's direction (unit vector, [`beam`]).
     pub dir: [f64; 3],
@@ -144,7 +373,8 @@ pub struct Aim {
 impl Aim {
     /// Fixture `f` (type data `p`) aimed with pan/tilt `pan`, `tilt` at `target`.
     pub fn new(f: &Fixture, p: &Physical, pan: f32, tilt: f32, target: [f32; 3]) -> Option<Aim> {
-        Some(Aim { from: v64(f.position), dir: beam(f, p, pan, tilt)?, target: v64(target) })
+        let (from, dir) = ray(f, p, pan, tilt)?;
+        Some(Aim { from, dir, target: v64(target) })
     }
 
     /// `v` with the part along the beam taken out (`(I − d dᵀ) v`).
@@ -387,17 +617,19 @@ pub fn shift(l: &mut Lighting, ids: &[FixtureId], by: [f32; 3]) {
         (f.position[1] - s.height).abs() <= ON_BAR && gap <= ON_BAR
     };
     let moved: std::collections::HashSet<FixtureId> = ids.iter().copied().collect();
+    let m = crate::limits::MAX_DISTANCE;
+    let within = |v: f32| if v.is_finite() { v.clamp(-m, m) } else { 0.0 };
     for s in l.shapes.iter_mut().filter(|s| s.kind == ShapeKind::Bar) {
         let hung: Vec<&Fixture> = l.fixtures.iter().filter(|f| on(s, f)).collect();
         if !hung.is_empty() && hung.iter().all(|f| moved.contains(&f.id)) {
-            s.a = [s.a[0] + by[0], s.a[1] + by[2]];
-            s.b = [s.b[0] + by[0], s.b[1] + by[2]];
-            s.height += by[1];
+            s.a = [s.a[0] + by[0], s.a[1] + by[2]].map(within);
+            s.b = [s.b[0] + by[0], s.b[1] + by[2]].map(within);
+            s.height = within(s.height + by[1]);
         }
     }
     for f in l.fixtures.iter_mut().filter(|f| moved.contains(&f.id)) {
         for (p, d) in f.position.iter_mut().zip(by) {
-            *p += d;
+            *p = within(*p + d);
         }
     }
 }
@@ -417,9 +649,94 @@ mod tests {
 
     /// The beam of an aimed fixture passes through the target.
     fn hits(f: &Fixture, p: &Physical, target: [f32; 3]) -> f64 {
-        let (pan, tilt) = aim(f, p, target).unwrap();
+        hits_with(f, p, target, false)
+    }
+
+    /// How far the beam aimed at `target` (either way round) passes from it (infinite when it
+    /// points away).
+    fn hits_with(f: &Fixture, p: &Physical, target: [f32; 3], flip: bool) -> f64 {
+        let (pan, tilt) = aim_with(f, p, target, flip).unwrap();
         let a = Aim::new(f, p, pan, tilt, target).unwrap();
+        if dot(sub(a.target, a.from), a.dir) <= 0.0 {
+            return f64::INFINITY;
+        }
         norm(a.across(sub(a.target, a.from)))
+    }
+
+    /// A head like manufacturers' files have it: pan the other way round, tilt off-centre, the
+    /// parts below the hanging point and the head turned a quarter round.
+    fn real_head() -> Physical {
+        let at = |r: [[f32; 3]; 3], t: [f32; 3]| [0, 1, 2].map(|i| [r[i][0], r[i][1], r[i][2], t[i]]);
+        let i3 = [[1.0, 0.0, 0.0], [0.0, 1.0, 0.0], [0.0, 0.0, 1.0]];
+        let quarter = [[0.0, 1.0, 0.0], [-1.0, 0.0, 0.0], [0.0, 0.0, 1.0]];
+        Physical {
+            pan_angles: Some([270.0, -270.0]),
+            tilt_angles: Some([-100.0, 140.0]),
+            parts: Some(super::super::model::MovingParts { yoke: at(i3, [0.0, 0.0, -0.1]), head: at(quarter, [0.02, 0.0, -0.3]), beam: at(i3, [0.0, 0.0, -0.2]) }),
+            ..Physical { tilt_range: 360.0, ..physical() }
+        }
+    }
+
+    #[test]
+    fn heads_as_their_files_have_them_reach_their_targets_both_ways() {
+        let p = Physical { tilt_angles: Some([-180.0, 180.0]), ..real_head() };
+        let rigs = [
+            mover([0.0, 6.0, -3.0], [0.0; 3]),
+            mover([-4.0, 7.5, 8.0], [0.0, 30.0, 0.0]),
+            mover([3.0, 0.5, 4.0], [180.0, 0.0, 0.0]), // standing on the floor
+            mover([5.0, 4.0, 0.0], [0.0, 90.0, 90.0]), // on a boom, sideways
+            Fixture { invert_pan: true, invert_tilt: true, ..mover([2.0, 8.0, -6.0], [10.0, -20.0, 5.0]) },
+        ];
+        let targets = [[0.0, 0.0, 0.0], [2.0, 0.0, 3.0], [-3.0, 1.0, -2.0], [0.0, 3.0, 8.0], [6.0, 0.0, 0.0]];
+        for f in &rigs {
+            for t in targets {
+                for flip in [false, true] {
+                    let miss = hits_with(f, &p, t, flip);
+                    assert!(miss < 1e-4, "{f:?} at {t:?} (flip {flip}): misses by {miss}");
+                }
+                let (a, b) = (aim_with(f, &p, t, false).unwrap(), aim_with(f, &p, t, true).unwrap());
+                assert!((a.0 - b.0).abs() > 0.2, "flipped: pan half a turn round ({a:?} {b:?})");
+            }
+        }
+    }
+
+    #[test]
+    fn reversed_angles_reverse_the_dmx() {
+        let f = mover([1.0, 6.0, 5.0], [0.0; 3]);
+        let base = Physical { pan_angles: Some([-270.0, 270.0]), ..physical() };
+        let reversed = Physical { pan_angles: Some([270.0, -270.0]), ..physical() };
+        let (a, b) = (aim(&f, &base, [0.0; 3]).unwrap(), aim(&f, &reversed, [0.0; 3]).unwrap());
+        assert!((a.0 - (1.0 - b.0)).abs() < 1e-6 && (a.1 - b.1).abs() < 1e-6, "{a:?} {b:?}");
+        // An off-centre span: the middle of the DMX range isn't straight down.
+        let offset = Physical { tilt_angles: Some([0.0, 270.0]), ..physical() };
+        let (_, tilt) = aim(&f, &offset, [1.0, 0.0, 5.0]).unwrap();
+        assert!(tilt.abs() < 1e-6, "straight down = tilt 0° = DMX 0: {tilt}");
+    }
+
+    #[test]
+    fn the_lens_is_where_the_beam_starts() {
+        // A head hanging 0.5 m below the fixture's point, aimed level: the beam is 0.5 m lower.
+        let at = |z: f32| [[1.0, 0.0, 0.0, 0.0], [0.0, 1.0, 0.0, 0.0], [0.0, 0.0, 1.0, z]];
+        let p = Physical { parts: Some(super::super::model::MovingParts { yoke: at(-0.2), head: at(-0.3), beam: at(0.0) }), ..physical() };
+        let f = mover([0.0, 6.0, 0.0], [0.0; 3]);
+        let (from, _) = ray(&f, &p, 0.5, 0.5).unwrap();
+        assert!(norm(sub(from, [0.0, 5.5, 0.0])) < 1e-6, "{from:?}");
+        assert!(hits(&f, &p, [10.0, 5.5, 0.0]) < 1e-4, "stored values are f32");
+        // Without the parts the same pan/tilt would light 0.5 m higher at that distance.
+        let (pan, tilt) = aim(&f, &p, [10.0, 5.5, 0.0]).unwrap();
+        let plain = Aim::new(&f, &physical(), pan, tilt, [10.0, 5.5, 0.0]).unwrap();
+        assert!(norm(plain.across(sub(plain.target, plain.from))) > 0.4);
+    }
+
+    #[test]
+    fn wild_input_gives_no_aim() {
+        let f = mover([0.0, 6.0, 0.0], [0.0; 3]);
+        assert_eq!(aim(&f, &physical(), [f32::INFINITY, 0.0, 0.0]), None);
+        assert_eq!(aim(&f, &physical(), [f32::NAN, 0.0, 0.0]), None);
+        assert_eq!(aim(&f, &Physical { pan_angles: Some([10.0, 10.0]), ..physical() }, [0.0; 3]), None, "empty span");
+        let flat = |z: f32| [[1.0, 0.0, 0.0, 0.0], [0.0, 1.0, 0.0, 0.0], [0.0, 0.0, z, 0.0]];
+        let p = Physical { parts: Some(super::super::model::MovingParts { yoke: flat(0.0), ..Default::default() }), ..physical() };
+        assert_eq!(aim(&f, &p, [0.0; 3]), None, "a yoke that can't be undone");
     }
 
     #[test]
@@ -553,7 +870,7 @@ mod tests {
         l.fixture_types.push(t.clone());
         l.fixtures = vec![Fixture { id: 1, fixture_type: t.id.clone(), mode, position: [3.0, 6.0, -2.0], ..Default::default() }].into();
         l.points.push(FocusPoint { id: 1, name: "Centre".into(), position: [0.0; 3] });
-        let v = Value::Point { point: 1 };
+        let v = Value::point(1);
         let at = |l: &Lighting| (l.resolve(1, Attribute::Pan, v).unwrap(), l.resolve(1, Attribute::Tilt, v).unwrap());
         let before = at(&l);
         assert_eq!(before, aim(&l.fixtures[0], &t.physical, [0.0; 3]).unwrap());
@@ -573,5 +890,32 @@ mod tests {
         l.delete_point(1);
         let vals = &l.sequences[0].cues[0].values[&1];
         assert_eq!((vals[&Attribute::Pan], vals[&Attribute::Tilt]), (Value::Level(kept.0), Value::Level(kept.1)));
+    }
+
+    #[test]
+    fn offsets_follow_their_point() {
+        use crate::light::model::{Attribute, Value};
+        let mut l = Lighting::default();
+        let t = crate::light::library::generics().into_iter().find(|t| t.physical.moving).expect("a generic mover");
+        let mode = t.modes[0].name.clone();
+        l.fixture_types.push(t.clone());
+        l.fixtures = vec![Fixture { id: 1, fixture_type: t.id.clone(), mode, position: [3.0, 6.0, -2.0], ..Default::default() }].into();
+        l.points.push(FocusPoint { id: 1, name: "Centre".into(), position: [0.0; 3] });
+        let v = Value::Point { point: 1, offset: [1.0, 0.0, 0.5], flip: false };
+        let at = |l: &Lighting| (l.resolve(1, Attribute::Pan, v).unwrap(), l.resolve(1, Attribute::Tilt, v).unwrap());
+        assert_eq!(at(&l), aim(&l.fixtures[0], &t.physical, [1.0, 0.0, 0.5]).unwrap());
+        l.points[0].position = [-1.0, 0.0, 1.0];
+        assert_eq!(at(&l), aim(&l.fixtures[0], &t.physical, [0.0, 0.0, 1.5]).unwrap(), "the offset moves with the point");
+        // Where the beam lands at the point's height gives the offset back.
+        let (pan, tilt) = at(&l);
+        let hit = reach(&l.fixtures[0], &t.physical, pan, tilt, 0.0).unwrap();
+        assert!(hit.iter().zip([0.0, 0.0, 1.5]).all(|(a, b)| (a - b).abs() < 1e-3), "{hit:?}");
+        // A beam pointing up reaches no floor.
+        let up = aim(&l.fixtures[0], &t.physical, [3.0, 9.0, -2.0]).unwrap();
+        assert_eq!(reach(&l.fixtures[0], &t.physical, up.0, up.1, 0.0), None);
+        // Saved without the offset when there is none.
+        assert_eq!(serde_json::to_string(&Value::point(2)).unwrap(), r#"{"point":2}"#);
+        let back: Value = serde_json::from_str(&serde_json::to_string(&v).unwrap()).unwrap();
+        assert_eq!(back, v);
     }
 }

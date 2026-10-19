@@ -2431,11 +2431,13 @@ impl App {
                     self.light.selection = l.units().into_iter().filter(|u| l.unit_attributes(*u).contains(&Attribute::Pan)).take(3).collect();
                     if let Some(p) = l.points.get(1) {
                         self.apply_point(&l, p.id);
+                        self.light.point_sel = Some(p.id);
                     }
+                    // One moved by hand: it aims beside the point, still measured from it.
                     if let Some(f) = self.light.selection.first()
-                        && let Some(pan) = l.resolve(*f, Attribute::Pan, crate::light::model::Value::Point { point: l.points.get(1).map_or(0, |p| p.id) })
+                        && let Some(pan) = l.resolve(*f, Attribute::Pan, crate::light::model::Value::point(l.points.get(1).map_or(0, |p| p.id)))
                     {
-                        self.light.programmer.entry(*f).or_default().insert(Attribute::Pan, (pan + 0.01).into());
+                        crate::light::focus::move_from_point(&l, *f, self.light.programmer.entry(*f).or_default(), Attribute::Pan, pan + 0.01);
                     }
                 } else if page == "beam" || page == "slots" {
                     use crate::light::Attribute;

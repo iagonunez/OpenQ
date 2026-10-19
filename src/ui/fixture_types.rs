@@ -447,15 +447,33 @@ impl App {
         theme::wrapped_row(ui, |ui| {
             let p = &mut e.ty.physical;
             ui.label(theme::caption(t("Physical")));
-            ui.label(t("Pan range"));
-            ui.add(DragValue::new(&mut p.pan_range).range(0.0..=3600.0).suffix("°"));
-            ui.label(t("Tilt range"));
-            ui.add(DragValue::new(&mut p.tilt_range).range(0.0..=3600.0).suffix("°"));
-            ui.label(t("Beam"));
-            ui.add(DragValue::new(&mut p.beam_min).range(0.0..=180.0).suffix("°"));
-            ui.label(t("to"));
-            ui.add(DragValue::new(&mut p.beam_max).range(0.0..=180.0).suffix("°"));
+            // Angles at the lowest and the highest value, as GDTF has them: the sign is the way
+            // it turns ("270 to −270" turns the other way), the zoom may narrow as it rises.
+            let m = crate::limits::MAX_FIXTURE_ANGLE;
+            let span = |ui: &mut Ui, label: &str, key: &str, mut v: [f32; 2], range: std::ops::RangeInclusive<f32>| -> Option<[f32; 2]> {
+                let mut changed = false;
+                theme::keep_together(ui, key, |ui| {
+                    ui.label(label);
+                    changed |= ui.add(DragValue::new(&mut v[0]).range(range.clone()).suffix("°")).on_hover_text(t("At the lowest value")).changed();
+                    ui.label(t("to"));
+                    changed |= ui.add(DragValue::new(&mut v[1]).range(range).suffix("°")).on_hover_text(t("At the highest value")).changed();
+                });
+                changed.then_some(v)
+            };
+            if let Some(v) = span(ui, t("Pan"), "type_pan", p.pan_span(), -m..=m) {
+                (p.pan_angles, p.pan_range) = (Some(v), (v[1] - v[0]).abs());
+            }
+            if let Some(v) = span(ui, t("Tilt"), "type_tilt", p.tilt_span(), -m..=m) {
+                (p.tilt_angles, p.tilt_range) = (Some(v), (v[1] - v[0]).abs());
+            }
+            if let Some(v) = span(ui, t("Zoom"), "type_zoom", p.zoom_span(), 0.0..=180.0) {
+                (p.zoom_angles, p.beam_min, p.beam_max) = (Some(v), v[0].min(v[1]), v[0].max(v[1]));
+            }
             ui.checkbox(&mut p.moving, t("Moving head"));
+            if p.parts.is_some() {
+                ui.label(RichText::new(t("Parts from the GDTF file")).color(theme::TEXT_DIM))
+                    .on_hover_text(t("Where the yoke, head and lens sit in the fixture: aiming at focus points starts the beam from the lens"));
+            }
         });
         ui.separator();
         // Modes.

@@ -450,12 +450,18 @@ pub fn import(json: &str, manufacturer: &str) -> anyhow::Result<Imported> {
     let num = |k: &str| focus.and_then(|f| f.get(k)).and_then(Value::as_f64).map(|x| x as f32);
     let d = Physical::default();
     let physical = Physical {
-        pan_range: num("panMax").or_else(|| capability_angle(&v, "Pan")).unwrap_or(d.pan_range),
-        tilt_range: num("tiltMax").or_else(|| capability_angle(&v, "Tilt")).unwrap_or(d.tilt_range),
+        pan_range: num("panMax").or_else(|| capability_angle(&v, "Pan").map(f32::abs)).unwrap_or(d.pan_range),
+        tilt_range: num("tiltMax").or_else(|| capability_angle(&v, "Tilt").map(f32::abs)).unwrap_or(d.tilt_range),
         beam_min: deg(0).unwrap_or(d.beam_min),
         beam_max: deg(1).or(deg(0)).unwrap_or(d.beam_max),
         moving: moving || modes.iter().any(|m| m.channel(Attribute::Pan).is_some() && m.channel(Attribute::Tilt).is_some()),
         emitters: Vec::new(),
+        // OFL has no geometry, and its pan/tilt angles have no zero: centred on the DMX middle,
+        // turning the other way when the capability's angles fall as the value rises.
+        pan_angles: reversed(&v, "Pan"),
+        tilt_angles: reversed(&v, "Tilt"),
+        zoom_angles: None,
+        parts: None,
     };
     let id = type_id("ofl", &manufacturer, name);
     let images = embedded_images(wheels, &mut notes);
@@ -464,6 +470,13 @@ pub fn import(json: &str, manufacturer: &str) -> anyhow::Result<Imported> {
 
 /// The angle a `Pan`/`Tilt` capability covers (`angleStart`/`angleEnd` in degrees), for files
 /// that give it there instead of in `physical.focus`. The widest one, if several.
+/// Pan or tilt angles of a type whose capability turns the other way (`angleStart` > `angleEnd`):
+/// centred on the DMX middle, falling. None otherwise.
+fn reversed(v: &Value, kind: &str) -> Option<[f32; 2]> {
+    let a = capability_angle(v, kind).filter(|a| *a < 0.0)?;
+    Some([-a / 2.0, a / 2.0])
+}
+
 fn capability_angle(v: &Value, kind: &str) -> Option<f32> {
     let deg = |c: &Value, k: &str| c.get(k)?.as_str()?.trim().strip_suffix("deg")?.trim().parse::<f32>().ok();
     ["availableChannels", "templateChannels"]
@@ -472,14 +485,22 @@ fn capability_angle(v: &Value, kind: &str) -> Option<f32> {
         .flat_map(|m| m.values())
         .flat_map(|ch| ch.get("capability").into_iter().chain(ch.get("capabilities").and_then(Value::as_array).into_iter().flatten()))
         .filter(|c| c.get("type").and_then(Value::as_str) == Some(kind))
-        .filter_map(|c| Some((deg(c, "angleEnd")? - deg(c, "angleStart")?).abs()))
-        .filter(|a| a.is_finite() && *a > 0.0)
-        .reduce(f32::max)
+        .filter_map(|c| Some(deg(c, "angleEnd")? - deg(c, "angleStart")?))
+        .filter(|a| a.is_finite() && *a != 0.0)
+        .reduce(|a, b| if b.abs() > a.abs() { b } else { a })
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn pan_running_backwards_turns_the_other_way() {
+        let cap = |start: &str, end: &str| serde_json::json!({"availableChannels": {"Pan": {"capability": {"type": "Pan", "angleStart": start, "angleEnd": end}}}});
+        assert_eq!(reversed(&cap("540deg", "0deg"), "Pan"), Some([270.0, -270.0]));
+        assert_eq!(reversed(&cap("0deg", "540deg"), "Pan"), None, "the usual way: centred, rising");
+        assert_eq!(capability_angle(&cap("540deg", "0deg"), "Pan").map(f32::abs), Some(540.0));
+    }
 
     const SPOT: &str = r#"{
       "name": "Test Spot 250",

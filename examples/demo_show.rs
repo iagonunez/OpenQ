@@ -1857,10 +1857,10 @@ impl Rig {
             mk(P_DOOR, "Door USR", Some(Feature::Position), pos(0.62, 0.55)),
             mk(P_AUDIENCE, "Audience sweep", Some(Feature::Position), pos(0.5, 0.9)),
             mk(P_LAMP, "Lighthouse lamp", Some(Feature::Position), pos(0.6, 0.45)),
-            mk(P_WINDOW, "Gobo window", Some(Feature::Beam), beam_p("Window", 0.4, 1.0, 0.55)),
-            mk(P_LEAVES, "Gobo leaves", Some(Feature::Beam), beam_p("Leaves", 0.7, 1.0, 0.4)),
-            mk(P_TIGHT, "Tight special", Some(Feature::Beam), beam_p("Open", 0.1, 0.35, 0.5)),
-            mk(P_FLOOD, "Wide flood", Some(Feature::Beam), beam_p("Open", 1.0, 1.0, 0.5)),
+            mk(P_WINDOW, "Gobo window", Some(Feature::Beam), beam_p("Window", 0.4, 0.0, 0.55)),
+            mk(P_LEAVES, "Gobo leaves", Some(Feature::Beam), beam_p("Leaves", 0.7, 0.0, 0.4)),
+            mk(P_TIGHT, "Tight special", Some(Feature::Beam), beam_p("Open", 0.1, 0.65, 0.5)),
+            mk(P_FLOOD, "Wide flood", Some(Feature::Beam), beam_p("Open", 1.0, 0.0, 0.5)),
             mk(P_FULL, "Full stage (all)", None, full),
         ];
     }
@@ -2189,7 +2189,7 @@ impl Rig {
                     set(&mut c, *f, A::Dimmer, if i < 4 { 0.85 } else { 0.0 });
                     let point = if i % 2 == 0 { PT_DSL } else { PT_DSR };
                     for a in [A::Pan, A::Tilt] {
-                        c.values.entry(*f).or_default().insert(a, Value::Point { point });
+                        c.values.entry(*f).or_default().insert(a, Value::point(point));
                     }
                     setp(&mut c, *f, A::Gobo, gobo);
                     setp(&mut c, *f, A::Zoom, gobo);
@@ -2500,6 +2500,7 @@ fn hybrid_type() -> FixtureType {
                 openq::light::model::Emitter { attribute: A::Green, x: 0.192, y: 0.718, luminance: 0.68 },
                 openq::light::model::Emitter { attribute: A::Blue, x: 0.141, y: 0.046, luminance: 0.07 },
             ],
+            ..Default::default()
         },
         images: BTreeMap::new(),
     }

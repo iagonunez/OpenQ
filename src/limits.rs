@@ -81,6 +81,8 @@ pub const EQ_Q: (f32, f32) = (0.1, 18.0);
 pub const RATE: (f32, f32) = (0.25, 4.0);
 /// Farthest a fixture, a focus point, a plot shape or a label sits from the plot's origin, metres.
 pub const MAX_DISTANCE: f32 = 200.0;
+/// How far a fixture's moving parts (yoke, head, lens) may sit from its origin, metres.
+pub const MAX_PART: f32 = 5.0;
 /// Farthest the plot editor moves a title or the legend, page units (the SVG of a 400 m plot is 24 000 px wide).
 pub const MAX_PLOT_PAGE: f32 = 30_000.0;
 /// Plot editor: most changed items (three per fixture, the fixture limit is the cue count) and added texts.
@@ -455,8 +457,14 @@ fn shared<T: Clone + PartialEq>(s: &mut Shared<T>, f: impl FnOnce(&mut T)) {
 
 fn look(l: &mut Look) {
     for v in l.values_mut().flat_map(|a| a.values_mut()) {
-        if let Value::Level(x) = v {
-            unit(x);
+        match v {
+            Value::Level(x) => unit(x),
+            Value::Point { offset, .. } => {
+                for x in offset {
+                    f32_in(x, -MAX_DISTANCE, MAX_DISTANCE);
+                }
+            }
+            Value::Preset { .. } => {}
         }
     }
 }
@@ -576,6 +584,29 @@ pub fn fixture_type(t: &mut FixtureType) {
     }
     p.emitters.retain(|e| e.is_valid() && e.attribute.is_emitter());
     p.emitters.truncate(16);
+    for span in [&mut p.pan_angles, &mut p.tilt_angles, &mut p.zoom_angles].into_iter().flatten() {
+        for v in span.iter_mut() {
+            f32_in(v, -MAX_FIXTURE_ANGLE, MAX_FIXTURE_ANGLE);
+        }
+    }
+    // A fixture's parts: turns within ±1 per entry (a rotation's), offsets within MAX_PART metres;
+    // a part that can't be undone (no turn left in it) is dropped.
+    if let Some(parts) = &mut p.parts {
+        for m in [&mut parts.yoke, &mut parts.head, &mut parts.beam] {
+            for row in m.iter_mut() {
+                for v in &mut row[..3] {
+                    f32_in(v, -1.0, 1.0);
+                }
+                f32_in(&mut row[3], -MAX_PART, MAX_PART);
+            }
+        }
+        let det = |m: &crate::light::model::Placement| {
+            m[0][0] * (m[1][1] * m[2][2] - m[1][2] * m[2][1]) - m[0][1] * (m[1][0] * m[2][2] - m[1][2] * m[2][0]) + m[0][2] * (m[1][0] * m[2][1] - m[1][1] * m[2][0])
+        };
+        if [parts.yoke, parts.head, parts.beam].iter().any(|m| det(m).abs() < 0.01) {
+            p.parts = None;
+        }
+    }
 }
 
 #[cfg(test)]

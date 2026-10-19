@@ -298,7 +298,8 @@ impl Attribute {
         use Attribute::*;
         match self {
             Pan | Tilt | Zoom | Focus => 0.5,
-            Iris | Shutter => 1.0,
+            // Iris channels open at 0 (GDTF and most fixtures); a shutter with no ranges opens at full.
+            Shutter => 1.0,
             _ => 0.0,
         }
     }
@@ -672,9 +673,9 @@ pub struct Physical {
     pub pan_range: f32,
     /// Full tilt range in degrees.
     pub tilt_range: f32,
-    /// Beam angle range in degrees (zoom 0 → min, 1 → max).
+    /// Narrowest beam angle, degrees (which zoom value gives it: [`Physical::zoom_span`]).
     pub beam_min: f32,
-    /// See `beam_min`.
+    /// Widest beam angle, degrees.
     pub beam_max: f32,
     /// Moving head (has a yoke).
     pub moving: bool,
@@ -682,11 +683,72 @@ pub struct Physical {
     /// ([`crate::light::colour`]).
     #[serde(skip_serializing_if = "Vec::is_empty")]
     pub emitters: Vec<Emitter>,
+    /// Pan angle at the lowest and the highest DMX value, degrees, as the GDTF file has it
+    /// (`PhysicalFrom`/`PhysicalTo` over the channel): the sign gives the direction ("270 → −270"
+    /// turns the other way) and the middle needn't be 0. None: −`pan_range`/2 … +`pan_range`/2.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub pan_angles: Option<[f32; 2]>,
+    /// Tilt angle at the lowest and the highest DMX value, like `pan_angles`.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub tilt_angles: Option<[f32; 2]>,
+    /// Beam angle at the lowest and the highest zoom value, degrees (GDTF zoom functions go either
+    /// way: "44 → 10" narrows as the value rises). None: `beam_min` … `beam_max`.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub zoom_angles: Option<[f32; 2]>,
+    /// Where a moving head's parts sit (from the GDTF geometry tree). None: pan and tilt axes
+    /// and the lens at the fixture's origin, unturned.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub parts: Option<MovingParts>,
 }
 
 impl Default for Physical {
     fn default() -> Self {
-        Self { pan_range: 540.0, tilt_range: 270.0, beam_min: 25.0, beam_max: 25.0, moving: false, emitters: Vec::new() }
+        Self { pan_range: 540.0, tilt_range: 270.0, beam_min: 25.0, beam_max: 25.0, moving: false, emitters: Vec::new(), pan_angles: None, tilt_angles: None, zoom_angles: None, parts: None }
+    }
+}
+
+impl Physical {
+    /// Pan angle at the lowest and the highest DMX value, degrees ([`Physical::pan_angles`]).
+    pub fn pan_span(&self) -> [f32; 2] {
+        self.pan_angles.unwrap_or([-self.pan_range / 2.0, self.pan_range / 2.0])
+    }
+
+    /// Tilt angle at the lowest and the highest DMX value, degrees.
+    pub fn tilt_span(&self) -> [f32; 2] {
+        self.tilt_angles.unwrap_or([-self.tilt_range / 2.0, self.tilt_range / 2.0])
+    }
+
+    /// Beam angle at the lowest and the highest zoom value, degrees ([`Physical::zoom_angles`]).
+    pub fn zoom_span(&self) -> [f32; 2] {
+        self.zoom_angles.unwrap_or([self.beam_min, self.beam_max])
+    }
+}
+
+/// A GDTF geometry placement: rotation rows with the translation (metres) in the last column,
+/// as in a GDTF `Position` matrix (axes x, y, z up).
+pub type Placement = [[f32; 4]; 3];
+
+/// The unturned placement.
+pub const UNTURNED: Placement = [[1.0, 0.0, 0.0, 0.0], [0.0, 1.0, 0.0, 0.0], [0.0, 0.0, 1.0, 0.0]];
+
+/// A moving head's parts from its GDTF geometry tree (GDTF axes: x, y, z up; a beam leaves its
+/// geometry along −z): the pan axis's geometry in the fixture, the tilt axis's geometry in the
+/// pan axis's, and the beam in the tilt axis's. Pan turns about the pan geometry's z axis, tilt
+/// about the tilt geometry's x axis (as visualisers draw the file).
+#[derive(Serialize, Deserialize, Clone, Copy, PartialEq, Debug)]
+#[serde(default)]
+pub struct MovingParts {
+    /// Pan axis geometry (the yoke) in the fixture.
+    pub yoke: Placement,
+    /// Tilt axis geometry (the head) in the yoke.
+    pub head: Placement,
+    /// Beam in the head.
+    pub beam: Placement,
+}
+
+impl Default for MovingParts {
+    fn default() -> Self {
+        Self { yoke: UNTURNED, head: UNTURNED, beam: UNTURNED }
     }
 }
 
@@ -839,9 +901,9 @@ pub struct Group {
 pub type PresetId = u32;
 
 /// A value in a cue or the programmer: a level, a reference to a preset (so editing the
-/// preset changes every cue that uses it), or, for pan and tilt, a focus point the fixture aims
-/// at (so moving the point or the fixture re-aims every cue). Saved as a bare number,
-/// `{"preset": n}` or `{"point": n}`.
+/// preset changes every cue that uses it), or, for pan and tilt, a place measured from a focus
+/// point that the fixture aims at (so moving the point or the fixture re-aims every cue). Saved as
+/// a bare number, `{"preset": n}` or `{"point": n}` (+ `"offset": [x, y, z]` when not at the point).
 #[derive(Serialize, Deserialize, Clone, Copy, PartialEq, Debug)]
 #[serde(untagged)]
 pub enum Value {
@@ -852,11 +914,40 @@ pub enum Value {
         /// Preset number.
         preset: PresetId,
     },
-    /// Pan or tilt aiming the fixture at a focus point ([`super::focus::aim`]).
+    /// Pan or tilt aiming the fixture at a focus point, or at a place measured from it
+    /// ([`super::focus::aim`]).
     Point {
         /// Focus point number.
         point: PointId,
+        /// Where the fixture aims, from the point (metres, the patch's axes like
+        /// [`FocusPoint::position`]); zero = at the point. Each fixture has its own, so a cue can
+        /// spread fixtures round a point (an arc, a line) and still follow it when it moves.
+        #[serde(default, skip_serializing_if = "no_offset")]
+        offset: [f32; 3],
+        /// Reach it the other way: the head turned over ([`super::focus::aim_with`]). Set when a
+        /// fixture is moved by hand onto that way, so a cue keeps the way the operator chose.
+        #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+        flip: bool,
     },
+}
+
+fn no_offset(v: &[f32; 3]) -> bool {
+    *v == [0.0; 3]
+}
+
+impl Value {
+    /// Aim at focus point `point` itself.
+    pub fn point(point: PointId) -> Self {
+        Value::Point { point, offset: [0.0; 3], flip: false }
+    }
+
+    /// The focus point this value is measured from, if any.
+    pub fn point_id(&self) -> Option<PointId> {
+        match self {
+            Value::Point { point, .. } => Some(*point),
+            _ => None,
+        }
+    }
 }
 
 /// User-facing focus point number.
@@ -1267,18 +1358,19 @@ impl Sequence {
 
 /// Replace references to preset `id` in `look` by the levels they stand for (dropped if none).
 pub fn unlink_preset(l: &Lighting, id: PresetId, look: &mut Look) {
-    unlink(l, Value::Preset { preset: id }, look);
+    unlink(l, |v| *v == Value::Preset { preset: id }, look);
 }
 
 /// Replace references to focus point `id` in `look` by the pan and tilt they stand for.
 pub fn unlink_point(l: &Lighting, id: PointId, look: &mut Look) {
-    unlink(l, Value::Point { point: id }, look);
+    unlink(l, |v| v.point_id() == Some(id), look);
 }
 
-fn unlink(l: &Lighting, id: Value, look: &mut Look) {
+/// Replace the values `linked` picks in `look` by the levels they stand for (dropped if none).
+pub fn unlink(l: &Lighting, linked: impl Fn(&Value) -> bool, look: &mut Look) {
     for (f, values) in look.iter_mut() {
         values.retain(|a, v| {
-            if *v != id {
+            if !linked(v) {
                 return true;
             }
             match l.resolve(*f, *a, *v) {
@@ -1835,7 +1927,7 @@ impl Lighting {
             .buttons
             .iter()
             .map(|b| {
-                b.values.values().any(|v| v.values().any(|x| *x == Value::Point { point: id })).then(|| {
+                b.values.values().any(|v| v.values().any(|x| x.point_id() == Some(id))).then(|| {
                     let mut look = (*b.values).clone();
                     unlink_point(self, id, &mut look);
                     look
@@ -1852,17 +1944,19 @@ impl Lighting {
 
     /// The level a value stands for on a fixture attribute (None: a preset that doesn't exist
     /// or has nothing for this fixture/attribute; a point that doesn't exist, on an attribute
-    /// other than pan/tilt, or on a fixture that can't aim).
+    /// other than pan/tilt, or on a fixture that can't aim). A point value aims at the point plus
+    /// its offset.
     pub fn resolve(&self, fixture: FixtureId, attr: Attribute, value: Value) -> Option<f32> {
         match value {
             Value::Level(v) => Some(v),
-            Value::Point { point } => {
+            Value::Point { point, offset, flip } => {
                 if !matches!(attr, Attribute::Pan | Attribute::Tilt) {
                     return None;
                 }
-                let target = self.point(point)?.position;
+                let p = self.point(point)?.position;
+                let target = [p[0] + offset[0], p[1] + offset[1], p[2] + offset[2]];
                 let (f, _) = self.unit(fixture)?;
-                let (pan, tilt) = super::focus::aim(f, &self.fixture_type(&f.fixture_type)?.physical, target)?;
+                let (pan, tilt) = super::focus::aim_with(f, &self.fixture_type(&f.fixture_type)?.physical, target, flip)?;
                 Some(if attr == Attribute::Pan { pan } else { tilt })
             }
             Value::Preset { preset } => {
