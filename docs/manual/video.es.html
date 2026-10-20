@@ -1,0 +1,220 @@
+<!doctype html>
+<html lang="es">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<!-- Built by tools/build_manual.py around the content block below: edit only that, then run the script. -->
+<title>Vídeo y proyección · Manual de usuario de OpenQ</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Barlow+Condensed:wght@500;600;700&family=Inter:wght@400;500;600&family=JetBrains+Mono:wght@400;500&display=swap">
+<link rel="stylesheet" href="manual.css">
+</head>
+<body>
+<div class="wrap">
+<nav class="toc" aria-label="Capítulos">
+  <div class="brand"><a href="index.es.html" title="Contenido">Open<b>Q</b></a></div>
+  <div class="brand-sub">Manual de usuario</div>
+  <div class="langs"><a href="video.html" hreflang="en" title="English">EN</a><a href="video.es.html" hreflang="es" title="Español" aria-current="page">ES</a><a href="video.gl.html" hreflang="gl" title="Galego">GL</a></div>
+  <ol class="chapters">
+    <li><a href="start.es.html">Primeros pasos</a></li>
+    <li><a href="cues.es.html">Cues y tiempos</a></li>
+    <li><a href="audio.es.html">Audio</a></li>
+    <li class="cur"><a href="video.es.html" aria-current="page">Vídeo y proyección</a>
+     <ol class="sub">
+      <li class="s2"><a href="#video">Cues de vídeo y texto</a></li>
+      <li class="s3"><a href="#geometry">Geometría</a></li>
+      <li class="s3"><a href="#camera-cues">Cues Cámara</a></li>
+      <li class="s3"><a href="#text-cues">Cues Texto</a></li>
+      <li class="s3"><a href="#animation">Animación</a></li>
+      <li class="s3"><a href="#videofx">FX de vídeo</a></li>
+      <li class="s2"><a href="#stages">Escenarios y proyección</a></li>
+      <li class="s3"><a href="#sending-a-stage-to-a-display">Enviar un escenario a una pantalla</a></li>
+      <li class="s3"><a href="#mapping">Mapeado</a></li>
+     </ol>
+    </li>
+    <li><a href="lighting.es.html">Iluminación</a></li>
+    <li><a href="remote.es.html">Control remoto y red</a></li>
+    <li><a href="help.es.html">Seguridad y ayuda</a></li>
+  </ol>
+</nav>
+
+<main>
+<header class="chapter-head">
+  <div class="eyebrow">Capítulo 4 · Manual de usuario de OpenQ</div>
+  <h1>Vídeo y proyección</h1>
+</header>
+
+<!--content-->
+<section id="video">
+  <h2><span class="n">4.1</span>Cues de vídeo y texto</h2>
+  <p>Una cue de vídeo reproduce una película (todo lo que FFmpeg puede reproducir) o una imagen fija: PNG, JPEG, WebP, GIF, TIFF, BMP o
+  <strong>SVG</strong>. Las imágenes se muestran durante un tiempo fijo o hasta que se paran. Un SVG se dibuja al tamaño al que se va a
+  mostrar, incluida la mayor escala a la que llegan su geometría y su animación, así que logotipos y dibujos de línea se ven nítidos.
+  <strong>Tiempo y bucles</strong> tiene recortes de inicio y fin, bucles y <em>Mantener el último fotograma</em>.
+  La pestaña <strong>Audio</strong> tiene los faders principal y de salida de la banda sonora, e <strong>I/O</strong> su archivo y
+  enrutado; la banda sonora suena por el mezclador como una cue de audio.</p>
+  <h3 id="geometry">Geometría</h3>
+  <ul>
+    <li><strong>Escenario:</strong> a qué salida va la imagen. Sin ninguna, se usa el primer escenario.</li>
+    <li><strong>Ajustar:</strong> <em>Ajustar</em> muestra la imagen entera (con bandas), <em>Rellenar</em> cubre el escenario y recorta lo que
+    sobra, <em>Estirar</em> lo llena exactamente y <em>Tamaño nativo</em> usa los píxeles propios del archivo.</li>
+    <li><strong>Capa</strong> (las más altas se dibujan encima) y <strong>opacidad</strong>.</li>
+    <li><strong>Posición, escala y rotación.</strong> La posición es un porcentaje del escenario: <code>X 25%</code>
+    mueve la imagen un cuarto del escenario hacia la derecha. Activa <em>proporcional</em> para escalar los dos ejes a la vez.</li>
+    <li><strong>Recorte:</strong> quita un porcentaje por la izquierda, arriba, derecha y abajo. El resto de la imagen
+    se queda donde estaba.</li>
+  </ul>
+  <figure class="narrow">
+    <img src="img/es/geometry-preview.webp" width="660" height="460" alt="Ventana de vista previa de geometría con una capa girada y recortada en un escenario de 1920 por 1080.">
+    <figcaption>La vista previa de geometría. Una línea discontinua muestra la imagen sin recortar.</figcaption>
+  </figure>
+  <p>La <strong>vista previa de geometría</strong> (<span class="menu">Ver → Vista previa de geometría</span>, o <em>Vista previa</em> en la pestaña Geometría)
+  dibuja el escenario de la cue seleccionada con la imagen en su sitio, sin abrir una salida de proyector. En modo edición,
+  arrastra en la vista previa para mover la imagen, usa la rueda para escalarla y haz doble clic para centrarla. Para una cue Fade que
+  cambia la geometría, la vista previa muestra dónde termina el fundido, con la posición inicial como contorno discontinuo.</p>
+  <h3 id="camera-cues">Cues Cámara</h3>
+  <p>Una cue Cámara muestra una cámara en directo (una webcam, una capturadora USB o HDMI) como capa en un escenario, con la misma
+  pestaña <strong>Geometría</strong> que el vídeo: posición, escala, rotación, recorte, opacidad y capa, y las cues Fade pueden moverla
+  y fundirla. En la pestaña <strong>Cámara</strong> elige el dispositivo y, si lo necesitas, el tamaño de captura; <em>Espejo</em>
+  voltea la imagen como en un selfi. <em>Mostrar durante</em> 0 la mantiene hasta que se pare. El dispositivo y el tamaño se usan la
+  próxima vez que arranque la cue.</p>
+  <h3 id="text-cues">Cues Texto</h3>
+  <p>Las cues de texto muestran texto escrito en un escenario: títulos, sobretítulos, subtítulos o una cuenta atrás para el equipo.
+  Las pestañas <strong>Geometría</strong> y <strong>Animación</strong> funcionan como en el vídeo, y las cues Fade pueden mover y fundir
+  el texto. Los cambios en la pestaña <strong>Texto</strong> aparecen al momento en una cue que se está mostrando.</p>
+  <figure>
+    <img src="img/es/text-cue.webp" width="1400" height="383" alt="Pestaña Texto en tarjetas: el texto, la fuente (peso, tamaño, interlineado, espaciado), el aspecto (color, alineación, contorno, sombra, caja de fondo) y una muestra.">
+    <figcaption>La pestaña Texto. Bajo los ajustes aparece una vista previa de la primera línea con el estilo elegido.</figcaption>
+  </figure>
+  <div class="table-wrap"><table>
+    <thead><tr><th>Ajuste</th><th>Qué hace</th></tr></thead>
+    <tbody>
+      <tr><td>Fuente</td><td>Cualquier fuente instalada en el ordenador. Escribe en la lista para buscar. <em>Inter (integrada)</em> está siempre disponible.</td></tr>
+      <tr><td>Peso · Cursiva</td><td>De Thin (100) a Black (900). Los pesos que la fuente no incluye aparecen en gris y se usa el instalado más cercano.</td></tr>
+      <tr><td>Tamaño</td><td>Tamaño de letra en píxeles del escenario: 96 px en un escenario de 1080 líneas es una décima parte de su altura.</td></tr>
+      <tr><td>Altura de línea · Espaciado</td><td>Distancia entre líneas (como múltiplo del tamaño) y espacio extra entre letras en em.</td></tr>
+      <tr><td>Color · alineación</td><td>Color y transparencia del texto; líneas a la izquierda, centradas o a la derecha.</td></tr>
+      <tr><td>Contorno</td><td>Un borde alrededor de cada letra, en píxeles del escenario, con su propio color. Mantiene el texto legible sobre vídeo cargado.</td></tr>
+      <tr><td>Sombra</td><td>Una sombra suave: color, desplazamiento a la derecha y abajo, y desenfoque.</td></tr>
+      <tr><td>Fondo</td><td>Una caja detrás del texto: color y transparencia, <em>margen</em> (espacio alrededor del texto, en píxeles del escenario) y <em>radio</em> para esquinas redondeadas. Buena para subtítulos y sobretítulos sobre vídeo.</td></tr>
+      <tr><td>Mostrar durante</td><td>Tiempo en pantalla; 0 la muestra hasta que se pare.</td></tr>
+    </tbody>
+  </table></div>
+  <p>El texto se compone correctamente en cualquier idioma. Pares como <em>AV</em> llevan kerning, se usan ligaduras y la escritura de
+  derecha a izquierda funciona. Los caracteres que no tiene la fuente elegida, como emoji o chino, se dibujan con otra fuente instalada.
+  El texto se renderiza al doble de la resolución del escenario, así que se ve nítido al ampliarlo y suave al reducirlo.</p>
+  <p>El texto se prepara en segundo plano antes de su GO, y otra vez después de cambiar su aspecto, así que arrancar o editar una cue de
+  texto nunca retiene el espectáculo. Los cambios de color, movimientos y animaciones no necesitan preparación. Tras cambiar el texto,
+  la fuente o el tamaño de una cue que se está mostrando, la versión nueva sustituye a la antigua un momento después.</p>
+  <div class="note"><span class="label">De gira</span><p>El archivo del espectáculo guarda el nombre de la fuente, no la fuente en sí.
+  Instala las mismas fuentes en cada ordenador que reproduzca el espectáculo. Si falta una fuente, la pestaña Texto indica <em>no instalada
+  aquí</em> y se usa una fuente de sustitución.</p></div>
+  <h3 id="animation">Animación</h3>
+  <p>La pestaña <strong><span class="ms" aria-hidden="true">&#xe71c;</span> Animación</strong> de las cues de vídeo y texto mueve,
+  escala, gira, recorta, funde y cambia el color de la capa con fotogramas clave. La animación empieza cuando arranca la cue y sigue el
+  reloj de la propia cue: pausar la cue la pausa.</p>
+  <figure>
+    <img src="img/es/animation.webp" width="1400" height="427" alt="Pestaña Animación: una línea de tiempo con filas para X, Opacidad, Escala X, Escala Y, Color del texto y Fondo, cada una con fotogramas clave en forma de rombo, un cabezal azul en 2,2 segundos y, debajo, los ajustes de animación y el tiempo y valor del fotograma clave seleccionado.">
+    <figcaption>La pestaña Animación. Cada fila es una propiedad animada; los rombos son fotogramas clave.</figcaption>
+  </figure>
+  <ul>
+    <li><strong>Añadir pista</strong> elige una propiedad. Su primer fotograma clave queda en el cabezal y no cambia nada,
+    así que después puedes poner los valores que quieras.</li>
+    <li><strong>Línea de tiempo:</strong> haz clic en la regla o en una fila para mover el cabezal. Haz clic en un fotograma clave para
+    seleccionarlo y arrástralo de lado para cambiar su tiempo. Haz doble clic en una fila para añadir un fotograma clave ahí.</li>
+    <li>Tarjeta <strong>Fotograma clave</strong>: el tiempo y el valor de la clave seleccionada, y <em>Después</em>, que indica cómo pasa el valor a
+    la clave siguiente: <em>Mantener</em> (se queda y luego salta), <em>Lineal</em>, <em>Entrada suave</em>, <em>Salida suave</em>,
+    <em>Entrada y salida suaves</em> o una <em>Curva personalizada</em> (una Bézier cúbica, escrita como en CSS: x1 y1 x2 y2).
+    <em>Fotograma clave en el cabezal</em> añade una clave con el valor que tiene la pista en el cabezal.</li>
+    <li><strong>Duración</strong> es una pasada de la animación; 0 significa que termina en el último fotograma clave. Una línea ámbar
+    discontinua la marca en la línea de tiempo. <strong>Repetir</strong>: <em>Una vez</em> mantiene los últimos valores, <em>Bucle</em> vuelve a
+    empezar, <em>Ping-pong</em> va hacia delante y luego hacia atrás.</li>
+    <li>Activa <strong>Vista previa</strong> para ver la capa en la vista previa de geometría tal como está en el cabezal. Un contorno
+    discontinuo muestra la posición propia de la cue.</li>
+  </ul>
+  <div class="table-wrap"><table>
+    <thead><tr><th>Propiedad</th><th>Valor</th><th>Cómo se combina con la cue</th></tr></thead>
+    <tbody>
+      <tr><td>X · Y</td><td>% del escenario</td><td>Se suma a la posición de la pestaña Geometría.</td></tr>
+      <tr><td>Escala X · Escala Y</td><td>%</td><td>Multiplica la escala de la pestaña Geometría: 200% la duplica.</td></tr>
+      <tr><td>Rotación</td><td>grados</td><td>Se suma a la rotación. 360° es una vuelta completa.</td></tr>
+      <tr><td>Recorte izquierda · arriba · derecha · abajo</td><td>% de la imagen</td><td>Se suma al recorte. Anímalo para cortinillas y revelados.</td></tr>
+      <tr><td>Opacidad</td><td>%</td><td>Multiplica la opacidad de la cue.</td></tr>
+      <tr><td>Tinte</td><td>color</td><td>Multiplica los colores de la imagen. El blanco la deja igual. Un tinte solo puede oscurecer o recolorear: el blanco se convierte en el color del tinte y el negro sigue negro.</td></tr>
+      <tr><td>Color del texto · Color del contorno · Color de la sombra · Fondo</td><td>color (solo texto)</td><td>Sustituyen los colores de la pestaña Texto.</td></tr>
+    </tbody>
+  </table></div>
+  <p>Como los valores son relativos, una cue Fade o un cambio en la pestaña Geometría siguen moviendo o fundiendo toda la capa animada.
+  Por ejemplo, una animación puede hacer que un logotipo suba y baje mientras una cue Fade lo desliza por el escenario.</p>
+  <figure class="narrow">
+    <img src="img/es/animation-stage.webp" width="900" height="449" alt="Un escenario con un título animado en ámbar sobre una caja roja redondeada y un logotipo SVG girado del revés y teñido de verde.">
+    <figcaption>En el escenario, a mitad de animación: el título ha entrado deslizándose, ha crecido y ha cambiado de color; el logotipo SVG gira con un tinte verde en bucle.</figcaption>
+  </figure>
+  <div class="note"><span class="label">Sin carga para el espectáculo</span><p>Las animaciones se calculan en directo mientras se dibuja
+  el escenario: unas pocas operaciones por capa, con el movimiento, la escala y el color a cargo de la tarjeta gráfica. No se renderiza
+  ni decodifica nada por adelantado, así que animar una capa cuesta lo mismo que mostrarla quieta. Los cambios que hagas aparecen al
+  momento, incluso en una cue en marcha, a cualquier resolución de escenario. El desenfoque y los cambios de color son
+  <a href="#videofx">efectos de vídeo</a>, que una cue Fade puede animar.</p></div>
+  <h3 id="videofx">FX de vídeo</h3>
+  <figure>
+    <img src="img/es/video-fx.webp" width="1400" height="237" alt="Pestaña FX de vídeo de una cue de texto: tarjetas Colorear, Desenfoque y Viñeta y una tarjeta para añadir efectos.">
+    <figcaption>Una cue de texto coloreada de naranja, algo desenfocada y con viñeta.</figcaption>
+  </figure>
+  <p>Las cues de vídeo, cámara y texto tienen una pestaña <strong>FX de vídeo</strong>, una pila de efectos sobre la imagen. Añádelos,
+  reordénalos y actívalos como los efectos de audio. Los dibuja la tarjeta gráfica mientras dibuja el escenario, así que casi no cuestan
+  nada y cambian en directo, incluso en una cue en marcha.</p>
+  <figure class="narrow">
+    <img src="img/es/video-fx-stage.webp" width="750" height="285" alt="Un escenario con el título 'Act One' en naranja.">
+    <figcaption>El resultado en el escenario.</figcaption>
+  </figure>
+  <div class="table-wrap"><table>
+    <thead><tr><th>Efecto</th><th>Ajustes</th></tr></thead>
+    <tbody>
+      <tr><td>Controles de color</td><td>Brillo, contraste, saturación (0 = blanco y negro).</td></tr>
+      <tr><td>Exposición</td><td>Exposición en pasos, gamma.</td></tr>
+      <tr><td>Matiz</td><td>Gira todos los colores por la rueda de color.</td></tr>
+      <tr><td>Colorear</td><td>Monocromo en el color que elijas.</td></tr>
+      <tr><td>Sepia · Invertir</td><td>Cantidad.</td></tr>
+      <tr><td>Posterizar</td><td>Número de niveles por color.</td></tr>
+      <tr><td>Umbral</td><td>Corte a blanco y negro en un nivel de brillo.</td></tr>
+      <tr><td>Viñeta</td><td>Oscurece los bordes: radio, suavidad, cantidad.</td></tr>
+      <tr><td>Desenfoque · Pixelar · Enfocar</td><td>Radio o tamaño de bloque en los píxeles propios de la imagen.</td></tr>
+      <tr><td>Chroma key</td><td>Hace transparente un color (croma verde o azul en una cue de cámara): color clave, umbral,
+      suavidad y derrame, que quita el reflejo verde de los bordes que quedan.</td></tr>
+    </tbody>
+  </table></div>
+  <p>Los efectos de color actúan de arriba abajo; Desenfoque, Pixelar y Enfocar cambian cómo se lee la imagen, así que siempre actúan
+  primero. Los efectos se aplican después del tinte y la opacidad de la capa, y funcionan con todos los modos de fusión.</p>
+</section>
+
+<section id="stages">
+  <h2><span class="n">4.2</span>Escenarios y proyección</h2>
+  <p>Un <strong>escenario</strong> (stage) es una salida de vídeo, como un proyector o una pantalla. Añade escenarios en
+  <span class="menu">Ajustes → Escenarios de vídeo</span>. Cada uno tiene un nombre y un tamaño de lienzo en píxeles.</p>
+  <h3 id="sending-a-stage-to-a-display">Enviar un escenario a una pantalla</h3>
+  <p>En <span class="menu">Vídeo → Escenario: <em>nombre</em> → Salida</span>, o con el desplegable Salida de Ajustes → Escenarios de vídeo,
+  elige <em>Ventana</em> o una de las pantallas conectadas. Un escenario asignado a una pantalla se abre a pantalla completa en ella, y
+  vuelve a abrirse allí al cargar el espectáculo. Si una pantalla no aparece, usa <em>Actualizar pantallas</em>. En una ventana de
+  escenario, haz doble clic o pulsa <kbd>F11</kbd> para alternar la pantalla completa.</p>
+  <h3 id="mapping">Mapeado</h3>
+  <figure>
+    <img src="img/es/mapping.webp" width="1100" height="551" alt="Patrón de ajuste de mapping en un escenario con corrección de trapecio: lienzo blanco con cuadrícula, reglas de píxeles en cada borde, círculos y esquinas numeradas.">
+    <figcaption>El patrón de ajuste de mapping. Círculos que parecen óvalos, o cuadros de la cuadrícula que no son cuadrados, muestran lo que aún está desajustado.</figcaption>
+  </figure>
+  <p><em>Editar mapeado</em> muestra un patrón de ajuste en el escenario: un lienzo blanco con una cuadrícula cuadrada, reglas de píxeles
+  en cada borde, círculos, diagonales y una cruz central, todo dibujado a través del mapping, además de cuatro esquinas numeradas.
+  Arrastra las esquinas para encajar la imagen en la pantalla (corrección de trapecio), o pasa el ratón por una esquina y muévela con
+  las flechas: un píxel cada vez, o diez con <kbd>Mayús</kbd>. <em>Restablecer mapeado</em> devuelve las esquinas a su sitio.</p>
+</section>
+<!--/content-->
+
+<nav class="pager" aria-label="Capítulo anterior y siguiente">
+  <a class="prev" href="audio.es.html"><span>← Anterior</span>Audio</a>
+  <a class="next" href="lighting.es.html"><span>Siguiente →</span>Iluminación</a>
+</nav>
+</main>
+</div>
+<script src="manual.js"></script>
+</body>
+</html>

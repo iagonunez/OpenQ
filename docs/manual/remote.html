@@ -1,0 +1,112 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<!-- Built by tools/build_manual.py around the content block below: edit only that, then run the script. -->
+<title>Remote control and network · OpenQ User Manual</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Barlow+Condensed:wght@500;600;700&family=Inter:wght@400;500;600&family=JetBrains+Mono:wght@400;500&display=swap">
+<link rel="stylesheet" href="manual.css">
+</head>
+<body>
+<div class="wrap">
+<nav class="toc" aria-label="Chapters">
+  <div class="brand"><a href="index.html" title="Contents">Open<b>Q</b></a></div>
+  <div class="brand-sub">User manual</div>
+  <div class="langs"><a href="remote.html" hreflang="en" title="English" aria-current="page">EN</a><a href="remote.es.html" hreflang="es" title="Español">ES</a><a href="remote.gl.html" hreflang="gl" title="Galego">GL</a></div>
+  <ol class="chapters">
+    <li><a href="start.html">Getting started</a></li>
+    <li><a href="cues.html">Cues and timing</a></li>
+    <li><a href="audio.html">Audio</a></li>
+    <li><a href="video.html">Video and projection</a></li>
+    <li><a href="lighting.html">Lighting</a></li>
+    <li class="cur"><a href="remote.html" aria-current="page">Remote control and network</a>
+     <ol class="sub">
+      <li class="s2"><a href="#remote">Remote devices</a></li>
+      <li class="s3"><a href="#pairing-a-device">Pairing a device</a></li>
+      <li class="s3"><a href="#roles">Roles</a></li>
+      <li class="s2"><a href="#osc">OSC and network cues</a></li>
+     </ol>
+    </li>
+    <li><a href="help.html">Safety and help</a></li>
+  </ol>
+</nav>
+
+<main>
+<header class="chapter-head">
+  <div class="eyebrow">Chapter 6 · OpenQ User Manual</div>
+  <h1>Remote control and network</h1>
+</header>
+
+<!--content-->
+<section id="remote">
+  <h2><span class="n">6.1</span>Remote devices</h2>
+  <p>A second computer running OpenQ on the same network can follow the show and run it. This could be the stage manager's laptop
+  or a tablet at the tech table. The computer running the show is the <strong>main device</strong>, and it does all the playback.
+  The other device shows its cue list, playhead, running cues and meters, and sends GO and other commands to it.</p>
+  <h3 id="pairing-a-device">Pairing a device</h3>
+  <ol>
+    <li>On the main device, open <span class="menu">Remote → Share this OpenQ</span>, tick
+    <em>Let paired devices connect</em>, and click <em>Pair a new device…</em>. A code such as <code>C9XR-E9HJ</code> appears.</li>
+    <li>On the other device, open <span class="menu">Remote → Connect to another OpenQ</span>, click <em>Search</em> and choose the
+    main device. If the search finds nothing, type its address, which is shown in the main device's Remote window.</li>
+    <li>Enter the code and click <em>Connect</em>. After the first time, connecting needs no code.</li>
+  </ol>
+  <figure class="narrow">
+    <img src="img/remote-share.webp" width="700" height="680" alt="Remote window on the main device showing a pairing code and a paired device list.">
+    <figcaption>The main device while pairing. Paired devices are listed below the code, with their role.</figcaption>
+  </figure>
+  <h3 id="roles">Roles</h3>
+  <div class="table-wrap"><table>
+    <thead><tr><th>Role</th><th>The device can</th></tr></thead>
+    <tbody>
+      <tr><td>View only</td><td>Follow the show: cue list, playhead, running cues and meters.</td></tr>
+      <tr><td>Control</td><td>Also press GO, stop, pause and resume, move the playhead, and start or stop single cues.</td></tr>
+      <tr><td>Control &amp; edit</td><td>Also edit the show. Changes are saved on the main device.</td></tr>
+    </tbody>
+  </table></div>
+  <p>Set the role new devices get, and change any device's role, in the main device's Remote window. Changes
+  take effect at once. <strong>Remove</strong> disconnects a device straight away, and it has to pair again to reconnect.
+  When a device disconnects, it gets its own show back. Media files stay on the main device, so add them there.</p>
+  <div class="note"><span class="label">Security</span><p>Connections are encrypted and authenticated. A pairing
+  code works for 5 minutes and 5 tries, and someone who records the network traffic still can't work it out from the
+  recording. After pairing, each device logs in with its own secret key. An address that keeps failing is blocked
+  for 5 minutes. The Activity list shows connections and rejected attempts.</p></div>
+  <div class="note tip"><span class="label">Network</span><p>Remote access uses TCP port <code>53200</code>, and
+  the search uses UDP port <code>53201</code>. A firewall on the main device has to allow both. On guest Wi-Fi the
+  search may find nothing; typing the address still works.</p></div>
+</section>
+
+<section id="osc">
+  <h2><span class="n">6.2</span>OSC and network cues</h2>
+  <p>Turn on <strong>OSC remote control</strong> in <span class="menu">Settings → General</span>. It listens on UDP port 53000
+  by default. Cues are addressed by their number.</p>
+  <div class="table-wrap"><table>
+    <thead><tr><th>Address</th><th>Action</th></tr></thead>
+    <tbody>
+      <tr><td><code>/go</code></td><td>GO</td></tr>
+      <tr><td><code>/stop</code> · <code>/panic</code></td><td>Stop all with the fade · stop all instantly</td></tr>
+      <tr><td><code>/pause</code> · <code>/resume</code></td><td>Pause all · resume all</td></tr>
+      <tr><td><code>/playhead/next</code> · <code>/playhead/previous</code></td><td>Move the playhead</td></tr>
+      <tr><td><code>/playhead/4.2</code></td><td>Put the playhead on cue 4.2</td></tr>
+      <tr><td><code>/cue/4.2/start</code></td><td>Also <code>stop</code>, <code>pause</code>, <code>resume</code>, <code>devamp</code></td></tr>
+      <tr><td><code>/light/executor/2/level 0.5</code></td><td>Executor 2's level; also <code>go</code>, <code>release</code>, <code>flash</code> (1 = press, 0 = let go). <code>/light/grandmaster 0.8</code>, <code>/light/blackout</code>, <code>/light/release</code>, <code>/light/tap</code></td></tr>
+    </tbody>
+  </table></div>
+  <p>A <strong>Network cue</strong> sends one OSC message to other gear. Set the host, port, address
+  (for example <code>/eos/cue/12/fire</code>) and arguments. Arguments are separated by spaces: numbers are sent as
+  numbers, and text in quotes is sent as text.</p>
+</section>
+<!--/content-->
+
+<nav class="pager" aria-label="Previous and next chapter">
+  <a class="prev" href="lighting.html"><span>← Previous</span>Lighting</a>
+  <a class="next" href="help.html"><span>Next →</span>Safety and help</a>
+</nav>
+</main>
+</div>
+<script src="manual.js"></script>
+</body>
+</html>

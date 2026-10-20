@@ -67,7 +67,10 @@ minute). Each run prints its seed (`OPENQ_FUZZ_SEED` repeats it); a failing inpu
 `target/demo-show` the show fuzzer also draws on every cue feature and real media, and with the
 `ffmpeg` program installed the media fuzzer starts from many more formats.
 
-User manual: **Help → User manual** (F1) in the app, or open `docs/manual/index.html` in a browser. API documentation: `cargo doc --no-deps --open`.
+User manual: **Help → User manual** (F1) in the app, or open `docs/manual/index.html` in a browser. It is one page per chapter in each language (`<chapter>.html`, `.es.html`, `.gl.html`) plus a
+contents page (`index*.html`); edit only the `<!--content-->` block of a page, then run `python3 -I tools/build_manual.py`,
+which rebuilds the head, the chapter rail with sections and subsections, section numbers, `<h3>` ids, cross-page links
+and the contents. Style and script are shared (`manual.css`, `manual.js`); new pages also go in `ui/manual.rs` `FILES`. API documentation: `cargo doc --no-deps --open`.
 
 Video uses the FFmpeg libraries (the system's on Linux; on Windows and macOS OQup installs an
 LGPL-only build inside the app), plus clang at build time, so anything FFmpeg can play works, with no codec plugins to

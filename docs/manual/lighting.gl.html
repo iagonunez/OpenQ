@@ -1,0 +1,513 @@
+<!doctype html>
+<html lang="gl">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<!-- Built by tools/build_manual.py around the content block below: edit only that, then run the script. -->
+<title>Iluminación · Manual de usuario de OpenQ</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Barlow+Condensed:wght@500;600;700&family=Inter:wght@400;500;600&family=JetBrains+Mono:wght@400;500&display=swap">
+<link rel="stylesheet" href="manual.css">
+</head>
+<body>
+<div class="wrap">
+<nav class="toc" aria-label="Capítulos">
+  <div class="brand"><a href="index.gl.html" title="Contido">Open<b>Q</b></a></div>
+  <div class="brand-sub">Manual de usuario</div>
+  <div class="langs"><a href="lighting.html" hreflang="en" title="English">EN</a><a href="lighting.es.html" hreflang="es" title="Español">ES</a><a href="lighting.gl.html" hreflang="gl" title="Galego" aria-current="page">GL</a></div>
+  <ol class="chapters">
+    <li><a href="start.gl.html">Primeiros pasos</a></li>
+    <li><a href="cues.gl.html">Cues e tempos</a></li>
+    <li><a href="audio.gl.html">Audio</a></li>
+    <li><a href="video.gl.html">Vídeo e proxección</a></li>
+    <li class="cur"><a href="lighting.gl.html" aria-current="page">Iluminación</a>
+     <ol class="sub">
+      <li class="s2"><a href="#lighting">Deseño</a></li>
+      <li class="s3"><a href="#light-cues">Cues de luz</a></li>
+      <li class="s3"><a href="#patch">Patch</a></li>
+      <li class="s3"><a href="#fixture-types">Tipos de aparato</a></li>
+      <li class="s3"><a href="#plot">Plano</a></li>
+      <li class="s2"><a href="#programming">Programación</a></li>
+      <li class="s3"><a href="#programmer">Programador</a></li>
+      <li class="s3"><a href="#focus-points">Puntos de enfoque</a></li>
+      <li class="s3"><a href="#command-line-and-keypad">Liña de ordes e teclado</a></li>
+      <li class="s3"><a href="#effects">Efectos</a></li>
+      <li class="s2"><a href="#light-playback">Reprodución e saídas</a></li>
+      <li class="s3"><a href="#sequences">Secuencias</a></li>
+      <li class="s3"><a href="#playback">Reprodución</a></li>
+      <li class="s3"><a href="#surfaces">Superficies de control</a></li>
+      <li class="s3"><a href="#lighting-io">Saídas e entradas</a></li>
+      <li class="s3"><a href="#dmx-monitor">Monitor DMX</a></li>
+      <li class="s3"><a href="#remote-devices-and-visualisers">Dispositivos remotos e visualizadores</a></li>
+     </ol>
+    </li>
+    <li><a href="remote.gl.html">Control remoto e rede</a></li>
+    <li><a href="help.gl.html">Seguridade e axuda</a></li>
+  </ol>
+</nav>
+
+<main>
+<header class="chapter-head">
+  <div class="eyebrow">Capítulo 5 · Manual de usuario de OpenQ</div>
+  <h1>Iluminación</h1>
+</header>
+
+<!--content-->
+<section id="lighting">
+  <h2><span class="n">5.1</span>Deseño</h2>
+  <p>OpenQ controla a iluminación por DMX. O <strong>deseño de iluminación</strong> (patch, grupos, presets, efectos e
+  secuencias de cues de iluminación) gárdase á parte da lista de cues, no espazo de <strong>Iluminación</strong>: cambia
+  entre <span class="menu"><span class="ms" aria-hidden="true">&#xe90f;</span> Iluminación</span> e <em>Cues</em> enriba da
+  lista de cues. O deseño só se pode cambiar en modo edición. En modo función, o espazo de Iluminación amosa a páxina
+  Reprodución e o monitor DMX.</p>
+  <h3 id="light-cues">Cues de luz</h3>
+  <p>Unha cue de <strong>Luz</strong> <span class="ms" aria-hidden="true">&#xe90f;</span> da lista de cues reproduce o deseño
+  de iluminación; non garda niveis propios. Na súa lapela Axustes escolle a <em>Acción</em>: <em>GO de cue de iluminación</em>
+  lanza unha cue de iluminación dunha secuencia (amósase como <code>secuencia/cue</code>) cos seus propios fundidos, e
+  <em>Liberación</em> apaga unha secuencia, ou todas, no tempo indicado. As cues de luz lánzanse xunto co son e o vídeo, así que
+  un cambio de luz pode ir no mesmo GO ca un efecto ou un vídeo.</p>
+  <figure>
+    <img src="img/gl/light-cue.webp" width="1100" height="783" alt="Lista de cues con cues de luz que apuntan ás cues de iluminación 1/1 a 1/4, e a lapela Axustes da cue de luz seleccionada.">
+    <figcaption>Cues de luz na lista de cues. A columna Destino amosa a cue de iluminación que lanza cada unha.</figcaption>
+  </figure>
+  <div class="note tip"><span class="label">Parar</span><p>Unha cue de parar dirixida a unha cue de luz libera a secuencia desa
+  cue. Con <em>As cues Parar sen destino tamén apagan a iluminación</em> (páxina Secuencias), as cues de parar sen destino
+  liberan tamén todas as secuencias, co <em>Fundido ao liberar</em>. Parar todo e a parada inmediata (<kbd>Esc</kbd>) paran só
+  o son e as imaxes: a iluminación segue como está, así que parar a lista de cues nunca deixa o escenario ás escuras.</p></div>
+  <p>A iluminación só funde mediante cues de luz: unha cue de iluminación funde cos seus propios tempos, e a seguinte cue de
+  iluminación ou unha liberación seguen desde aí. As cues Fade non actúan sobre cues de luz.</p>
+
+  <h3 id="patch"><span class="ms" aria-hidden="true">&#xefe6;</span> Patch</h3>
+  <p>A páxina Patch ten tres vistas: <em>Táboa</em>, <em>Planta</em> e <em>Tipos de aparato</em>. A táboa lista os
+  aparatos. Para engadir (na Táboa ou na Planta), escolle un tipo de aparato e un modo en <em>Engadir aparatos</em>, indica
+  cantos, o primeiro número de aparato, o universo e o enderezo inicial (<em>auto</em> colle o seguinte libre), e preme
+  <em>Sumar</em>. Todas as celas da táboa pódense editar: nome, tipo, modo, universo, enderezo, posición e rotación, e a
+  inversión de panorama ou tilt. Os enderezos que se solapan e os números repetidos avísanse enriba da táboa. Un aparato con varias entradas DMX (un
+  <em>break</em> por entrada, definido no seu tipo de aparato) ten un enderezo por break: preme o seu número de canles para
+  poñer o universo e o enderezo dos outros breaks.</p>
+  <figure>
+    <img src="img/gl/lighting-patch.webp" width="1100" height="484" alt="Táboa de patch con oito washes RGB, dous spots e unha barra de píxeles, con columnas de enderezo, posición e rotación.">
+    <figcaption>A táboa de patch. As posicións van en metros, nos eixes de escenario que usan os ficheiros MVR: x ao longo do ancho, y profundidade (+ cara ao foro), z altura.</figcaption>
+  </figure>
+  <p>Os aparatos de varias celas, como as barras LED, contrólanse tamén cela a cela: a cela 3 do aparato 101 é
+  <code>101.3</code>. <em>Planta</em> amosa a montaxe desde arriba. Fai clic para seleccionar (<kbd>Ctrl</kbd> engade), arrastra
+  para mover a selección, arrastra nun oco para desprazar a vista e usa a roda para achegar. Os <a href="#focus-points">puntos de enfoque</a> vense como cruces verdes; arrastra un para movelo. Con aparatos seleccionados,
+  <em>Colocar</em> repárteos en liña, en arco ou en cuadrícula.</p>
+  <figure>
+    <img src="img/gl/lighting-plan.webp" width="1100" height="810" alt="Vista desde arriba da montaxe: o bordo do escenario cunha tarima, dúas varas LX1 e LX2 e os aparatos; LX1 está seleccionada cos seus tiradores.">
+    <figcaption>A vista Planta co escenario, unha tarima e dúas varas. A marca de cada aparato indica cara a onde mira.</figcaption>
+  </figure>
+  <p>Para que a planta se pareza ao teatro real, debuxa nela: escolle <em>Vara</em> ou <em>Rectángulo</em> xunto a
+  <em>Debuxar</em> e arrastra na planta. As varas son tubos, truss ou rúas, coa súa altura; os rectángulos son o escenario,
+  tarimas ou escenografía. Fai clic nunha vara, ou no bordo dun rectángulo, para seleccionalo: arrástrao para movelo, arrastra
+  os seus tiradores brancos para cambiar os seus extremos ou esquinas, e axusta o seu nome, coordenadas exactas e altura na fila
+  de enriba. <kbd>Supr</kbd> sobre a planta bórrao. Con aparatos e unha vara seleccionados, <em>Colgar</em> reparte os aparatos
+  ao longo da vara, á súa altura. Arrastra a etiqueta dunha vara ou dun rectángulo para apartala; o plano tamén a pon aí, e
+  <span class="ms" aria-hidden="true">&#xe042;</span> na fila de enriba devólvea ao seu sitio.</p>
+  <h3 id="fixture-types">Tipos de aparato</h3>
+  <p>OpenQ trae tipos xenéricos (dimmer, RGB, RGBW, CMY, cabezas móbiles, estrobo, fume). <em>Importar aparato…</em> (na
+  Táboa e na Planta) le ficheiros de Open Fixture Library (<code>.json</code>), GDTF (<code>.gdtf</code>), QLC+ (<code>.qxf</code>) e OpenQ
+  (<code>.oqfixture</code>). Os tipos importados cópianse no espectáculo e gárdanse na túa biblioteca de aparatos, así que
+  estarán no seguinte espectáculo. <em>Tipos de aparato</em> abre o editor: canles e os seus atributos, canles finas de 16
+  bits, valores por defecto, o valor que usa Resaltar e os <strong>rangos</strong>: as partes con nome dunha canle, como as
+  posicións dunha roda de cor ou de gobos. Un rango pode ter unha cor e unha imaxe (<em>Imaxe (gobo)</em>), que se ven
+  no despregable desa canle no programador; os ficheiros GDTF traen as imaxes dos gobos e as cores dos LED do aparato, que usa
+  o selector de cor. Para as cabezas móbiles, o editor fixa os ángulos de pan, tilt e zoom no valor DMX máis baixo e no máis alto (un ficheiro
+  que xira ao revés tráeos invertidos); os ficheiros GDTF traen ademais onde están a forquita, a cabeza e a lente, así que
+  OpenQ apunta desde a lente como o debuxan os visualizadores.</p>
+  <figure>
+    <img src="img/gl/fixture-types.webp" width="1100" height="875" alt="Editor de tipos de aparato dun spot móbil, coas canles, o seu atributo, canle fina, valor por defecto e rangos.">
+    <figcaption>O editor de tipos de aparato.</figcaption>
+  </figure>
+  <p>Os <strong>ficheiros MVR</strong> levan unha implantación dun programa a outro. <em>Importar MVR…</em> (na Táboa e na
+  Planta) engade os aparatos dun ficheiro dun visualizador, un programa de CAD ou outra mesa, coas súas posicións, enderezos e
+  estruturas (como varas e formas na planta). Os tipos de aparato búscanse polo nome no espectáculo e na túa biblioteca de
+  aparatos; os demais saen dos ficheiros GDTF que leva o MVR. Na vista Planta, <em>Exportar MVR…</em> garda o patch coas
+  posicións e o ficheiro GDTF de cada tipo, para que visualizadores e outras mesas poidan importalo.</p>
+  <h3 id="plot">Plano</h3>
+  <p><em>Plano…</em>, na vista Planta, abre o editor do plano: a páxina impresa tal como sairá, coas varas e rectángulos, os
+  símbolos dos aparatos, números, enderezos, un título e unha lenda. As etiquetas nunca se tapan: onde os aparatos están
+  xuntos, as súas etiquetas sepáranse.</p>
+  <ul>
+    <li>Arrastra calquera elemento para movelo. Un clic selecciona (<kbd>Maiús</kbd> engade, arrastrar sobre o papel baleiro
+    selecciona unha zona); a columna lateral cambia o texto, o tamaño e a cor dos elementos seleccionados, ocúltaos ou
+    devólveos ao seu sitio.</li>
+    <li>Con varios elementos seleccionados, os botóns de aliñamento igualan os seus bordos ou centros, ou reparten tres ou máis
+    por igual.</li>
+    <li>Cada tipo de aparato recibe un símbolo deducido do seu nome (PAR, recorte, fresnel, cabeza móbil, panorama, estrobo,
+    efecto…); escolle outro para todo o tipo na lenda, ou para un só aparato.</li>
+    <li><em>Engadir texto</em> pon unha nota libre na páxina.</li>
+    <li><em>Exportar…</em> gárdao como PDF (unha folla A3, á maior escala normalizada que caiba, como 1:50) ou como debuxo SVG;
+    o tipo escóllese no diálogo de gardar.</li>
+  </ul>
+  <p>Os cambios gárdanse co espectáculo, así que a seguinte exportación consérvaos.</p>
+  <figure>
+    <img src="img/gl/lighting-plot.webp" width="1100" height="721" alt="Editor do plano: unha páxina A3 co escenario, varas, símbolos de aparatos e etiquetas, unha lenda e a columna lateral dos elementos seleccionados.">
+    <figcaption>O editor do plano.</figcaption>
+  </figure>
+</section>
+
+<section id="programming">
+  <h2><span class="n">5.2</span>Programación</h2>
+  <h3 id="programmer"><span class="ms" aria-hidden="true">&#xe429;</span> Programador</h3>
+  <p>Selecciona aparatos nas súas fichas: un clic engade un aparato á selección (un segundo clic quítao), arrastrar por riba
+  de varias fichas engádeas todas, e un clic dereito selecciona só ese aparato. Os grupos e a liña de ordes tamén
+  seleccionan. O panel da dereita axusta os seus valores, cunha páxina por familia: <em>Intensidade</em>, <em>Cor</em>,
+  <em>Posición</em> (arrastra no recadro para apuntar), <em>Feixe</em> e <em>Control</em>. Arrastra unha barra para fixar un
+  valor, ou usa a roda enriba para pasos do 1&nbsp;%. As canles con rangos teñen un botón por rango, por exemplo un por gobo.
+  Os atributos que cambian de forma continua (intensidade, mestura de cor, pan e tilt, zoom, foco, iris, frost, fume…)
+  sempre teñen unha barra; se o ficheiro do aparato nomea rangos deles, os rangos son un selector debaixo.</p>
+  <p>O selector de cor amosa todas as cores visibles e ilumina as que pode dar o aparato seleccionado: a forma entre as cores
+  dos seus LED. As de fóra vense apagadas, e un clic aí colle a cor máis próxima que pode dar. Cada aparato mestura a cor cos
+  seus propios LED. As cores dos LED veñen do tipo de aparato (os ficheiros GDTF tráenas); sen elas OpenQ usa cores de LED
+  típicas, e indícao baixo o selector.</p>
+  <figure>
+    <img src="img/gl/lighting-programmer.webp" width="1100" height="702" alt="Páxina Programador: grupos, presets e efectos como tarxetas na columna da esquerda, fichas de aparatos con oito washes seleccionados, e a páxina de cor co rango de cor dos washes.">
+    <figcaption>O programador. Os aparatos con valores no programador levan un punto laranxa.</figcaption>
+  </figure>
+  <p>Os valores do programador mandan sobre a reprodución mentres están postos, e son o que garda <em>Gravar cue</em>.
+  <em>Baleirar programador</em> devolve o control á reprodución.</p>
+  <ul>
+    <li>A columna da esquerda ten os <strong>grupos</strong>, <strong>presets</strong> e <strong>efectos</strong> como
+    tarxetas. Os botóns de enriba amosan só os presets e efectos dunha familia (intensidade, cor, posición, feixe, control).</li>
+    <li><strong>Grupos</strong>: <span class="ms" aria-hidden="true">&#xe145;</span> garda a selección como grupo; fai clic nun grupo para seleccionalo
+    (<kbd>Ctrl</kbd> engade); con clic dereito sobrescríbese ou bórrase.</li>
+    <li><strong>Presets</strong>: <span class="ms" aria-hidden="true">&#xe145;</span> garda os valores dos aparatos seleccionados como preset: todos os atributos,
+    ou só a familia que amosa o filtro. Ao facer clic nun preset aplícase. As cues gardan unha ligazón ao preset, así que ao
+    cambialo cambian todas as cues que o usan.</li>
+    <li><strong>Abanico</strong> reparte un valor pola selección, por exemplo de 0 a 100&nbsp;%, tamén desde o centro cara a fóra.</li>
+    <li><strong>Cego</strong> permite programar sen cambiar a saída. <strong>Resaltar</strong> pon os aparatos seleccionados en
+    branco aberto e a tope (non se grava); a frecha percórreos un a un.</li>
+    <li><strong>Capturar entrada</strong> leva ao programador o que reciben as <a href="#lighting-io">entradas DMX</a>, para
+    gravar aquí un estado feito noutra mesa.</li>
+  </ul>
+  <h3 id="focus-points">Puntos de enfoque</h3>
+  <p>Un <strong>punto de enfoque</strong> é un lugar do escenario con nome, como o centro, as esquinas do proscenio ou unha
+  tarima. As cues apuntan as cabezas móbiles <em>a un punto</em>, non a valores de pan e tilt: OpenQ calcula o pan e o tilt a
+  partir da posición, a rotación e os ángulos de cada aparato. Move o punto (arrástrao en Patch → Planta) ou un aparato, e
+  todas as cues que apuntan a el séguenno.</p>
+  <figure>
+    <img src="img/gl/lighting-points.webp" width="1100" height="656" alt="Programador cos puntos de enfoque Centre, DSL e DSR na columna esquerda, dous spots apuntando a DSL, e a páxina Posición co desprazamento desde o punto e a fila Repartir arredor do punto.">
+    <figcaption>Dous spots apuntando ao punto DSL. A páxina Posición amosa onde apuntan, medido desde o punto.</figcaption>
+  </figure>
+  <ul>
+    <li><strong>Crear un</strong>: apunta aparatos a un lugar a man e despois <span class="ms" aria-hidden="true">&#xe145;</span>
+    en <em>Puntos de enfoque</em> pon alí un punto (no chan para un aparato, onde se cruzan os feixes para varios).</li>
+    <li><strong>Apuntar a un</strong>: fai clic na tarxeta do punto (ou <code>point 2</code> na liña de ordes). Os aparatos
+    seleccionados xiran cara a el, e a fila baixo as tarxetas cambia o seu nome ou bórrao.</li>
+    <li><strong>Apuntar ao lado</strong>: move a man un aparato que apunta a un punto e conserva o punto: a páxina Posición
+    amosa o <em>desprazamento</em> desde o punto (x ao longo do ancho, y profundidade, z altura), e a cue segue o punto.
+    <em>No punto</em> volve poñer o desprazamento a 0, <em>Desvincular</em> garda o apuntado como pan e tilt normais,
+    <em>Voltear</em> chega ao mesmo sitio ao revés (pan media volta, tilt ao outro lado).</li>
+    <li><strong>Repartir arredor do punto</strong> (dous aparatos ou máis): coloca os aparatos seleccionados arredor do seu
+    punto en <em>Liña</em>, <em>Arco</em> ou <em>Círculo</em>, na orde en que se seleccionaron, co seu ancho ou raio e a súa
+    rotación. A cue conserva a forma e segue o punto.</li>
+  </ul>
+  <p><strong>Corrixir o rig</strong>: cando a montaxe real non colga onde di o patch, apunta aparatos a un punto e móveos a man
+  ata o sitio real. Escolle o grupo que colga xunto (unha vara ou un truss) e que eixes corrixir (altura, altura e
+  profundidade, ou todos), e <em>Corrixir</em> move eses aparatos no patch, e a vara do plano da que colgan, para que os seus
+  feixes cheguen aos puntos. Todas as cues que apuntan a puntos séguenno; os puntos quedan onde están. <em>Apuntar aos
+  puntos</em> devolve os aparatos movidos aos seus puntos.</p>
+
+  <h3 id="command-line-and-keypad">Liña de ordes e teclado</h3>
+  <p>A liña de ordes, enriba das páxinas, acepta ordes ao estilo dunha mesa (en inglés); <em>Teclado</em> abre teclas en
+  pantalla para unha pantalla táctil (<em>Borrar liña</em> baleira a liña de ordes). As palabras pódense abreviar a dúas letras (<code>th</code>, <code>gr</code>, <code>rec</code>).</p>
+  <div class="table-wrap"><table>
+    <thead><tr><th>Orde</th><th>Fai</th></tr></thead>
+    <tbody>
+      <tr><td><code>1 thru 10 at 50</code></td><td>Selecciona os aparatos 1 a 10 ao 50&nbsp;% de intensidade. <code>&gt;</code> tamén significa thru, <code>@</code> significa at.</td></tr>
+      <tr><td><code>101.1 thru 101.12 at 80</code></td><td>As celas 1 a 12 do aparato 101.</td></tr>
+      <tr><td><code>group 2 + 7 - 3 at full</code></td><td>O grupo 2, máis o aparato 7, menos o 3, a tope. <code>out</code> é 0.</td></tr>
+      <tr><td><code>1 thru 4 preset 3</code></td><td>Aplica o preset 3.</td></tr>
+      <tr><td><code>effect 2</code></td><td>Lanza o efecto 2 na selección.</td></tr>
+      <tr><td><code>201 thru 208 point 2</code></td><td>Apunta a selección ao <a href="#focus-points">punto de enfoque</a> 2 (tamén <code>at point 2</code>).</td></tr>
+      <tr><td><code>gobo star</code>, <code>wheel 3</code></td><td>Escolle un rango polo nome (abonda o principio) ou polo número.</td></tr>
+      <tr><td><code>record cue 5 / 2</code></td><td>Grava o programador como cue 5 da secuencia 2. Tamén <code>record group 4</code>, <code>record preset 6</code>.</td></tr>
+      <tr><td><code>update</code>, <code>clear</code>, <code>blind</code>, <code>highlight</code></td><td>O mesmo ca os botóns.</td></tr>
+      <tr><td><code>go 2</code>, <code>go cue 5 / 2</code>, <code>release 2</code></td><td>Reproduce secuencias.</td></tr>
+      <tr><td><code>delete cue 5 / 2</code></td><td>Borra unha cue, un grupo ou un preset.</td></tr>
+    </tbody>
+  </table></div>
+
+  <h3 id="effects"><span class="ms" aria-hidden="true">&#xe663;</span> Efectos</h3>
+  <p>Un efecto move un atributo dun conxunto de aparatos cunha forma de onda: seno, triángulo, cadrada, ramplas, aleatoria, ou
+  un círculo para panorama e tilt. A <em>Velocidade</em> vai en Hz, ou por pulso con <em>Seguir o tempo</em>. <em>Tamaño</em> e
+  <em>Base</em> fixan a oscilación; vai arredor do valor da cue ou, con <em>Absoluto</em>, arredor da base. O <em>Desfase</em>
+  escalona os aparatos, <em>Grupos</em> move varios aparatos xuntos e <em>Ás</em> reflicte o debuxo. A vista previa amosa o
+  resultado nos aparatos. Con <em>O tamaño segue o son</em> o efecto medra co volume ao que soa OpenQ: <em>Ganancia</em> di
+  canto, <em>Mínimo</em> canto queda en silencio, e a barra do lado amosa o nivel do momento.</p>
+  <figure>
+    <img src="img/gl/lighting-effects.webp" width="1100" height="737" alt="Páxina Efectos cun efecto de fórmula: axustes, vista previa de vermello, verde e azul en doce aparatos, e a fórmula do arco da vella co seu deslizador.">
+    <figcaption>Un efecto de fórmula: a fórmula crea a táboa de cores e a vista previa amósaa nos aparatos seleccionados.</figcaption>
+  </figure>
+  <p>Lanza un efecto desde o programador (os efectos ou <code>effect 2</code>) e grávao nunha cue. Segue funcionando nas cues
+  seguintes ata que unha cue o pare.</p>
+  <p>Os efectos compártense como ficheiros <code>.oqfx</code>: <em>Exportar ficheiro de efecto…</em> escribe un e o botón
+  <span class="ms" aria-hidden="true">&#xe9fc;</span> da lista de efectos impórtaos. <em>Gardar na biblioteca</em> pon un
+  efecto na túa biblioteca de efectos, que todos os espectáculos ofrecen en <em>Biblioteca</em>.</p>
+
+  <h4 id="formulas">Efectos de fórmula</h4>
+  <p>Para debuxos que as formas de onda non poden facer, escribe unha <strong>fórmula</strong>. Preme
+  <span class="ms" aria-hidden="true">&#xe86f;</span> (<em>Novo efecto con fórmula</em>) na lista de efectos, edita a fórmula na
+  tarxeta <em>Fórmula</em> e preme <em>Executar</em> (ou Ctrl+Intro). OpenQ converte a fórmula nunha táboa: para cada fila do
+  patrón e cada paso dun ciclo, fixa os atributos que nomeas. O primeiro aparato reproduce a fila 0, o seguinte a fila 1 e así
+  sucesivamente, volvendo empezar despois da última fila. A velocidade, o tamaño, o desfase e os demais axustes séguense
+  aplicando enriba. Unha fórmula é só aritmética: non pode abrir ficheiros nin repetir bucles, e nunca se executa durante a
+  función; só se reproduce a táboa que creou.</p>
+<pre><code># Un arco da vella que percorre oito aparatos, cun deslizador para a saturación.
+param sat 1 0..1
+effect "Rainbow run" steps 64 width 8 smooth
+red, green, blue = hsv(t + row / width, sat)</code></pre>
+  <p>Unha instrución por liña; <code>#</code> empeza un comentario e as maiúsculas dan igual. As palabras da fórmula están en
+  inglés.</p>
+  <div class="table-wrap"><table>
+    <thead><tr><th>Liña</th><th>Que fai</th></tr></thead>
+    <tbody>
+      <tr><td><code>param sat 1 0..1</code></td><td>Un deslizador na tarxeta Fórmula: nome, valor inicial e rango (0 a 1 se
+      non se indica). Engade <code>int</code> para números enteiros. Os deslizadores van antes do primeiro efecto; ao movelos a
+      fórmula calcúlase de novo.</td></tr>
+      <tr><td><code>effect "Nome" steps 64 width 8 smooth</code></td><td>Empeza un efecto: mostras por ciclo (1 a 4096),
+      filas do patrón (1 a 512) e <code>smooth</code> para fundir entre mostras (quítao para persecucións que saltan). Unha
+      fórmula pode crear varios efectos: o primeiro é o que editas, os demais engádense á lista.</td></tr>
+      <tr><td><code>let k = sine(t)</code></td><td>Garda un valor para as liñas de debaixo.</td></tr>
+      <tr><td><code>red, green, blue = …</code></td><td>Fixa atributos, cada un unha vez por efecto: <code>dimmer</code>,
+      <code>red</code>, <code>pan</code>, <code>tilt</code>, <code>zoom</code>, <code>gobo_rotation</code>, <code>extra3</code>…
+      Os niveis van de 0 a 1 (o que se sae recórtase).</td></tr>
+    </tbody>
+  </table></div>
+  <p>Os valores son números: <code>t</code> vai de 0 a 1 ao longo do ciclo, <code>step</code> conta os pasos (desde 0),
+  <code>row</code> é a fila do patrón, <code>steps</code> e <code>width</code> son os tamaños do efecto, e ademais os
+  deslizadores e os nomes de <code>let</code>. Usa <code>+ - * / % ^</code>, parénteses, comparacións
+  (<code>&lt; &lt;= == != &gt;= &gt;</code>, que dan 1 ou 0) e <code>and</code>, <code>or</code>, <code>not</code>.</p>
+  <div class="table-wrap"><table>
+    <thead><tr><th>Función</th><th>Resultado</th></tr></thead>
+    <tbody>
+      <tr><td><code>sine(x)</code>, <code>triangle(x)</code>,<br><code>saw(x)</code>, <code>ramp_down(x)</code></td><td>As formas de
+      onda, de 0 a 1 nun ciclo (<code>x</code> en ciclos, normalmente <code>t</code>).</td></tr>
+      <tr><td><code>square(x, duty)</code></td><td>1 durante a primeira parte <code>duty</code> do ciclo (a metade se non se
+      indica) e logo 0.</td></tr>
+      <tr><td><code>wave(x)</code></td><td>Unha onda senoidal de −1 a 1, <code>x</code> en ciclos; <code>wave(x + 0.25)</code> é
+      o coseno.</td></tr>
+      <tr><td><code>hsv(ton, saturación, valor)</code></td><td>Vermello, verde e azul dunha cor (ton en voltas da roda de
+      cor). Dá tres valores, así que enche tres atributos: <code>red, green, blue = hsv(t)</code>.</td></tr>
+      <tr><td><code>pick(i, a, b, c…)</code></td><td>O valor número <code>i</code> da lista, desde 0 (volve empezar ao
+      final).</td></tr>
+      <tr><td><code>if(condición, a, b)</code></td><td><code>a</code> cando a condición non é 0; se non, <code>b</code>.</td></tr>
+      <tr><td><code>noise(n, seed)</code></td><td>Un número aleatorio fixo de 0 a 1 para o número enteiro <code>n</code> (e
+      <code>seed</code>): sempre o mesmo.</td></tr>
+      <tr><td><code>min(a, b…)</code>, <code>max(a, b…)</code></td><td>O valor máis pequeno ou o máis grande.</td></tr>
+      <tr><td><code>clamp(x, baixo, alto)</code></td><td><code>x</code> dentro de <code>baixo</code> e <code>alto</code> (0 e 1 se non se indican).</td></tr>
+      <tr><td><code>lerp(a, b, k)</code></td><td>De <code>a</code> (<code>k</code> = 0) a <code>b</code> (<code>k</code> = 1).</td></tr>
+      <tr><td><code>smoothstep(x)</code></td><td>De 0 a 1 con inicio e final suaves.</td></tr>
+      <tr><td><code>abs</code>, <code>floor</code>, <code>round</code>, <code>frac</code></td><td>Sen signo, arredondado cara
+      abaixo, arredondado, a parte decimal.</td></tr>
+    </tbody>
+  </table></div>
+<pre><code># Aparatos alternos, que se intercambian en cada metade do ciclo.
+effect "Odd / even" steps 2 width 2
+dimmer = if(step == row, 1, 0)
+
+# Cabezas veciñas que se moven en sentidos opostos (Modo: Arredor do valor da cue).
+effect "Scissors" steps 64 width 2 smooth
+pan = 0.5 + pick(row, 0.5, -0.5) * wave(t)</code></pre>
+  <p>Un erro aparece baixo o editor coa súa liña e columna, e o efecto conserva a súa última táboa. Os espectáculos de OpenQ 0.3
+  con efectos de script de Python séguenos reproducindo; o script antigo amósase baixo a tarxeta Fórmula para reescribilo como
+  fórmula, ou en Python como se explica abaixo.</p>
+
+  <h4 id="python-effects">Efectos feitos en Python</h4>
+  <p>Algúns debuxos precisan un programa de verdade: un valor que depende do paso anterior (un paseo aleatorio, un debuxo que
+  medra), bucles ou datos doutro sitio. Escríbeos en Python no teu ordenador e gárdaos como ficheiro de efecto. OpenQ impórtao
+  como calquera outro ficheiro <code>.oqfx</code>, como datos: dentro de OpenQ non se executa nada. Serve calquera Python 3,
+  sen módulos extra.</p>
+  <ol>
+    <li>Garda isto como <code>wander.py</code>. Fai que catro cabezas móbiles deambulen ao chou e volvan a onde empezaron:
+<pre><code>import json
+import random
+
+
+def save_effect(path, name, attributes, steps, width, level,
+                smooth=True, **settings):
+    """Write an OpenQ effect file (.oqfx).
+
+    level(row, step) returns one level (0 to 1) per attribute.
+    """
+    n = len(attributes)
+    values = [0.0] * (n * steps * width)
+    for row in range(width):
+        for step in range(steps):
+            for col, v in enumerate(level(row, step)):
+                at = (row * n + col) * steps + step
+                values[at] = min(1.0, max(0.0, float(v)))
+    table = {"attributes": attributes, "steps": steps,
+             "width": width, "smooth": smooth, "values": values}
+    effect = {"name": name, "shape": "Custom",
+              "attribute": attributes[0], "table": table}
+    effect.update(settings)
+    with open(path, "w", encoding="utf-8") as f:
+        json.dump({"openq_effect": 1, "effect": effect}, f)
+
+
+def walk(steps, seed):
+    """A random walk that ends where it started (no jump)."""
+    rnd = random.Random(seed)
+    x, points = 0.5, []
+    for _ in range(steps):
+        x = min(1.0, max(0.0, x + rnd.uniform(-0.06, 0.06)))
+        points.append(x)
+    drift = points[-1] - points[0]
+    return [p - drift * k / steps for k, p in enumerate(points)]
+
+
+STEPS, HEADS = 128, 4
+pan = [walk(STEPS, seed=row) for row in range(HEADS)]
+tilt = [walk(STEPS, seed=100 + row) for row in range(HEADS)]
+save_effect("wander.oqfx", "Wander", ["Pan", "Tilt"], STEPS, HEADS,
+            lambda row, step: (pan[row][step], tilt[row][step]),
+            speed=0.05, relative=True, size=0.5, spread=0)</code></pre></li>
+    <li>Execútao: <code>python3 wander.py</code> (<code>py wander.py</code> en Windows). Escribe <code>wander.oqfx</code> no
+    mesmo cartafol.</li>
+    <li>En OpenQ, vai a <span class="menu">Iluminación → Efectos</span>, preme <span class="ms" aria-hidden="true">&#xe9fc;</span>
+    (<em>Importar ficheiros de efecto</em>) e escolle o ficheiro. O efecto engádese á lista; lánzao en catro cabezas.</li>
+  </ol>
+  <p><code>save_effect</code> é a parte que hai que conservar para os teus propios efectos:</p>
+  <ul>
+    <li><strong>attributes</strong>: os nomes que garda OpenQ, en inglés e con maiúsculas: <code>Dimmer</code>,
+    <code>Red</code>, <code>Green</code>, <code>Blue</code>, <code>White</code>, <code>Pan</code>, <code>Tilt</code>,
+    <code>Zoom</code>, <code>Iris</code>, <code>GoboRotation</code>, <code>Extra3</code>…</li>
+    <li><strong>steps</strong>: mostras por ciclo (1 a 4096); <strong>width</strong>: filas do patrón (1 a 512). Como moito
+    16 atributos e un millón de valores.</li>
+    <li><strong>level(row, step)</strong>: devolve un nivel de 0 a 1 por atributo, na mesma orde.</li>
+    <li><strong>smooth</strong>: fundir entre mostras (<code>False</code> mantén cada unha, para persecucións).</li>
+    <li>O resto son os axustes do efecto, todos opcionais: <code>speed</code> (Hz), <code>sync</code> (seguir o tempo),
+    <code>size</code> e <code>base</code> (0 a 1), <code>relative</code> (<code>True</code> = arredor do valor da cue),
+    <code>spread</code> (graos), <code>groups</code>, <code>wings</code>. Todos se poden cambiar despois en OpenQ.</li>
+  </ul>
+  <div class="note tip"><span class="label">Consello</span><p>O último paso dun ciclo enlaza directamente co primeiro. Fai que
+  coincidan, como fai <code>walk</code>, ou o efecto dará un salto en cada ciclo. OpenQ comproba cada ficheiro que importa e
+  rexeita os que teñen tamaños ou valores incorrectos.</p></div>
+</section>
+
+<section id="light-playback">
+  <h2><span class="n">5.3</span>Reprodución e saídas</h2>
+  <h3 id="sequences"><span class="ms" aria-hidden="true">&#xe1c4;</span> Secuencias</h3>
+  <p>Unha secuencia é unha pila de cues. As cues de iluminación son <strong>de seguimento</strong> (tracking): unha cue só garda
+  o que cambia, e o demais segue como o deixaron as cues anteriores. Cada cue ten un fade, un fade de baixada á parte para a
+  intensidade que baixa, e un delay.</p>
+  <figure>
+    <img src="img/gl/lighting-sequences.webp" width="1100" height="322" alt="Páxina Secuencias coa secuencia Main e as súas catro cues, cos seus tempos de fade, baixada e delay.">
+    <figcaption>Unha secuencia. A frecha marca a súa cue actual.</figcaption>
+  </figure>
+  <ul>
+    <li><strong>Tempos por familia</strong> dá á cor, á posición ou ao feixe o seu propio fade e delay.</li>
+    <li><strong>Só esta cue</strong>: os seus cambios non se arrastran; a cue seguinte volve ao que había antes.</li>
+    <li><strong>Bloquear</strong> garda na cue todos os valores que arrastra, así que editar cues anteriores xa non a cambia. Unha cue
+    bloqueada amosa un cadeado na lista e o botón di <em>Bloqueado</em>; prémeo outra vez para que eses valores volvan
+    arrastrarse.</li>
+    <li><strong>Mover en negro</strong> (por secuencia): os aparatos apagados collen a posición, a cor e o feixe da súa seguinte
+    cue antes de acenderse, tras o delay indicado.</li>
+    <li><em>Cargar no programador</em> recupera unha cue para editala; <em>Actualizar cue</em>, na páxina Programador, garda os cambios.</li>
+  </ul>
+  <p>Os ficheiros <strong>USITT ASCII</strong> (<code>.asc</code>) traen cues doutra mesa: o botón
+  <span class="ms" aria-hidden="true">&#xe9fc;</span> xunto a <em>Secuencias</em> le o patch, as cues, os grupos e os submásteres dun
+  ficheiro, e <span class="ms" aria-hidden="true">&#xf090;</span> garda o deseño como un. O formato só leva intensidades: a cor, a posición e
+  os efectos quedan fóra, e os tempos de follow e link pérdense.</p>
+  <h3 id="playback">Reprodución</h3>
+  <p>A páxina <strong>Reprodución</strong> é desde onde se leva a iluminación, nos dous modos, con tarxetas grandes para unha
+  pantalla táctil:</p>
+  <ul>
+    <li><strong>Másteres</strong>: o <strong>gran máster</strong>, o <strong>blackout</strong> e o <strong>tempo</strong> dos
+    efectos (escríbese ou márcase con Tap).</li>
+    <li><strong>Secuencias</strong>: unha tarxeta por secuencia, coa súa cue actual e a seguinte, un fader de nivel, <em>GO</em> e
+    <em>Liberación</em>.</li>
+    <li><strong>Executores</strong>: botóns que poñen un estado enriba das secuencias, como a máquina de fume ao 80&nbsp;%, un
+    estrobo ou un especial. En modo edición, <em>Engadir executor</em> crea un e o lapis edítao: o seu nome e cor, un
+    <em>predefinido</em> sobre uns <em>aparatos</em> (<em>Usar seleccionados</em> toma a selección do programador, ou escolle un
+    grupo), e/ou <em>Gardar o programador</em> para os valores e efectos do programador. Entra e sae no seu <em>Fade</em>;
+    <em>Conmutar</em> acéndeo e apágao con cada pulsación, <em>Flash</em> mantéñeo aceso só mentres se preme.</li>
+  </ul>
+  <p>Os executores están en <strong>páxinas</strong>: as lapelas de enriba, con <span class="ms" aria-hidden="true">&#xe145;</span> para unha
+  páxina nova; un clic dereito nunha lapela renoméaa ou elimínaa. Os executores dunha páxina que non se ve seguen activos. En
+  modo edición, arrastra un executor pola súa asa sobre outro para reordenalos, ou sobre unha lapela para levalo a esa páxina.
+  <em>Tamaño dos executores</em> agranda ou achica as tarxetas.</p>
+  <p><em>Abrir nunha xanela</em> pon a páxina Reprodución nunha xanela propia; escolle unha <em>Pantalla</em> para que ocupe unha
+  pantalla táctil. Cada ordenador lembra se a súa xanela está aberta e onde, así que volve tras reiniciar.</p>
+  <figure>
+    <img src="img/gl/lighting-playback.webp" width="1100" height="553" alt="Páxina Reprodución: gran máster, blackout e tempo, tarxetas de secuencia con GO e Liberación, e unha páxina de botóns de executor.">
+    <figcaption>A páxina Reprodución. En modo función só reproduce; os executores engádense e edítanse en modo edición.</figcaption>
+  </figure>
+
+  <h3 id="surfaces"><span class="ms" aria-hidden="true">&#xe521;</span> Superficies de control</h3>
+  <p>Un controlador MIDI ou unha aplicación OSC (TouchOSC, por exemplo) poden manexar os executores. En
+  <span class="menu">Axustes → Superficies de control</span> escolle a <strong>entrada MIDI</strong> deste ordenador e engade
+  <strong>asignacións</strong>: preme <em>Aprender novo</em> (ou o control dunha asignación), move un fader ou preme un botón e
+  escolle que fai. <em>Banco de executores</em> engade dunha vez faders en CC 1–8 e botóns nas notas 36–43. Os executores
+  numéranse polo seu lugar na lista de secuencias.</p>
+  <ul>
+    <li><strong>Faders</strong>: nivel de executor, gran máster.</li>
+    <li><strong>Botóns</strong>: GO, liberar e flash de executor (a tope mentres se mantén), executores de reprodución (os botóns
+    da páxina Reprodución), páxina seguinte e anterior, blackout, liberar todo, tap tempo, e o GO e Parar todo da lista de cues.
+    Un botón actúa unha vez por pulsación, mande notas, CC 127/0 ou OSC 1/0.</li>
+  </ul>
+  <ul>
+    <li><strong>Páxinas</strong>: cun tamaño de páxina de, por exemplo, 8, os oito faders do controlador levan as secuencias
+    1–8 na primeira páxina e as 9–16 na seguinte; os botóns de páxina pasan dunha a outra, e a páxina Reprodución amosa a mesma
+    páxina de executores.</li>
+    <li><strong>Recollida suave</strong>: un fader que non coincide co seu nivel (moveuse na pantalla, ou cambiou a páxina) non
+    fai nada ata alcanzalo, así que nada salta.</li>
+    <li><strong>Retorno</strong>: escolle unha saída en <em>Retorno MIDI</em> e as luces dos botóns e os faders motorizados
+    seguen o espectáculo. Para unha app OSC, pon en <em>Retorno OSC</em> o porto UDP no que escoita: os niveis e as luces
+    envíanse á app que mandou o último control.</li>
+    <li><strong>MIDI clock</strong>: con <em>Os efectos seguen o seu tempo</em>, o tempo dos efectos segue o reloxo da entrada
+    MIDI (dun programa de DJ ou unha caixa de ritmos); ao lado vense os BPM que le.</li>
+  </ul>
+  <p>As asignacións gárdanse co espectáculo; a entrada MIDI é do ordenador, así que un dispositivo remoto pode usar o seu propio
+  controlador (os seus movementos van ao dispositivo principal). As asignacións OSC chegan polo
+  <a href="remote.gl.html#osc">receptor OSC</a>, que ademais entende os enderezos <code>/light/…</code> sen asignación.</p>
+
+  <h3 id="lighting-io"><span class="ms" aria-hidden="true">&#xe328;</span> Saídas e entradas</h3>
+  <p>Na páxina Saídas engade a onde vai o DMX: <strong>Art-Net</strong> (o enderezo dun nodo, ou difusión; <em>Buscar
+  dispositivos</em> lista os nodos da rede), <strong>sACN</strong> (multicast ou un enderezo unicast, con prioridade) ou unha
+  interface <strong>Enttec DMX USB Pro</strong> (ou compatible). Cada saída envía unha lista de universos: o universo do patch á
+  esquerda e o número no cable á dereita (Art-Net conta desde 0). Cada saída funciona pola súa conta, así que un dispositivo
+  lento ou desconectado non frea os demais, e un perdido vólvese abrir só.</p>
+  <figure>
+    <img src="img/gl/lighting-outputs.webp" width="1100" height="443" alt="Páxina Saídas cunha saída Art-Net enviando, unha saída sACN desactivada e unha entrada sACN que mestura.">
+    <figcaption>Saídas e entradas, cada unha co seu estado en directo.</figcaption>
+  </figure>
+  <p>As <strong>entradas</strong> reciben Art-Net ou sACN doutra mesa. Cada unha <em>mestura</em> coa saída de OpenQ (gaña o
+  valor máis alto), a <em>substitúe</em> nos universos que recibe, ou queda <em>só para capturar</em>. Se varias mesas envían o
+  mesmo universo sACN, gaña a de máis prioridade. OpenQ ignora os seus propios paquetes, así que unha saída en difusión non
+  volve entrar por unha entrada.</p>
+    <p>Unha saída Art-Net pode mandar <strong>ArtSync</strong> tras cada fotograma, para que os nodos que o admiten cambien
+  todos os seus universos á vez. Maiús+clic nun nodo da lista <em>Nodos</em> envíalle os universos que emite; un aviso indica
+  cando a saída manda un universo que o nodo escollido non ten. Unha entrada Art-Net responde ás mesas que buscan nodos
+  (ArtPoll), así que as mesas que só envían aos nodos que atopan tamén envían a OpenQ.</p>
+  <h3 id="dmx-monitor"><span class="ms" aria-hidden="true">&#xe9b0;</span> Monitor DMX</h3>
+  <p>O monitor DMX amosa cada canle dun universo tal como sae, entradas incluídas. Unha liña amarela marca onde empeza cada
+  aparato.</p>
+  <figure>
+    <img src="img/gl/lighting-monitor.webp" width="1100" height="368" alt="Cuadrícula do monitor DMX do universo 1 con valores nas primeiras canles.">
+    <figcaption>O monitor DMX.</figcaption>
+  </figure>
+  <h3 id="remote-devices-and-visualisers">Dispositivos remotos e visualizadores</h3>
+  <p>Un <a href="remote.gl.html#remote">dispositivo remoto</a> recibe o deseño de iluminación e os seus cambios, e amosa os executores e a
+  saída DMX do dispositivo principal; o seu GO e os seus faders actúan no dispositivo principal. Un dispositivo co rol de
+  edición tamén pode cambiar o deseño. Un visualizador pode seguir a OpenQ do mesmo xeito, ou ler o DMX por Art-Net ou sACN e a
+  montaxe dun MVR exportado.</p>
+  <p id="lighting-oqvis"><span class="menu">Ver → Abrir en OQVis</span> (tamén en Patch → Planta) amosa a montaxe en
+  <strong>OQVis</strong>, o visualizador 3D que se instala con OpenQ: OpenQ garda o patch como ficheiro MVR e abre OQVis con
+  el. Se o escolles outra vez mentres OQVis está aberto, só se reescribe o ficheiro e OQVis vólveo cargar. OQVis recibe o DMX
+  por Art-Net, sACN ou o seu propio enlace con OpenQ. Se OpenQ non atopa OQVis, pregunta onde está o programa e lémbrao.</p>
+</section>
+<!--/content-->
+
+<nav class="pager" aria-label="Capítulo anterior e seguinte">
+  <a class="prev" href="video.gl.html"><span>← Anterior</span>Vídeo e proxección</a>
+  <a class="next" href="remote.gl.html"><span>Seguinte →</span>Control remoto e rede</a>
+</nav>
+</main>
+</div>
+<script src="manual.js"></script>
+</body>
+</html>

@@ -1,0 +1,113 @@
+<!doctype html>
+<html lang="gl">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<!-- Built by tools/build_manual.py around the content block below: edit only that, then run the script. -->
+<title>Control remoto e rede · Manual de usuario de OpenQ</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Barlow+Condensed:wght@500;600;700&family=Inter:wght@400;500;600&family=JetBrains+Mono:wght@400;500&display=swap">
+<link rel="stylesheet" href="manual.css">
+</head>
+<body>
+<div class="wrap">
+<nav class="toc" aria-label="Capítulos">
+  <div class="brand"><a href="index.gl.html" title="Contido">Open<b>Q</b></a></div>
+  <div class="brand-sub">Manual de usuario</div>
+  <div class="langs"><a href="remote.html" hreflang="en" title="English">EN</a><a href="remote.es.html" hreflang="es" title="Español">ES</a><a href="remote.gl.html" hreflang="gl" title="Galego" aria-current="page">GL</a></div>
+  <ol class="chapters">
+    <li><a href="start.gl.html">Primeiros pasos</a></li>
+    <li><a href="cues.gl.html">Cues e tempos</a></li>
+    <li><a href="audio.gl.html">Audio</a></li>
+    <li><a href="video.gl.html">Vídeo e proxección</a></li>
+    <li><a href="lighting.gl.html">Iluminación</a></li>
+    <li class="cur"><a href="remote.gl.html" aria-current="page">Control remoto e rede</a>
+     <ol class="sub">
+      <li class="s2"><a href="#remote">Dispositivos remotos</a></li>
+      <li class="s3"><a href="#pairing-a-device">Emparellar un dispositivo</a></li>
+      <li class="s3"><a href="#roles">Roles</a></li>
+      <li class="s2"><a href="#osc">OSC e cues de rede</a></li>
+     </ol>
+    </li>
+    <li><a href="help.gl.html">Seguridade e axuda</a></li>
+  </ol>
+</nav>
+
+<main>
+<header class="chapter-head">
+  <div class="eyebrow">Capítulo 6 · Manual de usuario de OpenQ</div>
+  <h1>Control remoto e rede</h1>
+</header>
+
+<!--content-->
+<section id="remote">
+  <h2><span class="n">6.1</span>Dispositivos remotos</h2>
+  <p>Un segundo ordenador con OpenQ na mesma rede pode seguir o espectáculo e levalo. Pode ser o portátil do regedor
+  ou unha tableta na mesa técnica. O ordenador que leva o espectáculo é o <strong>dispositivo principal</strong>, e fai toda a
+  reprodución. O outro dispositivo amosa a súa lista de cues, cabezal, cues en marcha e medidores, e envíalle GO e outras ordes.</p>
+  <h3 id="pairing-a-device">Emparellar un dispositivo</h3>
+  <ol class="steps">
+    <li>No dispositivo principal, abre <span class="menu">Remoto → Compartir este OpenQ</span>, marca
+    <em>Deixar que se conecten os dispositivos emparellados</em> e fai clic en <em>Emparellar un dispositivo novo…</em>. Aparece un código como <code>C9XR-E9HJ</code>.</li>
+    <li>No outro dispositivo, abre <span class="menu">Remoto → Conectar a outro OpenQ</span>, fai clic en <em>Buscar</em> e escolle o
+    dispositivo principal. Se a busca non atopa nada, escribe o seu enderezo, que aparece na xanela Remoto do dispositivo principal.</li>
+    <li>Introduce o código e fai clic en <em>Conectar</em>. A partir da primeira vez, conectar non precisa código.</li>
+  </ol>
+  <figure class="narrow">
+    <img src="img/gl/remote-share.webp" width="700" height="680" alt="Xanela Remoto do dispositivo principal cun código de emparellamento e unha lista de dispositivos emparellados.">
+    <figcaption>O dispositivo principal durante o emparellamento. Os dispositivos emparellados aparecen baixo o código, co seu rol.</figcaption>
+  </figure>
+  <h3 id="roles">Roles</h3>
+  <div class="table-wrap"><table>
+    <thead><tr><th>Rol</th><th>O dispositivo pode</th></tr></thead>
+    <tbody>
+      <tr><td>Só ver</td><td>Seguir o espectáculo: lista de cues, cabezal, cues en marcha e medidores.</td></tr>
+      <tr><td>Control</td><td>Ademais, premer GO, parar, pausar e retomar, mover o cabezal e iniciar ou parar cues soltas.</td></tr>
+      <tr><td>Control e edición</td><td>Ademais, editar o espectáculo. Os cambios gárdanse no dispositivo principal.</td></tr>
+    </tbody>
+  </table></div>
+  <p>Axusta o rol que reciben os dispositivos novos, e cambia o de calquera dispositivo, na xanela Remoto do dispositivo
+  principal. Os cambios aplícanse ao momento. <strong>Quitar</strong> desconecta un dispositivo axiña, e ten que volver
+  emparellarse para reconectar. Cando un dispositivo se desconecta, recupera o seu propio espectáculo. Os ficheiros de medios quedan
+  no dispositivo principal, así que engádeos alí.</p>
+  <div class="note"><span class="label">Seguridade</span><p>As conexións van cifradas e autenticadas. Un código de emparellamento
+  vale 5 minutos e 5 intentos, e quen grave o tráfico de rede non pode deducilo a partir da gravación. Despois do
+  emparellamento, cada dispositivo entra coa súa propia clave secreta. Un enderezo que falla unha e outra vez bloquéase
+  5 minutos. A lista Actividade amosa as conexións e os intentos rexeitados.</p></div>
+  <div class="note tip"><span class="label">Rede</span><p>O acceso remoto usa o porto TCP <code>53200</code>, e a busca
+  usa o porto UDP <code>53201</code>. Un devasa no dispositivo principal ten que permitir os dous. Nunha wifi de convidados
+  a busca pode non atopar nada; escribir o enderezo segue a funcionar.</p></div>
+</section>
+
+<section id="osc">
+  <h2><span class="n">6.2</span>OSC e cues de rede</h2>
+  <p>Activa <strong>Control remoto OSC</strong> en <span class="menu">Axustes → Xeral</span>. Escoita no porto UDP 53000
+  por defecto. As cues identifícanse polo seu número.</p>
+  <div class="table-wrap"><table>
+    <thead><tr><th>Enderezo</th><th>Acción</th></tr></thead>
+    <tbody>
+      <tr><td><code>/go</code></td><td>GO</td></tr>
+      <tr><td><code>/stop</code> · <code>/panic</code></td><td>Parar todo co fundido · parar todo ao instante</td></tr>
+      <tr><td><code>/pause</code> · <code>/resume</code></td><td>Pausar todo · retomar todo</td></tr>
+      <tr><td><code>/playhead/next</code> · <code>/playhead/previous</code></td><td>Mover o cabezal</td></tr>
+      <tr><td><code>/playhead/4.2</code></td><td>Poñer o cabezal na cue 4.2</td></tr>
+      <tr><td><code>/cue/4.2/start</code></td><td>Tamén <code>stop</code>, <code>pause</code>, <code>resume</code>, <code>devamp</code></td></tr>
+      <tr><td><code>/light/executor/2/level 0.5</code></td><td>Nivel do executor 2; tamén <code>go</code>, <code>release</code>, <code>flash</code> (1 = premer, 0 = soltar). <code>/light/grandmaster 0.8</code>, <code>/light/blackout</code>, <code>/light/release</code>, <code>/light/tap</code></td></tr>
+    </tbody>
+  </table></div>
+  <p>Unha <strong>cue Rede</strong> envía unha mensaxe OSC a outros equipos. Axusta o host, o porto, o enderezo
+  (por exemplo <code>/eos/cue/12/fire</code>) e os argumentos. Os argumentos sepáranse con espazos: os números envíanse como
+  números e o texto entre comiñas como texto.</p>
+</section>
+<!--/content-->
+
+<nav class="pager" aria-label="Capítulo anterior e seguinte">
+  <a class="prev" href="lighting.gl.html"><span>← Anterior</span>Iluminación</a>
+  <a class="next" href="help.gl.html"><span>Seguinte →</span>Seguridade e axuda</a>
+</nav>
+</main>
+</div>
+<script src="manual.js"></script>
+</body>
+</html>

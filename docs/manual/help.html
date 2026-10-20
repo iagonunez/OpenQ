@@ -1,0 +1,156 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<!-- Built by tools/build_manual.py around the content block below: edit only that, then run the script. -->
+<title>Safety and help · OpenQ User Manual</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Barlow+Condensed:wght@500;600;700&family=Inter:wght@400;500;600&family=JetBrains+Mono:wght@400;500&display=swap">
+<link rel="stylesheet" href="manual.css">
+</head>
+<body>
+<div class="wrap">
+<nav class="toc" aria-label="Chapters">
+  <div class="brand"><a href="index.html" title="Contents">Open<b>Q</b></a></div>
+  <div class="brand-sub">User manual</div>
+  <div class="langs"><a href="help.html" hreflang="en" title="English" aria-current="page">EN</a><a href="help.es.html" hreflang="es" title="Español">ES</a><a href="help.gl.html" hreflang="gl" title="Galego">GL</a></div>
+  <ol class="chapters">
+    <li><a href="start.html">Getting started</a></li>
+    <li><a href="cues.html">Cues and timing</a></li>
+    <li><a href="audio.html">Audio</a></li>
+    <li><a href="video.html">Video and projection</a></li>
+    <li><a href="lighting.html">Lighting</a></li>
+    <li><a href="remote.html">Remote control and network</a></li>
+    <li class="cur"><a href="help.html" aria-current="page">Safety and help</a>
+     <ol class="sub">
+      <li class="s2"><a href="#safety">Crash safety</a></li>
+      <li class="s3"><a href="#autosave-and-recovery">Autosave and recovery</a></li>
+      <li class="s3"><a href="#when-something-fails-during-a-show">When something fails during a show</a></li>
+      <li class="s2"><a href="#trouble">Troubleshooting</a></li>
+      <li class="s2"><a href="#license">License and credits</a></li>
+     </ol>
+    </li>
+  </ol>
+</nav>
+
+<main>
+<header class="chapter-head">
+  <div class="eyebrow">Chapter 7 · OpenQ User Manual</div>
+  <h1>Safety and help</h1>
+</header>
+
+<!--content-->
+<section id="safety">
+  <h2><span class="n">7.1</span>Crash safety</h2>
+  <p>A show has to carry on when something goes wrong. OpenQ keeps problems as small as it can and
+  gets your work back if it does go down.</p>
+  <h3 id="autosave-and-recovery">Autosave and recovery</h3>
+  <p>While a show has unsaved changes, OpenQ keeps a copy of it every few seconds. Saving the show,
+  or quitting normally, removes the copy. If OpenQ or the computer goes down, the next start
+  offers the copy back:</p>
+  <figure class="narrow">
+    <img src="img/recovery.webp" width="702" height="382" alt="Recover unsaved work window listing two autosaved shows, each with Recover and Discard buttons, and a Later button.">
+    <figcaption>After a crash: each show with unsaved changes, when it was autosaved and where it belongs.</figcaption>
+  </figure>
+  <ul>
+    <li><strong>Recover</strong> opens the copy with unsaved changes. Save it to keep them (it saves
+    to the show's own file).</li>
+    <li><strong>Discard</strong> deletes the copy for good.</li>
+    <li><strong>Later</strong> closes the window; it asks again next time.</li>
+  </ul>
+  <p>Saving a show writes a temporary file first and swaps it in once it is safely on disk, so a crash
+  or power cut during a save leaves the previous version intact.</p>
+  <h3 id="when-something-fails-during-a-show">When something fails during a show</h3>
+  <div class="table-wrap"><table>
+    <thead><tr><th>What happens</th><th>What OpenQ does</th></tr></thead>
+    <tbody>
+      <tr><td>The audio device disappears (unplugged, audio server restarted)</td><td>Its sounds stop and the
+      status bar shows <em>audio lost · reconnecting…</em>. OpenQ tries to open the same device again every
+      2 seconds and carries on as soon as it is back. Video and other cues keep running.</td></tr>
+      <tr><td>A media file is damaged</td><td>That cue ends with an error in <span class="menu">View → Engine log</span>;
+      every other cue plays on.</td></tr>
+      <tr><td>An internal error in the cue engine</td><td>All cues stop at once, the playhead stays where it was and
+      the log explains what happened. The next GO works as usual.</td></tr>
+      <tr><td>A cue starts itself in a loop with no time in it (a Start cue aimed at itself, or two aimed at
+      each other)</td><td>It is held off and the log names the cue, instead of slowing the whole show down.</td></tr>
+      <tr><td>More than 256 sounds at once</td><td>Further audio cues are refused with an error in the log.</td></tr>
+    </tbody>
+  </table></div>
+  <p>Autosaves and crash reports live in the OpenQ settings folder: <code>~/.config/openq</code> on Linux,
+  <code>~/Library/Application Support/OpenQ</code> on macOS, <code>%APPDATA%\OpenQ</code> on Windows, in
+  <code>recovery</code> and <code>crash</code>. A crash report holds what went wrong and where; please
+  attach it when you report a problem.</p>
+  <p><strong>Error log.</strong> Every warning and error (engine log entries, device failures, failed saves or
+  opens, crashes) is also written, with the date and time in UTC, to <code>logs/openq.log</code> in the same
+  folder, so you can look back after the show. <span class="menu">Help → Error log</span> opens it. When it grows
+  past 2 MB it is moved to <code>openq.old.log</code> the next time OpenQ starts.</p>
+</section>
+
+<section id="trouble">
+  <h2><span class="n">7.2</span>Troubleshooting</h2>
+  <div class="table-wrap"><table>
+    <thead><tr><th>Problem</th><th>Try</th></tr></thead>
+    <tbody>
+      <tr><td>No sound</td><td>Check the status bar. If it says <em>no audio</em>, pick another device in Settings → Audio.
+      Check the master volume and the cue's level and routing.</td></tr>
+      <tr><td>A Mic cue is silent</td><td>Check the input device and channels on its I/O tab; the level bar shows whether
+      anything arrives. On macOS and Windows, OpenQ needs permission to use the microphone.</td></tr>
+      <tr><td>Timecode triggers don't fire</td><td>Open the list's <em>Timecode…</em> window and check that it receives
+      timecode at the right rate. Cues only fire while timecode runs forward through their trigger time.</td></tr>
+      <tr><td>A Camera cue shows nothing</td><td>Check the device on its Camera tab (use <span class="ms" aria-hidden="true">&#xe5d5;</span>
+      to look again) and the engine log. Another program using the camera can block it.</td></tr>
+      <tr><td>A cue shows a red <span class="ms" style="color:var(--red)" aria-hidden="true">&#xf8b6;</span> icon</td><td>Its media file is missing or unreadable, or its target cue was deleted. If the file has moved, click <em>Browse…</em> on the cue's
+      Basics tab to find it again. After reconnecting a drive, give it about two seconds to clear.</td></tr>
+      <tr><td>A video doesn't appear</td><td>Open the stage window from the Video menu. Check the cue's stage, opacity
+      and layer, and look in <span class="menu">View → Engine log</span> for decoder errors. A graphics card can only
+      show pictures up to a certain size (often 8192 or 16384 pixels across). OpenQ shrinks still images, SVGs and text
+      to fit, but a larger movie is left out: convert it to a smaller size.</td></tr>
+      <tr><td>The status bar says <em>audio lost · reconnecting…</em></td><td>The audio device went away. Plug it back in or
+      restart the audio service; OpenQ reconnects by itself. To use another device instead, pick it in Settings → Audio.</td></tr>
+      <tr><td>OpenQ asks to recover unsaved work</td><td>It didn't quit normally last time. See <a href="#safety">Crash safety</a>.</td></tr>
+      <tr><td>GO seems to do nothing</td><td>The cue at the playhead may be disarmed, or the second press may have
+      come within double-GO protection.</td></tr>
+      <tr><td>A remote device can't find the main device</td><td>Make sure remote access is on and both are on the
+      same network, then type the address shown on the main device.</td></tr>
+      <tr><td>"Pair this device again" (remote)</td><td>The device was removed on the main device, or its key was forgotten. Open
+      pairing on the main device and enter the new code.</td></tr>
+      <tr><td>Something fails and you don't know why</td><td>Open <span class="menu">Help → Error log</span>: every warning, error and crash is there with its time.</td></tr>
+    </tbody>
+  </table></div>
+
+</section>
+
+<section id="license">
+  <h2><span class="n">7.3</span>License and credits</h2>
+  <p>OpenQ is licensed under the <a href="https://www.apache.org/licenses/LICENSE-2.0">Apache License 2.0</a>.</p>
+  <div class="table-wrap split"><table>
+    <thead><tr><th>You may</th><th>You must</th></tr></thead>
+    <tbody>
+      <tr><td>Use OpenQ for anything, commercial included: run paid shows, concerts, tours, events and installations, and be paid to program or operate them.</td><td>Keep the copyright notice, <code>LICENSE.md</code> and <code>NOTICE.md</code> with every copy.</td></tr>
+      <tr><td>Copy, change and share it.</td><td>Say in the files you change that they were changed.</td></tr>
+      <tr><td>Sell copies, changed versions or services built on it.</td><td>Not use the OpenQ name as a trademark: the license gives no right to it.</td></tr>
+    </tbody>
+  </table></div>
+  <pre><code>Copyright 2026 Iago Núñez — OpenQ (https://github.com/iagonunez/OpenQ)</code></pre>
+  <p><span class="menu">Help → About OpenQ and licenses</span> shows the version, the license and every third-party
+  notice. These are the fonts (Inter, JetBrains Mono and Barlow Condensed under the SIL Open Font License; Material Symbols
+  under Apache 2.0; the fonts built into egui) and the open-source Rust libraries OpenQ is built from, each under its
+  own license. The same texts are in <code>NOTICE.md</code> and <code>THIRD_PARTY_LICENSES.md</code> next to the program.</p>
+  <div class="note"><span class="label">Video and FFmpeg</span><p>OpenQ plays video with the FFmpeg libraries. On Windows and
+  macOS the installer puts a build without GPL parts inside OpenQ, with its license in the <code>Licenses</code> folder;
+  on Linux OpenQ uses the system's FFmpeg. FFmpeg has its own license. If you pass a built OpenQ on to others, use an
+  FFmpeg without GPL parts, or the GPL 3 covers the whole program. See <code>NOTICE.md</code>.</p></div>
+  <footer>OpenQ · Apache 2.0. Fonts: Inter, JetBrains Mono, Barlow Condensed (SIL OFL 1.1) and Material Symbols (Apache 2.0).</footer>
+</section>
+<!--/content-->
+
+<nav class="pager" aria-label="Previous and next chapter">
+  <a class="prev" href="remote.html"><span>← Previous</span>Remote control and network</a>
+</nav>
+</main>
+</div>
+<script src="manual.js"></script>
+</body>
+</html>

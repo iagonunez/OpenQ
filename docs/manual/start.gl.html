@@ -1,0 +1,268 @@
+<!doctype html>
+<html lang="gl">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<!-- Built by tools/build_manual.py around the content block below: edit only that, then run the script. -->
+<title>Primeiros pasos · Manual de usuario de OpenQ</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Barlow+Condensed:wght@500;600;700&family=Inter:wght@400;500;600&family=JetBrains+Mono:wght@400;500&display=swap">
+<link rel="stylesheet" href="manual.css">
+</head>
+<body>
+<div class="wrap">
+<nav class="toc" aria-label="Capítulos">
+  <div class="brand"><a href="index.gl.html" title="Contido">Open<b>Q</b></a></div>
+  <div class="brand-sub">Manual de usuario</div>
+  <div class="langs"><a href="start.html" hreflang="en" title="English">EN</a><a href="start.es.html" hreflang="es" title="Español">ES</a><a href="start.gl.html" hreflang="gl" title="Galego" aria-current="page">GL</a></div>
+  <ol class="chapters">
+    <li class="cur"><a href="start.gl.html" aria-current="page">Primeiros pasos</a>
+     <ol class="sub">
+      <li class="s2"><a href="#start">Instalación e primeiro espectáculo</a></li>
+      <li class="s3"><a href="#installing">Instalación</a></li>
+      <li class="s3"><a href="#your-first-show">O teu primeiro espectáculo</a></li>
+      <li class="s2"><a href="#window">A xanela principal</a></li>
+      <li class="s3"><a href="#working-with-the-cue-list">Traballar coa lista de cues</a></li>
+      <li class="s3"><a href="#cue-lists">Listas de cues</a></li>
+      <li class="s2"><a href="#modes">Modo edición e modo función</a></li>
+      <li class="s3"><a href="#stopping">Parar</a></li>
+      <li class="s2"><a href="#settings">Axustes</a></li>
+      <li class="s2"><a href="#keys">Atallos de teclado</a></li>
+     </ol>
+    </li>
+    <li><a href="cues.gl.html">Cues e tempos</a></li>
+    <li><a href="audio.gl.html">Audio</a></li>
+    <li><a href="video.gl.html">Vídeo e proxección</a></li>
+    <li><a href="lighting.gl.html">Iluminación</a></li>
+    <li><a href="remote.gl.html">Control remoto e rede</a></li>
+    <li><a href="help.gl.html">Seguridade e axuda</a></li>
+  </ol>
+</nav>
+
+<main>
+<header class="chapter-head">
+  <div class="eyebrow">Capítulo 1 · Manual de usuario de OpenQ</div>
+  <h1>Primeiros pasos</h1>
+</header>
+
+<!--content-->
+<section id="start">
+  <h2><span class="n">1.1</span>Instalación e primeiro espectáculo</h2>
+  <h3 id="installing">Instalación</h3>
+  <p>OpenQ instálase co seu instalador, <a href="https://github.com/iagonunez/OQup">OQup</a>. OQup descarga a versión máis
+  recente de OpenQ para o teu sistema, compróbaa, engade as bibliotecas de FFmpeg que usa para o vídeo (unha versión LGPL)
+  e instálaa cunha entrada no menú. Co espazo de iluminación (o predeterminado) instala tamén <strong>OQVis</strong>, o
+  visualizador 3D que abre <a href="lighting.gl.html#lighting-oqvis">Abrir en OQVis</a>. Os teus espectáculos nunca se tocan.</p>
+  <div class="note tip"><span class="label">Antes de comezar</span><p>Necesitas conexión a internet. En Linux, OQup pode
+  pedir o teu contrasinal para instalar algunhas bibliotecas do sistema (son, dispositivos); pregunta antes.</p></div>
+
+  <h4>Linux</h4>
+  <ol>
+    <li>Abre un terminal, pega a orde de abaixo e preme Intro:
+<pre><code>curl --proto '=https' --tlsv1.2 -fsSL https://github.com/iagonunez/OQup/releases/latest/download/install.sh | sh</code></pre></li>
+    <li>O primeiro paso descarga OQup, comproba a suma de control publicada e gárdao en
+    <code>~/.local/bin</code>. Despois arranca.</li>
+    <li>Se faltan bibliotecas do sistema que OpenQ necesita (ALSA, PipeWire, udev), OQup amósaas e pregunta antes de
+    instalalas co xestor de paquetes da túa distribución. Responde que si; o xestor pedirá o teu contrasinal.</li>
+    <li>Deixa o terminal aberto ata que diga que OpenQ está instalado.</li>
+    <li>Abre OpenQ desde o menú de aplicacións (busca "OpenQ"), ou escribe <code>openq</code> nun terminal.</li>
+  </ol>
+  <p>Se o terminal di <code>openq: orde non atopada</code>, <code>~/.local/bin</code> aínda non está no teu PATH.
+  Engádeo unha vez e abre un terminal novo:</p>
+<pre><code>fish_add_path ~/.local/bin                                 # fish
+echo 'export PATH="$HOME/.local/bin:$PATH"' &gt;&gt; ~/.bashrc   # bash (zsh: ~/.zshrc)</code></pre>
+
+  <h4>macOS</h4>
+  <ol>
+    <li>Abre Terminal (preme ⌘ Espazo e escribe "Terminal").</li>
+    <li>Pega a orde de abaixo e preme Intro:
+<pre><code>curl --proto '=https' --tlsv1.2 -fsSL https://github.com/iagonunez/OQup/releases/latest/download/install.sh | sh</code></pre></li>
+    <li>A app queda en <code>~/Applications/OpenQ.app</code>, o cartafol Applications do teu cartafol persoal, con FFmpeg
+    dentro. Ábrea desde o Finder (Ir → Cartafol persoal → Applications) ou con Spotlight.</li>
+  </ol>
+
+  <h4>Windows</h4>
+  <ol>
+    <li>Abre PowerShell: preme a tecla Inicio, escribe <em>PowerShell</em> e preme Intro.</li>
+    <li>Pega a orde de abaixo e preme Intro:
+<pre><code>powershell -ExecutionPolicy Bypass -c "irm https://github.com/iagonunez/OQup/releases/latest/download/install.ps1 | iex"</code></pre></li>
+    <li>Ao rematar, OpenQ está no menú Inicio e en <em>Configuración → Aplicacións → Aplicacións instaladas</em>.</li>
+  </ol>
+
+  <h4>Compilar no teu ordenador</h4>
+  <p><code>oqup install --build-source</code> compila OpenQ (e OQVis) desde o código fonte no teu ordenador en vez de
+  descargar a versión publicada. Antes, OQup instala o que necesita a compilación: unha copia privada de Rust se non hai
+  ningunha, un compilador de C e libclang, e FFmpeg (en Linux cos paquetes da túa distribución, preguntando antes; en macOS
+  as Command Line Tools de Apple e despois FFmpeg compilado desde o seu código; en Windows as C++ Build Tools de Microsoft,
+  cuxo instalador se abre para que o aceptes). Necesita varios gigabytes libres e a primeira compilación tarda moito; as
+  seguintes son máis rápidas.</p>
+
+  <h4>Se algo falla</h4>
+  <ul>
+    <li><code>oqup doctor</code> amosa que está instalado e que lle falta a unha instalación.</li>
+    <li>Se a instalación se detén, le as últimas liñas que amosa, corrixe a causa (case sempre un paquete que falta ou un
+    instalador cancelado) e volve executar a orde.</li>
+  </ul>
+
+  <h4>Actualizar e desinstalar</h4>
+  <p>Para obter unha versión máis nova, executa <code>oqup update</code>: volve instalar OpenQ cando sae unha versión nova,
+  do mesmo xeito ca a última vez. <code>oqup versions</code> amosa as versións que podes instalar, e
+  <code>oqup install --ref v0.4.0</code> instala unha delas. Para quitar OpenQ, executa <code>oqup uninstall</code>;
+  pregunta antes. Con <code>--purge</code> quita tamén as descargas, o Rust, as dependencias e a caché de compilación de
+  OQup. En Windows tamén podes quitalo desde <em>Configuración → Aplicacións → Aplicacións instaladas</em>. Os teus
+  espectáculos nunca se tocan.</p>
+  <p>Se só necesitas cues, <code>oqup install --no-lighting</code> instala OpenQ sen o espazo de iluminación (sen vista
+  Iluminación, cues de luz, descargas de aparatos nin OQVis). Os espectáculos cun deseño de iluminación séguense abrindo,
+  consérvano e reproducen as súas cues de luz. <code>oqup install --lighting</code> vólveo engadir; <code>--no-oqvis</code>
+  mantén a iluminación pero deixa fóra OQVis.</p>
+  <p>Para executar unha copia na que esteas a traballar desde o código fonte:</p>
+<pre><code>cargo run --release                  # comezar cun espectáculo baleiro
+cargo run --release -- show.openq    # abrir un espectáculo gardado</code></pre>
+  <p>Este manual vén dentro de OpenQ: escolle <span class="menu">Axuda → Manual de usuario</span> ou preme <kbd>F1</kbd>
+  para abrilo no teu navegador, na lingua da interface. Funciona sen conexión a internet e sempre corresponde á túa versión de OpenQ.</p>
+  <h3 id="your-first-show">O teu primeiro espectáculo</h3>
+  <ol class="steps">
+    <li>Arrastra ficheiros de audio ou vídeo desde o teu xestor de ficheiros á xanela. Cada ficheiro convértese nunha cue.
+    Tamén podes usar <span class="menu">Ficheiro → Importar ficheiros multimedia…</span>.</li>
+    <li>Engade outras cues desde a barra de ferramentas sobre a lista de cues, ou preme <kbd>Ctrl</kbd>+<kbd>1</kbd>…<kbd>0</kbd>.</li>
+    <li>Selecciona unha cue e axusta as súas opcións no inspector, na parte inferior da xanela.</li>
+    <li>Fai clic na primeira cue para poñer o <strong>cabezal</strong> (playhead) sobre ela e preme <kbd>Espazo</kbd> (GO).</li>
+    <li>Garda con <kbd>Ctrl</kbd>+<kbd>S</kbd>. Os espectáculos gárdanse como ficheiros <code>.openq</code>. As rutas dos
+    medios gárdanse relativas ao ficheiro do espectáculo, así que podes mover o cartafol do espectáculo enteiro.</li>
+  </ol>
+  <div class="note tip"><span class="label">Consello</span><p>Garda o ficheiro do espectáculo no mesmo cartafol ca os seus medios.
+  Así o cartafol pódese copiar a outro ordenador e abrirse alí sen cambios.</p></div>
+</section>
+
+<section id="window">
+  <h2><span class="n">1.2</span>A xanela principal</h2>
+  <figure>
+    <img src="img/gl/edit-mode.webp" width="1400" height="1535" alt="Xanela principal de OpenQ en modo edición: botón GO, tarxeta de espera, transporte, medidores, barra de ferramentas, lista de cues e inspector.">
+    <figcaption>Modo edición coa primeira cue seleccionada e o inspector amosando a súa lapela Tempo e bucles.</figcaption>
+  </figure>
+  <ul>
+    <li><strong>Barra de título:</strong> o nome do espectáculo (un punto indica cambios sen gardar). En Windows tamén
+    contén os botóns de minimizar, maximizar e pechar: arrastra a barra para mover a xanela, fai dobre clic para
+    maximizala e arrastra calquera bordo para cambiar o seu tamaño.</li>
+    <li><strong>Menús:</strong> Ficheiro, Edición, Cue, Función, Vídeo (escenarios e saídas), Remoto, Ver
+    (vista previa de xeometría, rexistro do motor) e Axuda (este manual, o rexistro de erros, acerca de e licenzas).</li>
+    <li><strong>GO</strong> dispara a cue que está baixo o cabezal. A tarxeta <strong>Standby</strong> amosa esa cue,
+    coas súas notas debaixo para que o operador poida lelas antes de premer GO.</li>
+    <li><strong>Transporte:</strong> <span class="ms" aria-hidden="true">&#xe034;</span> pausar todo, <span class="ms" aria-hidden="true">&#xe037;</span> retomar todo,
+    <span class="ms" aria-hidden="true">&#xe047;</span> parar todo. Ao lado, os medidores de saída amosan cada canle do dispositivo en dB.</li>
+    <li><strong>Lapelas de listas:</strong> unha lapela por lista de cues (ver máis abaixo).</li>
+    <li><strong>Lista de cues:</strong> número, nome, destino (datos do ficheiro ou a cue de destino), pre-espera,
+    tempo de acción, post-espera e a frecha de continuación. As cues en marcha vólvense verdes e a súa columna de
+    acción fai a conta atrás. Unha icona vermella <span class="ms" style="color:var(--red)" aria-hidden="true">&#xf8b6;</span> marca un ficheiro ou destino que falta.
+    Os ficheiros compróbanse en segundo plano cada par de segundos, así que unha unidade de rede lenta nunca conxela a
+    xanela, e unha unidade que se volve conectar quita a icona por si soa.</li>
+    <li><strong>Cues activas:</strong> cada cue en marcha co seu tempo transcorrido e restante, e os seus propios botóns de pausa e parada.</li>
+    <li><strong>Inspector:</strong> os axustes da cue seleccionada, en lapelas. Cada lapela agrupa os seus axustes en
+    tarxetas. Ábrese con altura suficiente para amosar unha lapela enteira; arrastra o seu bordo superior para cambiar o seu tamaño.</li>
+    <li><strong>Barra de estado:</strong> o interruptor <strong>Edición / Función</strong> á esquerda, e despois o dispositivo de
+    audio, o estado do vídeo, OSC, as conexións remotas e as mensaxes. O botón <span class="ms" aria-hidden="true">&#xe8b8;</span>
+    da dereita abre os <a href="#settings">axustes</a>. Un aviso do motor aparece ao seu lado durante uns segundos e abre o
+    rexistro do motor; as mensaxes da parte esquerda da barra tamén desaparecen ao cabo duns segundos.</li>
+  </ul>
+  <h3 id="working-with-the-cue-list">Traballar coa lista de cues</h3>
+  <ul>
+    <li>Fai clic nunha cue para seleccionala e mover o cabezal a ela. Usa <kbd>Ctrl</kbd>-clic para seleccionar
+    varias cues, <kbd>Maiús</kbd>-clic para un rango, e <kbd>↑</kbd> <kbd>↓</kbd> para mover o cabezal.</li>
+    <li>Arrastra as cues para reordenalas. Sóltaas no centro da fila dun grupo para metelas dentro.</li>
+    <li>Fai dobre clic nun número, nome, pre-espera ou post-espera para editalo no sitio. <kbd>Intro</kbd>
+    confirma e <kbd>Esc</kbd> cancela.</li>
+    <li>Fai clic na columna de continuación para pasar por <em>non continuar → autocontinuar → autoseguir</em>.</li>
+    <li>Fai clic dereito nunha fila para iniciar, parar, duplicar, borrar e máis.</li>
+  </ul>
+  <h3 id="cue-lists">Listas de cues</h3>
+  <p>Un espectáculo pode ter varias listas de cues, por exemplo a secuencia principal e unha lista de efectos de son
+  para disparar á man. Cada lista ten unha lapela sobre a barra de ferramentas; fai clic nunha lapela para traer esa
+  lista á fronte. GO, o cabezal e a tarxeta de espera traballan sobre a lista da fronte, e cada lista lembra onde
+  estaba o seu cabezal.</p>
+  <ul>
+    <li>Fai clic en <span class="ms" aria-hidden="true">&#xe145;</span> para engadir unha lista. Fai clic dereito na lapela da
+    lista actual para renomeala (ou dobre clic), movela, axustar o seu <a href="cues.gl.html#timecode">código de tempo</a> ou borrala.</li>
+    <li>As cues seguen a soar ao cambiar de lista, e as cues Iniciar, Parar, Fade e outras poden apuntar a cues de calquera lista.
+    No menú de destino, as cues doutras listas amosan o nome da súa lista.</li>
+    <li>Os números de cue son comúns a todas as listas, así que OSC e os atallos chegan a cues de calquera lista.</li>
+  </ul>
+</section>
+
+<section id="modes">
+  <h2><span class="n">1.3</span>Modo edición e modo función</h2>
+  <p>O <strong>modo edición</strong> (Edición) é para montar o espectáculo: todo se pode cambiar. O <strong>modo función</strong>
+  (Función) é para levalo. A lista queda bloqueada, a barra de ferramentas e o inspector ocúltanse, e as filas fanse
+  máis grandes para lelas con facilidade nunha cabina ás escuras. GO, parar, pausa, os atallos e mover o cabezal funcionan
+  nos dous modos.</p>
+  <p>Cambia co interruptor á esquerda da barra de estado, <span class="menu">Función → Entrar en modo función</span>, ou <kbd>Ctrl</kbd>+<kbd>E</kbd>.</p>
+  <figure>
+    <img src="img/gl/show-mode.webp" width="1400" height="735" alt="Modo función: filas grandes, varias cues en marcha con conta atrás e o panel de cues activas á dereita.">
+    <figcaption>Modo función mentres se executa unha secuencia. As filas verdes están a soar e a columna de acción fai a conta atrás.</figcaption>
+  </figure>
+  <h3 id="stopping">Parar</h3>
+  <p><kbd>Esc</kbd> ou o botón vermello de parada funde todo a silencio durante o <em>tempo de fundido de Parar todo</em>
+  (ver <a href="#settings">Axustes</a>). Prémeo outra vez durante ese fundido para parar ao instante.</p>
+  <p>A <strong>protección contra dobre GO</strong> ignora un segundo GO que chegue moi pouco despois do primeiro, para que
+  unha tecla que rebota non salte unha cue.</p>
+</section>
+
+<section id="settings">
+  <h2><span class="n">1.4</span>Axustes</h2>
+  <p><span class="menu">Edición → Axustes…</span>, ou o botón <span class="ms" aria-hidden="true">&#xe8b8;</span> á
+  dereita da barra de estado. Gárdanse co espectáculo, agás a lingua e a entrada MIDI das superficies de control, que son de cada ordenador.</p>
+  <div class="table-wrap"><table>
+    <thead><tr><th>Lapela</th><th>Axustes</th></tr></thead>
+    <tbody>
+      <tr><td>Xeral</td><td>Lingua da interface (galego, español ou inglés; cambia ao momento), tempo de fundido de Parar todo, protección contra dobre GO, volume xeral, OSC activado e porto.</td></tr>
+      <tr><td>Audio</td><td>Dispositivo de saída. Cambialo para toda a reprodución. As matrices de enrutado apuntan ás saídas deste dispositivo.
+      A <strong>sala para audio por obxectos</strong>: os altofalantes, onde están e a que saída vai cada un.</td></tr>
+      <tr><td>Escenarios de vídeo</td><td>Engadir e nomear escenarios, tamaño do lenzo, pantalla de saída, pantalla completa, mapping.</td></tr>
+      <tr><td>Superficies de control</td><td>A entrada MIDI deste ordenador e as <a href="lighting.gl.html#surfaces">asignacións de superficies de control</a> do espectáculo, con aprendizaxe.</td></tr>
+    </tbody>
+  </table></div>
+  <figure class="narrow">
+    <img src="img/gl/room.webp" width="731" height="465" alt="O editor de sala: unha sala cadrada con catro altofalantes FL, FR, RL, RR e unha táboa coas súas saídas e posicións.">
+    <figcaption>A sala para audio por obxectos. Arrastra os altofalantes ou escribe as súas posicións.</figcaption>
+  </figure>
+  <p>Mentres non a cambies, a sala segue o dispositivo de saída: un par estéreo, cuadrafónico, 5.1 ou 7.1 (sen altofalante na saída
+  LFE), ou un anel para outros números de canles. Os predefinidos configuran esas salas, e <em>Usar o predeterminado</em> volve seguir o
+  dispositivo. A fronte, onde está o escenario, queda arriba. Varios altofalantes poden compartir unha saída.</p>
+  <p>Os axustes de acceso remoto e as claves dos dispositivos pertencen ao ordenador, non ao espectáculo. Están en
+  <code>~/.config/openq/remote.json</code>, lexible só pola túa conta de usuario.</p>
+</section>
+
+<section id="keys">
+  <h2><span class="n">1.5</span>Atallos de teclado</h2>
+  <div class="table-wrap"><table>
+    <thead><tr><th>Teclas</th><th>Acción</th></tr></thead>
+    <tbody>
+      <tr><td><kbd>Espazo</kbd></td><td>GO</td></tr>
+      <tr><td><kbd>Esc</kbd></td><td>Parar todo (con fundido); preme outra vez para parar ao instante. Tamén cancela unha edición nunha fila.</td></tr>
+      <tr><td><kbd>P</kbd> / <kbd>R</kbd></td><td>Pausar todo / retomar todo</td></tr>
+      <tr><td><kbd>↑</kbd> <kbd>↓</kbd></td><td>Mover o cabezal</td></tr>
+      <tr><td><kbd>←</kbd> <kbd>→</kbd></td><td>Pregar / despregar un grupo</td></tr>
+      <tr><td><kbd>Ctrl</kbd>+<kbd>E</kbd></td><td>Cambiar entre modo edición e modo función</td></tr>
+      <tr><td><kbd>Intro</kbd></td><td>Renomear no sitio a cue seleccionada</td></tr>
+      <tr><td><kbd>Ctrl</kbd>+<kbd>1</kbd> … <kbd>0</kbd></td><td>Nova cue Audio, Vídeo, Grupo, Espera, Memo, Fade, Iniciar, Parar, Pausa, Ir a</td></tr>
+      <tr><td><kbd>Ctrl</kbd>+<kbd>D</kbd> · <kbd>Ctrl</kbd>+<kbd>G</kbd> · <kbd>Supr</kbd></td><td>Duplicar · agrupar a selección · borrar</td></tr>
+      <tr><td><kbd>Ctrl</kbd>+<kbd>Z</kbd> · <kbd>Ctrl</kbd>+<kbd>Maiús</kbd>+<kbd>Z</kbd></td><td>Desfacer · refacer (ata 200 pasos; os espectáculos moi grandes gardan menos, polo menos 10, para aforrar memoria)</td></tr>
+      <tr><td><kbd>Ctrl</kbd>+<kbd>N</kbd> / <kbd>O</kbd> / <kbd>S</kbd> / <kbd>Maiús</kbd>+<kbd>S</kbd></td><td>Novo / abrir / gardar / gardar como</td></tr>
+      <tr><td><kbd>F1</kbd></td><td>Abrir este manual de usuario</td></tr>
+      <tr><td><kbd>F11</kbd></td><td>Pantalla completa, nunha xanela de escenario</td></tr>
+      <tr><td><kbd>←</kbd> <kbd>→</kbd> <kbd>↑</kbd> <kbd>↓</kbd> (+<kbd>Maiús</kbd>)</td><td>Mover 1 (10) píxeles a esquina baixo o rato ao facer mapping</td></tr>
+      <tr><td>Atallo da cue</td><td>Dispara esa cue directamente (axústase na lapela Disparadores)</td></tr>
+    </tbody>
+  </table></div>
+</section>
+<!--/content-->
+
+<nav class="pager" aria-label="Capítulo anterior e seguinte">
+  <a class="prev" href="index.gl.html"><span>← Anterior</span>Contido</a>
+  <a class="next" href="cues.gl.html"><span>Seguinte →</span>Cues e tempos</a>
+</nav>
+</main>
+</div>
+<script src="manual.js"></script>
+</body>
+</html>

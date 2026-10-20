@@ -1,0 +1,219 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<!-- Built by tools/build_manual.py around the content block below: edit only that, then run the script. -->
+<title>Video and projection · OpenQ User Manual</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Barlow+Condensed:wght@500;600;700&family=Inter:wght@400;500;600&family=JetBrains+Mono:wght@400;500&display=swap">
+<link rel="stylesheet" href="manual.css">
+</head>
+<body>
+<div class="wrap">
+<nav class="toc" aria-label="Chapters">
+  <div class="brand"><a href="index.html" title="Contents">Open<b>Q</b></a></div>
+  <div class="brand-sub">User manual</div>
+  <div class="langs"><a href="video.html" hreflang="en" title="English" aria-current="page">EN</a><a href="video.es.html" hreflang="es" title="Español">ES</a><a href="video.gl.html" hreflang="gl" title="Galego">GL</a></div>
+  <ol class="chapters">
+    <li><a href="start.html">Getting started</a></li>
+    <li><a href="cues.html">Cues and timing</a></li>
+    <li><a href="audio.html">Audio</a></li>
+    <li class="cur"><a href="video.html" aria-current="page">Video and projection</a>
+     <ol class="sub">
+      <li class="s2"><a href="#video">Video and text cues</a></li>
+      <li class="s3"><a href="#geometry">Geometry</a></li>
+      <li class="s3"><a href="#camera-cues">Camera cues</a></li>
+      <li class="s3"><a href="#text-cues">Text cues</a></li>
+      <li class="s3"><a href="#animation">Animation</a></li>
+      <li class="s3"><a href="#videofx">Video FX</a></li>
+      <li class="s2"><a href="#stages">Stages and projection</a></li>
+      <li class="s3"><a href="#sending-a-stage-to-a-display">Sending a stage to a display</a></li>
+      <li class="s3"><a href="#mapping">Mapping</a></li>
+     </ol>
+    </li>
+    <li><a href="lighting.html">Lighting</a></li>
+    <li><a href="remote.html">Remote control and network</a></li>
+    <li><a href="help.html">Safety and help</a></li>
+  </ol>
+</nav>
+
+<main>
+<header class="chapter-head">
+  <div class="eyebrow">Chapter 4 · OpenQ User Manual</div>
+  <h1>Video and projection</h1>
+</header>
+
+<!--content-->
+<section id="video">
+  <h2><span class="n">4.1</span>Video and text cues</h2>
+  <p>A video cue plays a movie (anything FFmpeg can play) or a still image: PNG, JPEG, WebP, GIF, TIFF, BMP or
+  <strong>SVG</strong>. Stills show for a set time, or until stopped. An SVG is drawn at the size it will be shown,
+  including the largest scale its geometry and animation reach, so logos and line art stay sharp. <strong>Time &amp; Loops</strong> has start and end trims, loops and <em>hold last frame</em>.
+  The <strong>Audio</strong> tab has the soundtrack's main and output faders, and <strong>I/O</strong> its file and
+  routing; the soundtrack plays through the mixer like an audio cue.</p>
+  <h3 id="geometry">Geometry</h3>
+  <ul>
+    <li><strong>Stage:</strong> which output the picture goes to. Without one, the first stage is used.</li>
+    <li><strong>Fit:</strong> <em>Fit</em> shows the whole picture (letterboxed), <em>Fill</em> covers the stage and
+    trims the overflow, <em>Stretch</em> fills it exactly, and <em>Native size</em> uses the file's own pixels.</li>
+    <li><strong>Layer</strong> (higher draws on top) and <strong>opacity</strong>.</li>
+    <li><strong>Position, scale and rotation.</strong> Position is a percentage of the stage: <code>X 25%</code>
+    moves the picture a quarter of the stage to the right. Lock <em>proportional</em> to scale both axes together.</li>
+    <li><strong>Crop:</strong> trims a percentage from the left, top, right and bottom. The rest of the picture
+    stays where it was.</li>
+  </ul>
+  <figure class="narrow">
+    <img src="img/geometry-preview.webp" width="660" height="460" alt="Geometry preview window showing a rotated, cropped layer on a 1920 by 1080 stage.">
+    <figcaption>The geometry preview. A dashed line shows the uncropped picture.</figcaption>
+  </figure>
+  <p><strong>Geometry preview</strong> (<span class="menu">View → Geometry preview</span>, or <em>Preview</em> on the Geometry tab)
+  draws the selected cue's stage with the picture in place, without opening a projector output. In edit
+  mode, drag in the preview to move the picture, scroll to scale it, and double-click to centre it. For a Fade cue that
+  changes geometry, the preview shows where the fade ends, with the starting position as a dashed outline.</p>
+  <h3 id="camera-cues">Camera cues</h3>
+  <p>A Camera cue shows a live camera (a webcam, a USB or HDMI capture card) as a layer on a stage, with the same
+  <strong>Geometry</strong> tab as video: position, scale, rotation, crop, opacity and layer, and Fade cues can move
+  and fade it. On the <strong>Camera</strong> tab pick the device and, if you need it, the capture size; <em>Mirror</em>
+  flips the picture like a selfie view. <em>Show for</em> 0 keeps it on until stopped. The device and size are used
+  the next time the cue starts.</p>
+  <h3 id="text-cues">Text cues</h3>
+  <p>Text cues show typed text on a stage: titles, surtitles, captions, or a countdown for the crew.
+  The <strong>Geometry</strong> and <strong>Animation</strong> tabs work as they do for video, and Fade cues can move and fade text. Changes on the
+  <strong>Text</strong> tab appear at once on a cue that is showing.</p>
+  <figure>
+    <img src="img/text-cue.webp" width="1400" height="383" alt="Text tab in cards: the text, font (weight, size, line height, spacing), look (colour, alignment, outline, shadow, background box) and a rendered sample.">
+    <figcaption>The Text tab. A preview of the first line in the chosen style appears under the settings.</figcaption>
+  </figure>
+  <div class="table-wrap"><table>
+    <thead><tr><th>Setting</th><th>What it does</th></tr></thead>
+    <tbody>
+      <tr><td>Font</td><td>Any font installed on the computer. Type in the list to search. <em>Inter (built-in)</em> is always available.</td></tr>
+      <tr><td>Weight · Italic</td><td>Thin (100) to Black (900). Weights the font doesn't include are greyed out, and the nearest installed one is used.</td></tr>
+      <tr><td>Size</td><td>Letter size in stage pixels: 96 px on a 1080-line stage is about a tenth of its height.</td></tr>
+      <tr><td>Line height · Spacing</td><td>Distance between lines (as a multiple of the size), and extra space between letters in em.</td></tr>
+      <tr><td>Colour · alignment</td><td>Text colour and transparency; left, centred or right lines.</td></tr>
+      <tr><td>Outline</td><td>An edge around every letter, in stage pixels, with its own colour. Keeps text readable over busy video.</td></tr>
+      <tr><td>Shadow</td><td>A soft drop shadow: colour, offset right and down, and blur.</td></tr>
+      <tr><td>Background</td><td>A box behind the text: colour and transparency, <em>padding</em> (space around the text, in stage pixels) and <em>radius</em> for rounded corners. Good for captions and surtitles over video.</td></tr>
+      <tr><td>Show for</td><td>Time on screen; 0 shows it until stopped.</td></tr>
+    </tbody>
+  </table></div>
+  <p>Text is laid out properly for every language. Pairs like <em>AV</em> are kerned, ligatures are used, and
+  right-to-left scripts work. Characters the chosen font lacks, such as emoji or Chinese, are drawn with another
+  installed font. Text is rendered at twice the stage resolution, so it stays sharp when it is scaled up and smooth when
+  it is scaled down.</p>
+  <p>Text is prepared in the background before its GO, and again after you change how it looks, so starting or editing
+  a text cue never holds up the show. Colour changes, moves and animations need no preparing at all. After a change
+  to the text, font or size of a cue that is showing, the new version replaces the old one a moment later.</p>
+  <div class="note"><span class="label">Touring a show</span><p>The show file stores the font's name, not the font itself.
+  Install the same fonts on every computer that plays the show. If a font is missing, the Text tab says <em>not installed
+  here</em> and a fallback font is used.</p></div>
+  <h3 id="animation">Animation</h3>
+  <p>The <strong><span class="ms" aria-hidden="true">&#xe71c;</span> Animation</strong> tab of video and text cues moves,
+  scales, rotates, crops, fades and recolours the layer with keyframes. The animation starts when the cue starts and
+  follows the cue's own clock: pausing the cue pauses it.</p>
+  <figure>
+    <img src="img/animation.webp" width="1400" height="427" alt="Animation tab: a timeline with rows for X, Opacity, Scale X, Scale Y, Text colour and Background, each with diamond keyframes, a blue playhead at 2.2 seconds, and below it the Animation settings and the selected keyframe's time and value.">
+    <figcaption>The Animation tab. Each row is one animated property; the diamonds are keyframes.</figcaption>
+  </figure>
+  <ul>
+    <li><strong>Add track</strong> picks a property. Its first keyframe sits at the playhead and changes nothing,
+    so you can then set the values you want.</li>
+    <li><strong>Timeline:</strong> click the ruler or a row to move the playhead. Click a keyframe to select it, and drag
+    it sideways to change its time. Double-click a row to add a keyframe there.</li>
+    <li><strong>Keyframe</strong> card: the selected key's time, value and <em>Then</em>, which says how the value moves on to
+    the next key: <em>Hold</em> (stays, then jumps), <em>Linear</em>, <em>Ease in</em>, <em>Ease out</em>,
+    <em>Ease in-out</em>, or a <em>Custom curve</em> (a cubic Bézier, written like CSS: x1 y1 x2 y2).
+    <em>Key at playhead</em> adds a key with the value the track has at the playhead.</li>
+    <li><strong>Length</strong> is one pass of the animation; 0 means it ends at the last keyframe. A dashed amber line marks
+    it on the timeline. <strong>Repeat</strong>: <em>Once</em> holds the last values, <em>Loop</em> starts again,
+    <em>Ping-pong</em> plays forwards, then backwards.</li>
+    <li>Turn on <strong>Preview</strong> to see the layer in the geometry preview as it looks at the playhead. A dashed outline
+    shows the cue's own position.</li>
+  </ul>
+  <div class="table-wrap"><table>
+    <thead><tr><th>Property</th><th>Value</th><th>How it combines with the cue</th></tr></thead>
+    <tbody>
+      <tr><td>X · Y</td><td>% of the stage</td><td>Added to the Geometry tab's position.</td></tr>
+      <tr><td>Scale X · Scale Y</td><td>%</td><td>Multiplies the Geometry tab's scale: 200% doubles it.</td></tr>
+      <tr><td>Rotation</td><td>degrees</td><td>Added to the rotation. 360° is a full turn.</td></tr>
+      <tr><td>Crop left · top · right · bottom</td><td>% of the picture</td><td>Added to the crop. Animate it for wipes and reveals.</td></tr>
+      <tr><td>Opacity</td><td>%</td><td>Multiplies the cue's opacity.</td></tr>
+      <tr><td>Tint</td><td>colour</td><td>Multiplies the picture's colours. White leaves it alone. A tint can only darken or recolour: white turns into the tint colour, black stays black.</td></tr>
+      <tr><td>Text colour · Outline colour · Shadow colour · Background</td><td>colour (text only)</td><td>Replace the colours on the Text tab.</td></tr>
+    </tbody>
+  </table></div>
+  <p>Because the values are relative, a Fade cue or a change on the Geometry tab still moves or fades the whole animated
+  layer. For example, an animation can bob a logo up and down while a Fade cue slides it across the stage.</p>
+  <figure class="narrow">
+    <img src="img/animation-stage.webp" width="900" height="449" alt="A stage showing an animated title in amber on a red rounded box, and an SVG logo rotated upside down and tinted green.">
+    <figcaption>On stage, mid-animation: the title has slid in, grown and changed colour; the SVG logo spins with a looping green tint.</figcaption>
+  </figure>
+  <div class="note"><span class="label">No load on the show</span><p>Animations are worked out live while the stage draws: a few
+  sums per layer, with the moving, scaling and colouring done by the graphics card. Nothing is rendered or decoded
+  ahead of time, so animating a layer costs about the same as showing it still. Changes you make appear at once, even on a
+  running cue, at any stage resolution. Blur and colour changes are <a href="#videofx">video effects</a>, which a Fade
+  cue can animate.</p></div>
+  <h3 id="videofx">Video FX</h3>
+  <figure>
+    <img src="img/video-fx.webp" width="1400" height="237" alt="Video FX tab of a text cue: Colourise, Blur and Vignette cards and an Add effect card.">
+    <figcaption>A text cue coloured orange, slightly blurred and vignetted.</figcaption>
+  </figure>
+  <p>Video, camera and text cues have a <strong>Video FX</strong> tab, a stack of effects on the picture. Add, reorder and switch them like audio effects. They are drawn by the graphics card as the stage draws,
+  so they cost almost nothing and change live, even on a running cue.</p>
+  <figure class="narrow">
+    <img src="img/video-fx-stage.webp" width="750" height="285" alt="A stage showing the title 'Act One' in orange.">
+    <figcaption>The result on stage.</figcaption>
+  </figure>
+  <div class="table-wrap"><table>
+    <thead><tr><th>Effect</th><th>Settings</th></tr></thead>
+    <tbody>
+      <tr><td>Colour controls</td><td>Brightness, contrast, saturation (0 = black and white).</td></tr>
+      <tr><td>Exposure</td><td>Exposure in stops, gamma.</td></tr>
+      <tr><td>Hue</td><td>Turns every colour round the colour wheel.</td></tr>
+      <tr><td>Colourise</td><td>Monochrome in a colour of your choice.</td></tr>
+      <tr><td>Sepia · Invert</td><td>Amount.</td></tr>
+      <tr><td>Posterise</td><td>Number of levels per colour.</td></tr>
+      <tr><td>Threshold</td><td>Black and white cut at a brightness level.</td></tr>
+      <tr><td>Vignette</td><td>Darkens the edges: radius, softness, amount.</td></tr>
+      <tr><td>Blur · Pixellate · Sharpen</td><td>Radius or block size in the picture's own pixels.</td></tr>
+      <tr><td>Chroma key</td><td>Makes a colour transparent (green or blue screen on a camera cue): key colour, threshold,
+      softness and spill, which takes the green cast off the edges that remain.</td></tr>
+    </tbody>
+  </table></div>
+  <p>Colour effects run top to bottom; Blur, Pixellate and Sharpen change how the picture is read, so they always act
+  first. The effects are applied after the layer's tint and opacity, and work with every blend mode.</p>
+</section>
+
+<section id="stages">
+  <h2><span class="n">4.2</span>Stages and projection</h2>
+  <p>A <strong>stage</strong> is one video output, such as a projector or a screen. Add stages in
+  <span class="menu">Settings → Stages</span>. Each has a name and a canvas size in pixels.</p>
+  <h3 id="sending-a-stage-to-a-display">Sending a stage to a display</h3>
+  <p>In <span class="menu">Video → Stage: <em>name</em> → Output</span>, or with the Output dropdown in Settings → Stages,
+  choose <em>Window</em> or one of the connected displays. A stage set to a display opens fullscreen on that display, and it
+  opens there again when the show is loaded. If a display isn't listed, use <em>Refresh displays</em>. In a stage window,
+  double-click or press <kbd>F11</kbd> to toggle fullscreen.</p>
+  <h3 id="mapping">Mapping</h3>
+  <figure>
+    <img src="img/mapping.webp" width="1100" height="551" alt="Mapping test pattern on a keystoned stage: white canvas with a grid, pixel rulers along every edge, circles and numbered corner pins.">
+    <figcaption>The mapping test pattern. Circles that look like ovals, or grid squares that aren't square, show what is still off.</figcaption>
+  </figure>
+  <p><em>Edit mapping</em> shows a test pattern on the stage: a white canvas with a square grid, pixel rulers along
+  every edge, circles, diagonals and a centre cross, all drawn through the mapping, plus four numbered corner pins.
+  Drag the corners to fit the picture onto the screen (keystone correction), or hover a corner and nudge it with the
+  arrow keys: one pixel at a time, or ten with <kbd>Shift</kbd>. <em>Reset mapping</em> puts the corners back.</p>
+</section>
+<!--/content-->
+
+<nav class="pager" aria-label="Previous and next chapter">
+  <a class="prev" href="audio.html"><span>← Previous</span>Audio</a>
+  <a class="next" href="lighting.html"><span>Next →</span>Lighting</a>
+</nav>
+</main>
+</div>
+<script src="manual.js"></script>
+</body>
+</html>

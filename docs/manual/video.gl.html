@@ -1,0 +1,220 @@
+<!doctype html>
+<html lang="gl">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<!-- Built by tools/build_manual.py around the content block below: edit only that, then run the script. -->
+<title>Vídeo e proxección · Manual de usuario de OpenQ</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Barlow+Condensed:wght@500;600;700&family=Inter:wght@400;500;600&family=JetBrains+Mono:wght@400;500&display=swap">
+<link rel="stylesheet" href="manual.css">
+</head>
+<body>
+<div class="wrap">
+<nav class="toc" aria-label="Capítulos">
+  <div class="brand"><a href="index.gl.html" title="Contido">Open<b>Q</b></a></div>
+  <div class="brand-sub">Manual de usuario</div>
+  <div class="langs"><a href="video.html" hreflang="en" title="English">EN</a><a href="video.es.html" hreflang="es" title="Español">ES</a><a href="video.gl.html" hreflang="gl" title="Galego" aria-current="page">GL</a></div>
+  <ol class="chapters">
+    <li><a href="start.gl.html">Primeiros pasos</a></li>
+    <li><a href="cues.gl.html">Cues e tempos</a></li>
+    <li><a href="audio.gl.html">Audio</a></li>
+    <li class="cur"><a href="video.gl.html" aria-current="page">Vídeo e proxección</a>
+     <ol class="sub">
+      <li class="s2"><a href="#video">Cues de vídeo e texto</a></li>
+      <li class="s3"><a href="#geometry">Xeometría</a></li>
+      <li class="s3"><a href="#camera-cues">Cues Cámara</a></li>
+      <li class="s3"><a href="#text-cues">Cues Texto</a></li>
+      <li class="s3"><a href="#animation">Animación</a></li>
+      <li class="s3"><a href="#videofx">FX de vídeo</a></li>
+      <li class="s2"><a href="#stages">Escenarios e proxección</a></li>
+      <li class="s3"><a href="#sending-a-stage-to-a-display">Enviar un escenario a unha pantalla</a></li>
+      <li class="s3"><a href="#mapping">Mapeado</a></li>
+     </ol>
+    </li>
+    <li><a href="lighting.gl.html">Iluminación</a></li>
+    <li><a href="remote.gl.html">Control remoto e rede</a></li>
+    <li><a href="help.gl.html">Seguridade e axuda</a></li>
+  </ol>
+</nav>
+
+<main>
+<header class="chapter-head">
+  <div class="eyebrow">Capítulo 4 · Manual de usuario de OpenQ</div>
+  <h1>Vídeo e proxección</h1>
+</header>
+
+<!--content-->
+<section id="video">
+  <h2><span class="n">4.1</span>Cues de vídeo e texto</h2>
+  <p>Unha cue de vídeo reproduce unha película (todo o que FFmpeg pode reproducir) ou unha imaxe fixa: PNG, JPEG, WebP, GIF, TIFF, BMP ou
+  <strong>SVG</strong>. As imaxes amósanse durante un tempo fixo ou ata que se paran. Un SVG debúxase ao tamaño ao que se vai
+  amosar, incluída a maior escala á que chegan a súa xeometría e a súa animación, así que logotipos e debuxos de liña vense nítidos.
+  <strong>Tempo e bucles</strong> ten recortes de inicio e fin, bucles e <em>Manter o último fotograma</em>.
+  A lapela <strong>Audio</strong> ten os faders principal e de saída da banda sonora, e <strong>I/O</strong> o seu ficheiro e
+  enrutado; a banda sonora soa polo mesturador como unha cue de audio.</p>
+  <h3 id="geometry">Xeometría</h3>
+  <ul>
+    <li><strong>Escenario:</strong> a que saída vai a imaxe. Sen ningunha, úsase o primeiro escenario.</li>
+    <li><strong>Axustar:</strong> <em>Axustar</em> amosa a imaxe enteira (con bandas), <em>Encher</em> cobre o escenario e recorta o que
+    sobra, <em>Estirar</em> énchea exactamente e <em>Tamaño nativo</em> usa os píxeles propios do ficheiro.</li>
+    <li><strong>Capa</strong> (as máis altas debúxanse enriba) e <strong>opacidade</strong>.</li>
+    <li><strong>Posición, escala e rotación.</strong> A posición é unha porcentaxe do escenario: <code>X 25%</code>
+    move a imaxe un cuarto do escenario cara á dereita. Activa <em>proporcional</em> para escalar os dous eixes á vez.</li>
+    <li><strong>Recorte:</strong> quita unha porcentaxe pola esquerda, arriba, dereita e abaixo. O resto da imaxe
+    queda onde estaba.</li>
+  </ul>
+  <figure class="narrow">
+    <img src="img/gl/geometry-preview.webp" width="660" height="460" alt="Xanela de vista previa de xeometría cunha capa xirada e recortada nun escenario de 1920 por 1080.">
+    <figcaption>A vista previa de xeometría. Unha liña descontinua amosa a imaxe sen recortar.</figcaption>
+  </figure>
+  <p>A <strong>vista previa de xeometría</strong> (<span class="menu">Ver → Vista previa de xeometría</span>, ou <em>Vista previa</em> na lapela Xeometría)
+  debuxa o escenario da cue seleccionada coa imaxe no seu sitio, sen abrir unha saída de proxector. En modo edición,
+  arrastra na vista previa para mover a imaxe, usa a roda para escalala e fai dobre clic para centrala. Para unha cue Fade que
+  cambia a xeometría, a vista previa amosa onde remata o fundido, coa posición inicial como contorno descontinuo.</p>
+  <h3 id="camera-cues">Cues Cámara</h3>
+  <p>Unha cue Cámara amosa unha cámara en directo (unha webcam, unha capturadora USB ou HDMI) como capa nun escenario, coa mesma
+  lapela <strong>Xeometría</strong> ca o vídeo: posición, escala, rotación, recorte, opacidade e capa, e as cues Fade poden movela
+  e fundila. Na lapela <strong>Cámara</strong> escolle o dispositivo e, se o precisas, o tamaño de captura; <em>Espello</em>
+  voltea a imaxe como nun selfi. <em>Amosar durante</em> 0 mantena ata que se pare. O dispositivo e o tamaño úsanse a
+  próxima vez que arrinque a cue.</p>
+  <h3 id="text-cues">Cues Texto</h3>
+  <p>As cues de texto amosan texto escrito nun escenario: títulos, sobretítulos, subtítulos ou unha conta atrás para o equipo.
+  As lapelas <strong>Xeometría</strong> e <strong>Animación</strong> funcionan como no vídeo, e as cues Fade poden mover e fundir
+  o texto. Os cambios na lapela <strong>Texto</strong> aparecen ao momento nunha cue que se está a amosar.</p>
+  <figure>
+    <img src="img/gl/text-cue.webp" width="1400" height="383" alt="Lapela Texto en tarxetas: o texto, a fonte (peso, tamaño, entreliñado, espazado), o aspecto (cor, aliñamento, contorno, sombra, caixa de fondo) e unha mostra.">
+    <figcaption>A lapela Texto. Baixo os axustes aparece unha vista previa da primeira liña co estilo escollido.</figcaption>
+  </figure>
+  <div class="table-wrap"><table>
+    <thead><tr><th>Axuste</th><th>Que fai</th></tr></thead>
+    <tbody>
+      <tr><td>Fonte</td><td>Calquera fonte instalada no ordenador. Escribe na lista para buscar. <em>Inter (integrada)</em> está sempre dispoñible.</td></tr>
+      <tr><td>Peso · Cursiva</td><td>De Thin (100) a Black (900). Os pesos que a fonte non inclúe aparecen en gris e úsase o instalado máis próximo.</td></tr>
+      <tr><td>Tamaño</td><td>Tamaño de letra en píxeles do escenario: 96 px nun escenario de 1080 liñas é unha décima parte da súa altura.</td></tr>
+      <tr><td>Altura de liña · Espazado</td><td>Distancia entre liñas (como múltiplo do tamaño) e espazo extra entre letras en em.</td></tr>
+      <tr><td>Cor · aliñamento</td><td>Cor e transparencia do texto; liñas á esquerda, centradas ou á dereita.</td></tr>
+      <tr><td>Contorno</td><td>Un bordo arredor de cada letra, en píxeles do escenario, coa súa propia cor. Mantén o texto lexible sobre vídeo cargado.</td></tr>
+      <tr><td>Sombra</td><td>Unha sombra suave: cor, desprazamento á dereita e abaixo, e desenfoque.</td></tr>
+      <tr><td>Fondo</td><td>Unha caixa detrás do texto: cor e transparencia, <em>marxe</em> (espazo arredor do texto, en píxeles do escenario) e <em>raio</em> para esquinas arredondadas. Boa para subtítulos e sobretítulos sobre vídeo.</td></tr>
+      <tr><td>Amosar durante</td><td>Tempo en pantalla; 0 amósaa ata que se pare.</td></tr>
+    </tbody>
+  </table></div>
+  <p>O texto compóñese correctamente en calquera lingua. Pares como <em>AV</em> levan kerning, úsanse ligaduras e a escrita de
+  dereita a esquerda funciona. Os caracteres que non ten a fonte escollida, como emoji ou chinés, debúxanse con outra fonte instalada.
+  O texto renderízase ao dobre da resolución do escenario, así que se ve nítido ao amplialo e suave ao reducilo.</p>
+  <p>O texto prepárase en segundo plano antes do seu GO, e outra vez despois de cambiar o seu aspecto, así que arrancar ou editar unha
+  cue de texto nunca retén o espectáculo. Os cambios de cor, movementos e animacións non precisan preparación. Tras cambiar o texto,
+  a fonte ou o tamaño dunha cue que se está a amosar, a versión nova substitúe a antiga un momento despois.</p>
+  <div class="note"><span class="label">De xira</span><p>O ficheiro do espectáculo garda o nome da fonte, non a fonte en si.
+  Instala as mesmas fontes en cada ordenador que reproduza o espectáculo. Se falta unha fonte, a lapela Texto indica <em>non instalada
+  aquí</em> e úsase unha fonte de substitución.</p></div>
+  <h3 id="animation">Animación</h3>
+  <p>A lapela <strong><span class="ms" aria-hidden="true">&#xe71c;</span> Animación</strong> das cues de vídeo e texto move,
+  escala, xira, recorta, funde e cambia a cor da capa con fotogramas clave. A animación comeza cando arrinca a cue e segue o
+  reloxo da propia cue: pausar a cue pausaa.</p>
+  <figure>
+    <img src="img/gl/animation.webp" width="1400" height="427" alt="Lapela Animación: unha liña de tempo con filas para X, Opacidade, Escala X, Escala Y, Cor do texto e Fondo, cada unha con fotogramas clave en forma de rombo, un cabezal azul en 2,2 segundos e, debaixo, os axustes de animación e o tempo e valor do fotograma clave seleccionado.">
+    <figcaption>A lapela Animación. Cada fila é unha propiedade animada; os rombos son fotogramas clave.</figcaption>
+  </figure>
+  <ul>
+    <li><strong>Engadir pista</strong> escolle unha propiedade. O seu primeiro fotograma clave queda no cabezal e non cambia nada,
+    así que despois podes poñer os valores que queiras.</li>
+    <li><strong>Liña de tempo:</strong> fai clic na regra ou nunha fila para mover o cabezal. Fai clic nun fotograma clave para
+    seleccionalo e arrástrao de lado para cambiar o seu tempo. Fai dobre clic nunha fila para engadir un fotograma clave aí.</li>
+    <li>Tarxeta <strong>Fotograma clave</strong>: o tempo e o valor da clave seleccionada, e <em>Despois</em>, que indica como pasa o valor á
+    clave seguinte: <em>Manter</em> (quédase e logo salta), <em>Lineal</em>, <em>Entrada suave</em>, <em>Saída suave</em>,
+    <em>Entrada e saída suaves</em> ou unha <em>Curva personalizada</em> (unha Bézier cúbica, escrita como en CSS: x1 y1 x2 y2).
+    <em>Fotograma clave no cabezal</em> engade unha clave co valor que ten a pista no cabezal.</li>
+    <li><strong>Duración</strong> é unha pasada da animación; 0 significa que remata no último fotograma clave. Unha liña ámbar
+    descontinua márcaa na liña de tempo. <strong>Repetir</strong>: <em>Unha vez</em> mantén os últimos valores, <em>Bucle</em> volve
+    comezar, <em>Ping-pong</em> vai cara adiante e logo cara atrás.</li>
+    <li>Activa <strong>Vista previa</strong> para ver a capa na vista previa de xeometría tal e como está no cabezal. Un contorno
+    descontinuo amosa a posición propia da cue.</li>
+  </ul>
+  <div class="table-wrap"><table>
+    <thead><tr><th>Propiedade</th><th>Valor</th><th>Como se combina coa cue</th></tr></thead>
+    <tbody>
+      <tr><td>X · Y</td><td>% do escenario</td><td>Súmase á posición da lapela Xeometría.</td></tr>
+      <tr><td>Escala X · Escala Y</td><td>%</td><td>Multiplica a escala da lapela Xeometría: 200% duplícaa.</td></tr>
+      <tr><td>Rotación</td><td>graos</td><td>Súmase á rotación. 360° é unha volta completa.</td></tr>
+      <tr><td>Recorte esquerda · arriba · dereita · abaixo</td><td>% da imaxe</td><td>Súmase ao recorte. Anímao para cortinas e revelados.</td></tr>
+      <tr><td>Opacidade</td><td>%</td><td>Multiplica a opacidade da cue.</td></tr>
+      <tr><td>Tinguidura</td><td>cor</td><td>Multiplica as cores da imaxe. O branco déixaa igual. Unha tinguidura só pode escurecer ou recolorear: o branco convértese na cor da tinguidura e o negro segue negro.</td></tr>
+      <tr><td>Cor do texto · Cor do contorno · Cor da sombra · Fondo</td><td>cor (só texto)</td><td>Substitúen as cores da lapela Texto.</td></tr>
+    </tbody>
+  </table></div>
+  <p>Como os valores son relativos, unha cue Fade ou un cambio na lapela Xeometría seguen a mover ou fundir toda a capa animada.
+  Por exemplo, unha animación pode facer que un logotipo suba e baixe mentres unha cue Fade o despraza polo escenario.</p>
+  <figure class="narrow">
+    <img src="img/gl/animation-stage.webp" width="900" height="449" alt="Un escenario cun título animado en ámbar sobre unha caixa vermella arredondada e un logotipo SVG xirado do revés e tinguido de verde.">
+    <figcaption>No escenario, a metade de animación: o título entrou esvarando, medrou e cambiou de cor; o logotipo SVG xira cunha tinguidura verde en bucle.</figcaption>
+  </figure>
+  <div class="note"><span class="label">Sen carga para o espectáculo</span><p>As animacións calcúlanse en directo mentres se debuxa
+  o escenario: unhas poucas operacións por capa, co movemento, a escala e a cor a cargo da tarxeta gráfica. Non se renderiza
+  nin descodifica nada por adiantado, así que animar unha capa custa o mesmo que amosala queda. Os cambios que fagas aparecen ao
+  momento, mesmo nunha cue en marcha, a calquera resolución de escenario. O desenfoque e os cambios de cor son
+  <a href="#videofx">efectos de vídeo</a>, que unha cue Fade pode animar.</p></div>
+  <h3 id="videofx">FX de vídeo</h3>
+  <figure>
+    <img src="img/gl/video-fx.webp" width="1400" height="237" alt="Lapela FX de vídeo dunha cue de texto: tarxetas Colorear, Desenfoque e Viñeta e unha tarxeta para engadir efectos.">
+    <figcaption>Unha cue de texto coloreada de laranxa, algo desenfocada e con viñeta.</figcaption>
+  </figure>
+  <p>As cues de vídeo, cámara e texto teñen unha lapela <strong>FX de vídeo</strong>, unha morea de efectos sobre a imaxe. Engádeos,
+  reordénaos e actívaos como os efectos de audio. Debúxaos a tarxeta gráfica mentres debuxa o escenario, así que case non custan
+  nada e cambian en directo, mesmo nunha cue en marcha.</p>
+  <figure class="narrow">
+    <img src="img/gl/video-fx-stage.webp" width="750" height="285" alt="Un escenario co título 'Act One' en laranxa.">
+    <figcaption>O resultado no escenario.</figcaption>
+  </figure>
+  <div class="table-wrap"><table>
+    <thead><tr><th>Efecto</th><th>Axustes</th></tr></thead>
+    <tbody>
+      <tr><td>Controis de cor</td><td>Brillo, contraste, saturación (0 = branco e negro).</td></tr>
+      <tr><td>Exposición</td><td>Exposición en pasos, gamma.</td></tr>
+      <tr><td>Matiz</td><td>Xira todas as cores pola roda de cor.</td></tr>
+      <tr><td>Colorear</td><td>Monocromo na cor que escollas.</td></tr>
+      <tr><td>Sepia · Inverter</td><td>Cantidade.</td></tr>
+      <tr><td>Posterizar</td><td>Número de niveis por cor.</td></tr>
+      <tr><td>Limiar</td><td>Corte a branco e negro nun nivel de brillo.</td></tr>
+      <tr><td>Viñeta</td><td>Escurece os bordos: raio, suavidade, cantidade.</td></tr>
+      <tr><td>Desenfoque · Pixelar · Enfocar</td><td>Raio ou tamaño de bloque nos píxeles propios da imaxe.</td></tr>
+      <tr><td>Chroma key</td><td>Fai transparente unha cor (croma verde ou azul nunha cue de cámara): cor clave, limiar,
+      suavidade e derrame, que quita o reflexo verde dos bordos que quedan.</td></tr>
+    </tbody>
+  </table></div>
+  <p>Os efectos de cor actúan de arriba abaixo; Desenfoque, Pixelar e Enfocar cambian como se le a imaxe, así que sempre actúan
+  primeiro. Os efectos aplícanse despois da tinguidura e a opacidade da capa, e funcionan con todos os modos de fusión.</p>
+</section>
+
+<section id="stages">
+  <h2><span class="n">4.2</span>Escenarios e proxección</h2>
+  <p>Un <strong>escenario</strong> (stage) é unha saída de vídeo, como un proxector ou unha pantalla. Engade escenarios en
+  <span class="menu">Axustes → Escenarios de vídeo</span>. Cada un ten un nome e un tamaño de lenzo en píxeles.</p>
+  <h3 id="sending-a-stage-to-a-display">Enviar un escenario a unha pantalla</h3>
+  <p>En <span class="menu">Vídeo → Escenario: <em>nome</em> → Saída</span>, ou co despregable Saída de Axustes → Escenarios de vídeo,
+  escolle <em>Xanela</em> ou unha das pantallas conectadas. Un escenario asignado a unha pantalla ábrese a pantalla completa nela, e
+  volve abrirse alí ao cargar o espectáculo. Se unha pantalla non aparece, usa <em>Actualizar pantallas</em>. Nunha xanela de
+  escenario, fai dobre clic ou preme <kbd>F11</kbd> para alternar a pantalla completa.</p>
+  <h3 id="mapping">Mapeado</h3>
+  <figure>
+    <img src="img/gl/mapping.webp" width="1100" height="551" alt="Patrón de axuste de mapping nun escenario con corrección de trapecio: lenzo branco con cuadrícula, regras de píxeles en cada bordo, círculos e esquinas numeradas.">
+    <figcaption>O patrón de axuste de mapping. Círculos que parecen óvalos, ou cadros da cuadrícula que non son cadrados, amosan o que aínda está desaxustado.</figcaption>
+  </figure>
+  <p><em>Editar mapeado</em> amosa un patrón de axuste no escenario: un lenzo branco cunha cuadrícula cadrada, regras de píxeles
+  en cada bordo, círculos, diagonais e unha cruz central, todo debuxado a través do mapping, ademais de catro esquinas numeradas.
+  Arrastra as esquinas para encaixar a imaxe na pantalla (corrección de trapecio), ou pasa o rato por unha esquina e móvea coas
+  frechas: un píxel cada vez, ou dez con <kbd>Maiús</kbd>. <em>Restablecer mapeado</em> devolve as esquinas ao seu sitio.</p>
+</section>
+<!--/content-->
+
+<nav class="pager" aria-label="Capítulo anterior e seguinte">
+  <a class="prev" href="audio.gl.html"><span>← Anterior</span>Audio</a>
+  <a class="next" href="lighting.gl.html"><span>Seguinte →</span>Iluminación</a>
+</nav>
+</main>
+</div>
+<script src="manual.js"></script>
+</body>
+</html>

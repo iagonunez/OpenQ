@@ -1,0 +1,157 @@
+<!doctype html>
+<html lang="es">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<!-- Built by tools/build_manual.py around the content block below: edit only that, then run the script. -->
+<title>Audio · Manual de usuario de OpenQ</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Barlow+Condensed:wght@500;600;700&family=Inter:wght@400;500;600&family=JetBrains+Mono:wght@400;500&display=swap">
+<link rel="stylesheet" href="manual.css">
+</head>
+<body>
+<div class="wrap">
+<nav class="toc" aria-label="Capítulos">
+  <div class="brand"><a href="index.es.html" title="Contenido">Open<b>Q</b></a></div>
+  <div class="brand-sub">Manual de usuario</div>
+  <div class="langs"><a href="audio.html" hreflang="en" title="English">EN</a><a href="audio.es.html" hreflang="es" title="Español" aria-current="page">ES</a><a href="audio.gl.html" hreflang="gl" title="Galego">GL</a></div>
+  <ol class="chapters">
+    <li><a href="start.es.html">Primeros pasos</a></li>
+    <li><a href="cues.es.html">Cues y tiempos</a></li>
+    <li class="cur"><a href="audio.es.html" aria-current="page">Audio</a>
+     <ol class="sub">
+      <li class="s2"><a href="#audio">Cues de audio</a></li>
+      <li class="s3"><a href="#time-loops">Tiempo y bucles</a></li>
+      <li class="s3"><a href="#i-o">I/O</a></li>
+      <li class="s3"><a href="#object-audio">Audio por objetos</a></li>
+      <li class="s3"><a href="#levels">Niveles</a></li>
+      <li class="s3"><a href="#eq">EQ</a></li>
+      <li class="s3"><a href="#audio-fx">FX de audio</a></li>
+      <li class="s3"><a href="#mic-cues">Cues Micro</a></li>
+     </ol>
+    </li>
+    <li><a href="video.es.html">Vídeo y proyección</a></li>
+    <li><a href="lighting.es.html">Iluminación</a></li>
+    <li><a href="remote.es.html">Control remoto y red</a></li>
+    <li><a href="help.es.html">Seguridad y ayuda</a></li>
+  </ol>
+</nav>
+
+<main>
+<header class="chapter-head">
+  <div class="eyebrow">Capítulo 3 · Manual de usuario de OpenQ</div>
+  <h1>Audio</h1>
+</header>
+
+<!--content-->
+<section id="audio">
+  <h2><span class="n">3.1</span>Cues de audio</h2>
+  <h3 id="time-loops">Tiempo y bucles</h3>
+  <figure>
+    <img src="img/es/waveform.webp" width="1400" height="369" alt="Pestaña Tiempo y bucles: forma de onda con marcadores de recorte y curvas de fundido, y las tarjetas Recorte, Bucles, Reproducción y Fundidos.">
+    <figcaption>La pestaña Tiempo y bucles. Arrastra los marcadores verde y rojo para recortar; haz doble clic para añadir un fragmento.
+    Las curvas naranjas son la entrada y la salida en fundido de la cue.</figcaption>
+  </figure>
+  <ul>
+    <li><strong>Recorte:</strong> arrastra los marcadores de inicio y fin, o escribe los tiempos. Arrastra la forma de onda para
+    desplazarte y usa <kbd>Ctrl</kbd>+rueda para hacer zoom. Una línea muestra la posición de reproducción mientras la cue suena.</li>
+    <li><strong>Bucles:</strong> fija un número de <em>Repeticiones</em> o marca <em>Bucle infinito</em> para repetir hasta que se pare.</li>
+    <li><strong>Reproducción:</strong> la velocidad es varispeed. El tono cambia con la velocidad, como en un magnetófono.</li>
+    <li><strong>Fundidos:</strong> una entrada desde silencio al empezar la cue y una salida a silencio al final, con varias curvas a
+    elegir, sin necesidad de una cue Fade aparte. La salida necesita un final conocido, así que no ocurre mientras la cue se repite
+    indefinidamente; con un fragmento en vamp suena después del Devamp.</li>
+    <li><strong>Fragmentos:</strong> haz doble clic en la forma de onda para añadir un marcador de fragmento. Arrástralo para
+    moverlo y haz clic derecho para borrarlo. Cada fragmento suena un número fijo de veces o se repite hasta que una cue
+    <strong>Devamp</strong> (o el mensaje OSC <code>/cue/&lt;n&gt;/devamp</code>) lo libera. Entonces termina la pasada actual y la
+    reproducción sigue. Úsalo para música que tiene que hacer vamp hasta la frase de un actor.</li>
+  </ul>
+  <h3 id="i-o">I/O</h3>
+  <figure>
+    <img src="img/es/io.webp" width="1400" height="348" alt="Pestaña I/O: datos del archivo de entrada, dispositivo de salida y la tarjeta de enrutado.">
+    <figcaption>De dónde viene el sonido y a dónde va.</figcaption>
+  </figure>
+  <ul>
+    <li><strong>Entrada:</strong> el archivo de medios, con su duración, formato, ubicación en disco (y un botón para mostrarlo en el
+    gestor de archivos), tamaño y número de canales. <em>Examinar…</em> sustituye el archivo.</li>
+    <li><strong>Salida:</strong> el dispositivo de audio por el que suena la cue y su número de salidas (se ajusta en Ajustes → Audio).</li>
+    <li><strong>Enrutado:</strong> automático, o una <strong>matriz de puntos de cruce</strong> de los canales del archivo a las salidas
+    del dispositivo. Cada punto de cruce tiene su propio nivel en dB, así que un archivo estéreo puede alimentar ocho altavoces.
+    O cambia a <strong>Audio por objetos</strong> y coloca los canales en la sala (más abajo).</li>
+  </ul>
+  <h3 id="object-audio">Audio por objetos</h3>
+  <figure>
+    <img src="img/es/object-audio.webp" width="1400" height="382" alt="Pestaña I/O en modo audio por objetos: una sala con cuatro altavoces y dos objetos numerados, y sus posiciones.">
+    <figcaption>Audio por objetos: cada canal del archivo es un objeto numerado en la sala. Los altavoces se iluminan con lo que reproducen.</figcaption>
+  </figure>
+  <p>El audio por objetos enruta el sonido según <em>de dónde debe venir</em> en lugar de por salida. Elige
+  <strong>Audio por objetos</strong> en la tarjeta Enrutado: cada canal del archivo se convierte en un objeto que arrastras por la sala
+  (o cuya posición escribes). Los altavoces más cercanos a un objeto lo reproducen más fuerte; el nivel baja 6 dB cada vez que la
+  distancia se duplica, y la potencia total es la misma esté donde esté el objeto, así que moverlo nunca cambia su volumen.
+  <strong>Apertura</strong> ensancha un objeto desde un punto (0 %) hasta toda la sala (100 %). Los faders de salida de la pestaña
+  Niveles siguen aplicándose, y las cues Mic y las bandas sonoras de vídeo también pueden usar audio por objetos.</p>
+  <p>La sala se ajusta una vez por espectáculo en <a href="start.es.html#settings">Ajustes → Audio</a>. Una <a href="cues.es.html#fades">cue Fade</a> puede
+  mover los objetos, para un sonido que vuela por la sala. Los movimientos se suavizan, así que arrastrar un objeto en una cue que
+  suena no produce chasquidos.</p>
+  <h3 id="levels">Niveles</h3>
+  <figure>
+    <img src="img/es/levels.webp" width="1400" height="314" alt="Pestaña Niveles: faders verticales para el nivel principal y las salidas 1 y 2, y una tarjeta de panorama.">
+    <figcaption>Faders para el nivel principal de la cue y cada salida del dispositivo.</figcaption>
+  </figure>
+  <p>El fader <strong>Principal</strong> fija el nivel de la cue. A su lado hay un fader por cada salida del dispositivo de audio, que
+  ajusta esa salida después de la matriz de enrutado. Arrastra un fader o escribe un valor en la casilla de encima; haz doble clic
+  en un fader para devolverlo a 0 dB. <strong>Panorama</strong> mueve el sonido entre las salidas 1 y 2 mientras el enrutado es automático.</p>
+  <h3 id="eq">EQ</h3>
+  <figure>
+    <img src="img/es/eq.webp" width="1400" height="421" alt="Ecualizador con una curva de respuesta y una lista de bandas.">
+    <figcaption>Hasta ocho bandas por cue. Arrastra los tiradores para ajustar frecuencia y ganancia, y usa la rueda sobre un tirador para cambiar la Q.</figcaption>
+  </figure>
+  <p>Los tipos de banda son paso alto, shelf de graves, pico, shelf de agudos y paso bajo. <strong>EQ activado</strong> activa y
+  desactiva todo el ecualizador.</p>
+  <h3 id="audio-fx">FX de audio</h3>
+  <figure>
+    <img src="img/es/audio-fx.webp" width="1400" height="283" alt="Pestaña FX de audio: reverb, compresor y un delay desactivado como tarjetas, y una tarjeta para añadir efectos.">
+    <figcaption>Una cadena de efectos: reverb y después compresor; el delay está apagado.</figcaption>
+  </figure>
+  <p>Las cues de audio, Mic y vídeo tienen una pestaña <strong>FX de audio</strong>: una cadena de hasta ocho efectos que actúan de arriba
+  abajo sobre los canales de la cue, después del EQ y antes del enrutado. <em>Añadir…</em> pone un efecto nuevo al final; las flechas
+  cambian el orden, <strong>Encendido</strong> puentea un efecto sin perder sus ajustes.</p>
+  <div class="table-wrap"><table>
+    <thead><tr><th>Efecto</th><th>Ajustes</th><th>Uso</th></tr></thead>
+    <tbody>
+      <tr><td>Delay</td><td>tiempo, realimentación, corte de agudos, mezcla</td><td>Ecos; el corte de agudos oscurece cada repetición.</td></tr>
+      <tr><td>Reverberación</td><td>tamaño, amortiguación, predelay, ancho, mezcla</td><td>Sonido de sala para grabaciones secas o voces.</td></tr>
+      <tr><td>Compresor</td><td>umbral, relación, ataque, liberación, compensación</td><td>Iguala el nivel; todos los canales se mueven juntos.</td></tr>
+      <tr><td>Limitador</td><td>techo, liberación</td><td>Nunca deja pasar un pico por encima del techo.</td></tr>
+      <tr><td>Puerta de ruido</td><td>umbral, rango, ataque, mantenimiento, liberación</td><td>Baja un micrófono entre frases.</td></tr>
+      <tr><td>Distorsión</td><td>ganancia, tono, salida, mezcla</td><td>Sonidos de radio, de teléfono o saturados.</td></tr>
+      <tr><td>Chorus</td><td>velocidad, profundidad, retardo, realimentación, mezcla</td><td>Engorda y ensancha un sonido.</td></tr>
+      <tr><td>Bitcrusher</td><td>bits, submuestreo, mezcla</td><td>Sonidos lo-fi, de videojuego retro.</td></tr>
+    </tbody>
+  </table></div>
+  <div class="note tip"><span class="label">Cambios en directo</span><p>Los cambios de nivel, fader de salida, panorama, EQ, efectos,
+  enrutado y objetos se oyen al momento en una cue que suena, así que puedes ajustarlos durante un pase. Las colas de reverb y
+  delay continúan a través de una edición.</p></div>
+  <h3 id="mic-cues">Cues Micro</h3>
+  <figure>
+    <img src="img/es/mic.webp" width="1400" height="312" alt="Pestaña I/O de una cue Micro: dispositivo de entrada, canales y medidor de nivel, tiempos y enrutado.">
+    <figcaption>La pestaña I/O de una cue Micro. La barra de nivel se mueve mientras la cue está en marcha.</figcaption>
+  </figure>
+  <p>Una cue Micro envía una entrada en directo (un micrófono, una entrada de línea, un reproductor) por el mezclador de OpenQ, así que
+  tiene los mismos faders de <strong>Niveles</strong>, panorama, <strong>EQ</strong> y enrutado que una cue de audio, y las cues Fade
+  pueden fundirla. En la pestaña <strong>I/O</strong> elige el dispositivo de entrada y qué canales usar, por ejemplo las entradas
+  3–4 para un par estéreo. Una <strong>duración</strong> de 0 mantiene la entrada abierta hasta que se para la cue, y la
+  <strong>entrada en fundido</strong> la sube desde silencio. La entrada llega a las salidas con unos 30 ms de retraso, demasiado
+  poco para oírse como eco en la mayoría de salas.</p>
+</section>
+<!--/content-->
+
+<nav class="pager" aria-label="Capítulo anterior y siguiente">
+  <a class="prev" href="cues.es.html"><span>← Anterior</span>Cues y tiempos</a>
+  <a class="next" href="video.es.html"><span>Siguiente →</span>Vídeo y proyección</a>
+</nav>
+</main>
+</div>
+<script src="manual.js"></script>
+</body>
+</html>

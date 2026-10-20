@@ -1,0 +1,264 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<!-- Built by tools/build_manual.py around the content block below: edit only that, then run the script. -->
+<title>Getting started · OpenQ User Manual</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Barlow+Condensed:wght@500;600;700&family=Inter:wght@400;500;600&family=JetBrains+Mono:wght@400;500&display=swap">
+<link rel="stylesheet" href="manual.css">
+</head>
+<body>
+<div class="wrap">
+<nav class="toc" aria-label="Chapters">
+  <div class="brand"><a href="index.html" title="Contents">Open<b>Q</b></a></div>
+  <div class="brand-sub">User manual</div>
+  <div class="langs"><a href="start.html" hreflang="en" title="English" aria-current="page">EN</a><a href="start.es.html" hreflang="es" title="Español">ES</a><a href="start.gl.html" hreflang="gl" title="Galego">GL</a></div>
+  <ol class="chapters">
+    <li class="cur"><a href="start.html" aria-current="page">Getting started</a>
+     <ol class="sub">
+      <li class="s2"><a href="#start">Installing and first show</a></li>
+      <li class="s3"><a href="#installing">Installing</a></li>
+      <li class="s3"><a href="#your-first-show">Your first show</a></li>
+      <li class="s2"><a href="#window">The main window</a></li>
+      <li class="s3"><a href="#working-with-the-cue-list">Working with the cue list</a></li>
+      <li class="s3"><a href="#cue-lists">Cue lists</a></li>
+      <li class="s2"><a href="#modes">Edit and show mode</a></li>
+      <li class="s3"><a href="#stopping">Stopping</a></li>
+      <li class="s2"><a href="#settings">Settings</a></li>
+      <li class="s2"><a href="#keys">Keyboard shortcuts</a></li>
+     </ol>
+    </li>
+    <li><a href="cues.html">Cues and timing</a></li>
+    <li><a href="audio.html">Audio</a></li>
+    <li><a href="video.html">Video and projection</a></li>
+    <li><a href="lighting.html">Lighting</a></li>
+    <li><a href="remote.html">Remote control and network</a></li>
+    <li><a href="help.html">Safety and help</a></li>
+  </ol>
+</nav>
+
+<main>
+<header class="chapter-head">
+  <div class="eyebrow">Chapter 1 · OpenQ User Manual</div>
+  <h1>Getting started</h1>
+</header>
+
+<!--content-->
+<section id="start">
+  <h2><span class="n">1.1</span>Installing and first show</h2>
+  <h3 id="installing">Installing</h3>
+  <p>OpenQ is installed by its installer, <a href="https://github.com/iagonunez/OQup">OQup</a>. OQup downloads the newest
+  release of OpenQ for your system, checks it, adds the FFmpeg libraries it uses for video (an LGPL build) and installs it
+  with a menu entry. With the lighting workspace (the default) it also installs <strong>OQVis</strong>, the 3D visualiser
+  that <a href="lighting.html#lighting-oqvis">Open in OQVis</a> starts. Your shows are never touched.</p>
+  <div class="note tip"><span class="label">Before you start</span><p>You need an internet connection. On Linux OQup may
+  need your password to install a few system libraries (sound, devices); it asks first.</p></div>
+
+  <h4>Linux</h4>
+  <ol>
+    <li>Open a terminal, paste the command below and press Enter:
+<pre><code>curl --proto '=https' --tlsv1.2 -fsSL https://github.com/iagonunez/OQup/releases/latest/download/install.sh | sh</code></pre></li>
+    <li>The first step downloads OQup, checks it against the published checksum and puts it in
+    <code>~/.local/bin</code>. Then it starts.</li>
+    <li>If system libraries OpenQ needs are missing (ALSA, PipeWire, udev), OQup lists them and asks before installing
+    them with your distribution's package manager. Answer yes; the package manager asks for your password.</li>
+    <li>Leave the terminal open until it says that OpenQ is installed.</li>
+    <li>Open OpenQ from your applications menu (search for "OpenQ"), or type <code>openq</code> in a terminal.</li>
+  </ol>
+  <p>If the terminal says <code>openq: command not found</code>, <code>~/.local/bin</code> is not in your PATH yet. Add it
+  once, then open a new terminal:</p>
+<pre><code>fish_add_path ~/.local/bin                                 # fish
+echo 'export PATH="$HOME/.local/bin:$PATH"' &gt;&gt; ~/.bashrc   # bash (zsh: ~/.zshrc)</code></pre>
+
+  <h4>macOS</h4>
+  <ol>
+    <li>Open Terminal (press ⌘ Space and type "Terminal").</li>
+    <li>Paste the command below and press Enter:
+<pre><code>curl --proto '=https' --tlsv1.2 -fsSL https://github.com/iagonunez/OQup/releases/latest/download/install.sh | sh</code></pre></li>
+    <li>The app is placed at <code>~/Applications/OpenQ.app</code>, the Applications folder in your home folder, with
+    FFmpeg inside it. Open it from the Finder (Go → Home → Applications) or with Spotlight.</li>
+  </ol>
+
+  <h4>Windows</h4>
+  <ol>
+    <li>Open PowerShell: press the Start key, type <em>PowerShell</em> and press Enter.</li>
+    <li>Paste the command below and press Enter:
+<pre><code>powershell -ExecutionPolicy Bypass -c "irm https://github.com/iagonunez/OQup/releases/latest/download/install.ps1 | iex"</code></pre></li>
+    <li>When it is done, OpenQ is in the Start menu and listed under <em>Settings → Apps → Installed apps</em>.</li>
+  </ol>
+
+  <h4>Building on your own computer</h4>
+  <p><code>oqup install --build-source</code> compiles OpenQ (and OQVis) from the source code on your computer instead of
+  downloading the release. OQup installs what the build needs first: a private copy of Rust if there is none, a C
+  compiler and libclang, and FFmpeg (on Linux from your distribution's packages, after asking; on macOS Apple's Command
+  Line Tools, then FFmpeg compiled from its source; on Windows Microsoft's C++ Build Tools, whose installer opens for you
+  to accept). It needs several gigabytes of free space and the first build takes a long time; later ones are quicker.</p>
+
+  <h4>If something goes wrong</h4>
+  <ul>
+    <li><code>oqup doctor</code> shows what is installed and what an install still needs.</li>
+    <li>If the install stops, read the last lines it printed, fix the cause (usually a missing package or a cancelled
+    installer) and run the command again.</li>
+  </ul>
+
+  <h4>Updating and removing</h4>
+  <p>To get a newer version, run <code>oqup update</code>: it installs OpenQ again when a new version is released, the same
+  way as last time. <code>oqup versions</code> lists the versions you can install, and <code>oqup install --ref v0.4.0</code>
+  installs one of them. To remove OpenQ, run <code>oqup uninstall</code>; it asks first. Add <code>--purge</code> to remove
+  OQup's downloads, Rust, dependencies and build cache as well. On Windows you can also remove OpenQ from
+  <em>Settings → Apps → Installed apps</em>. Your shows are never touched.</p>
+  <p>If you only need cues, <code>oqup install --no-lighting</code> installs OpenQ without the lighting workspace (no
+  Lighting view, Light cues, fixture downloads or OQVis). Shows with a lighting design still open, keep it and play their
+  Light cues. <code>oqup install --lighting</code> adds it back; <code>--no-oqvis</code> keeps the lighting but leaves
+  OQVis out.</p>
+  <p>To run a copy you are working on from source instead:</p>
+<pre><code>cargo run --release                  # start with an empty show
+cargo run --release -- show.openq    # open a saved show</code></pre>
+  <p>This manual is built into OpenQ: choose <span class="menu">Help → User manual</span> or press <kbd>F1</kbd>
+  to open it in your web browser, in the language of the interface. It works without an internet connection and always matches your version of OpenQ.</p>
+  <h3 id="your-first-show">Your first show</h3>
+  <ol>
+    <li>Drag audio or video files from your file manager onto the window. Each file becomes a cue.
+    You can also use <span class="menu">File → Import media files…</span>.</li>
+    <li>Add other cues from the toolbar above the cue list, or press <kbd>Ctrl</kbd>+<kbd>1</kbd>…<kbd>0</kbd>.</li>
+    <li>Select a cue and set its options in the inspector at the bottom of the window.</li>
+    <li>Click the first cue to put the <strong>playhead</strong> on it, then press <kbd>Space</kbd> (GO).</li>
+    <li>Save with <kbd>Ctrl</kbd>+<kbd>S</kbd>. Shows are saved as <code>.openq</code> files. Media paths are
+    stored relative to the show file, so you can move the show folder as a whole.</li>
+  </ol>
+  <div class="note tip"><span class="label">Tip</span><p>Keep the show file in the same folder as its media.
+  Then the folder can be copied to another computer and opened there unchanged.</p></div>
+</section>
+
+<section id="window">
+  <h2><span class="n">1.2</span>The main window</h2>
+  <figure>
+    <img src="img/edit-mode.webp" width="1400" height="1535" alt="OpenQ main window in edit mode: GO button, standby card, transport, meters, toolbar, cue list and inspector.">
+    <figcaption>Edit mode with the first cue selected and the inspector showing its Time &amp; Loops tab.</figcaption>
+  </figure>
+  <ul>
+    <li><strong>Title bar:</strong> the show's name (a dot means unsaved changes). On Windows it also holds the
+    minimise, maximise and close buttons: drag the bar to move the window, double-click it to maximise, and drag any
+    window edge to resize.</li>
+    <li><strong>Menus:</strong> File, Edit, Cue, Show, Video (stages and outputs), Remote, View
+    (geometry preview, engine log) and Help (this manual, the error log, about and licenses).</li>
+    <li><strong>GO</strong> fires the cue at the playhead. The <strong>standby</strong> card shows that cue,
+    with its notes underneath so the operator can read them before pressing GO.</li>
+    <li><strong>Transport:</strong> <span class="ms" aria-hidden="true">&#xe034;</span> pause all, <span class="ms" aria-hidden="true">&#xe037;</span> resume all,
+    <span class="ms" aria-hidden="true">&#xe047;</span> stop all. Next to them, the output meters show each device channel in dB.</li>
+    <li><strong>Cue list tabs:</strong> one tab per cue list (see below).</li>
+    <li><strong>Cue list:</strong> number, name, target (file details or the target cue), pre-wait,
+    action time, post-wait and the continue arrow. Running cues turn green, and their action column
+    counts down. A red <span class="ms" style="color:var(--red)" aria-hidden="true">&#xf8b6;</span> icon marks a missing file or target.
+    Files are checked in the background every couple of seconds, so a slow network drive never freezes the
+    window, and a drive plugged back in clears the icon on its own.</li>
+    <li><strong>Active cues:</strong> every running cue with elapsed and remaining time, plus its own pause and stop buttons.</li>
+    <li><strong>Inspector:</strong> the settings of the selected cue, in tabs. Each tab groups its settings in
+    cards. It opens tall enough to show a whole tab; drag its top edge to resize it.</li>
+    <li><strong>Status bar:</strong> the <strong>Edit / Show</strong> switch at the left, then the audio device, video
+    status, OSC, remote connections and messages. The <span class="ms" aria-hidden="true">&#xe8b8;</span> button at the
+    right opens <a href="#settings">Settings</a>. A warning from the engine appears next to it for a few seconds and opens the engine log; messages on the
+    left of the bar also fade out after a few seconds.</li>
+  </ul>
+  <h3 id="working-with-the-cue-list">Working with the cue list</h3>
+  <ul>
+    <li>Click a cue to select it and move the playhead to it. Use <kbd>Ctrl</kbd>-click to select
+    several cues, <kbd>Shift</kbd>-click for a range, and <kbd>↑</kbd> <kbd>↓</kbd> to move the playhead.</li>
+    <li>Drag cues to reorder them. Drop onto the middle of a group row to put cues inside it.</li>
+    <li>Double-click a number, name, pre-wait or post-wait to edit it in place. <kbd>Enter</kbd>
+    commits and <kbd>Esc</kbd> cancels.</li>
+    <li>Click the continue column to cycle <em>do not continue → auto-continue → auto-follow</em>.</li>
+    <li>Right-click a row for start, stop, duplicate, delete and more.</li>
+  </ul>
+  <h3 id="cue-lists">Cue lists</h3>
+  <p>A show can have several cue lists, for example the main sequence and a list of sound effects to fire by hand.
+  Each list has a tab above the toolbar; click a tab to bring that list forward. GO, the playhead and the standby card
+  work on the list in front, and each list remembers where its playhead was.</p>
+  <ul>
+    <li>Click <span class="ms" aria-hidden="true">&#xe145;</span> to add a list. Right-click the current list's tab to
+    rename it (or double-click it), move it, set its <a href="cues.html#timecode">timecode</a>, or delete it.</li>
+    <li>Cues keep playing when you switch lists, and Start, Stop, Fade and other cues can target cues in any list.
+    In the target menu, cues from other lists show the list's name.</li>
+    <li>Cue numbers are shared by all lists, so OSC and hotkeys reach cues in every list.</li>
+  </ul>
+</section>
+
+<section id="modes">
+  <h2><span class="n">1.3</span>Edit and show mode</h2>
+  <p><strong>Edit mode</strong> is for building the show: everything can be changed. <strong>Show mode</strong> is for
+  running it. The list is locked, the toolbar and inspector are hidden, and rows get bigger so they are easy to read
+  in a dark booth. GO, stop, pause, hotkeys and moving the playhead all work in both modes.</p>
+  <p>Switch with the switch at the left of the status bar, <span class="menu">Show → Enter show mode</span>, or <kbd>Ctrl</kbd>+<kbd>E</kbd>.</p>
+  <figure>
+    <img src="img/show-mode.webp" width="1400" height="735" alt="Show mode: large rows, several cues running with countdowns, active cues panel on the right.">
+    <figcaption>Show mode while a sequence runs. Green rows are playing, and the action column counts down.</figcaption>
+  </figure>
+  <h3 id="stopping">Stopping</h3>
+  <p><kbd>Esc</kbd> or the red stop button fades everything out over the <em>stop-all fade time</em>
+  (see <a href="#settings">Settings</a>). Press it again during that fade to stop instantly.</p>
+  <p><strong>Double-GO protection</strong> ignores a second GO that comes within a short time
+  of the first, so a bounced key doesn't skip a cue.</p>
+</section>
+
+<section id="settings">
+  <h2><span class="n">1.4</span>Settings</h2>
+  <p><span class="menu">Edit → Settings…</span>, or the <span class="ms" aria-hidden="true">&#xe8b8;</span> button at the
+  right of the status bar. These are saved with the show, except the language and the control surface MIDI input, which belong to the computer.</p>
+  <div class="table-wrap"><table>
+    <thead><tr><th>Tab</th><th>Settings</th></tr></thead>
+    <tbody>
+      <tr><td>General</td><td>Interface language (English, Spanish or Galician; changes at once), stop-all fade time, double-GO protection, master volume, OSC on/off and port.</td></tr>
+      <tr><td>Audio</td><td>Output device. Changing it stops all playback. Routing matrices address this device's outputs.
+      The <strong>room for object audio</strong>: the speakers, where they stand and which output each one is on.</td></tr>
+      <tr><td>Stages</td><td>Add and name stages, canvas size, output display, fullscreen, mapping.</td></tr>
+      <tr><td>Control surfaces</td><td>This computer's MIDI input and the show's <a href="lighting.html#surfaces">control surface mappings</a>, with learn.</td></tr>
+    </tbody>
+  </table></div>
+  <figure class="narrow">
+    <img src="img/room.webp" width="731" height="465" alt="The room editor: a square room with four speakers FL, FR, RL, RR and a table of their outputs and positions.">
+    <figcaption>The room for object audio. Drag the speakers, or type their positions.</figcaption>
+  </figure>
+  <p>Until you change it, the room follows the output device: a stereo pair, quad, 5.1 or 7.1 (with no speaker on the
+  LFE output), or a ring for other channel counts. The presets set those up, and <em>Use default</em> goes back to
+  following the device. Front, where the stage is, is at the top. Several speakers can share an output.</p>
+  <p>Remote access settings and device keys belong to the computer, not the show. They live in
+  <code>~/.config/openq/remote.json</code>, readable only by your user account.</p>
+</section>
+
+<section id="keys">
+  <h2><span class="n">1.5</span>Keyboard shortcuts</h2>
+  <div class="table-wrap"><table>
+    <thead><tr><th>Keys</th><th>Action</th></tr></thead>
+    <tbody>
+      <tr><td><kbd>Space</kbd></td><td>GO</td></tr>
+      <tr><td><kbd>Esc</kbd></td><td>Stop all (fade); press again to stop instantly. Also cancels an edit in a row.</td></tr>
+      <tr><td><kbd>P</kbd> / <kbd>R</kbd></td><td>Pause all / resume all</td></tr>
+      <tr><td><kbd>↑</kbd> <kbd>↓</kbd></td><td>Move the playhead</td></tr>
+      <tr><td><kbd>←</kbd> <kbd>→</kbd></td><td>Collapse / expand a group</td></tr>
+      <tr><td><kbd>Ctrl</kbd>+<kbd>E</kbd></td><td>Switch edit / show mode</td></tr>
+      <tr><td><kbd>Enter</kbd></td><td>Rename the selected cue in place</td></tr>
+      <tr><td><kbd>Ctrl</kbd>+<kbd>1</kbd> … <kbd>0</kbd></td><td>New Audio, Video, Group, Wait, Memo, Fade, Start, Stop, Pause, Go To cue</td></tr>
+      <tr><td><kbd>Ctrl</kbd>+<kbd>D</kbd> · <kbd>Ctrl</kbd>+<kbd>G</kbd> · <kbd>Del</kbd></td><td>Duplicate · group selection · delete</td></tr>
+      <tr><td><kbd>Ctrl</kbd>+<kbd>Z</kbd> · <kbd>Ctrl</kbd>+<kbd>Shift</kbd>+<kbd>Z</kbd></td><td>Undo · redo (up to 200 steps; very large shows keep fewer, at least 10, to save memory)</td></tr>
+      <tr><td><kbd>Ctrl</kbd>+<kbd>N</kbd> / <kbd>O</kbd> / <kbd>S</kbd> / <kbd>Shift</kbd>+<kbd>S</kbd></td><td>New / open / save / save as</td></tr>
+      <tr><td><kbd>F1</kbd></td><td>Open this user manual</td></tr>
+      <tr><td><kbd>F11</kbd></td><td>Fullscreen, in a stage window</td></tr>
+      <tr><td><kbd>←</kbd> <kbd>→</kbd> <kbd>↑</kbd> <kbd>↓</kbd> (+<kbd>Shift</kbd>)</td><td>Nudge the hovered corner pin 1 (10) pixels while mapping</td></tr>
+      <tr><td>Cue hotkey</td><td>Fires that cue directly (set on the Triggers tab)</td></tr>
+    </tbody>
+  </table></div>
+</section>
+<!--/content-->
+
+<nav class="pager" aria-label="Previous and next chapter">
+  <a class="prev" href="index.html"><span>← Previous</span>Contents</a>
+  <a class="next" href="cues.html"><span>Next →</span>Cues and timing</a>
+</nav>
+</main>
+</div>
+<script src="manual.js"></script>
+</body>
+</html>

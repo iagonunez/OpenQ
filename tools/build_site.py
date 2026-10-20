@@ -3,6 +3,7 @@
 template, so the three languages keep the same layout. Run `python3 -I tools/build_site.py`
 after changing the texts below; docs/site/ holds the shared CSS, JS and logo."""
 
+import re
 from pathlib import Path
 
 DOCS = Path(__file__).resolve().parent.parent / "docs"
@@ -13,7 +14,7 @@ PS = 'powershell -ExecutionPolicy Bypass -c "irm https://github.com/iagonunez/OQ
 TEXT = {
     "en": {
         "shot": "screenshot.webp",
-        "dir": "", "readme": "README.md", "manual": "manual/index.html",
+        "dir": "", "readme": "README.md", "manual": "manual/index.html", "manual_start": "manual/start.html",
         "title": "OpenQ — live show control for sound, video and the stage",
         "desc": "OpenQ runs a show from a list of cues: music, sound effects, video, text, fades and OSC, fired with one GO button. Free for any production.",
         "tagline": "Live show control for sound, video and the stage",
@@ -45,7 +46,7 @@ TEXT = {
     },
     "es": {
         "shot": "screenshot.es.webp",
-        "dir": "es/", "readme": "README.es.md", "manual": "manual/index.es.html",
+        "dir": "es/", "readme": "README.es.md", "manual": "manual/index.es.html", "manual_start": "manual/start.es.html",
         "title": "OpenQ — control de espectáculos en directo para sonido, vídeo y escena",
         "desc": "OpenQ lleva un espectáculo desde una lista de cues: música, efectos, vídeo, texto, fundidos y OSC, con un solo botón GO. Gratis para cualquier producción.",
         "tagline": "Control de espectáculos en directo para sonido, vídeo y escena",
@@ -77,7 +78,7 @@ TEXT = {
     },
     "gl": {
         "shot": "screenshot.gl.webp",
-        "dir": "gl/", "readme": "README.gl.md", "manual": "manual/index.gl.html",
+        "dir": "gl/", "readme": "README.gl.md", "manual": "manual/index.gl.html", "manual_start": "manual/start.gl.html",
         "title": "OpenQ — control de espectáculos en directo para son, vídeo e escena",
         "desc": "OpenQ leva un espectáculo desde unha lista de cues: música, efectos, vídeo, texto, fundidos e OSC, cun só botón GO. De balde para calquera produción.",
         "tagline": "Control de espectáculos en directo para son, vídeo e escena",
@@ -120,11 +121,14 @@ def guide(lang):
     """The step-by-step install walkthrough, taken from the manual's Installing section so the page
     and the manual always say the same thing. The video is served from the site root."""
     t = TEXT[lang]
-    src = (DOCS / t["manual"]).read_text(encoding="utf-8")
-    start = src.index("  <h3>", src.index('<section id="start">'))
+    src = (DOCS / t["manual_start"]).read_text(encoding="utf-8")
+    start = src.index("  <h3", src.index('<section id="start">'))
     end = src.rfind("  <p>", start, src.index("<pre><code>cargo run", start))
     body = src[start:end]
     body = body[body.index("\n") + 1:]  # drop the manual's own <h3>; the page has its own heading
+    # Links to other manual pages are relative to the manual's folder.
+    up = "../" if t["dir"] else ""
+    body = re.sub(r'href="([\w.-]+\.html)', lambda m: f'href="{up}manual/{m.group(1)}', body)
     return (f'<section class="guide" id="guide">\n  <h2>{t["guide_title"]}</h2>\n'
             f'{body}</section>')
 

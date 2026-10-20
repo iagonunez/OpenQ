@@ -1,0 +1,165 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<!-- Built by tools/build_manual.py around the content block below: edit only that, then run the script. -->
+<title>Cues and timing · OpenQ User Manual</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Barlow+Condensed:wght@500;600;700&family=Inter:wght@400;500;600&family=JetBrains+Mono:wght@400;500&display=swap">
+<link rel="stylesheet" href="manual.css">
+</head>
+<body>
+<div class="wrap">
+<nav class="toc" aria-label="Chapters">
+  <div class="brand"><a href="index.html" title="Contents">Open<b>Q</b></a></div>
+  <div class="brand-sub">User manual</div>
+  <div class="langs"><a href="cues.html" hreflang="en" title="English" aria-current="page">EN</a><a href="cues.es.html" hreflang="es" title="Español">ES</a><a href="cues.gl.html" hreflang="gl" title="Galego">GL</a></div>
+  <ol class="chapters">
+    <li><a href="start.html">Getting started</a></li>
+    <li class="cur"><a href="cues.html" aria-current="page">Cues and timing</a>
+     <ol class="sub">
+      <li class="s2"><a href="#cues">Cue types</a></li>
+      <li class="s2"><a href="#timing">Timing and continues</a></li>
+      <li class="s3"><a href="#groups">Groups</a></li>
+      <li class="s2"><a href="#fades">Fades</a></li>
+      <li class="s2"><a href="#timecode">Timecode</a></li>
+      <li class="s3"><a href="#setting-up-a-cue-list">Setting up a cue list</a></li>
+      <li class="s3"><a href="#timecode-triggers">Timecode triggers</a></li>
+     </ol>
+    </li>
+    <li><a href="audio.html">Audio</a></li>
+    <li><a href="video.html">Video and projection</a></li>
+    <li><a href="lighting.html">Lighting</a></li>
+    <li><a href="remote.html">Remote control and network</a></li>
+    <li><a href="help.html">Safety and help</a></li>
+  </ol>
+</nav>
+
+<main>
+<header class="chapter-head">
+  <div class="eyebrow">Chapter 2 · OpenQ User Manual</div>
+  <h1>Cues and timing</h1>
+</header>
+
+<!--content-->
+<section id="cues">
+  <h2><span class="n">2.1</span>Cue types</h2>
+  <div class="types">
+    <div class="type"><b><span class="ms" aria-hidden="true">&#xe050;</span>Audio</b><span class="d">Plays a sound file through the OpenQ mixer, with trims, loops, slices, EQ and routing.</span></div>
+    <div class="type"><b><span class="ms" aria-hidden="true">&#xe404;</span>Video</b><span class="d">Plays a movie or still image on a stage; its soundtrack goes through the mixer.</span></div>
+    <div class="type"><b><span class="ms" aria-hidden="true">&#xe262;</span>Text</b><span class="d">Shows text on a stage, such as titles, surtitles or cue lights for performers.</span></div>
+    <div class="type"><b><span class="ms" aria-hidden="true">&#xe2c7;</span>Group</b><span class="d">Holds other cues and fires them in one of four ways.</span></div>
+    <div class="type"><b><span class="ms" aria-hidden="true">&#xe88b;</span>Wait</b><span class="d">Takes a set time. Use it to space out an auto-follow chain.</span></div>
+    <div class="type"><b><span class="ms" aria-hidden="true">&#xf1fc;</span>Memo</b><span class="d">Does nothing. Holds notes and marks places in the show.</span></div>
+    <div class="type"><b><span class="ms" aria-hidden="true">&#xe8e3;</span>Fade</b><span class="d">Changes another cue's level, opacity, geometry, video effects or object-audio positions over time.</span></div>
+    <div class="type"><b><span class="ms" aria-hidden="true">&#xe1c4;</span>Start</b><span class="d">Fires another cue.</span></div>
+    <div class="type"><b><span class="ms" aria-hidden="true">&#xef71;</span>Stop</b><span class="d">Stops another cue.</span></div>
+    <div class="type"><b><span class="ms" aria-hidden="true">&#xe1a2;</span>Pause</b><span class="d">Pauses another cue.</span></div>
+    <div class="type"><b><span class="ms" aria-hidden="true">&#xe5da;</span>Go To</b><span class="d">Moves the playhead to another cue.</span></div>
+    <div class="type"><b><span class="ms" aria-hidden="true">&#xe044;</span>Devamp</b><span class="d">Lets a looping audio slice finish its pass and play on.</span></div>
+    <div class="type"><b><span class="ms" aria-hidden="true">&#xeb2f;</span>Network</b><span class="d">Sends an OSC message to other gear, such as a lighting desk.</span></div>
+    <div class="type"><b><span class="ms" aria-hidden="true">&#xe31d;</span>Mic</b><span class="d">Plays a live audio input, such as a microphone, through the mixer.</span></div>
+    <div class="type"><b><span class="ms" aria-hidden="true">&#xe412;</span>Camera</b><span class="d">Shows a live camera or capture card on a stage.</span></div>
+    <div class="type"><b><span class="ms" aria-hidden="true">&#xe90f;</span>Light</b><span class="d">Plays a cue of the lighting design, or releases its sequences (see <a href="lighting.html#lighting">Lighting</a>).</span></div>
+  </div>
+  <p>Every cue has a <strong>number</strong> (free text, like <code>4.2</code>), a <strong>name</strong>, <strong>notes</strong>,
+  a <strong>colour</strong> and an <strong>armed</strong> switch, all on the Basics tab. A disarmed cue is skipped by GO. Basics also
+  sets the cue's <strong>pre-wait</strong>, <strong>continue</strong> mode and <strong>post-wait</strong>, and, for audio
+  and video cues, the <strong>media file</strong>.</p>
+  <p>The <strong>Triggers</strong> tab holds the ways to fire a cue besides GO: a <strong>hotkey</strong>, a key that
+  fires the cue directly whatever the playhead is on, and a <a href="#timecode">timecode trigger</a>.</p>
+</section>
+
+<section id="timing">
+  <h2><span class="n">2.2</span>Timing and continues</h2>
+  <p>Each cue has three times. The <strong>pre-wait</strong> runs between GO and the cue's action. The
+  <strong>action</strong> is the cue itself: a sound playing, a fade running. The <strong>post-wait</strong> is counted
+  from the start of the action and is used by auto-continue.</p>
+  <div class="timing" role="img" aria-label="Diagram: cue 1 has a 1 second pre-wait, then a 6 second action. With auto-continue and a 3 second post-wait, cue 2 fires 3 seconds after cue 1's action starts.">
+    <div class="lane"><span class="who">GO → 1</span>
+      <div class="track">
+        <div class="seg pre" style="left:0;width:10%">pre</div>
+        <div class="seg act" style="left:10%;width:60%">action 0:06.00</div>
+      </div></div>
+    <div class="lane"><span class="who">post-wait</span>
+      <div class="track"><div class="seg post" style="left:10%;width:30%">0:03.00 → fire 2</div></div></div>
+    <div class="lane"><span class="who">auto → 2</span>
+      <div class="track"><div class="seg act" style="left:40%;width:45%">action</div><div class="marker" style="left:40%"></div></div></div>
+    <div class="axis"><span></span><div class="ticks"><span>0s</span><span>2</span><span>4</span><span>6</span><span>8</span><span>10s</span></div></div>
+  </div>
+  <div class="table-wrap"><table>
+    <thead><tr><th>Continue mode</th><th>What happens next</th></tr></thead>
+    <tbody>
+      <tr><td>Do not continue</td><td>Nothing. The playhead moves to the next cue and waits for GO.</td></tr>
+      <tr><td>Auto-continue <span class="ms" aria-hidden="true">&#xe5db;</span></td><td>The next cue fires when this cue's post-wait has run out.</td></tr>
+      <tr><td>Auto-follow <span class="ms" aria-hidden="true">&#xead0;</span></td><td>The next cue fires when this cue's action ends.</td></tr>
+    </tbody>
+  </table></div>
+  <p>Chained cues start on exact sample boundaries, so a sequence keeps its timing however long it runs.</p>
+  <h3 id="groups">Groups</h3>
+  <div class="table-wrap"><table>
+    <thead><tr><th>Group mode</th><th>Behaviour</th></tr></thead>
+    <tbody>
+      <tr><td>Start first child and enter group</td><td>Fires the first cue inside the group and moves the playhead into it.</td></tr>
+      <tr><td>Start first child and go to next cue</td><td>A playlist: the children play one after another while the playhead moves on past the group.</td></tr>
+      <tr><td>Start all children simultaneously</td><td>Fires everything inside at once, each with its own pre-wait.</td></tr>
+      <tr><td>Start random child and go to next cue</td><td>Fires one child picked at random.</td></tr>
+    </tbody>
+  </table></div>
+  <p>Select cues and press <kbd>Ctrl</kbd>+<kbd>G</kbd> to group them. <kbd>←</kbd> and <kbd>→</kbd> collapse and expand a group. Groups can hold other groups. Each level is inset with a guide line, so you can see where a group ends.</p>
+</section>
+
+<section id="fades">
+  <h2><span class="n">2.3</span>Fades</h2>
+  <p>A Fade cue changes another cue while it runs. Choose the <strong>target</strong> cue, the
+  <strong>duration</strong> and the <strong>curve</strong> (linear, S-curve or logarithmic), then tick what to change:</p>
+  <ul>
+    <li><strong>Level</strong> in dB, for audio and for video soundtracks.</li>
+    <li><strong>Opacity</strong>, for video and text.</li>
+    <li><strong>Geometry</strong>: position, scale, rotation and crop. This starts from the target's own geometry, so only
+    the values you change will move.</li>
+    <li><strong>Video effects</strong>: the target's <a href="video.html#videofx">Video FX</a> settings are copied into the fade
+    when you tick it; change the values to fade to. An effect switched off here fades out, and effects the target
+    doesn't have fade in from nothing. <em>Take the target's effects</em> copies them again after you change the target.</li>
+    <li><strong>Objects</strong>, for targets in <a href="audio.html#audio">object audio</a> mode: the positions and spread to move
+    the objects to, edited on the same room view.</li>
+  </ul>
+  <p>Light cues can't be the target of a Fade cue: lighting fades with its own Light cues (see <a href="lighting.html#lighting">Lighting</a>).</p>
+  <p>Tick <strong>Stop target</strong> for a fade-out: the target stops when the fade ends. Pausing a fade freezes it, and resuming it continues
+  with the time that was left.</p>
+</section>
+
+<section id="timecode">
+  <h2><span class="n">2.4</span>Timecode</h2>
+  <p>OpenQ can run a cue list from incoming SMPTE timecode, for a show locked to a video, a band's
+  click track or a lighting desk. It reads <strong>LTC</strong> (timecode as an audio signal) on an audio input or
+  <strong>MTC</strong> (MIDI Time Code) on a MIDI input, at 24, 25, 29.97 drop-frame or 30 fps.</p>
+  <h3 id="setting-up-a-cue-list">Setting up a cue list</h3>
+  <p>Right-click the cue list's tab and choose <em>Timecode…</em>. Choose what the list follows (LTC or MTC), the
+  audio input and channel or the MIDI input it arrives on, and the frame rate. The window shows the timecode coming in,
+  and while that list is in front the standby card shows it too. Each cue list follows its own source, so one list can
+  follow the band's LTC while another is run by hand.</p>
+  <h3 id="timecode-triggers">Timecode triggers</h3>
+  <figure>
+    <img src="img/triggers.webp" width="1400" height="255" alt="Triggers tab: a hotkey card, and a timecode card with the trigger time, the list's timecode source and what it is receiving.">
+    <figcaption>The Triggers tab of a cue that fires at 01:00:05:00.</figcaption>
+  </figure>
+  <p>On a cue's <strong>Triggers</strong> tab, tick <em>Fire at</em> and type the time (hh:mm:ss:ff). When the list's
+  timecode runs past that time the cue fires, whatever the playhead is on, and its continues run as usual. The tab
+  shows what the list follows and what it is receiving; <em>Set up…</em> opens the list's timecode settings.</p>
+  <p>Only timecode running forward fires cues. When the source jumps (a locate or a rewind) or stops, nothing fires,
+  and triggering picks up again from the new position, so rehearsing a section by rolling back the source is safe.</p>
+</section>
+<!--/content-->
+
+<nav class="pager" aria-label="Previous and next chapter">
+  <a class="prev" href="start.html"><span>← Previous</span>Getting started</a>
+  <a class="next" href="audio.html"><span>Next →</span>Audio</a>
+</nav>
+</main>
+</div>
+<script src="manual.js"></script>
+</body>
+</html>

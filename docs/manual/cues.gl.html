@@ -1,0 +1,165 @@
+<!doctype html>
+<html lang="gl">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<!-- Built by tools/build_manual.py around the content block below: edit only that, then run the script. -->
+<title>Cues e tempos · Manual de usuario de OpenQ</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Barlow+Condensed:wght@500;600;700&family=Inter:wght@400;500;600&family=JetBrains+Mono:wght@400;500&display=swap">
+<link rel="stylesheet" href="manual.css">
+</head>
+<body>
+<div class="wrap">
+<nav class="toc" aria-label="Capítulos">
+  <div class="brand"><a href="index.gl.html" title="Contido">Open<b>Q</b></a></div>
+  <div class="brand-sub">Manual de usuario</div>
+  <div class="langs"><a href="cues.html" hreflang="en" title="English">EN</a><a href="cues.es.html" hreflang="es" title="Español">ES</a><a href="cues.gl.html" hreflang="gl" title="Galego" aria-current="page">GL</a></div>
+  <ol class="chapters">
+    <li><a href="start.gl.html">Primeiros pasos</a></li>
+    <li class="cur"><a href="cues.gl.html" aria-current="page">Cues e tempos</a>
+     <ol class="sub">
+      <li class="s2"><a href="#cues">Tipos de cue</a></li>
+      <li class="s2"><a href="#timing">Tempos e continuacións</a></li>
+      <li class="s3"><a href="#groups">Grupos</a></li>
+      <li class="s2"><a href="#fades">Fundidos</a></li>
+      <li class="s2"><a href="#timecode">Código de tempo</a></li>
+      <li class="s3"><a href="#setting-up-a-cue-list">Configurar unha lista de cues</a></li>
+      <li class="s3"><a href="#timecode-triggers">Disparadores por código de tempo</a></li>
+     </ol>
+    </li>
+    <li><a href="audio.gl.html">Audio</a></li>
+    <li><a href="video.gl.html">Vídeo e proxección</a></li>
+    <li><a href="lighting.gl.html">Iluminación</a></li>
+    <li><a href="remote.gl.html">Control remoto e rede</a></li>
+    <li><a href="help.gl.html">Seguridade e axuda</a></li>
+  </ol>
+</nav>
+
+<main>
+<header class="chapter-head">
+  <div class="eyebrow">Capítulo 2 · Manual de usuario de OpenQ</div>
+  <h1>Cues e tempos</h1>
+</header>
+
+<!--content-->
+<section id="cues">
+  <h2><span class="n">2.1</span>Tipos de cue</h2>
+  <div class="types">
+    <div class="type"><b><span class="ms" aria-hidden="true">&#xe050;</span>Audio</b><span class="d">Reproduce un ficheiro de son polo mesturador de OpenQ, con recortes, bucles, fragmentos, EQ e enrutado.</span></div>
+    <div class="type"><b><span class="ms" aria-hidden="true">&#xe404;</span>Vídeo</b><span class="d">Reproduce unha película ou unha imaxe fixa nun escenario; a súa banda sonora pasa polo mesturador.</span></div>
+    <div class="type"><b><span class="ms" aria-hidden="true">&#xe262;</span>Texto</b><span class="d">Amosa texto nun escenario, como títulos, sobretítulos ou avisos para os intérpretes.</span></div>
+    <div class="type"><b><span class="ms" aria-hidden="true">&#xe2c7;</span>Grupo</b><span class="d">Contén outras cues e dispáraas dunha de catro maneiras.</span></div>
+    <div class="type"><b><span class="ms" aria-hidden="true">&#xe88b;</span>Espera</b><span class="d">Dura un tempo fixo. Úsaa para espazar unha cadea de autoseguir.</span></div>
+    <div class="type"><b><span class="ms" aria-hidden="true">&#xf1fc;</span>Memo</b><span class="d">Non fai nada. Garda notas e marca lugares do espectáculo.</span></div>
+    <div class="type"><b><span class="ms" aria-hidden="true">&#xe8e3;</span>Fade</b><span class="d">Cambia co tempo o nivel, a opacidade, a xeometría, os efectos de vídeo ou as posicións de audio por obxectos doutra cue.</span></div>
+    <div class="type"><b><span class="ms" aria-hidden="true">&#xe1c4;</span>Iniciar</b><span class="d">Dispara outra cue.</span></div>
+    <div class="type"><b><span class="ms" aria-hidden="true">&#xef71;</span>Parar</b><span class="d">Para outra cue.</span></div>
+    <div class="type"><b><span class="ms" aria-hidden="true">&#xe1a2;</span>Pausa</b><span class="d">Pausa outra cue.</span></div>
+    <div class="type"><b><span class="ms" aria-hidden="true">&#xe5da;</span>Ir a</b><span class="d">Move o cabezal a outra cue.</span></div>
+    <div class="type"><b><span class="ms" aria-hidden="true">&#xe044;</span>Devamp</b><span class="d">Deixa que un fragmento de audio en bucle remate a súa pasada e siga adiante.</span></div>
+    <div class="type"><b><span class="ms" aria-hidden="true">&#xeb2f;</span>Rede</b><span class="d">Envía unha mensaxe OSC a outros equipos, como unha mesa de luces.</span></div>
+    <div class="type"><b><span class="ms" aria-hidden="true">&#xe31d;</span>Micro</b><span class="d">Reproduce unha entrada de audio en directo, como un micrófono, polo mesturador.</span></div>
+    <div class="type"><b><span class="ms" aria-hidden="true">&#xe412;</span>Cámara</b><span class="d">Amosa unha cámara ou unha capturadora en directo nun escenario.</span></div>
+    <div class="type"><b><span class="ms" aria-hidden="true">&#xe90f;</span>Luz</b><span class="d">Reproduce unha cue do deseño de iluminación, ou libera as súas secuencias (ver <a href="lighting.gl.html#lighting">Iluminación</a>).</span></div>
+  </div>
+  <p>Cada cue ten un <strong>número</strong> (texto libre, como <code>4.2</code>), un <strong>nome</strong>, <strong>notas</strong>,
+  unha <strong>cor</strong> e un interruptor <strong>Armada</strong>, todo na lapela Básico. GO salta unha cue desarmada.
+  Básico tamén axusta a <strong>pre-espera</strong>, o modo de <strong>continuación</strong> e a <strong>post-espera</strong> da
+  cue e, para cues de audio e vídeo, o <strong>ficheiro de medios</strong>.</p>
+  <p>A lapela <strong>Disparadores</strong> reúne as formas de disparar unha cue ademais de GO: un <strong>atallo</strong>, unha tecla
+  que dispara a cue directamente estea onde estea o cabezal, e un <a href="#timecode">disparador por código de tempo</a>.</p>
+</section>
+
+<section id="timing">
+  <h2><span class="n">2.2</span>Tempos e continuacións</h2>
+  <p>Cada cue ten tres tempos. A <strong>pre-espera</strong> transcorre entre GO e a acción da cue. A
+  <strong>acción</strong> é a cue en si: un son que soa, un fundido en marcha. A <strong>post-espera</strong> cóntase
+  desde o inicio da acción e úsaa autocontinuar.</p>
+  <div class="timing" role="img" aria-label="Diagrama: a cue 1 ten unha pre-espera de 1 segundo e logo unha acción de 6 segundos. Con autocontinuar e unha post-espera de 3 segundos, a cue 2 dispárase 3 segundos despois de que comece a acción da cue 1.">
+    <div class="lane"><span class="who">GO → 1</span>
+      <div class="track">
+        <div class="seg pre" style="left:0;width:10%">pre</div>
+        <div class="seg act" style="left:10%;width:60%">acción 0:06.00</div>
+      </div></div>
+    <div class="lane"><span class="who">post-espera</span>
+      <div class="track"><div class="seg post" style="left:10%;width:30%">0:03.00 → dispara 2</div></div></div>
+    <div class="lane"><span class="who">auto → 2</span>
+      <div class="track"><div class="seg act" style="left:40%;width:45%">acción</div><div class="marker" style="left:40%"></div></div></div>
+    <div class="axis"><span></span><div class="ticks"><span>0s</span><span>2</span><span>4</span><span>6</span><span>8</span><span>10s</span></div></div>
+  </div>
+  <div class="table-wrap"><table>
+    <thead><tr><th>Modo de continuación</th><th>Que pasa despois</th></tr></thead>
+    <tbody>
+      <tr><td>Non continuar</td><td>Nada. O cabezal pasa á seguinte cue e agarda por GO.</td></tr>
+      <tr><td>Autocontinuar <span class="ms" aria-hidden="true">&#xe5db;</span></td><td>A seguinte cue dispárase cando se esgota a post-espera desta.</td></tr>
+      <tr><td>Autoseguir <span class="ms" aria-hidden="true">&#xead0;</span></td><td>A seguinte cue dispárase cando remata a acción desta.</td></tr>
+    </tbody>
+  </table></div>
+  <p>As cues encadeadas arrancan exactamente no límite dunha mostra, así que unha secuencia mantén o seu tempo por moito que dure.</p>
+  <h3 id="groups">Grupos</h3>
+  <div class="table-wrap"><table>
+    <thead><tr><th>Modo de grupo</th><th>Comportamento</th></tr></thead>
+    <tbody>
+      <tr><td>Iniciar a primeira filla e entrar no grupo</td><td>Dispara a primeira cue do grupo e mete o cabezal dentro.</td></tr>
+      <tr><td>Iniciar a primeira filla e pasar á seguinte cue</td><td>Unha lista de reprodución: as fillas soan unha tras outra mentres o cabezal pasa máis alá do grupo.</td></tr>
+      <tr><td>Iniciar todas as fillas á vez</td><td>Dispara todo o que contén á vez, cada un coa súa propia pre-espera.</td></tr>
+      <tr><td>Iniciar unha filla ao chou e pasar á seguinte cue</td><td>Dispara unha filla escollida ao chou.</td></tr>
+    </tbody>
+  </table></div>
+  <p>Selecciona cues e preme <kbd>Ctrl</kbd>+<kbd>G</kbd> para agrupalas. <kbd>←</kbd> e <kbd>→</kbd> pregan e despregan un grupo. Os grupos poden conter outros grupos. Cada nivel sangrase cunha liña guía, para ver onde remata un grupo.</p>
+</section>
+
+<section id="fades">
+  <h2><span class="n">2.3</span>Fundidos</h2>
+  <p>Unha cue Fade cambia outra cue mentres soa. Escolle a cue de <strong>destino</strong>, a <strong>duración</strong> e a
+  <strong>curva</strong> (lineal, en S ou logarítmica), e marca o que queres cambiar:</p>
+  <ul>
+    <li><strong>Nivel</strong> en dB, para audio e para bandas sonoras de vídeo.</li>
+    <li><strong>Opacidade</strong>, para vídeo e texto.</li>
+    <li><strong>Xeometría</strong>: posición, escala, rotación e recorte. Parte da xeometría propia do destino, así que só
+    se moven os valores que cambies.</li>
+    <li><strong>Efectos de vídeo</strong>: os axustes de <a href="video.gl.html#videofx">FX de vídeo</a> do destino cópianse no fundido ao
+    marcalo; cambia os valores cara aos que fundir. Un efecto apagado aquí fúndese cara a fóra, e os efectos que o destino non
+    ten entran fundindo desde nada. <em>Tomar os efectos do destino</em> vólveos copiar despois de cambiar de destino.</li>
+    <li><strong>Obxectos</strong>, para destinos en modo <a href="audio.gl.html#audio">audio por obxectos</a>: as posicións e a dispersión ás
+    que mover os obxectos, editadas na mesma vista de sala.</li>
+  </ul>
+  <p>Unha cue Fade non pode ter como destino unha cue de luz: a iluminación funde coas súas propias cues de luz (ver <a href="lighting.gl.html#lighting">Iluminación</a>).</p>
+  <p>Marca <strong>Parar o destino</strong> para un fundido de saída: o destino párase ao rematar o fundido. Pausar un fundido
+  conxélao, e retomalo continúa co tempo que quedaba.</p>
+</section>
+
+<section id="timecode">
+  <h2><span class="n">2.4</span>Código de tempo</h2>
+  <p>OpenQ pode levar unha lista de cues a partir de código de tempo SMPTE entrante, para un espectáculo sincronizado cun vídeo,
+  o click dunha banda ou unha mesa de luces. Le <strong>LTC</strong> (código de tempo como sinal de audio) nunha entrada de audio ou
+  <strong>MTC</strong> (MIDI Time Code) nunha entrada MIDI, a 24, 25, 29,97 drop-frame ou 30 fps.</p>
+  <h3 id="setting-up-a-cue-list">Configurar unha lista de cues</h3>
+  <p>Fai clic dereito na lapela da lista e escolle <em>Timecode…</em>. Escolle que segue a lista (LTC ou MTC), a entrada de audio
+  e a canle ou a entrada MIDI pola que chega, e a frecuencia de fotogramas. A xanela amosa o código de tempo que entra, e
+  mentres esa lista está á fronte a tarxeta de espera tamén o amosa. Cada lista segue a súa propia fonte, así que unha lista pode
+  seguir o LTC da banda mentres outra se leva á man.</p>
+  <h3 id="timecode-triggers">Disparadores por código de tempo</h3>
+  <figure>
+    <img src="img/gl/triggers.webp" width="1400" height="255" alt="Lapela Disparadores: unha tarxeta de atallo e unha tarxeta de código de tempo co tempo de disparo, a fonte da lista e o que está a recibir.">
+    <figcaption>A lapela Disparadores dunha cue que se dispara en 01:00:05:00.</figcaption>
+  </figure>
+  <p>Na lapela <strong>Disparadores</strong> dunha cue, marca <em>Disparar en</em> e escribe o tempo (hh:mm:ss:ff). Cando o código de
+  tempo da lista pasa por ese momento, a cue dispárase, estea onde estea o cabezal, e as súas continuacións funcionan coma sempre.
+  A lapela amosa que segue a lista e que está a recibir; <em>Configurar…</em> abre os axustes de código de tempo da lista.</p>
+  <p>Só o código de tempo que avanza dispara cues. Cando a fonte salta (un locate ou un rebobinado) ou se para, non se dispara nada,
+  e os disparos retómanse desde a nova posición, así que ensaiar unha sección facendo retroceder a fonte é seguro.</p>
+</section>
+<!--/content-->
+
+<nav class="pager" aria-label="Capítulo anterior e seguinte">
+  <a class="prev" href="start.gl.html"><span>← Anterior</span>Primeiros pasos</a>
+  <a class="next" href="audio.gl.html"><span>Seguinte →</span>Audio</a>
+</nav>
+</main>
+</div>
+<script src="manual.js"></script>
+</body>
+</html>

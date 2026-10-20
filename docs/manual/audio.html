@@ -1,0 +1,158 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<!-- Built by tools/build_manual.py around the content block below: edit only that, then run the script. -->
+<title>Audio · OpenQ User Manual</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Barlow+Condensed:wght@500;600;700&family=Inter:wght@400;500;600&family=JetBrains+Mono:wght@400;500&display=swap">
+<link rel="stylesheet" href="manual.css">
+</head>
+<body>
+<div class="wrap">
+<nav class="toc" aria-label="Chapters">
+  <div class="brand"><a href="index.html" title="Contents">Open<b>Q</b></a></div>
+  <div class="brand-sub">User manual</div>
+  <div class="langs"><a href="audio.html" hreflang="en" title="English" aria-current="page">EN</a><a href="audio.es.html" hreflang="es" title="Español">ES</a><a href="audio.gl.html" hreflang="gl" title="Galego">GL</a></div>
+  <ol class="chapters">
+    <li><a href="start.html">Getting started</a></li>
+    <li><a href="cues.html">Cues and timing</a></li>
+    <li class="cur"><a href="audio.html" aria-current="page">Audio</a>
+     <ol class="sub">
+      <li class="s2"><a href="#audio">Audio cues</a></li>
+      <li class="s3"><a href="#time-loops">Time &amp; Loops</a></li>
+      <li class="s3"><a href="#i-o">I/O</a></li>
+      <li class="s3"><a href="#object-audio">Object audio</a></li>
+      <li class="s3"><a href="#levels">Levels</a></li>
+      <li class="s3"><a href="#eq">EQ</a></li>
+      <li class="s3"><a href="#audio-fx">Audio FX</a></li>
+      <li class="s3"><a href="#mic-cues">Mic cues</a></li>
+     </ol>
+    </li>
+    <li><a href="video.html">Video and projection</a></li>
+    <li><a href="lighting.html">Lighting</a></li>
+    <li><a href="remote.html">Remote control and network</a></li>
+    <li><a href="help.html">Safety and help</a></li>
+  </ol>
+</nav>
+
+<main>
+<header class="chapter-head">
+  <div class="eyebrow">Chapter 3 · OpenQ User Manual</div>
+  <h1>Audio</h1>
+</header>
+
+<!--content-->
+<section id="audio">
+  <h2><span class="n">3.1</span>Audio cues</h2>
+  <h3 id="time-loops">Time &amp; Loops</h3>
+  <figure>
+    <img src="img/waveform.webp" width="1400" height="369" alt="Time and Loops tab: waveform with trim markers and fade curves, then Trim, Loops, Playback and Fades cards.">
+    <figcaption>The Time &amp; Loops tab. Drag the green and red markers to trim; double-click to add a slice.
+    The orange curves are the cue's fade-in and fade-out.</figcaption>
+  </figure>
+  <ul>
+    <li><strong>Trim:</strong> drag the start and end markers, or type the times. Drag the waveform to pan, and use
+    <kbd>Ctrl</kbd>+scroll to zoom. A line shows the playback position while the cue runs.</li>
+    <li><strong>Loops:</strong> set a play count, or loop until stopped.</li>
+    <li><strong>Playback:</strong> the rate is varispeed. The pitch changes with the speed, like a tape machine.</li>
+    <li><strong>Fades:</strong> a fade-in from silence when the cue starts and a fade-out to silence at its end, with a
+    choice of curve, without a separate Fade cue. The fade-out needs a known end, so it doesn't happen while the cue
+    loops forever; with a vamping slice it plays after the Devamp.</li>
+    <li><strong>Slices:</strong> double-click the waveform to add a slice marker. Drag it to move it, and right-click to
+    delete it. Each slice plays a set number of times, or loops until a <strong>Devamp</strong> cue (or the OSC
+    message <code>/cue/&lt;n&gt;/devamp</code>) releases it. The current pass then finishes and playback carries on.
+    Use this for music that has to vamp until an actor's line.</li>
+  </ul>
+  <h3 id="i-o">I/O</h3>
+  <figure>
+    <img src="img/io.webp" width="1400" height="348" alt="I/O tab: input file details, output device and the routing card.">
+    <figcaption>Where the sound comes from and where it goes.</figcaption>
+  </figure>
+  <ul>
+    <li><strong>Input:</strong> the media file, with its length, format, location on disk (and a button to show it in
+    the file manager), size and channel count. <em>Browse…</em> replaces the file.</li>
+    <li><strong>Output:</strong> the audio device the cue plays on and its number of outputs (set in Settings → Audio).</li>
+    <li><strong>Routing:</strong> automatic, or a <strong>crosspoint matrix</strong> from the file's channels to the
+    device outputs. Each crosspoint has its own level in dB, so a stereo file can feed eight speakers. Or switch to
+    <strong>Object audio</strong> and place the channels in the room (below).</li>
+  </ul>
+  <h3 id="object-audio">Object audio</h3>
+  <figure>
+    <img src="img/object-audio.webp" width="1400" height="382" alt="I/O tab in object audio mode: a room with four speakers and two numbered objects, and their positions.">
+    <figcaption>Object audio: each channel of the file is a numbered object in the room. The speakers light up with what they play.</figcaption>
+  </figure>
+  <p>Object audio routes sound by <em>where it should come from</em> instead of by output. Pick
+  <strong>Object audio</strong> in the Routing card: every channel of the file becomes an object you drag around the room
+  (or type its position). The speakers nearest an object play it loudest; the level falls 6 dB each time the distance
+  doubles, and the total power stays the same wherever the object is, so moving it never changes its loudness.
+  <strong>Spread</strong> widens an object from a point (0 %) to the whole room (100 %). Output faders on the Levels tab
+  still apply, and Mic cues and video soundtracks can use object audio too.</p>
+  <p>The room is set once per show in <a href="start.html#settings">Settings → Audio</a>. A <a href="cues.html#fades">Fade cue</a> can move
+  the objects, for a sound that flies across the room. Moves are smoothed, so dragging an object on a playing cue
+  doesn't click.</p>
+  <h3 id="levels">Levels</h3>
+  <figure>
+    <img src="img/levels.webp" width="1400" height="314" alt="Levels tab: vertical faders for the main level and outputs 1 and 2, and a pan card.">
+    <figcaption>Faders for the cue's main level and each device output.</figcaption>
+  </figure>
+  <p>The <strong>Main</strong> fader sets the cue's level. Next to it there is a fader for each output of the audio
+  device, which trims that output after the routing matrix. Drag a fader, or type a value in the box above it;
+  double-click a fader to return it to 0 dB. <strong>Pan</strong> moves the sound between outputs 1 and 2 while the
+  routing is automatic.</p>
+  <h3 id="eq">EQ</h3>
+  <figure>
+    <img src="img/eq.webp" width="1400" height="421" alt="Equaliser with a response curve and a list of bands.">
+    <figcaption>Up to eight bands per cue. Drag the handles to set frequency and gain, and scroll on a handle to change Q.</figcaption>
+  </figure>
+  <p>Band types are high-pass, low shelf, peak, high shelf and low-pass. <strong>EQ enabled</strong> turns the
+  whole EQ on and off.</p>
+  <h3 id="audio-fx">Audio FX</h3>
+  <figure>
+    <img src="img/audio-fx.webp" width="1400" height="283" alt="Audio FX tab: reverb, compressor and a bypassed delay as cards, and an Add effect card.">
+    <figcaption>An effect chain: reverb, then compressor; the delay is switched off.</figcaption>
+  </figure>
+  <p>Audio, Mic and video cues have an <strong>Audio FX</strong> tab: a chain of up to eight effects that run top to
+  bottom on the cue's channels, after the EQ and before routing. <em>Add…</em> puts a new effect at the end; the arrows
+  change the order, <strong>On</strong> bypasses an effect without losing its settings.</p>
+  <div class="table-wrap"><table>
+    <thead><tr><th>Effect</th><th>Settings</th><th>Use</th></tr></thead>
+    <tbody>
+      <tr><td>Delay</td><td>time, feedback, high cut, mix</td><td>Echoes; the high cut darkens each repeat.</td></tr>
+      <tr><td>Reverb</td><td>size, damping, pre-delay, width, mix</td><td>Room sound for dry recordings or voices.</td></tr>
+      <tr><td>Compressor</td><td>threshold, ratio, attack, release, makeup</td><td>Evens out level; all channels move together.</td></tr>
+      <tr><td>Limiter</td><td>ceiling, release</td><td>Never lets a peak past the ceiling.</td></tr>
+      <tr><td>Gate</td><td>threshold, range, attack, hold, release</td><td>Turns a microphone down between phrases.</td></tr>
+      <tr><td>Distortion</td><td>drive, tone, output, mix</td><td>Radio, telephone or overdriven sounds.</td></tr>
+      <tr><td>Chorus</td><td>rate, depth, delay, feedback, mix</td><td>Thickens and widens a sound.</td></tr>
+      <tr><td>Bitcrusher</td><td>bits, downsample, mix</td><td>Lo-fi, retro game sounds.</td></tr>
+    </tbody>
+  </table></div>
+  <div class="note tip"><span class="label">Live changes</span><p>Level, output fader, pan, EQ, effect, routing and object
+  changes are heard straight away on a playing cue, so you can tune them during a run. Reverb and delay tails carry on
+  through an edit.</p></div>
+  <h3 id="mic-cues">Mic cues</h3>
+  <figure>
+    <img src="img/mic.webp" width="1400" height="312" alt="Mic cue I/O tab: input device, channels and level meter, timing, and routing.">
+    <figcaption>A Mic cue's I/O tab. The level bar moves while the cue runs.</figcaption>
+  </figure>
+  <p>A Mic cue sends a live input (a microphone, a line input, a playback machine) through the OpenQ mixer, so it gets
+  the same <strong>Levels</strong> faders, pan, <strong>EQ</strong> and routing as an audio cue, and Fade cues can fade
+  it. On the <strong>I/O</strong> tab choose the input device and which of its channels to use, for example inputs
+  3–4 for a stereo pair. A <strong>duration</strong> of 0 keeps the input open until the cue is stopped, and the
+  <strong>fade in</strong> brings it up from silence. The input reaches the outputs about 30 ms late, which is too
+  little to hear as an echo in most rooms.</p>
+</section>
+<!--/content-->
+
+<nav class="pager" aria-label="Previous and next chapter">
+  <a class="prev" href="cues.html"><span>← Previous</span>Cues and timing</a>
+  <a class="next" href="video.html"><span>Next →</span>Video and projection</a>
+</nav>
+</main>
+</div>
+<script src="manual.js"></script>
+</body>
+</html>

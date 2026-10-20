@@ -5,11 +5,35 @@
 
 use std::path::{Path, PathBuf};
 
-/// Every file of the manual, by its path relative to `index.html`.
+/// Every file of the manual, by its path relative to `index.html`: the contents page and one page per chapter in
+/// each language (built around their content by `tools/build_manual.py`), the shared style sheet and script, pictures.
 const FILES: &[(&str, &[u8])] = &[
     ("index.html", include_bytes!("../../docs/manual/index.html")),
     ("index.es.html", include_bytes!("../../docs/manual/index.es.html")),
     ("index.gl.html", include_bytes!("../../docs/manual/index.gl.html")),
+    ("start.html", include_bytes!("../../docs/manual/start.html")),
+    ("start.es.html", include_bytes!("../../docs/manual/start.es.html")),
+    ("start.gl.html", include_bytes!("../../docs/manual/start.gl.html")),
+    ("cues.html", include_bytes!("../../docs/manual/cues.html")),
+    ("cues.es.html", include_bytes!("../../docs/manual/cues.es.html")),
+    ("cues.gl.html", include_bytes!("../../docs/manual/cues.gl.html")),
+    ("audio.html", include_bytes!("../../docs/manual/audio.html")),
+    ("audio.es.html", include_bytes!("../../docs/manual/audio.es.html")),
+    ("audio.gl.html", include_bytes!("../../docs/manual/audio.gl.html")),
+    ("video.html", include_bytes!("../../docs/manual/video.html")),
+    ("video.es.html", include_bytes!("../../docs/manual/video.es.html")),
+    ("video.gl.html", include_bytes!("../../docs/manual/video.gl.html")),
+    ("lighting.html", include_bytes!("../../docs/manual/lighting.html")),
+    ("lighting.es.html", include_bytes!("../../docs/manual/lighting.es.html")),
+    ("lighting.gl.html", include_bytes!("../../docs/manual/lighting.gl.html")),
+    ("remote.html", include_bytes!("../../docs/manual/remote.html")),
+    ("remote.es.html", include_bytes!("../../docs/manual/remote.es.html")),
+    ("remote.gl.html", include_bytes!("../../docs/manual/remote.gl.html")),
+    ("help.html", include_bytes!("../../docs/manual/help.html")),
+    ("help.es.html", include_bytes!("../../docs/manual/help.es.html")),
+    ("help.gl.html", include_bytes!("../../docs/manual/help.gl.html")),
+    ("manual.css", include_bytes!("../../docs/manual/manual.css")),
+    ("manual.js", include_bytes!("../../docs/manual/manual.js")),
     ("img/animation.webp", include_bytes!("../../docs/manual/img/animation.webp")),
     ("img/animation-stage.webp", include_bytes!("../../docs/manual/img/animation-stage.webp")),
     ("img/audio-fx.webp", include_bytes!("../../docs/manual/img/audio-fx.webp")),
@@ -26,11 +50,11 @@ const FILES: &[(&str, &[u8])] = &[
     ("img/light-cue.webp", include_bytes!("../../docs/manual/img/light-cue.webp")),
     ("img/lighting-patch.webp", include_bytes!("../../docs/manual/img/lighting-patch.webp")),
     ("img/lighting-plan.webp", include_bytes!("../../docs/manual/img/lighting-plan.webp")),
+    ("img/lighting-playback.webp", include_bytes!("../../docs/manual/img/lighting-playback.webp")),
     ("img/fixture-types.webp", include_bytes!("../../docs/manual/img/fixture-types.webp")),
     ("img/lighting-programmer.webp", include_bytes!("../../docs/manual/img/lighting-programmer.webp")),
     ("img/lighting-effects.webp", include_bytes!("../../docs/manual/img/lighting-effects.webp")),
     ("img/lighting-sequences.webp", include_bytes!("../../docs/manual/img/lighting-sequences.webp")),
-    ("img/lighting-playback.webp", include_bytes!("../../docs/manual/img/lighting-playback.webp")),
     ("img/lighting-points.webp", include_bytes!("../../docs/manual/img/lighting-points.webp")),
     ("img/lighting-plot.webp", include_bytes!("../../docs/manual/img/lighting-plot.webp")),
     ("img/lighting-outputs.webp", include_bytes!("../../docs/manual/img/lighting-outputs.webp")),
@@ -175,38 +199,60 @@ pub(super) fn open() -> anyhow::Result<PathBuf> {
 mod tests {
     use super::*;
 
+    /// The text of every page in one language (`""` English, `"es"`, `"gl"`), with the style sheet.
+    fn pages(lang: &str) -> String {
+        let is_lang = |name: &str| match lang {
+            "" => !name.ends_with(".es.html") && !name.ends_with(".gl.html"),
+            l => name.ends_with(&format!(".{l}.html")),
+        };
+        FILES.iter()
+            .filter(|f| (f.0.ends_with(".html") && is_lang(f.0)) || f.0 == "manual.css")
+            .map(|f| std::str::from_utf8(f.1).unwrap())
+            .collect()
+    }
+
     #[test]
     fn every_manual_file_is_bundled_and_referenced_files_exist() {
         let root = Path::new(env!("CARGO_MANIFEST_DIR")).join("docs/manual");
         let bundled: Vec<&str> = FILES.iter().map(|f| f.0).collect();
-        for dir in ["img", "img/es", "img/gl"] {
+        for dir in [".", "img", "img/es", "img/gl"] {
             for entry in std::fs::read_dir(root.join(dir)).unwrap() {
                 let entry = entry.unwrap();
                 if entry.path().is_file() {
-                    let name = format!("{dir}/{}", entry.file_name().to_string_lossy());
+                    let file = entry.file_name().to_string_lossy().into_owned();
+                    let name = if dir == "." { file } else { format!("{dir}/{file}") };
                     assert!(bundled.contains(&name.as_str()), "{name} is not in manual::FILES");
                 }
             }
         }
-        let html = std::str::from_utf8(FILES[0].1).unwrap();
-        for (rel, _) in FILES[1..].iter().filter(|f| !f.0.starts_with("img/es/") && !f.0.starts_with("img/gl/")) {
+        let html = pages("");
+        for (rel, _) in FILES.iter().filter(|f| !f.0.ends_with(".html") && !f.0.starts_with("img/es/") && !f.0.starts_with("img/gl/")) {
             assert!(html.contains(rel), "{rel} is bundled but not used by the manual");
         }
-        for (rel, lang) in [("img/es/", "index.es.html"), ("img/gl/", "index.gl.html")] {
-            let page = std::str::from_utf8(FILES.iter().find(|f| f.0 == lang).unwrap().1).unwrap();
-            for (img, _) in FILES.iter().filter(|f| f.0.starts_with(rel)) {
-                assert!(page.contains(img), "{lang} doesn't show {img}");
+        // Every page in a language links to the others there, and nothing links to a page that isn't bundled.
+        for lang in ["", "es", "gl"] {
+            let text = pages(lang);
+            for link in text.split("href=\"").skip(1).filter_map(|l| l.split(['"', '#']).next()) {
+                if link.ends_with(".html") {
+                    assert!(bundled.contains(&link), "the manual links to {link}, which is not bundled");
+                }
             }
         }
-        // Each translation shows its own language's pictures: img/X.webp (English) in index.html,
-        // img/es/X.webp in index.es.html and img/gl/X.webp in index.gl.html. A picture without a
-        // translation stays English and is referenced as img/X.webp in every page.
-        for (rel, lang) in [("index.es.html", "es"), ("index.gl.html", "gl")] {
-            let page = std::str::from_utf8(FILES.iter().find(|f| f.0 == rel).unwrap().1).unwrap();
+        for (rel, lang) in [("img/es/", "es"), ("img/gl/", "gl")] {
+            let text = pages(lang);
+            for (img, _) in FILES.iter().filter(|f| f.0.starts_with(rel)) {
+                assert!(text.contains(img), "the {lang} manual doesn't show {img}");
+            }
+        }
+        // Each translation shows its own language's pictures: img/X.webp (English) in the English pages,
+        // img/es/X.webp in the Spanish ones and img/gl/X.webp in the Galician ones. A picture without a
+        // translation stays English and is referenced as img/X.webp in every language.
+        for lang in ["es", "gl"] {
+            let text = pages(lang);
             for (img, _) in FILES.iter().filter(|f| f.0.starts_with("img/") && !f.0.starts_with("img/es/") && !f.0.starts_with("img/gl/")) {
                 let translated = img.replacen("img/", &format!("img/{lang}/"), 1);
                 let shown = if FILES.iter().any(|f| f.0 == translated) { translated } else { img.to_string() };
-                assert!(page.contains(&shown), "{rel} doesn't show {shown}");
+                assert!(text.contains(&shown), "the {lang} manual doesn't show {shown}");
             }
         }
         assert_eq!((page_for("es_ES.UTF-8"), page_for("gl_ES"), page_for("en_GB"), page_for("")), ("index.es.html", "index.gl.html", "index.html", "index.html"));

@@ -1,0 +1,215 @@
+/* Layout: a sticky chapter rail on the left and a single reading column, like a console's
+   help screen. The colours come from the app's own theme (theme.rs). */
+:root {
+  --bg: #f6f7f9;
+  --panel: #ffffff;
+  --raised: #eceef2;
+  --border: #d9dce3;
+  --fg: #16171b;
+  --dim: #555a66;
+  --faint: #868b97;
+  --accent: #2f5fd6;
+  --accent-bg: rgba(47, 95, 214, .10);
+  --go: #1f8a3f;
+  --amber: #a86d00;
+  --red: #c2363b;
+  --code-bg: #eceef2;
+  --display: "Barlow Condensed", "Arial Narrow", system-ui, sans-serif;
+  --body: "Inter", system-ui, -apple-system, "Segoe UI", sans-serif;
+  --mono: "JetBrains Mono", ui-monospace, "SFMono-Regular", Menlo, monospace;
+}
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) {
+    --bg: #141518; --panel: #1b1c20; --raised: #24252b; --border: #32343b;
+    --fg: #e8e8eb; --dim: #9b9da6; --faint: #6c6e77;
+    --accent: #6f98f5; --accent-bg: rgba(74, 124, 240, .18);
+    --go: #3cc864; --amber: #f2b01e; --red: #ee6a6e; --code-bg: #101114;
+    color-scheme: dark;
+  }
+}
+:root[data-theme="dark"] {
+  --bg: #141518; --panel: #1b1c20; --raised: #24252b; --border: #32343b;
+  --fg: #e8e8eb; --dim: #9b9da6; --faint: #6c6e77;
+  --accent: #6f98f5; --accent-bg: rgba(74, 124, 240, .18);
+  --go: #3cc864; --amber: #f2b01e; --red: #ee6a6e; --code-bg: #101114;
+  color-scheme: dark;
+}
+
+* { box-sizing: border-box; }
+body {
+  margin: 0; background: var(--bg); color: var(--fg);
+  font: 15px/1.65 var(--body);
+  -webkit-font-smoothing: antialiased;
+}
+a { color: var(--accent); text-underline-offset: 2px; }
+a:focus-visible, button:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; border-radius: 4px; }
+
+.wrap {
+  display: grid; grid-template-columns: 240px minmax(0, 1fr); gap: 48px;
+  max-width: 1180px; margin: 0 auto; padding-inline: 24px; padding-block: 0 80px;
+}
+@media (max-width: 880px) { .wrap { grid-template-columns: minmax(0, 1fr); gap: 0; padding-inline: 16px; } }
+
+/* Chapter rail: every chapter (one page each), with the current one's sections and subsections. */
+nav.toc {
+  position: sticky; top: env(safe-area-inset-top, 0px); align-self: start;
+  max-height: 100vh; overflow-y: auto; padding-block: 28px 24px; overscroll-behavior: contain;
+}
+.brand { font: 700 34px/1 var(--display); letter-spacing: .01em; margin: 0 0 4px; }
+.brand a { color: inherit; text-decoration: none; }
+.brand b { color: var(--go); font-weight: 700; }
+.brand-sub { font: 600 11px/1 var(--body); letter-spacing: .14em; text-transform: uppercase; color: var(--faint); margin-bottom: 22px; }
+/* Language switcher under the brand: the same page in the other languages. */
+.langs { display: inline-flex; gap: 2px; padding: 3px; margin: -8px 0 18px; border: 1px solid var(--border); border-radius: 99px; }
+nav.toc .langs a { display: inline-block; padding: 1px 9px; border-radius: 99px; font: 600 11px/1.6 var(--body); letter-spacing: .06em; color: var(--dim); text-decoration: none; }
+nav.toc .langs a:hover { color: var(--fg); }
+nav.toc .langs a[aria-current] { background: var(--raised); color: var(--fg); }
+nav.toc ol { list-style: none; margin: 0; padding: 0; }
+.chapters { display: grid; gap: 1px; counter-reset: ch; }
+.chapters > li { counter-increment: ch; margin: 0; }
+.chapters > li > a {
+  display: flex; gap: 10px; align-items: baseline; padding: 5px 10px; border-radius: 6px;
+  color: var(--dim); text-decoration: none; font-size: 14px; line-height: 1.4;
+}
+.chapters > li > a::before { content: counter(ch); font: 500 11px var(--mono); color: var(--faint); min-width: 16px; }
+.chapters > li > a:hover { background: var(--raised); color: var(--fg); }
+.chapters > li > a[aria-current] { background: var(--accent-bg); color: var(--fg); font-weight: 500; }
+.sub { margin: 4px 0 10px 18px; border-left: 1px solid var(--border); }
+.sub li { margin: 0; }
+.sub a {
+  display: block; margin-left: -1px; padding: 3px 10px; border-left: 2px solid transparent; border-radius: 0 6px 6px 0;
+  color: var(--dim); text-decoration: none; font-size: 13px; line-height: 1.35;
+}
+.sub .s2 a { color: var(--fg); font-weight: 500; margin-top: 6px; }
+.sub .s2:first-child a { margin-top: 0; }
+.sub .s3 a { padding-left: 22px; }
+.sub a:hover { background: var(--raised); color: var(--fg); }
+.sub a.on { border-left-color: var(--accent); background: var(--accent-bg); color: var(--fg); }
+@media (max-width: 880px) {
+  nav.toc { position: static; max-height: none; padding-block: 24px 8px; border-bottom: 1px solid var(--border); }
+  .chapters { grid-template-columns: repeat(auto-fill, minmax(170px, 1fr)); }
+  .chapters > li.cur { grid-column: 1 / -1; }
+}
+
+main { min-width: 0; max-width: 780px; padding-block: 28px 0; }
+header.hero { padding-block: 8px 28px; border-bottom: 1px solid var(--border); margin-bottom: 8px; }
+.eyebrow { font: 600 11px/1 var(--body); letter-spacing: .14em; text-transform: uppercase; color: var(--faint); }
+h1 { font: 700 clamp(40px, 6vw, 64px)/0.95 var(--display); margin: 10px 0 14px; text-wrap: balance; letter-spacing: .005em; }
+.lede { font-size: 17px; color: var(--dim); max-width: 62ch; margin: 0; }
+
+section { padding-block: 36px 8px; scroll-margin-top: 12px; }
+h3[id], h4[id], p[id] { scroll-margin-top: 12px; }
+h2 {
+  font: 700 34px/1.05 var(--display); margin: 0 0 14px; text-wrap: balance;
+  display: flex; gap: 12px; align-items: baseline;
+}
+h2 .n { font: 500 13px var(--mono); color: var(--faint); }
+h3 { font: 600 22px/1.2 var(--display); margin: 28px 0 8px; letter-spacing: .01em; }
+p, ul, ol { max-width: 68ch; }
+ul, ol { padding-left: 1.25em; }
+li { margin-block: 4px; }
+strong { font-weight: 600; }
+
+code, kbd, .mono { font-family: var(--mono); font-size: .86em; }
+code { background: var(--code-bg); border: 1px solid var(--border); border-radius: 4px; padding: 1px 5px; }
+kbd {
+  display: inline-block; min-width: 1.7em; text-align: center; padding: 1px 6px;
+  border: 1px solid var(--border); border-bottom-width: 2px; border-radius: 5px;
+  background: var(--panel); color: var(--fg); line-height: 1.5; white-space: nowrap;
+}
+pre { background: var(--code-bg); border: 1px solid var(--border); border-radius: 8px; padding: 12px 14px; overflow-x: auto; font: 13px/1.6 var(--mono); }
+pre code { background: none; border: 0; padding: 0; font-size: inherit; }
+
+/* Icons from the app's own Material Symbols subset, by codepoint, so they also work offline
+   (the copy opened from Help → User manual has the font in fonts/; the repo copy uses assets/;
+   the website copy on GitHub Pages loads it from the repository through jsDelivr). */
+@font-face {
+  font-family: "OpenQ Symbols";
+  src: url("fonts/MaterialSymbolsRounded.ttf") format("truetype"),
+       url("../../assets/fonts/MaterialSymbolsRounded.ttf") format("truetype"),
+       url("https://cdn.jsdelivr.net/gh/iagonunez/OpenQ@master/assets/fonts/MaterialSymbolsRounded.ttf") format("truetype");
+  font-display: block;
+}
+.ms {
+  font-family: "OpenQ Symbols"; font-weight: normal; font-style: normal; font-size: 20px;
+  line-height: 1; letter-spacing: normal; text-transform: none; white-space: nowrap;
+  vertical-align: -4px; color: var(--dim);
+}
+.menu { font-weight: 600; white-space: nowrap; }
+
+figure { margin: 18px 0 22px; }
+figure img { display: block; width: 100%; height: auto; border-radius: 10px; border: 1px solid var(--border); background: #141518; }
+h4 { font: 600 17px/1.3 var(--display); margin: 20px 0 6px; }
+figcaption { font-size: 13px; color: var(--faint); margin-top: 8px; }
+figure.narrow { max-width: 560px; }
+
+.table-wrap { overflow-x: auto; margin: 14px 0 18px; border: 1px solid var(--border); border-radius: 10px; }
+table { border-collapse: collapse; width: 100%; font-size: 14px; }
+th, td { text-align: left; padding: 8px 12px; border-bottom: 1px solid var(--border); vertical-align: top; }
+th { font: 600 11px/1.4 var(--body); letter-spacing: .1em; text-transform: uppercase; color: var(--faint); background: var(--raised); }
+tr:last-child td { border-bottom: 0; }
+td:first-child { white-space: nowrap; }
+.table-wrap.split td:first-child { white-space: normal; width: 50%; }
+
+.note {
+  border: 1px solid var(--border); border-left: 3px solid var(--amber); border-radius: 8px;
+  background: var(--panel); padding: 10px 14px; margin: 16px 0; max-width: 68ch;
+}
+.note.tip { border-left-color: var(--go); }
+.note .label { font: 600 11px/1 var(--body); letter-spacing: .12em; text-transform: uppercase; color: var(--faint); display: block; margin-bottom: 4px; }
+.note p { margin: 0; }
+
+/* Cue timing diagram: pre-wait, action, post-wait on a common time axis. */
+.timing { border: 1px solid var(--border); border-radius: 10px; background: var(--panel); padding: 16px; margin: 16px 0 20px; }
+.lane { display: grid; grid-template-columns: 92px minmax(0, 1fr); align-items: center; gap: 12px; margin-block: 8px; }
+.lane .who { font: 500 12px var(--mono); color: var(--dim); }
+.track { position: relative; height: 26px; }
+.seg { position: absolute; top: 0; bottom: 0; border-radius: 5px; font: 500 11px/26px var(--mono); padding-inline: 8px; overflow: hidden; white-space: nowrap; }
+.seg.pre { background: var(--raised); color: var(--dim); border: 1px dashed var(--border); }
+.seg.act { background: var(--go); color: #fff; }
+.seg.post { background: transparent; color: var(--accent); border: 1px solid var(--accent); }
+.marker { position: absolute; top: -4px; bottom: -4px; width: 2px; background: var(--accent); }
+.axis { display: grid; grid-template-columns: 92px minmax(0, 1fr); gap: 12px; font: 11px var(--mono); color: var(--faint); }
+.axis .ticks { display: flex; justify-content: space-between; }
+
+.types { display: grid; grid-template-columns: repeat(auto-fill, minmax(220px, 1fr)); gap: 10px; margin: 16px 0; }
+.type { border: 1px solid var(--border); border-radius: 8px; padding: 10px 12px; background: var(--panel); }
+.type b { display: flex; align-items: center; gap: 8px; font-weight: 600; }
+.type span.d { display: block; font-size: 13.5px; color: var(--dim); margin-top: 3px; }
+
+.steps { counter-reset: s; list-style: none; padding: 0; }
+.steps > li { counter-increment: s; position: relative; padding-left: 36px; margin-block: 10px; }
+.steps > li::before {
+  content: counter(s); position: absolute; left: 0; top: 1px; width: 24px; height: 24px; border-radius: 50%;
+  background: var(--accent-bg); color: var(--accent); font: 600 12px/24px var(--mono); text-align: center;
+}
+
+/* Chapter pages: heading, and links to the previous and next chapter at the end. */
+header.chapter-head { padding-block: 8px 20px; border-bottom: 1px solid var(--border); }
+header.chapter-head h1 { font-size: clamp(36px, 5vw, 52px); margin-bottom: 0; }
+.pager { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; margin-top: 56px; }
+.pager a {
+  display: block; padding: 12px 16px; border: 1px solid var(--border); border-radius: 10px; background: var(--panel);
+  color: var(--fg); text-decoration: none; font: 600 19px/1.2 var(--display);
+}
+.pager a:hover { border-color: var(--accent); }
+.pager a span { display: block; margin-bottom: 4px; font: 600 11px/1 var(--body); letter-spacing: .12em; text-transform: uppercase; color: var(--faint); }
+.pager .next { grid-column: 2; text-align: right; }
+@media (max-width: 560px) { .pager { grid-template-columns: 1fr; } .pager .next { grid-column: 1; } }
+
+/* Contents page: one card per chapter with its sections and their subsections. */
+.chapter-cards { display: grid; grid-template-columns: repeat(auto-fill, minmax(330px, 1fr)); gap: 12px; margin-top: 8px; }
+.chapter-card { border: 1px solid var(--border); border-radius: 10px; background: var(--panel); padding: 14px 16px 10px; }
+.chapter-card .ct { display: flex; gap: 10px; align-items: baseline; color: var(--fg); text-decoration: none; font: 700 23px/1.1 var(--display); }
+.chapter-card .ct .n { font: 500 12px var(--mono); color: var(--faint); }
+.chapter-card .ct:hover { color: var(--accent); }
+.chapter-card ul { list-style: none; padding: 0; margin: 10px 0 0; }
+.chapter-card li { margin: 0 0 8px; }
+.chapter-card .sec { font-weight: 600; font-size: 14px; color: var(--fg); text-decoration: none; }
+.chapter-card .sec:hover { color: var(--accent); }
+.chapter-card .subs { display: block; font-size: 13px; line-height: 1.5; color: var(--faint); }
+.chapter-card .subs a { color: var(--dim); text-decoration: none; }
+.chapter-card .subs a:hover { color: var(--accent); text-decoration: underline; }
+
+footer { margin-top: 56px; padding-top: 18px; border-top: 1px solid var(--border); color: var(--faint); font-size: 13px; }
+@media (prefers-reduced-motion: no-preference) { html { scroll-behavior: smooth; } }
