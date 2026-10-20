@@ -61,6 +61,10 @@ computer instead (installing Rust and the build dependencies if they're missing)
 curl --proto '=https' --tlsv1.2 -fsSL https://github.com/iagonunez/OQup/releases/latest/download/install.sh | sh
 ```
 
+The Linux binaries need Debian 12, Ubuntu 23.04, Fedora 37 or newer (glibc 2.36). On older systems use
+`oqup install --build-source --no-default-features --features video,lighting` (sound through ALSA: their
+PipeWire is too old for OpenQ's PipeWire support).
+
 ### 🪟 Windows 10/11 (64-bit), in PowerShell
 
 ```powershell

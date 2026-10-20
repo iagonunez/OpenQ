@@ -14,6 +14,9 @@
 # assets/icon/*, assets/fonts/*.txt (font licences). FFmpeg is never inside: the program finds it next to itself
 # (Windows), in `lib/` (Linux, rpath $ORIGIN/lib) or in the bundle's Frameworks (macOS, rpath).
 #
+# Linux builds run in a Debian 12 container (tools/release_linux.sh): cpal's PipeWire bindings need PipeWire >= 0.3.65,
+# so glibc 2.36 is the oldest base; the binaries run on Debian 12+, Ubuntu 23.04+, Fedora 37+.
+#
 # FFmpeg: keep FFMPEG_VERSION/FFMPEG_SHA256/FFMPEG_SERIES and the macOS configure flags in step with OQup
 # (src/platform/macos.rs, src/platform/{linux,windows}.rs).
 name: Release
@@ -79,11 +82,11 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        os: [ubuntu-22.04, ubuntu-22.04-arm, macos-15, macos-15-intel, windows-latest]
+        os: [ubuntu-24.04, ubuntu-24.04-arm, macos-15, macos-15-intel, windows-latest]
         variant: [full, cues]
         include:
-          - { os: ubuntu-22.04, target: x86_64-unknown-linux-gnu, btbn: linux64 }     # older glibc = more distributions
-          - { os: ubuntu-22.04-arm, target: aarch64-unknown-linux-gnu, btbn: linuxarm64 }
+          - { os: ubuntu-24.04, target: x86_64-unknown-linux-gnu, btbn: linux64 }     # built in Debian 12 (see above)
+          - { os: ubuntu-24.04-arm, target: aarch64-unknown-linux-gnu, btbn: linuxarm64 }
           - { os: macos-15, target: aarch64-apple-darwin }
           - { os: macos-15-intel, target: x86_64-apple-darwin }
           - { os: windows-latest, target: x86_64-pc-windows-msvc, btbn: win64 }
@@ -93,12 +96,8 @@ jobs:
     defaults: { run: { shell: bash } }
     steps:
       - uses: actions/checkout@v4
-      - run: rustup toolchain install stable --profile minimal --target ${{ matrix.target }} && rustup default stable
-      - name: System libraries (Linux)
-        if: runner.os == 'Linux'
-        run: |
-          sudo apt-get update
-          sudo apt-get install -y pkg-config clang libclang-dev libasound2-dev libudev-dev libpipewire-0.3-dev
+      - if: runner.os != 'Linux'   # Linux installs its own in the container
+        run: rustup toolchain install stable --profile minimal --target ${{ matrix.target }} && rustup default stable
       - name: FFmpeg (BtbN LGPL shared build)
         if: runner.os != 'macOS'
         run: |
@@ -124,9 +123,11 @@ jobs:
           echo "PKG_CONFIG_PATH=$RUNNER_TEMP/ffmpeg/lib/pkgconfig" >> "$GITHUB_ENV"
       - name: Build
         run: |
+          if [[ "${{ runner.os }}" == Linux ]]; then
+            exec docker run --rm -v "$PWD:/src" -w /src -v "$FFMPEG_DIR:/ffmpeg:ro" -e CARGO_TERM_COLOR debian:bookworm \
+              bash tools/release_linux.sh ${{ matrix.target }} ${{ matrix.cargo_features }}
+          fi
           case "${{ runner.os }}" in
-            # DT_RPATH (not RUNPATH) so FFmpeg's own libraries find each other in lib/ too.
-            Linux) export RUSTFLAGS='-C link-arg=-Wl,-rpath,$ORIGIN/lib -C link-arg=-Wl,--disable-new-dtags' ;;
             macOS) export RUSTFLAGS='-C link-arg=-Wl,-rpath,@executable_path/../Frameworks' MACOSX_DEPLOYMENT_TARGET=11.0 ;;
             # No VC++ runtime needed on the user's computer.
             Windows) export RUSTFLAGS='-C target-feature=+crt-static' ;;

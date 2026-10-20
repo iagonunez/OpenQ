@@ -49,6 +49,10 @@ teu ordenador (instalando Rust e as dependencias de compilación se faltan).
 curl --proto '=https' --tlsv1.2 -fsSL https://github.com/iagonunez/OQup/releases/latest/download/install.sh | sh
 ```
 
+Os binarios de Linux precisan Debian 12, Ubuntu 23.04, Fedora 37 ou posterior (glibc 2.36). En sistemas máis
+antigos usa `oqup install --build-source --no-default-features --features video,lighting` (son por ALSA: o seu
+PipeWire é demasiado antigo para o soporte de PipeWire de OpenQ).
+
 ### 🪟 Windows 10/11 (64 bits), en PowerShell
 
 ```powershell

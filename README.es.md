@@ -49,6 +49,10 @@ iluminación ni OQVis (`--lighting` lo vuelve a añadir).
 curl --proto '=https' --tlsv1.2 -fsSL https://github.com/iagonunez/OQup/releases/latest/download/install.sh | sh
 ```
 
+Los binarios de Linux necesitan Debian 12, Ubuntu 23.04, Fedora 37 o posterior (glibc 2.36). En sistemas más
+antiguos usa `oqup install --build-source --no-default-features --features video,lighting` (sonido por ALSA: su
+PipeWire es demasiado antiguo para el soporte de PipeWire de OpenQ).
+
 ### 🪟 Windows 10/11 (64 bits), en PowerShell
 
 ```powershell
