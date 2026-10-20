@@ -807,6 +807,7 @@ impl App {
         show.ws.stages = st.stages.clone();
         show.ws.lighting = st.lighting.clone();
         show.dirty = true;
+        show.changed();
         show.engine.workspace_changed();
         show.sync_lighting();
         self.undo_base = Some(st);
@@ -3057,15 +3058,23 @@ mod tests {
         let shared: SharedShow = Arc::new(parking_lot::Mutex::new(Show::new(prober.clone())));
         let mut app = App::new(shared.clone(), prober);
         let ctx = egui::Context::default();
-        let port = std::net::UdpSocket::bind(("0.0.0.0", 0)).unwrap().local_addr().unwrap().port();
-        let set = |app: &mut App, on: bool| {
+        let set = |app: &mut App, port: u16, on: bool| {
             let mut s = shared.lock();
             s.ws.settings.osc_port = port;
             s.ws.settings.osc_enabled = on;
             app.sync_osc(&ctx, &s);
         };
-        set(&mut app, true);
-        assert_eq!(app.osc.as_ref().map(|o| o.port), Some(port), "{:?}", app.osc_error);
+        // A port below the ephemeral range: one picked by binding port 0 could be taken by another
+        // test (which also binds 0) between being freed here and rebound.
+        let base = 20_000 + (std::process::id() % 5_000) as u16;
+        let port = (0..50u16)
+            .map(|i| base + i * 97)
+            .find(|&p| {
+                set(&mut app, p, true);
+                app.osc.is_some()
+            })
+            .expect("no free UDP port for OSC");
+        let set = |app: &mut App, on: bool| set(app, port, on);
         set(&mut app, false);
         assert!(app.osc.is_none() && app.osc_error.is_none(), "OSC still listening after being turned off");
         std::net::UdpSocket::bind(("0.0.0.0", port)).expect("port still taken after OSC was turned off");

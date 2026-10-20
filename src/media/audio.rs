@@ -443,9 +443,16 @@ enum Garbage {
     Fx(#[allow(dead_code)] Box<FxChain>),
 }
 
+/// Garbage kept on the audio thread while the queue is full (allocated up front).
+const GARBAGE_OVERFLOW: usize = 1024;
+
 struct Mixer {
     cmds: rtrb::Consumer<Cmd>,
     garbage: rtrb::Producer<Garbage>,
+    /// Garbage the full queue didn't take, handed over on later callbacks: freeing it here
+    /// could stall the callback (the engine thread empties the queue each tick, so it fills
+    /// only while that thread is held up).
+    overflow: Vec<Garbage>,
     // Boxed so voices move in/out of the RT thread via the queues without copying or freeing.
     #[allow(clippy::vec_box)]
     voices: Vec<Box<Voice>>,
@@ -460,7 +467,32 @@ struct Mixer {
 }
 
 impl Mixer {
+    /// Hand `g` to the engine thread to free, or keep it for a later callback if the queue is full.
+    fn retire(&mut self, g: Garbage) {
+        if let Err(rtrb::PushError::Full(g)) = self.garbage.push(g) {
+            if self.overflow.len() < self.overflow.capacity() {
+                self.overflow.push(g);
+            } else {
+                // Both full: the engine thread has stopped emptying the queue for a long time.
+                drop(g);
+            }
+        }
+    }
+
+    /// Move kept garbage into the queue while it has room.
+    fn flush_overflow(&mut self) {
+        while let Some(g) = self.overflow.pop() {
+            if let Err(rtrb::PushError::Full(g)) = self.garbage.push(g) {
+                self.overflow.push(g);
+                break;
+            }
+        }
+    }
+
     fn handle_commands(&mut self) {
+        if !self.overflow.is_empty() {
+            self.flush_overflow();
+        }
         while let Ok(cmd) = self.cmds.pop() {
             match cmd {
                 Cmd::Add(v) => {
@@ -471,7 +503,7 @@ impl Mixer {
                         v.shared.rejected.store(true, Ordering::Release);
                         v.shared.finished.store(true, Ordering::Release);
                         v.shared.stop.store(true, Ordering::Release);
-                        let _ = self.garbage.push(Garbage::Voice(v));
+                        self.retire(Garbage::Voice(v));
                     }
                 }
                 Cmd::Master(g) => self.master = g,
@@ -563,7 +595,7 @@ impl Mixer {
                         }
                     }
                     // The box (now holding the old matrix) is freed off the audio thread.
-                    let _ = self.garbage.push(Garbage::Matrix(matrix));
+                    self.retire(Garbage::Matrix(matrix));
                 }
                 Cmd::Fx { id, mut chain } => {
                     if let Some(v) = self.voice(id) {
@@ -574,7 +606,7 @@ impl Mixer {
                     }
                     // `chain` now holds the replaced one (or the unused new one).
                     if let Some(c) = chain {
-                        let _ = self.garbage.push(Garbage::Fx(c));
+                        self.retire(Garbage::Fx(c));
                     }
                 }
             }
@@ -643,9 +675,7 @@ impl Mixer {
                 let v = self.voices.swap_remove(i);
                 v.shared.finished.store(true, Ordering::Release);
                 v.shared.stop.store(true, Ordering::Release);
-                if let Err(rtrb::PushError::Full(v)) = self.garbage.push(Garbage::Voice(v)) {
-                    drop(v);
-                }
+                self.retire(Garbage::Voice(v));
             } else {
                 i += 1;
             }
@@ -1009,6 +1039,7 @@ impl AudioOutput {
             let mixer = Mixer {
                 cmds: cmd_rx,
                 garbage: gb_tx,
+                overflow: Vec::with_capacity(GARBAGE_OVERFLOW),
                 voices: Vec::with_capacity(MAX_VOICES),
                 channels,
                 frame: 0,
@@ -1597,6 +1628,41 @@ fn run_virtual(mixer: &mut Mixer, shutdown: &AtomicBool, mut capture: Option<rtr
 mod tests {
     use super::*;
     use crate::model::{Eq, EqBand, EqKind};
+
+    /// When the garbage queue is full the audio thread keeps what it retires and hands it over
+    /// once there is room, instead of freeing it in the callback.
+    #[test]
+    fn full_garbage_queue_keeps_garbage_for_later() {
+        let (_cmd_tx, cmd_rx) = rtrb::RingBuffer::<Cmd>::new(4);
+        let (gb_tx, mut gb_rx) = rtrb::RingBuffer::<Garbage>::new(2);
+        let mut m = Mixer {
+            cmds: cmd_rx,
+            garbage: gb_tx,
+            overflow: Vec::with_capacity(GARBAGE_OVERFLOW),
+            voices: Vec::new(),
+            channels: 2,
+            frame: 0,
+            master: 1.0,
+            clock: Arc::new(Clock::new(48_000)),
+            filter: ClockFilter::new(48_000),
+            meters: Arc::new(Default::default()),
+            scratch: Vec::new(),
+            health: Arc::new(Health::default()),
+        };
+        let cap = m.overflow.capacity();
+        for _ in 0..5 {
+            m.retire(Garbage::Matrix(Box::new([0.0; MAX_SRC_CHANNELS * MAX_OUT_CHANNELS])));
+        }
+        assert_eq!(m.overflow.len(), 3, "two in the queue, three kept");
+        assert_eq!(m.overflow.capacity(), cap, "keeping never allocates");
+        while gb_rx.pop().is_ok() {}
+        m.handle_commands();
+        assert_eq!(m.overflow.len(), 1);
+        assert_eq!(gb_rx.slots(), 2, "the queue is full again");
+        while gb_rx.pop().is_ok() {}
+        m.handle_commands();
+        assert!(m.overflow.is_empty());
+    }
 
     #[test]
     fn alsa_list_keeps_one_entry_per_output() {

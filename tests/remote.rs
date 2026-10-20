@@ -46,6 +46,8 @@ fn pair_sync_control_and_revoke() {
     show.lock().replace_workspace(ws, None);
 
     let port = 40000 + (std::process::id() % 20000) as u16;
+    // Discovery's port is fixed: another OpenQ sharing on this computer may hold it.
+    let discovery_free = std::net::UdpSocket::bind(("0.0.0.0", openq::remote::DISCOVERY_PORT)).is_ok();
     let server_cfg = Arc::new(Mutex::new(RemoteConfig { port, instance_name: "Main".into(), ..Default::default() }));
     let server = Server::start(show.clone(), server_cfg.clone(), || {}).unwrap();
     let client_cfg = Arc::new(Mutex::new(RemoteConfig { instance_name: "Tablet".into(), ..Default::default() }));
@@ -289,6 +291,12 @@ fn pair_sync_control_and_revoke() {
     let (why, needs) = wait_for("bad token", || closed(&link));
     assert!(needs && why.contains("Authentication failed"), "{why}");
 
+    // Turning sharing off frees both ports at once, so it can be turned straight back on.
     drop(server);
+    std::net::TcpListener::bind(("0.0.0.0", port)).expect("listening port still taken after the server stopped");
+    if discovery_free {
+        std::net::UdpSocket::bind(("0.0.0.0", openq::remote::DISCOVERY_PORT)).expect("discovery port still taken after the server stopped");
+    }
+    drop(Server::start(show.clone(), server_cfg.clone(), || {}).expect("sharing turned straight back on"));
     let _ = std::fs::remove_dir_all(dir);
 }

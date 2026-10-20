@@ -180,6 +180,9 @@ pub struct Autosave {
     _lock: File,
     last_gen: Option<u64>,
     has_copy: bool,
+    /// The show as last written, kept in step by taking only what edits changed (see
+    /// [`crate::changes`]); dropped once the show is saved.
+    mirror: crate::changes::Mirror,
 }
 
 impl Autosave {
@@ -191,7 +194,7 @@ impl Autosave {
         let id = format!("{}-{millis}-{}", std::process::id(), SEQ.fetch_add(1, Ordering::Relaxed));
         let lock = File::create(dir.join(format!("session-{id}.lock")))?;
         lock.try_lock().map_err(|e| anyhow::anyhow!("cannot lock autosave session: {e}"))?;
-        Ok(Self { dir: dir.to_path_buf(), id, _lock: lock, last_gen: None, has_copy: false })
+        Ok(Self { dir: dir.to_path_buf(), id, _lock: lock, last_gen: None, has_copy: false, mirror: Default::default() })
     }
 
     /// Start a session in the config folder.
@@ -209,7 +212,11 @@ impl Autosave {
 
     /// Store a copy of `ws` (media paths stay absolute, so it loads from anywhere).
     pub fn write(&mut self, ws: &Workspace, path: Option<&Path>) -> anyhow::Result<()> {
-        write_atomic(&self.data_path(), serde_json::to_string(ws)?.as_bytes())?;
+        self.write_json(&serde_json::to_string(ws)?, path)
+    }
+
+    fn write_json(&mut self, json: &str, path: Option<&Path>) -> anyhow::Result<()> {
+        write_atomic(&self.data_path(), json.as_bytes())?;
         let info = AutosaveInfo { path: path.map(Path::to_path_buf), saved: unix_secs() };
         write_atomic(&self.info_path(), serde_json::to_string(&info)?.as_bytes())?;
         self.has_copy = true;
@@ -224,10 +231,12 @@ impl Autosave {
             self.has_copy = false;
         }
         self.last_gen = None;
+        self.mirror.reset();
     }
 
     /// Autosave `show` if it has changes not copied yet, or clear the copy once it's saved.
-    /// The workspace is cloned under the lock and written after releasing it.
+    /// What changed is taken under the lock ([`crate::changes::Mirror`]); the copy is brought up
+    /// to date and written after releasing it.
     pub fn sync(&mut self, show: &SharedShow) -> anyhow::Result<()> {
         let snap = {
             let s = show.lock();
@@ -239,13 +248,21 @@ impl Autosave {
             } else if self.last_gen == Some(s.edit_gen) {
                 return Ok(());
             } else {
-                Some((s.ws.clone(), s.path.clone(), s.edit_gen))
+                Some((self.mirror.take(&s), s.path.clone(), s.edit_gen))
             }
         };
         match snap {
             None => self.clear(),
-            Some((ws, path, generation)) => {
-                self.write(&ws, path.as_deref())?;
+            Some((taken, path, generation)) => {
+                if let Some(t) = taken
+                    && matches!(self.mirror.catch_up(t), crate::changes::Delta::Lost)
+                {
+                    // Taken whole next time.
+                    return Ok(());
+                }
+                let Some(ws) = self.mirror.ws() else { return Ok(()) };
+                let json = serde_json::to_string(ws)?;
+                self.write_json(&json, path.as_deref())?;
                 self.last_gen = Some(generation);
             }
         }
@@ -381,6 +398,7 @@ pub fn find_orphans(own: Option<&Autosave>) -> Vec<Orphan> {
 
 /// Write a crash report for a panic: message, thread, location and backtrace.
 fn write_crash_log(info: &std::panic::PanicHookInfo) -> Option<PathBuf> {
+    use std::io::Write;
     let dir = crash_dir()?;
     std::fs::create_dir_all(&dir).ok()?;
     let thread = std::thread::current();
@@ -393,8 +411,12 @@ fn write_crash_log(info: &std::panic::PanicHookInfo) -> Option<PathBuf> {
         info.location().map(|l| l.to_string()).unwrap_or_default(),
         std::backtrace::Backtrace::force_capture(),
     );
-    let path = dir.join(format!("crash-{}-{}.log", unix_secs(), std::process::id()));
-    std::fs::write(&path, report).ok()?;
+    // Milliseconds + pid + a counter: two panics in the same second (or millisecond, on two
+    // threads) each get their own report; `create_new` never overwrites one.
+    static SEQ: std::sync::atomic::AtomicU32 = std::sync::atomic::AtomicU32::new(0);
+    let millis = SystemTime::now().duration_since(UNIX_EPOCH).map(|d| d.as_millis()).unwrap_or(0);
+    let path = dir.join(format!("crash-{millis}-{}-{}.log", std::process::id(), SEQ.fetch_add(1, Ordering::Relaxed)));
+    std::fs::OpenOptions::new().write(true).create_new(true).open(&path).ok()?.write_all(report.as_bytes()).ok()?;
     // Keep the folder small.
     if let Ok(rd) = std::fs::read_dir(&dir) {
         let mut logs: Vec<PathBuf> = rd.flatten().map(|e| e.path()).filter(|p| p.extension().is_some_and(|x| x == "log")).collect();

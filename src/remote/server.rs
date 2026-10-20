@@ -4,7 +4,6 @@ use super::secure::{self, HandshakeError, Hello, ServerInfo};
 use super::netguard::{self, NetworkChange};
 use super::{ClientMsg, LiveState, RemoteConfig, Role, ServerMsg, TrustedDevice, normalize_code, unix_now};
 use crate::media::audio::MeterReader;
-use crate::model::Workspace;
 use crate::show::SharedShow;
 use parking_lot::Mutex;
 use std::collections::{HashMap, HashSet, VecDeque};
@@ -152,6 +151,9 @@ fn chrono_like_now() -> String {
 /// A running remote-access server. Dropping it stops listening and disconnects everyone.
 pub struct Server {
     shared: Arc<Shared>,
+    /// Accept and discovery threads, joined on drop so the ports are free when it returns
+    /// (turning sharing off and straight on again failed to bind otherwise).
+    threads: Vec<std::thread::JoinHandle<()>>,
 }
 
 impl Server {
@@ -181,14 +183,23 @@ impl Server {
             repaint: Box::new(repaint),
             port,
         });
+        let mut threads = Vec::new();
         let cfg = config.clone();
-        if let Err(e) = super::discovery::respond(id, move || cfg.lock().instance_name.clone(), port, stop.clone()) {
-            log::warn!("remote discovery unavailable: {e}");
+        match super::discovery::respond(id, move || cfg.lock().instance_name.clone(), port, stop.clone()) {
+            Ok(t) => threads.push(t),
+            Err(e) => log::warn!("remote discovery unavailable: {e}"),
         }
         let sh = shared.clone();
-        std::thread::Builder::new().name("openq-remote-accept".into()).spawn(move || accept_loop(sh, listener))?;
+        match std::thread::Builder::new().name("openq-remote-accept".into()).spawn(move || accept_loop(sh, listener)) {
+            Ok(t) => threads.push(t),
+            Err(e) => {
+                stop.store(true, Ordering::Relaxed);
+                threads.into_iter().for_each(|t| drop(t.join()));
+                return Err(e.into());
+            }
+        }
         shared.event(format!("Remote access on, port {port}"));
-        Ok(Self { shared })
+        Ok(Self { shared, threads })
     }
 
     /// Port being listened on.
@@ -244,6 +255,10 @@ impl Server {
 impl Drop for Server {
     fn drop(&mut self) {
         self.shared.stop.store(true, Ordering::Relaxed);
+        // Both threads look at `stop` at least every 50 ms.
+        for t in self.threads.drain(..) {
+            let _ = t.join();
+        }
     }
 }
 
@@ -338,7 +353,7 @@ fn release_address(shared: &Shared, ip: IpAddr) {
     }
 }
 
-use super::vet::media_paths;
+use crate::changes::Delta;
 
 fn title_of(path: &Option<PathBuf>) -> String {
     path.as_ref().and_then(|p| p.file_stem()).map_or_else(|| "Untitled".into(), |s| s.to_string_lossy().into_owned())
@@ -560,7 +575,7 @@ fn receive_loop(
                     continue;
                 }
                 let mut show = shared.show.lock();
-                if let Err(why) = super::vet::cues(&show.ws, &cues).and_then(|_| super::vet::numbers(&lighting)) {
+                if let Err(why) = super::vet::cues(&show.lookups().media, &cues).and_then(|_| super::vet::numbers(&lighting)) {
                     drop(show);
                     refuse_edit(shared, flags, notices, why);
                     continue;
@@ -570,7 +585,7 @@ fn receive_loop(
                 if let Some(p) = lighting.as_deref_mut() {
                     netguard::hold_lighting(&show.ws, p, &mut held);
                 }
-                if show.apply_remote_patch(&cues, lighting.as_deref()) {
+                if show.apply_remote_patch(cues, lighting.as_deref()) {
                     hold_for_operator(shared, &mut show, flags, notices, device_name, held);
                     drop(show);
                     (shared.repaint)();
@@ -587,7 +602,7 @@ fn receive_loop(
                     continue;
                 }
                 let mut show = shared.show.lock();
-                if let Err(why) = super::vet::workspace(&show.ws, &ws).and_then(|_| super::vet::numbers(&lighting)) {
+                if let Err(why) = super::vet::workspace(&show.lookups().media, &ws).and_then(|_| super::vet::numbers(&lighting)) {
                     drop(show);
                     refuse_edit(shared, flags, notices, why);
                     continue;
@@ -612,7 +627,7 @@ fn receive_loop(
             ClientMsg::Edit(mut ws) => {
                 if role.can_edit() {
                     let mut show = shared.show.lock();
-                    if let Err(why) = super::vet::workspace(&show.ws, &ws) {
+                    if let Err(why) = super::vet::workspace(&show.lookups().media, &ws) {
                         drop(show);
                         refuse_edit(shared, flags, notices, why);
                         continue;
@@ -629,7 +644,7 @@ fn receive_loop(
             }
             ClientMsg::Waveform(path) => {
                 // Only files the show uses: a replica must not be able to read anything else.
-                let known = media_paths(&shared.show.lock().ws).contains(&path);
+                let known = shared.show.lock().lookups().media.contains(&path);
                 if known {
                     waveforms.request(path);
                 } else {
@@ -718,12 +733,13 @@ fn send_loop(
     flags: &Flags,
     notices: std::sync::mpsc::Receiver<ServerMsg>,
 ) -> anyhow::Result<()> {
-    let mut last_ws: Option<Workspace> = None;
-    // Comparing whole workspaces under the show lock every 50 ms (per replica) costs real time on
-    // big shows, so it's done when the edit generation moves, or once per heartbeat for changes
-    // that don't bump it (loading another show).
-    let mut last_gen = None;
-    let mut last_compare = Instant::now();
+    // The replica's copy of the workspace, kept in step by taking only what edits changed
+    // ([`crate::changes`]): cloning or comparing a big show under the lock held the engine up.
+    let mut mirror = crate::changes::Mirror::default();
+    // Media files: looked at again when the show changes, or once per heartbeat (probe results
+    // come in later).
+    let mut media_gen = None;
+    let mut media_checked = Instant::now();
     let mut last_state: Option<LiveState> = None;
     let mut last_sent = Instant::now();
     let mut media_sent: HashSet<PathBuf> = HashSet::new();
@@ -746,25 +762,22 @@ fn send_loop(
         }
 
         if flags.resync.swap(false, Ordering::AcqRel) {
-            last_ws = None;
-            last_gen = None;
+            mirror.reset();
         }
         let meters = shared.meters();
         let want_dmx = flags.dmx.load(Ordering::Acquire);
         if !want_dmx {
             dmx_sent = None;
         }
-        let (ws, title, state, prober, dmx) = {
-            let show = shared.show.lock();
+        let (taken, title, state, prober, dmx, media) = {
+            let mut show = shared.show.lock();
             let now = Instant::now();
-            let compare = last_gen != Some(show.edit_gen) || now.duration_since(last_compare) >= HEARTBEAT;
-            let ws = if compare {
-                last_gen = Some(show.edit_gen);
-                last_compare = now;
-                (last_ws.as_ref() != Some(&show.ws)).then(|| show.ws.clone())
-            } else {
-                None
-            };
+            let taken = mirror.take(&show);
+            let media = (media_gen != Some(show.edit_gen) || now.duration_since(media_checked) >= HEARTBEAT).then(|| {
+                media_gen = Some(show.edit_gen);
+                media_checked = now;
+                show.lookups()
+            });
             let state = LiveState {
                 playhead: show.engine.playhead,
                 panicking: show.engine.is_panicking(),
@@ -779,7 +792,7 @@ fn send_loop(
                 },
             };
             let dmx = want_dmx.then(|| show.media.light.frame());
-            (ws, title_of(&show.path), state, show.media.prober.clone(), dmx)
+            (taken, title_of(&show.path), state, show.media.prober.clone(), dmx, media)
         };
         if let Some(frame) = dmx {
             let changed: Vec<(u16, Vec<u8>)> = frame
@@ -793,11 +806,13 @@ fn send_loop(
             }
             dmx_sent = Some(frame);
         }
-        if let Some(ws) = ws {
+        if let Some(taken) = taken {
             // Small edits (a slider being dragged) go as the changed cues and lighting design
             // changes, not the whole show.
-            match last_ws.as_ref().and_then(|old| super::workspace_patch(old, &ws)) {
-                Some((cues, lighting)) => {
+            match mirror.catch_up(taken) {
+                Delta::Same => {}
+                Delta::Lost => continue,
+                Delta::Patch(cues, lighting) => {
                     if !cues.is_empty() || lighting.is_none() {
                         tx.send(&ServerMsg::Cues(cues))?;
                     }
@@ -805,26 +820,28 @@ fn send_loop(
                         tx.send(&ServerMsg::Lighting(Box::new(l)))?;
                     }
                 }
-                None => match &last_ws {
-                    // The replica has a design: keep it, send only its changes.
-                    Some(old) => {
+                Delta::Whole { had_copy, lighting } => {
+                    let ws = mirror.ws().expect("caught up");
+                    if had_copy {
+                        // The replica has a design: keep it, send only its changes.
                         let mut light = ws.clone();
                         light.lighting = Default::default();
                         tx.send(&ServerMsg::Workspace { ws: Box::new(light), title, keep_lighting: true })?;
-                        if let Some(l) = crate::light::patch::diff(&old.lighting, &ws.lighting) {
+                        if let Some(l) = lighting {
                             tx.send(&ServerMsg::Lighting(Box::new(l)))?;
                         }
+                    } else {
+                        tx.send(&ServerMsg::Workspace { ws: Box::new(ws.clone()), title, keep_lighting: false })?;
                     }
-                    None => tx.send(&ServerMsg::Workspace { ws: Box::new(ws.clone()), title, keep_lighting: false })?,
-                },
+                }
             }
-            last_ws = Some(ws);
         }
-        if let Some(ws) = &last_ws {
-            let fresh: Vec<_> = media_paths(ws)
-                .into_iter()
-                .filter(|p| !media_sent.contains(p))
-                .filter_map(|p| prober.get(&p).map(|r| (p, r)))
+        if let Some(media) = media {
+            let fresh: Vec<_> = media
+                .media
+                .iter()
+                .filter(|p| !media_sent.contains(*p))
+                .filter_map(|p| prober.get(p).map(|r| (p.clone(), r)))
                 .collect();
             if !fresh.is_empty() {
                 media_sent.extend(fresh.iter().map(|f| f.0.clone()));

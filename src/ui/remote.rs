@@ -41,6 +41,9 @@ struct Replica {
     meters: Vec<f32>,
     /// Last workspace both sides agree on; local differences are edits to send.
     synced: Option<Workspace>,
+    /// [`Show::edit_gen`] at which the show was last known to match `synced`: comparing the two
+    /// every frame cost ~8 ms on a 50 000-cue show.
+    checked_gen: Option<u64>,
     last_edit: Instant,
     /// Playhead as last mirrored, to notice local changes.
     mirrored_playhead: Option<CueId>,
@@ -244,6 +247,7 @@ impl App {
             dirty: false,
             meters: Vec::new(),
             synced: None,
+            checked_gen: None,
             last_edit: Instant::now(),
             mirrored_playhead: None,
             pending_playhead: None,
@@ -329,6 +333,8 @@ impl App {
                     if r.synced.as_ref() != Some(&*ws) {
                         show.ws = (*ws).clone();
                         r.synced = Some(*ws);
+                        show.changed();
+                        r.checked_gen = Some(show.edit_gen);
                         new_ws = true;
                     }
                 }
@@ -341,6 +347,7 @@ impl App {
                     if applied {
                         // Local edits not yet echoed are overwritten, as with a whole workspace.
                         crate::remote::apply_cue_patch(&mut show.ws, &patch);
+                        r.checked_gen = changed_in_step(show, r.checked_gen);
                         show.engine.workspace_changed();
                     } else {
                         link.send(ClientMsg::Resync);
@@ -360,6 +367,7 @@ impl App {
                             crate::limits::lighting(&mut synced.lighting);
                         }
                         crate::limits::lighting(&mut show.ws.lighting);
+                        r.checked_gen = changed_in_step(show, r.checked_gen);
                         show.sync_lighting();
                     } else {
                         link.send(ClientMsg::Resync);
@@ -393,7 +401,9 @@ impl App {
         }
 
         // Local edits go to the main device (or are undone if not allowed).
+        let unchecked = r.checked_gen != Some(show.edit_gen);
         if let Some(synced) = &r.synced
+            && unchecked
             && show.ws != *synced
         {
             if r.role.can_edit() {
@@ -408,11 +418,16 @@ impl App {
                         }
                     }
                     r.synced = Some(show.ws.clone());
+                    r.checked_gen = Some(show.edit_gen);
                     r.last_edit = now;
                 }
             } else {
                 show.ws = synced.clone();
+                show.changed();
+                r.checked_gen = Some(show.edit_gen);
             }
+        } else if unchecked && r.synced.is_some() {
+            r.checked_gen = Some(show.edit_gen);
         }
         let can_edit = r.role.can_edit();
         if new_ws {
@@ -827,4 +842,12 @@ fn ago(unix: u64) -> String {
         3600..=86_399 => tr!("{n} h ago", n = s / 3600),
         _ => tr!("{n} days ago", n = s / 86_400),
     }
+}
+
+/// Bump the show's edit generation for a change that came from the main device and went into
+/// both copies: still in step with the synced copy if it was before.
+fn changed_in_step(show: &mut Show, checked: Option<u64>) -> Option<u64> {
+    let was = checked == Some(show.edit_gen);
+    show.changed();
+    was.then_some(show.edit_gen)
 }

@@ -227,7 +227,7 @@ impl App {
                     let r = ui.add(egui::Slider::new(&mut v, 0.6..=2.5).step_by(0.05).custom_formatter(|v, _| format!("{:.0} %", v * 100.0)));
                     if r.changed() {
                         l.button_scale = v;
-                        show.edited();
+                        show.edited_outside_cues();
                     }
                 });
             }
@@ -464,13 +464,13 @@ impl App {
             let seq = b.sequence_id();
             l.buttons.remove(k);
             self.light.playback.edit = None;
-            show.edited();
+            show.edited_outside_cues();
             self.control(show, Command::Light(LightControl::Release(Some(seq), 0.0)));
             return;
         }
         if b != l.buttons[k] {
             l.buttons[k] = b;
-            show.edited();
+            show.edited_outside_cues();
         }
         if !open {
             self.light.playback.edit = None;
@@ -648,7 +648,7 @@ fn executors(ui: &mut Ui, show: &mut Show, pad: Pad, mut edit: Option<Editing>, 
         let id = l.buttons.iter().map(|b| b.id).max().unwrap_or(0) + 1;
         l.buttons.push(LightButton { id, name: tr!("Executor {n}", n = id.to_string()), page, ..Default::default() });
         *e.open = Some(id);
-        show.edited();
+        show.edited_outside_cues();
     }
     if dropped.is_some() || page_edit.is_some() {
         let l = &mut show.ws.lighting;
@@ -685,7 +685,7 @@ fn executors(ui: &mut Ui, show: &mut Show, pad: Pad, mut edit: Option<Editing>, 
             }
             None => {}
         }
-        show.edited();
+        show.edited_outside_cues();
     }
 }
 

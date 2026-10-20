@@ -60,10 +60,20 @@ pub struct Found {
     pub protocol: u32,
 }
 
-/// Answer discovery queries until `stop` is set. Returns at once if the port is taken.
-pub fn respond(id: Uuid, name: impl Fn() -> String + Send + 'static, port: u16, stop: Arc<AtomicBool>) -> std::io::Result<()> {
+/// How often the discovery responder checks whether it should stop (short: turning sharing off
+/// waits for it).
+pub const STOP_CHECK: Duration = Duration::from_millis(50);
+
+/// Answer discovery queries until `stop` is set. Returns at once if the port is taken. The
+/// thread checks `stop` every [`STOP_CHECK`]; join it to be sure the port is free again.
+pub fn respond(
+    id: Uuid,
+    name: impl Fn() -> String + Send + 'static,
+    port: u16,
+    stop: Arc<AtomicBool>,
+) -> std::io::Result<std::thread::JoinHandle<()>> {
     let sock = UdpSocket::bind((Ipv4Addr::UNSPECIFIED, DISCOVERY_PORT))?;
-    sock.set_read_timeout(Some(Duration::from_millis(300)))?;
+    sock.set_read_timeout(Some(STOP_CHECK))?;
     std::thread::Builder::new().name("openq-discovery".into()).spawn(move || {
         let mut buf = [0u8; 64];
         let mut budget = Budget::new(ANSWERS_PER_SECOND);
@@ -78,8 +88,7 @@ pub fn respond(id: Uuid, name: impl Fn() -> String + Send + 'static, port: u16, 
                 }
             }
         }
-    })?;
-    Ok(())
+    })
 }
 
 /// Ask the network who is there, collecting answers for `wait`.

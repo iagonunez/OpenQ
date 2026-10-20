@@ -2,7 +2,7 @@
 
 use crate::engine::Engine;
 use crate::media::{Media, Prober};
-use crate::model::Workspace;
+use crate::model::{CueId, Workspace};
 use parking_lot::Mutex;
 use std::path::PathBuf;
 use std::sync::Arc;
@@ -25,8 +25,14 @@ pub struct Show {
     pub dirty: bool,
     /// Set once media has been torn down; the engine stops ticking.
     pub shut_down: bool,
-    /// Bumped on every edit (drives undo snapshots).
+    /// Bumped on every edit and whenever the workspace is swapped (drives undo snapshots, the
+    /// copies kept by replicas and the autosave, [`Show::lookups`]). Bump it only through
+    /// [`Show::edited`], [`Show::edited_cues`] or [`Show::changed`], which also log it.
     pub edit_gen: u64,
+    /// What each recent edit generation changed.
+    pub changes: crate::changes::ChangeLog,
+    /// Cue numbers and media paths, rebuilt when [`Show::edit_gen`] moves.
+    lookups: Option<(u64, Arc<Lookups>)>,
     /// This instance mirrors a remote main device: the engine is display-only and never ticks.
     pub replica: bool,
     /// Incoming timecode for the cue lists that follow it.
@@ -69,6 +75,15 @@ pub struct TickStats {
 /// Wait cue ends, may be this much late).
 pub const LATE_TICK: Duration = Duration::from_millis(5);
 
+/// Lookups over the whole workspace that remote devices and OSC ask for many times between edits.
+#[derive(Default)]
+pub struct Lookups {
+    /// Cue number → the first cue with it (in [`crate::model::CueList::iter_all`] order).
+    pub numbers: std::collections::HashMap<String, CueId>,
+    /// Media files the show uses ([`crate::remote::vet::media_paths`]).
+    pub media: std::collections::HashSet<PathBuf>,
+}
+
 /// The show as shared between threads.
 pub type SharedShow = Arc<Mutex<Show>>;
 
@@ -83,6 +98,8 @@ impl Show {
             dirty: false,
             shut_down: false,
             edit_gen: 0,
+            changes: Default::default(),
+            lookups: None,
             replica: false,
             timecode: Default::default(),
             tc_last: Default::default(),
@@ -186,11 +203,53 @@ impl Show {
 
     /// Call after any edit to the workspace.
     pub fn edited(&mut self) {
+        self.edited_with(None);
+    }
+
+    /// Call after an edit that changed only these cues' own fields (no cue added, removed or
+    /// moved, a group's children untouched) and perhaps parts of the workspace other than the
+    /// cue lists. Copies kept by replicas and the autosave then take only these cues
+    /// ([`crate::changes`]).
+    pub fn edited_cues(&mut self, cues: impl IntoIterator<Item = CueId>) {
+        self.edited_with(Some(cues.into_iter().collect()));
+    }
+
+    /// Call after an edit outside the cue lists (settings, stages, the lighting design).
+    pub fn edited_outside_cues(&mut self) {
+        self.edited_with(Some(Vec::new()));
+    }
+
+    /// The workspace changed without being edited here (swapped, undone, or changed by the main
+    /// device on a replica): bump [`Show::edit_gen`] so copies and lookups look again.
+    pub fn changed(&mut self) {
+        self.edit_gen += 1;
+        self.changes.push(self.edit_gen, None);
+    }
+
+    fn edited_with(&mut self, cues: Option<Vec<CueId>>) {
         self.dirty = true;
         self.edit_gen += 1;
+        self.changes.push(self.edit_gen, cues);
         self.engine.workspace_changed();
         self.media.set_room(&self.ws.settings.speakers);
         self.sync_lighting();
+    }
+
+    /// Cue numbers and media paths of the whole show, built once per [`Show::edit_gen`].
+    pub fn lookups(&mut self) -> Arc<Lookups> {
+        if let Some((g, l)) = &self.lookups
+            && *g == self.edit_gen
+        {
+            return l.clone();
+        }
+        let mut l = Lookups::default();
+        for c in self.ws.cue_list.iter_all() {
+            l.numbers.entry(c.number.clone()).or_insert(c.id);
+        }
+        l.media = crate::remote::vet::media_paths(&self.ws).into_iter().collect();
+        let l = Arc::new(l);
+        self.lookups = Some((self.edit_gen, l.clone()));
+        l
     }
 
     /// Recompile the lighting design for the light thread if it (or the replica flag) changed.
@@ -244,26 +303,25 @@ impl Show {
     }
 
     /// Take an edit made on a remote device as changes to this workspace
-    /// ([`crate::remote::workspace_patch`]). False (nothing changed) if they don't fit.
-    pub fn apply_remote_patch(&mut self, cues: &[crate::model::Cue], lighting: Option<&crate::light::patch::LightingPatch>) -> bool {
+    /// ([`crate::remote::workspace_patch`]). False (nothing changed) if they don't fit. Only the
+    /// patched cues (and the design, if patched) are brought into range: the rest already is.
+    pub fn apply_remote_patch(&mut self, mut cues: Vec<crate::model::Cue>, lighting: Option<&crate::light::patch::LightingPatch>) -> bool {
+        cues.iter_mut().for_each(crate::limits::cue);
         // (A copy of the design costs little: its big parts are shared.)
         let before = lighting.map(|_| self.ws.lighting.clone());
-        if !crate::remote::apply_workspace_patch(&mut self.ws, cues, lighting) {
+        if !crate::remote::apply_workspace_patch(&mut self.ws, &cues, lighting) {
             return false;
         }
-        // Cue patches only change cues; a lighting patch may add cues beyond the count.
-        if let Some(before) = before
-            && crate::limits::check_counts(&self.ws).is_err()
-        {
-            self.ws.lighting = before;
-            return false;
+        if let Some(before) = before {
+            // Cue patches only change cues; a lighting patch may add cues beyond the count.
+            if crate::limits::light_cue_count(&self.ws.lighting) > crate::limits::MAX_LIGHT_CUES {
+                self.ws.lighting = before;
+                return false;
+            }
+            // Unchanged parts of the design keep their allocations (see `limits::lighting`).
+            crate::limits::lighting(&mut self.ws.lighting);
         }
-        // Unchanged parts of the design keep their allocations (see `limits::lighting`).
-        crate::limits::workspace(&mut self.ws);
-        if self.engine.playhead.is_some_and(|p| self.ws.cue_list.find(p).is_none()) {
-            self.engine.set_playhead(None);
-        }
-        self.edited();
+        self.edited_cues(cues.iter().map(|c| c.id));
         true
     }
 
@@ -294,6 +352,7 @@ impl Show {
         self.engine.stop_all(&mut self.media, now, 0.0);
         self.ws = ws;
         self.path = path;
+        self.changed();
         // Requests were about the show that was open.
         self.network_requests.clear();
         self.dirty = false;

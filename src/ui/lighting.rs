@@ -311,7 +311,7 @@ impl App {
                 self.light.effect = Some(e.id);
                 l.effects.push(e);
             }
-            show.edited();
+            show.edited_outside_cues();
         }
         self.light.tab = LightTab::Effects;
         self.notify(tr!("Imported {n} effects", n = n.to_string()));
@@ -432,7 +432,7 @@ impl App {
             self.plot_editor(ui.ctx(), &mut show.ws.lighting, &title);
         }
         if show.ws.lighting != before {
-            show.edited();
+            show.edited_outside_cues();
         }
         if std::mem::take(&mut self.light.capture) {
             let frame = show.media.light.input_frame();
@@ -2814,7 +2814,7 @@ impl App {
             }
         }
         if show.ws.lighting != before {
-            show.edited();
+            show.edited_outside_cues();
         }
         Ok(done)
     }

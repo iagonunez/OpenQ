@@ -399,7 +399,8 @@ impl App {
             if show.engine.instances.contains_key(&id) {
                 show.media.update_live(&cue);
             }
-            show.edited();
+            // A group's copy carries its children, which may differ too.
+            if cue.is_group() { show.edited() } else { show.edited_cues([id]) }
         }
     }
 }

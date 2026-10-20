@@ -19,7 +19,9 @@
 //!   unit-tested with a mock backend. It works on logical timestamps and hands starts to the
 //!   backend [`engine::LOOKAHEAD`] early, so chained cues start sample-accurately.
 //! * [`show`] — [`show::Show`] bundles workspace, engine and media; shared as
-//!   [`show::SharedShow`] by the UI, the engine thread, OSC and remote connections.
+//!   [`show::SharedShow`] by the UI, the engine thread, OSC and remote connections. Edits say
+//!   which cues they changed ([`changes`]), so replicas and the autosave keep their copies in
+//!   step without cloning the whole show under the lock.
 //! * [`control`] — every transport action (GO, stop, pause, playhead, single cues) as a
 //!   [`control::Command`]; the one entry point used by the UI, OSC and remote devices.
 //! * [`media`] — audio mixer and decoders, live inputs (Mic cues), video/image/text/camera
@@ -100,6 +102,7 @@ pub mod limits;
 pub mod animation;
 pub mod audio_fx;
 pub mod bench;
+pub mod changes;
 pub mod control;
 pub mod displays;
 pub mod dsp;

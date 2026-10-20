@@ -373,7 +373,7 @@ impl App {
         if show.engine.instances.contains_key(&id) {
             show.media.update_live(&cue);
         }
-        show.edited();
+        show.edited_cues([id]);
     }
 }
 

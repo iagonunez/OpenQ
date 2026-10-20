@@ -298,7 +298,10 @@ fn run(shared: &Shared, config: &InputConfig, port: u16) {
     let mut merged = DmxFrame::default();
     let mut last_status = Instant::now();
     let mut packets = 0u64;
-    let mut dirty = false;
+    // Wires with new data or sources gone since the last merge: only their universes are merged
+    // again (merging every route and source per packet was quadratic in a big rig).
+    let mut dirty: Vec<u16> = Vec::new();
+    let mut universes: Vec<u16> = Vec::new();
     while !shared.quit.load(Ordering::Relaxed) {
         let Some(sock) = socket.as_ref() else {
             if Instant::now() < next_open {
@@ -332,9 +335,11 @@ fn run(shared: &Shared, config: &InputConfig, port: u16) {
                     if poll_budget.take() {
                         answer_poll(sock, config, from);
                     }
-                } else if take(config, &buf[..n], from, &mut sources) {
+                } else if let Some(wire) = take(config, &buf[..n], from, &mut sources) {
                     packets += 1;
-                    dirty = true;
+                    if !dirty.contains(&wire) {
+                        dirty.push(wire);
+                    }
                 }
             }
             Err(e) if matches!(e.kind(), std::io::ErrorKind::WouldBlock | std::io::ErrorKind::TimedOut | std::io::ErrorKind::Interrupted) => {}
@@ -351,13 +356,27 @@ fn run(shared: &Shared, config: &InputConfig, port: u16) {
             }
         }
         let now = Instant::now();
-        let before = sources.len();
-        sources.retain(|s| now.duration_since(s.seen) < SOURCE_TIMEOUT);
-        dirty |= sources.len() != before;
-        if dirty {
-            merge_sources(config, &sources, &mut merged);
-            shared.frame.lock().universes.clone_from(&merged.universes);
-            dirty = false;
+        sources.retain(|s| {
+            let live = now.duration_since(s.seen) < SOURCE_TIMEOUT;
+            if !live && !dirty.contains(&s.wire) {
+                dirty.push(s.wire);
+            }
+            live
+        });
+        if !dirty.is_empty() {
+            universes.clear();
+            universes.extend(config.routes.iter().filter(|r| dirty.contains(&r.wire)).map(|r| r.universe));
+            universes.sort_unstable();
+            universes.dedup();
+            merge_universes(config, &sources, &universes, &mut merged);
+            let mut frame = shared.frame.lock();
+            for &u in &universes {
+                match merged.get(u) {
+                    Some(m) => frame.get_mut(u).data = m.data,
+                    None => frame.remove(u),
+                }
+            }
+            dirty.clear();
         }
         if last_status.elapsed() >= Duration::from_millis(250) {
             last_status = now;
@@ -394,19 +413,20 @@ fn answer_poll(sock: &UdpSocket, config: &InputConfig, from: SocketAddr) {
 
 /// Take a packet into `sources`. False if it isn't for this input (other protocol or universe,
 /// OpenQ's own, sACN preview data).
-fn take(config: &InputConfig, p: &[u8], from: SocketAddr, sources: &mut Vec<Source>) -> bool {
+/// Take a packet into its source's data; the wire it came on, if it changed anything.
+fn take(config: &InputConfig, p: &[u8], from: SocketAddr, sources: &mut Vec<Source>) -> Option<u16> {
     let (key, name, wire, priority, data, terminated) = match config.protocol {
         InputProtocol::ArtNet => {
             if super::artnet::is_own_port(from.port()) && is_local(from) {
-                return false;
+                return None;
             }
-            let Some((wire, data)) = super::artnet::parse_dmx(p) else { return false };
+            let (wire, data) = super::artnet::parse_dmx(p)?;
             (addr_key(from), from.ip().to_string(), wire, 100, data, false)
         }
         InputProtocol::Sacn => {
-            let Some(d) = super::sacn::parse(p) else { return false };
+            let d = super::sacn::parse(p)?;
             if d.cid == super::sacn::own_cid() || d.options & super::sacn::PREVIEW != 0 {
-                return false;
+                return None;
             }
             // Source name, as the sender calls itself (falls back to its address).
             let raw = &p[44..108];
@@ -419,14 +439,14 @@ fn take(config: &InputConfig, p: &[u8], from: SocketAddr, sources: &mut Vec<Sour
         }
     };
     if !config.routes.iter().any(|r| r.wire == wire) {
-        return false;
+        return None;
     }
     let at = sources.iter().position(|s| s.key == key && s.wire == wire);
     if terminated {
         if let Some(i) = at {
             sources.swap_remove(i);
         }
-        return true;
+        return Some(wire);
     }
     let i = match at {
         Some(i) => i,
@@ -434,7 +454,7 @@ fn take(config: &InputConfig, p: &[u8], from: SocketAddr, sources: &mut Vec<Sour
             sources.push(Source { key, name, wire, priority, data: [0; SLOTS], seen: Instant::now() });
             sources.len() - 1
         }
-        None => return false,
+        None => return None,
     };
     let s = &mut sources[i];
     let n = data.len().min(SLOTS);
@@ -442,7 +462,7 @@ fn take(config: &InputConfig, p: &[u8], from: SocketAddr, sources: &mut Vec<Sour
     s.data[n..].fill(0);
     s.priority = priority;
     s.seen = Instant::now();
-    true
+    Some(wire)
 }
 
 /// True for loopback and this machine's addresses as far as cheaply known (the unspecified
@@ -473,16 +493,35 @@ fn local_ips() -> &'static [std::net::IpAddr] {
 }
 
 /// Merge the live sources of each route: highest priority wins, equal priorities HTP.
+#[cfg(test)]
 fn merge_sources(config: &InputConfig, sources: &[Source], out: &mut DmxFrame) {
     out.universes.clear();
-    for r in &config.routes {
-        let live = sources.iter().filter(|s| s.wire == r.wire);
-        let Some(top) = live.clone().map(|s| s.priority).max() else { continue };
-        let u = out.get_mut(r.universe);
-        for s in live.filter(|s| s.priority == top) {
-            for (a, b) in u.data.iter_mut().zip(&s.data) {
-                *a = (*a).max(*b);
+    let all: Vec<u16> = config.routes.iter().map(|r| r.universe).collect();
+    merge_universes(config, sources, &all, out);
+}
+
+/// Merge again universes `universes` (each once) of `out` from the live sources of the routes
+/// feeding them (highest priority wins, equal priorities HTP); a universe no live source feeds
+/// leaves `out`.
+fn merge_universes(config: &InputConfig, sources: &[Source], universes: &[u16], out: &mut DmxFrame) {
+    for &id in universes {
+        let mut fed = false;
+        for r in config.routes.iter().filter(|r| r.universe == id) {
+            let live = sources.iter().filter(|s| s.wire == r.wire);
+            let Some(top) = live.clone().map(|s| s.priority).max() else { continue };
+            let u = out.get_mut(id);
+            if !fed {
+                u.data = [0; SLOTS];
+                fed = true;
             }
+            for s in live.filter(|s| s.priority == top) {
+                for (a, b) in u.data.iter_mut().zip(&s.data) {
+                    *a = (*a).max(*b);
+                }
+            }
+        }
+        if !fed {
+            out.remove(id);
         }
     }
 }
@@ -661,6 +700,45 @@ mod tests {
             }
             merge_sources(&cfg, &sources, &mut out);
         }
+    }
+
+    /// Merging only the universes a packet touched gives the same frame as merging everything,
+    /// and a universe whose sources are gone leaves the frame.
+    #[test]
+    fn merging_touched_universes_matches_a_full_merge() {
+        let mut rng = fastrand::Rng::with_seed(11);
+        // Wires 0..6 into universes 1..4 (two wires share universes 1 and 2).
+        let routes: Vec<UniverseRoute> = (0..6).map(|w| UniverseRoute { universe: w % 4 + 1, wire: w }).collect();
+        let cfg = InputConfig { protocol: InputProtocol::Sacn, routes, ..Default::default() };
+        let mut sources = Vec::new();
+        let mut merged = DmxFrame::default();
+        for i in 0..2_000u32 {
+            let mut u = Universe::new(0);
+            u.data[rng.usize(0..SLOTS)] = rng.u8(..);
+            let wire = rng.u16(0..7);
+            let cid = [rng.u8(0..4); 16];
+            let mut p = [0u8; super::super::sacn::PACKET_LEN];
+            super::super::sacn::data_packet(&cid, "x", rng.u8(90..110), i as u8, &Universe { id: wire, ..u }, &mut p);
+            let from = SocketAddr::from(([10, 0, 0, 1], 5568));
+            let touched = take(&cfg, &p, from, &mut sources);
+            if i % 50 == 0 && !sources.is_empty() {
+                // A source goes quiet.
+                let gone = sources.swap_remove(rng.usize(0..sources.len()));
+                merge_universes(&cfg, &sources, &cfg.routes.iter().filter(|r| r.wire == gone.wire).map(|r| r.universe).collect::<Vec<_>>(), &mut merged);
+            }
+            if let Some(w) = touched {
+                let us: Vec<u16> = cfg.routes.iter().filter(|r| r.wire == w).map(|r| r.universe).collect();
+                merge_universes(&cfg, &sources, &us, &mut merged);
+            } else {
+                assert_eq!(wire, 6, "only the unrouted wire is ignored");
+            }
+            let mut full = DmxFrame::default();
+            merge_sources(&cfg, &sources, &mut full);
+            assert_eq!(merged, full, "packet {i}");
+        }
+        sources.clear();
+        merge_universes(&cfg, &sources, &[1, 2, 3, 4], &mut merged);
+        assert!(merged.universes.is_empty());
     }
 
     #[test]

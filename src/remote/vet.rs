@@ -42,8 +42,9 @@ pub fn numbers<T: Serialize + ?Sized>(value: &T) -> Result<(), String> {
 /// Largest stage canvas side accepted from a replica, pixels.
 pub const MAX_STAGE_SIDE: u32 = 16384;
 
-/// Check a whole workspace from a replica against the current one.
-pub fn workspace(current: &Workspace, new: &Workspace) -> Result<(), String> {
+/// Check a whole workspace from a replica against the media files the show uses now (`known`,
+/// [`media_paths`]; the main device keeps them in [`crate::show::Show::lookups`]).
+pub fn workspace(known: &HashSet<PathBuf>, new: &Workspace) -> Result<(), String> {
     numbers(new)?;
     crate::limits::check_counts(new)?;
     if new.stages.iter().any(|s| s.width.max(s.height) > MAX_STAGE_SIDE) {
@@ -54,20 +55,19 @@ pub fn workspace(current: &Workspace, new: &Workspace) -> Result<(), String> {
     if let Some(c) = all.iter().find(|c| !ids.insert(c.id)) {
         return Err(format!("The edit has two cues with the same id ({})", c.id));
     }
-    paths(current, all)
+    paths(known, all)
 }
 
-/// Check changed cues from a replica against the current workspace.
-pub fn cues(current: &Workspace, cues: &[Cue]) -> Result<(), String> {
+/// Check changed cues from a replica against the media files the show uses now (see
+/// [`workspace`]).
+pub fn cues(known: &HashSet<PathBuf>, cues: &[Cue]) -> Result<(), String> {
     numbers(cues)?;
-    paths(current, cues.iter())
+    paths(known, cues.iter())
 }
 
-fn paths<'a>(current: &Workspace, cues: impl IntoIterator<Item = &'a Cue>) -> Result<(), String> {
-    let mut known: Option<HashSet<PathBuf>> = None;
+fn paths<'a>(known: &HashSet<PathBuf>, cues: impl IntoIterator<Item = &'a Cue>) -> Result<(), String> {
     for c in cues {
         let Some(p) = media_path(c).filter(|p| !p.as_os_str().is_empty()) else { continue };
-        let known = known.get_or_insert_with(|| media_paths(current).into_iter().collect());
         if !known.contains(p) {
             return Err(format!("A replica can't add media files ({}); add them on the main device", p.display()));
         }
@@ -262,29 +262,30 @@ mod tests {
         let mut ws = Workspace::default();
         let audio = Cue::new(CueKind::Audio(AudioCue { path: "/show/a.wav".into(), ..Default::default() }));
         ws.cue_list.cues.push(audio.clone());
-        assert!(workspace(&ws, &ws).is_ok());
+        let known: HashSet<PathBuf> = media_paths(&ws).into_iter().collect();
+        assert!(workspace(&known, &ws).is_ok());
 
         let mut wild = ws.clone();
         wild.cue_list.cues[0].pre_wait = 1e300;
-        assert!(workspace(&ws, &wild).is_err(), "huge time");
+        assert!(workspace(&known, &wild).is_err(), "huge time");
         let mut nan = ws.clone();
         nan.settings.master_volume_db = f32::INFINITY;
-        assert!(workspace(&ws, &nan).is_err(), "infinite level");
+        assert!(workspace(&known, &nan).is_err(), "infinite level");
 
         // A replica can reuse the show's files but not bring in new ones.
         let mut copy = audio.clone();
         copy.id = crate::model::CueId::new_v4();
-        assert!(cues(&ws, &[copy.clone()]).is_ok());
+        assert!(cues(&known, &[copy.clone()]).is_ok());
         if let CueKind::Audio(a) = &mut copy.kind {
             a.path = "/etc/shadow".into();
         }
-        assert!(cues(&ws, &[copy.clone()]).is_err());
+        assert!(cues(&known, &[copy.clone()]).is_err());
         let mut added = ws.clone();
         added.cue_list.cues.push(copy);
-        assert!(workspace(&ws, &added).is_err());
+        assert!(workspace(&known, &added).is_err());
 
         let mut twice = ws.clone();
         twice.cue_list.cues.push(audio.clone());
-        assert!(workspace(&ws, &twice).is_err(), "same id twice");
+        assert!(workspace(&known, &twice).is_err(), "same id twice");
     }
 }

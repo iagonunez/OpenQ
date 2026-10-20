@@ -75,7 +75,7 @@ impl App {
                     s.corners = c;
                 }
             }
-            show.edited();
+            show.edited_outside_cues();
         }
     }
 }

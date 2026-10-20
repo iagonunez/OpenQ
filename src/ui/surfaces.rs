@@ -48,7 +48,7 @@ impl App {
                 }
                 None => return,
             }
-            show.edited();
+            show.edited_outside_cues();
         }
         if !self.surfaces.learning() {
             self.learn_into = None;
@@ -131,7 +131,7 @@ impl App {
                 let mut on = show.ws.settings.surfaces.midi_clock;
                 if ui.add_enabled(self.can_edit_show(), egui::Checkbox::new(&mut on, t("Effects follow its tempo"))).changed() {
                     show.ws.settings.surfaces.midi_clock = on;
-                    show.edited();
+                    show.edited_outside_cues();
                 }
                 match self.surfaces.clock() {
                     Some(bpm) => ui.label(RichText::new(format!("{bpm:.1} BPM")).font(theme::mono(12.0)).color(theme::GREEN)),
@@ -175,7 +175,7 @@ impl App {
             });
             ui.end_row();
             if (s.page_size, s.soft_takeover, s.osc_feedback_port) != before {
-                show.edited();
+                show.edited_outside_cues();
             }
         });
         ui.add_space(8.0);
@@ -270,7 +270,7 @@ impl App {
                 .small(),
         );
         if show.ws.settings.surfaces != maps_before {
-            show.edited();
+            show.edited_outside_cues();
         }
     }
 }

@@ -658,7 +658,7 @@ fn exercise_show(f: &Fuzz, show: &SharedShow, path: &Path, bytes: &[u8], rng_see
     f.guard("saving and playing", Duration::from_secs(30), bytes, "openq", move || {
         let mut rng = fastrand::Rng::with_seed(rng_seed);
         let _ = ws.save(&path.with_extension("again.openq"));
-        let _ = openq::remote::vet::workspace(&ws, &ws);
+        let _ = openq::remote::vet::workspace(&openq::remote::vet::media_paths(&ws).into_iter().collect(), &ws);
         let _ = ws.lighting.validate();
         let _ = openq::light::patch::diff(&Lighting::default(), &ws.lighting).map(|p| openq::light::patch::apply(&mut Lighting::default(), &p));
         let _ = openq::light::plot::svg(&ws.lighting, "fuzz");

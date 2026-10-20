@@ -230,16 +230,9 @@ pub fn handle(show: &SharedShow, addr: &str) -> Result<(), String> {
     use crate::control::{Command, CueAction};
     let mut guard = show.lock();
     let parts: Vec<&str> = addr.trim_matches('/').split('/').collect();
-    let find = |number: &str| {
-        guard
-            .ws
-            .cue_list
-            .iter_all()
-            .iter()
-            .find(|c| c.number == number)
-            .map(|c| c.id)
-            .ok_or_else(|| format!("no cue numbered {number}"))
-    };
+    // Numbers are looked up in a map built once per edit: messages can come 500 times a second.
+    let numbers = guard.lookups();
+    let find = |number: &str| numbers.numbers.get(number).copied().ok_or_else(|| format!("no cue numbered {number}"));
     let cmd = match parts.as_slice() {
         ["go"] => Command::Go,
         ["stop"] => Command::Stop,

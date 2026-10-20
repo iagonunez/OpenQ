@@ -607,7 +607,7 @@ impl App {
                 }
             }
             if *c != before {
-                show.edited();
+                show.edited_cues([ed.id]);
             }
         }
         if let Some(id) = cycle_continue
@@ -618,7 +618,7 @@ impl App {
                 ContinueMode::AutoContinue => ContinueMode::AutoFollow,
                 ContinueMode::AutoFollow => ContinueMode::DoNotContinue,
             };
-            show.edited();
+            show.edited_cues([id]);
         }
 
         if let Some((id, mods)) = clicked {
@@ -704,7 +704,7 @@ impl App {
             RowAction::ToggleArmed => {
                 if let Some(c) = show.ws.cue_list.find_mut(id) {
                     c.armed = !c.armed;
-                    show.edited();
+                    show.edited_cues([id]);
                 }
             }
         }

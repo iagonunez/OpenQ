@@ -907,6 +907,51 @@ fn remote(m: &mut Vec<Metric>, quick: bool) {
         1
     });
     push(m, "remote.full_snapshot", ms(t), "ms", "serialise the whole workspace (first sync, resync)");
+
+    // Work done under the show lock on a big show, per edit and per replica (or autosave).
+    let n = if quick { 2_000 } else { 27_750 }; // ~50 000 cues with the groups
+    let mut show = Show::new(Prober::new());
+    show.ws = mixed_workspace(n);
+    show.changed();
+    let cues = crate::limits::cue_count(&show.ws);
+    let mut mirror = crate::changes::Mirror::default();
+    if let Some(t) = mirror.take(&show) {
+        mirror.catch_up(t);
+    }
+    let id = show.ws.cue_list.cues[n / 2].id;
+    // Only the take is timed (the edit happens anyway; catching up is outside the lock).
+    let mut take = |show: &mut Show, edit: &dyn Fn(&mut Show), reps: usize| {
+        let mut v: Vec<Duration> = (0..reps)
+            .map(|_| {
+                edit(show);
+                let t = Instant::now();
+                let taken = std::hint::black_box(mirror.take(show));
+                let d = t.elapsed();
+                taken.map(|t| mirror.catch_up(t));
+                d
+            })
+            .collect();
+        quantile(&mut v, 0.5)
+    };
+    let t = take(&mut show, &|s| {
+        s.ws.cue_list.find_mut(id).expect("cue").pre_wait += 0.001;
+        s.edited_cues([id]);
+    }, 20);
+    push(m, "remote.lock_take_edit", us(t), "us", &format!("take one edited cue for a replica/autosave copy, {cues} cues (under the lock)"));
+    let t = take(&mut show, &|s| s.edited(), 5);
+    push(m, "remote.lock_take_unknown", ms(t), "ms", &format!("same after an edit that doesn't say which cues (whole copy), {cues} cues"));
+    let mut patch = show.ws.cue_list.find(id).expect("cue").shallow_clone();
+    let t = per_call(20, || {
+        patch.post_wait += 0.001;
+        std::hint::black_box(show.apply_remote_patch(vec![patch.clone()], None)) as usize
+    });
+    push(m, "remote.lock_apply_patch", us(t), "us", &format!("apply a replica's one-cue edit on the main device, {cues} cues"));
+    let number = (n / 2).to_string();
+    let t = per_call(20, || {
+        std::hint::black_box(show.lookups().numbers.get(&number).copied());
+        1
+    });
+    push(m, "remote.lock_number_lookup", us(t), "us", "cue by number (OSC, between edits)");
 }
 
 // ------------------------------------------------------------------ ui

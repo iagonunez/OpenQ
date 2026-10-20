@@ -62,6 +62,13 @@ impl DmxFrame {
         &mut self.universes[i]
     }
 
+    /// Take universe `id` out of the frame.
+    pub fn remove(&mut self, id: u16) {
+        if let Ok(i) = self.universes.binary_search_by_key(&id, |u| u.id) {
+            self.universes.remove(i);
+        }
+    }
+
     /// Zero every slot (keeps the universes allocated).
     pub fn clear(&mut self) {
         for u in &mut self.universes {
