@@ -149,14 +149,14 @@ pub fn render_at(cue: &TextCue, density: f32) -> TextImage {
     }
     if let Some(colour) = &m.colour {
         let fade = cue.color[3] as f32 / 255.0;
-        for (o, px) in acc.iter_mut().zip(colour.chunks_exact(4)) {
+        for (o, px) in acc.iter_mut().zip(colour.as_chunks::<4>().0) {
             if px[3] > 0 {
                 *o = over(std::array::from_fn(|k| px[k] as f32 / 255.0 * fade), *o);
             }
         }
     }
     let mut rgba = vec![0u8; iw * ih * 4];
-    for (px, a) in rgba.chunks_exact_mut(4).zip(&acc) {
+    for (px, a) in rgba.as_chunks_mut::<4>().0.iter_mut().zip(&acc) {
         if a[3] > 0.0 {
             let inv = 1.0 / a[3];
             px[0] = (a[0] * inv * 255.0).round().clamp(0.0, 255.0) as u8;
@@ -463,7 +463,7 @@ fn masks(cue: &TextCue, density: f32) -> TextPlanes {
     // Colour glyphs keep their own colours: straight RGBA.
     let colour = has_colour.then(|| {
         let mut out = vec![0u8; iw * ih * 4];
-        for (px, c) in out.chunks_exact_mut(4).zip(&colour) {
+        for (px, c) in out.as_chunks_mut::<4>().0.iter_mut().zip(&colour) {
             if c[3] > 0.0 {
                 let inv = 1.0 / c[3];
                 for k in 0..3 {
@@ -589,7 +589,7 @@ mod tests {
     use super::*;
 
     fn lit(img: &TextImage) -> usize {
-        img.rgba.chunks_exact(4).filter(|p| p[3] > 128).count()
+        img.rgba.as_chunks::<4>().0.iter().filter(|p| p[3] > 128).count()
     }
 
     #[test]
@@ -600,7 +600,7 @@ mod tests {
         assert!(img.width as f32 / img.density > 60.0 && img.height as f32 / img.density > 80.0, "{}x{}", img.width, img.height);
         assert!(lit(&img) > 800, "{} lit pixels", lit(&img));
         // White text with straight alpha: every visible pixel is white.
-        assert!(img.rgba.chunks_exact(4).filter(|p| p[3] > 0).all(|p| p[0] == 255));
+        assert!(img.rgba.as_chunks::<4>().0.iter().filter(|p| p[3] > 0).all(|p| p[0] == 255));
     }
 
     #[test]
@@ -610,12 +610,12 @@ mod tests {
         let outlined = render_at(&TextCue { outline_width: 3.0, ..base.clone() }, 1.0);
         assert!(lit(&outlined) > plain * 3 / 2, "{} vs {plain}", lit(&outlined));
         // The outline is black, the fill white: both colours appear.
-        assert!(outlined.rgba.chunks_exact(4).any(|p| p[3] == 255 && p[0] < 10));
-        assert!(outlined.rgba.chunks_exact(4).any(|p| p[3] == 255 && p[0] > 245));
+        assert!(outlined.rgba.as_chunks::<4>().0.iter().any(|p| p[3] == 255 && p[0] < 10));
+        assert!(outlined.rgba.as_chunks::<4>().0.iter().any(|p| p[3] == 255 && p[0] > 245));
         // An offset well past the stroke width, so the shadow barely overlaps the glyphs (the default 4 px left the
         // count right at the threshold, and font rasterisation differences on CI tipped it under).
         let shadowed = render_at(&TextCue { shadow_color: [0, 0, 0, 200], shadow_blur: 0.0, shadow_offset: [12.0, 12.0], ..base }, 1.0);
-        let n = shadowed.rgba.chunks_exact(4).filter(|p| p[3] > 100).count();
+        let n = shadowed.rgba.as_chunks::<4>().0.iter().filter(|p| p[3] > 100).count();
         assert!(n > plain * 3 / 2, "{n} vs {plain}");
     }
 

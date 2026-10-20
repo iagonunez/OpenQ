@@ -604,7 +604,7 @@ impl DecodeJob {
         let bytes = &out.data(0)[..n * 4];
         let skip_samples = ((skip * tap.rate as f64) as usize * tap.channels).min(n);
         pending.extend(
-            bytes.chunks_exact(4).skip(skip_samples).map(|b| super::decoder::clean_sample(f32::from_le_bytes([b[0], b[1], b[2], b[3]]))),
+            bytes.as_chunks::<4>().0.iter().skip(skip_samples).map(|b| super::decoder::clean_sample(f32::from_le_bytes(*b))),
         );
         Ok(())
     }
@@ -627,7 +627,7 @@ struct Converter {
 
 /// Premultiply straight RGBA in place (gamma space, as egui's colours are).
 fn premultiply(rgba: &mut [u8]) {
-    for px in rgba.chunks_exact_mut(4) {
+    for px in rgba.as_chunks_mut::<4>().0 {
         let a = px[3] as u32;
         if a < 255 {
             for c in &mut px[..3] {
@@ -1910,7 +1910,9 @@ mod tests {
     fn premultiply_matches_egui() {
         let mut px = vec![200, 100, 50, 128, 10, 20, 30, 255, 255, 255, 255, 0];
         let want: Vec<u8> = px
-            .chunks_exact(4)
+            .as_chunks::<4>()
+            .0
+            .iter()
             .flat_map(|p| egui::Color32::from_rgba_unmultiplied(p[0], p[1], p[2], p[3]).to_array())
             .collect();
         premultiply(&mut px);

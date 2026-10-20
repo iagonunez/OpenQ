@@ -192,7 +192,7 @@ pub fn load_dir(dir: &Path) -> (Vec<FixtureType>, Vec<(String, String)>) {
             Err(e) => errors.push((name, format!("{e:#}"))),
         }
     }
-    types.sort_by(|a, b| (a.manufacturer.to_lowercase(), a.name.to_lowercase()).cmp(&(b.manufacturer.to_lowercase(), b.name.to_lowercase())));
+    types.sort_by_cached_key(|a| (a.manufacturer.to_lowercase(), a.name.to_lowercase()));
     (types, errors)
 }
 

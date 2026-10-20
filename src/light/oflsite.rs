@@ -210,7 +210,7 @@ pub fn fetch_catalogue(progress: &(dyn Fn(usize, usize) + Sync)) -> anyhow::Resu
         return Err(e);
     }
     let mut fixtures = out.into_inner();
-    fixtures.sort_by(|a, b| (a.maker_name.to_lowercase(), a.name.to_lowercase()).cmp(&(b.maker_name.to_lowercase(), b.name.to_lowercase())));
+    fixtures.sort_by_cached_key(|a| (a.maker_name.to_lowercase(), a.name.to_lowercase()));
     Ok(Catalogue { fetched: now(), fixtures })
 }
 

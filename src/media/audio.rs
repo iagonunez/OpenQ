@@ -619,8 +619,8 @@ impl Mixer {
         let audio = (data.len() / self.channels.max(1)) as u64 * 1_000_000_000 / self.clock.rate.max(1) as u64;
         self.health.busy_ns.fetch_add(busy, Ordering::Relaxed);
         self.health.audio_ns.fetch_add(audio, Ordering::Relaxed);
-        if audio > 0 {
-            self.health.peak_ppm.fetch_max(busy * 1_000_000 / audio, Ordering::Relaxed);
+        if let Some(ppm) = (busy * 1_000_000).checked_div(audio) {
+            self.health.peak_ppm.fetch_max(ppm, Ordering::Relaxed);
         }
     }
 

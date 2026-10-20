@@ -1633,23 +1633,29 @@ fn fuzz_devices() {
     let port = taken.local_addr().unwrap().port();
     assert!(openq::osc::OscServer::start(port, show.clone(), || {}).is_err(), "OSC on a taken port");
     // Cues that need devices: a Mic on a missing input, a Camera on a missing device, a Network
-    // cue to a host that doesn't resolve.
+    // cue to a host that doesn't resolve (an mDNS name takes seconds to fail: the lookup must not
+    // hold up the engine).
     let mut ws = Workspace::default();
     for k in KindTag::ALL {
         let mut c = Cue::new(k.default_kind());
         match &mut c.kind {
             CueKind::Mic(m) => m.device = Some("nonexistent".into()),
             CueKind::Camera(cam) => cam.device = Some("/dev/video99".into()),
-            CueKind::Network(n) => n.host = "attacker.invalid".into(),
+            CueKind::Network(n) => n.host = "openq-fuzz-missing-desk.local".into(),
             _ => {}
         }
         ws.cue_list.cues.push(c);
     }
     let s = show.clone();
-    f.guard("cues on missing devices", Duration::from_secs(20), &[], "txt", move || {
+    f.guard("cues on missing devices", Duration::from_secs(3), &[], "txt", move || {
         let mut show = s.lock();
+        let ids: Vec<CueId> = ws.cue_list.cues.iter().map(|c| c.id).collect();
         show.replace_workspace(ws, None);
         let t0 = Instant::now();
+        // Each cue started directly (GO stops at the Goto cue, which has no target), then GOs.
+        for id in ids {
+            let _ = apply(&mut show, Command::Cue(id, CueAction::Start), t0);
+        }
         for i in 0..100 {
             let now = t0 + Duration::from_millis(20 * i);
             if i % 5 == 0 {

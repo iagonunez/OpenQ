@@ -218,7 +218,7 @@ pub fn load(path: &Path, svg_scale: f32) -> anyhow::Result<Still> {
     let pixmap = render_svg(&tree, k, w, h)?;
     // tiny-skia is premultiplied; layers are straight alpha.
     let mut rgba = pixmap.take();
-    for px in rgba.chunks_exact_mut(4) {
+    for px in rgba.as_chunks_mut::<4>().0 {
         let a = px[3];
         if a > 0 && a < 255 {
             for c in &mut px[..3] {

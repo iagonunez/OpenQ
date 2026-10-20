@@ -23,7 +23,8 @@
 //! * [`control`] — every transport action (GO, stop, pause, playhead, single cues) as a
 //!   [`control::Command`]; the one entry point used by the UI, OSC and remote devices.
 //! * [`media`] — audio mixer and decoders, live inputs (Mic cues), video/image/text/camera
-//!   layers, timecode in and out ([`media::tcio`]), media probing, waveform and poster caches.
+//!   layers, timecode in and out ([`media::tcio`]), media probing, waveform and poster caches,
+//!   Network cue messages ([`media::netsend`]: host lookups never on the engine thread).
 //!   Audio devices come from cpal's PipeWire host when PipeWire runs (feature `pipewire`), ALSA
 //!   otherwise; the pickers list one entry per real output/input.
 //! * [`timecode`] — SMPTE labels, the LTC encoder/decoder and MIDI Time Code. Cue lists can

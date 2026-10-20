@@ -877,7 +877,10 @@ impl Engine {
                     .instance_subtree(ws, *target)
                     .into_iter()
                     .filter(|k| self.instances.get(k).is_some_and(|i| i.kind == KindTag::Audio))
-                    .fold(false, |acc, k| be.devamp(k) || acc);
+                    // Every vamping voice is released (no `any`: it would stop at the first).
+                    .filter(|&k| be.devamp(k))
+                    .count()
+                    > 0;
                 if !hit {
                     self.log(format!("Devamp cue {}: target is not playing", cue.number));
                 }

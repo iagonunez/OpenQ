@@ -3,6 +3,7 @@
 pub mod audio;
 pub mod decoder;
 pub mod input;
+pub mod netsend;
 pub mod pool;
 pub mod still;
 pub mod tcio;
@@ -559,7 +560,8 @@ pub struct Media {
     pub video_error: Option<String>,
     /// Media-info cache.
     pub prober: Arc<Prober>,
-    net: Option<std::net::UdpSocket>,
+    /// Sends Network cue messages (started by the first one).
+    net: Option<netsend::NetSender>,
     /// Open inputs of running Mic cues.
     mics: HashMap<CueId, MicInput>,
     /// Set while a lost audio output is being reopened.
@@ -1198,20 +1200,15 @@ impl Backend for Media {
         self.audio.as_mut().is_some_and(|a| a.devamp(id))
     }
 
+    /// Queues the message: the host name lookup and the send happen on the
+    /// [`netsend::NetSender`] worker, never on the engine thread (a lookup can take seconds).
     fn send_network(&mut self, n: &NetworkCue) -> Result<(), String> {
-        use std::net::ToSocketAddrs;
-        if self.net.is_none() {
-            self.net = Some(std::net::UdpSocket::bind("0.0.0.0:0").map_err(|e| e.to_string())?);
-        }
-        let addr = (n.host.as_str(), n.port)
-            .to_socket_addrs()
-            .map_err(|e| format!("{}: {e}", n.host))?
-            .next()
-            .ok_or_else(|| format!("cannot resolve {}", n.host))?;
         let msg = rosc::OscPacket::Message(rosc::OscMessage { addr: n.address.clone(), args: parse_osc_args(&n.args) });
         let bytes = rosc::encoder::encode(&msg).map_err(|e| e.to_string())?;
-        self.net.as_ref().unwrap().send_to(&bytes, addr).map_err(|e| e.to_string())?;
-        Ok(())
+        if self.net.is_none() {
+            self.net = Some(netsend::NetSender::new().map_err(|e| e.to_string())?);
+        }
+        self.net.as_ref().expect("just set").send(&n.host, n.port, bytes)
     }
 
     fn is_finished(&self, id: CueId) -> bool {
@@ -1263,6 +1260,7 @@ impl Backend for Media {
         let mut out = std::mem::take(&mut self.notes);
         out.extend(self.audio.as_mut().map(|a| a.drain_errors()).unwrap_or_default());
         out.extend(self.light.drain_errors());
+        out.extend(self.net.as_ref().map(|n| n.drain_errors()).unwrap_or_default());
         #[cfg(feature = "video")]
         if let Some(v) = &mut self.video {
             out.extend(v.drain_errors());
