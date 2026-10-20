@@ -48,90 +48,90 @@
     <div class="tabs" role="tablist" aria-label="Instala OpenQ"><button role="tab" id="tab-linux" aria-controls="panel-linux" aria-selected="true"><span aria-hidden="true">🐧</span>Linux</button><button role="tab" id="tab-macos" aria-controls="panel-macos" aria-selected="false" tabindex="-1"><span aria-hidden="true">🍎</span>macOS</button><button role="tab" id="tab-windows" aria-controls="panel-windows" aria-selected="false" tabindex="-1"><span aria-hidden="true">🪟</span>Windows</button></div>
 <div class="panel" id="panel-linux" role="tabpanel" aria-labelledby="tab-linux">
   <p class="where">Nun terminal:</p>
-  <div class="cmd"><code>curl --proto '=https' --tlsv1.2 -fsSL https://github.com/iagonunez/oqman/releases/latest/download/install.sh | sh</code><button class="copy" type="button" data-done="Copiado">Copiar</button></div>
-  <p class="after">Instala as ferramentas de compilación cos paquetes da túa distribución (pregunta antes), compila OpenQ e engádeo ao menú de aplicacións.</p>
+  <div class="cmd"><code>curl --proto '=https' --tlsv1.2 -fsSL https://github.com/iagonunez/OQup/releases/latest/download/install.sh | sh</code><button class="copy" type="button" data-done="Copiado">Copiar</button></div>
+  <p class="after">Descarga a versión máis recente (x86_64 ou ARM64; unha distribución de 2022 ou posterior), instala as bibliotecas de son e dispositivos que falten cos paquetes da túa distribución (pregunta antes) e engade OpenQ ao menú de aplicacións.</p>
 </div>
 <div class="panel" id="panel-macos" role="tabpanel" aria-labelledby="tab-macos" hidden>
   <p class="where">Nun terminal:</p>
-  <div class="cmd"><code>curl --proto '=https' --tlsv1.2 -fsSL https://github.com/iagonunez/oqman/releases/latest/download/install.sh | sh</code><button class="copy" type="button" data-done="Copiado">Copiar</button></div>
-  <p class="after">macOS 11 ou posterior. Nun Mac sen as Command Line Tools de Apple, macOS pide instalalas primeiro; despois volve executar a orde. OpenQ queda en Aplicacións dentro do teu cartafol persoal.</p>
+  <div class="cmd"><code>curl --proto '=https' --tlsv1.2 -fsSL https://github.com/iagonunez/OQup/releases/latest/download/install.sh | sh</code><button class="copy" type="button" data-done="Copiado">Copiar</button></div>
+  <p class="after">macOS 11 ou posterior, Apple silicon ou Intel. OpenQ queda en Aplicacións dentro do teu cartafol persoal.</p>
 </div>
 <div class="panel" id="panel-windows" role="tabpanel" aria-labelledby="tab-windows" hidden>
   <p class="where">En PowerShell:</p>
-  <div class="cmd ps"><code>powershell -ExecutionPolicy Bypass -c &quot;irm https://github.com/iagonunez/oqman/releases/latest/download/install.ps1 | iex&quot;</code><button class="copy" type="button" data-done="Copiado">Copiar</button></div>
-  <p class="after">Windows 10/11 de 64 bits. Sen as C++ Build Tools de Microsoft, primeiro ábrese o seu instalador: acéptao e deixa que remate. Despois OpenQ está no menú Inicio.</p>
+  <div class="cmd ps"><code>powershell -ExecutionPolicy Bypass -c &quot;irm https://github.com/iagonunez/OQup/releases/latest/download/install.ps1 | iex&quot;</code><button class="copy" type="button" data-done="Copiado">Copiar</button></div>
+  <p class="after">Windows 10/11 de 64 bits. Despois OpenQ está no menú Inicio.</p>
 </div>
   </div>
-  <p class="more">O instalador, <a href="https://github.com/iagonunez/oqman">oqman</a>, compila OpenQ no teu ordenador. Máis adiante: <code>oqman update</code> · <code>oqman uninstall</code>.</p>
+  <p class="more">O instalador, <a href="https://github.com/iagonunez/OQup">OQup</a>, descarga OpenQ coas bibliotecas FFmpeg LGPL que usa e, con iluminación, o visualizador 3D OQVis. Máis adiante: <code>oqup update</code> · <code>oqup versions</code> · <code>oqup uninstall</code>; <code>oqup install --build-source</code> compílao no teu ordenador, <code>--no-lighting</code> instala só as cues.</p>
 </section>
 <section class="guide" id="guide">
   <h2>Paso a paso</h2>
-  <p>OpenQ compílase no teu propio ordenador co seu instalador, <a href="https://github.com/iagonunez/oqman">oqman</a>. O instalador descarga o código da versión máis
-  recente, instala o que precisa a compilación (Rust, un compilador de C e FFmpeg para o vídeo), compila OpenQ e engádeo ás
-  túas aplicacións. Os teus espectáculos nunca se tocan.</p>
-  <div class="note tip"><span class="label">Antes de comezar</span><p>Necesitas conexión a internet, varios gigabytes de
-  espazo libre no disco e, en Linux e Windows, o contrasinal de administrador (úsase para instalar paquetes do sistema). A
-  primeira instalación é a máis longa, porque compila o programa enteiro; nun ordenador antigo pode tardar moito. As
-  actualizacións posteriores son máis rápidas, porque as dependencias xa están compiladas.</p></div>
+  <p>OpenQ instálase co seu instalador, <a href="https://github.com/iagonunez/OQup">OQup</a>. OQup descarga a versión máis
+  recente de OpenQ para o teu sistema, compróbaa, engade as bibliotecas de FFmpeg que usa para o vídeo (unha versión LGPL)
+  e instálaa cunha entrada no menú. Co espazo de iluminación (o predeterminado) instala tamén <strong>OQVis</strong>, o
+  visualizador 3D que abre <a href="#lighting-oqvis">Abrir en OQVis</a>. Os teus espectáculos nunca se tocan.</p>
+  <div class="note tip"><span class="label">Antes de comezar</span><p>Necesitas conexión a internet. En Linux, OQup pode
+  pedir o teu contrasinal para instalar algunhas bibliotecas do sistema (son, dispositivos); pregunta antes.</p></div>
 
   <h4>Linux</h4>
   <ol>
-    <li>Abre unha terminal, pega a orde de abaixo e preme Intro:
-<pre><code>curl --proto '=https' --tlsv1.2 -fsSL https://github.com/iagonunez/oqman/releases/latest/download/install.sh | sh</code></pre></li>
-    <li>O primeiro paso descarga o instalador, comproba a suma de control publicada e gárdao en
+    <li>Abre un terminal, pega a orde de abaixo e preme Intro:
+<pre><code>curl --proto '=https' --tlsv1.2 -fsSL https://github.com/iagonunez/OQup/releases/latest/download/install.sh | sh</code></pre></li>
+    <li>O primeiro paso descarga OQup, comproba a suma de control publicada e gárdao en
     <code>~/.local/bin</code>. Despois arranca.</li>
-    <li>Cando amose os paquetes do sistema que precisa (un compilador de C, libclang, as cabeceiras de son ALSA e PipeWire,
-    udev e FFmpeg), pregunta antes de instalalos co xestor de paquetes da túa distribución. Responde que si; o xestor
-    pedirá o contrasinal.</li>
-    <li>Se o ordenador non ten Rust, oqman instala unha copia privada na súa propia carpeta. O Rust que xa haxa no sistema
-    non se toca.</li>
-    <li>A compilación amosa cada paquete que compila. Deixa a terminal aberta ata que diga que OpenQ está instalado.</li>
-    <li>Abre OpenQ desde o menú de aplicacións (busca «OpenQ»), ou escribe <code>openq</code> nunha terminal.</li>
+    <li>Se faltan bibliotecas do sistema que OpenQ necesita (ALSA, PipeWire, udev), OQup amósaas e pregunta antes de
+    instalalas co xestor de paquetes da túa distribución. Responde que si; o xestor pedirá o teu contrasinal.</li>
+    <li>Deixa o terminal aberto ata que diga que OpenQ está instalado.</li>
+    <li>Abre OpenQ desde o menú de aplicacións (busca "OpenQ"), ou escribe <code>openq</code> nun terminal.</li>
   </ol>
-  <p>Se a terminal di <code>openq: orde non atopada</code>, <code>~/.local/bin</code> aínda non está no teu PATH. Engádea
-  unha vez e abre unha terminal nova:</p>
+  <p>Se o terminal di <code>openq: orde non atopada</code>, <code>~/.local/bin</code> aínda non está no teu PATH.
+  Engádeo unha vez e abre un terminal novo:</p>
 <pre><code>fish_add_path ~/.local/bin                                 # fish
 echo 'export PATH="$HOME/.local/bin:$PATH"' &gt;&gt; ~/.bashrc   # bash (zsh: ~/.zshrc)</code></pre>
 
   <h4>macOS</h4>
   <ol>
-    <li>Abre Terminal (preme ⌘ Espazo e escribe «Terminal»).</li>
+    <li>Abre Terminal (preme ⌘ Espazo e escribe "Terminal").</li>
     <li>Pega a orde de abaixo e preme Intro:
-<pre><code>curl --proto '=https' --tlsv1.2 -fsSL https://github.com/iagonunez/oqman/releases/latest/download/install.sh | sh</code></pre></li>
-    <li>Se o Mac aínda non ten as Command Line Tools de Apple, macOS abre o seu instalador. Acepta a licenza de Apple,
-    agarda a que remate e volve executar a mesma orde.</li>
-    <li>oqman compila FFmpeg desde o seu código fonte, o que leva tempo. Nun Mac Intel compila tamén NASM, o ensamblador que
-    usa FFmpeg.</li>
-    <li>A app queda en <code>~/Applications/OpenQ.app</code>, a carpeta Applications da túa carpeta persoal. Ábrea desde o
-    Finder (Ir → Carpeta persoal → Applications) ou con Spotlight. Como a compilaches neste Mac, macOS non amosa o aviso de
-    «desenvolvedor non identificado».</li>
+<pre><code>curl --proto '=https' --tlsv1.2 -fsSL https://github.com/iagonunez/OQup/releases/latest/download/install.sh | sh</code></pre></li>
+    <li>A app queda en <code>~/Applications/OpenQ.app</code>, o cartafol Applications do teu cartafol persoal, con FFmpeg
+    dentro. Ábrea desde o Finder (Ir → Cartafol persoal → Applications) ou con Spotlight.</li>
   </ol>
 
   <h4>Windows</h4>
   <ol>
     <li>Abre PowerShell: preme a tecla Inicio, escribe <em>PowerShell</em> e preme Intro.</li>
     <li>Pega a orde de abaixo e preme Intro:
-<pre><code>powershell -ExecutionPolicy Bypass -c "irm https://github.com/iagonunez/oqman/releases/latest/download/install.ps1 | iex"</code></pre></li>
-    <li>Se o ordenador non ten as C++ Build Tools de Microsoft, ábrese o seu instalador coa carga de traballo «Desenvolvemento
-    para escritorio con C++» marcada. Acepta a licenza de Microsoft e agarda a que remate; é grande e pode tardar. Despois
-    oqman continúa só na mesma xanela.</li>
-    <li>oqman descarga FFmpeg (a versión compartida LGPL) e libclang de LLVM, e compila OpenQ.</li>
+<pre><code>powershell -ExecutionPolicy Bypass -c "irm https://github.com/iagonunez/OQup/releases/latest/download/install.ps1 | iex"</code></pre></li>
     <li>Ao rematar, OpenQ está no menú Inicio e en <em>Configuración → Aplicacións → Aplicacións instaladas</em>.</li>
   </ol>
 
+  <h4>Compilar no teu ordenador</h4>
+  <p><code>oqup install --build-source</code> compila OpenQ (e OQVis) desde o código fonte no teu ordenador en vez de
+  descargar a versión publicada. Antes, OQup instala o que necesita a compilación: unha copia privada de Rust se non hai
+  ningunha, un compilador de C e libclang, e FFmpeg (en Linux cos paquetes da túa distribución, preguntando antes; en macOS
+  as Command Line Tools de Apple e despois FFmpeg compilado desde o seu código; en Windows as C++ Build Tools de Microsoft,
+  cuxo instalador se abre para que o aceptes). Necesita varios gigabytes libres e a primeira compilación tarda moito; as
+  seguintes son máis rápidas.</p>
+
   <h4>Se algo falla</h4>
   <ul>
-    <li><code>oqman doctor</code> amosa o que está instalado e o que aínda lle falta á compilación.</li>
-    <li>Se a compilación se detén, le as últimas liñas que amosa, corrixe a causa (case sempre un paquete que falta ou un
-    instalador cancelado) e volve executar a orde. O que xa se compilou consérvase, así que o segundo intento é máis
-    rápido.</li>
+    <li><code>oqup doctor</code> amosa que está instalado e que lle falta a unha instalación.</li>
+    <li>Se a instalación se detén, le as últimas liñas que amosa, corrixe a causa (case sempre un paquete que falta ou un
+    instalador cancelado) e volve executar a orde.</li>
   </ul>
 
   <h4>Actualizar e desinstalar</h4>
-  <p>Para obter unha versión máis nova, executa <code>oqman update</code>: recompila OpenQ cando sae unha versión nova. Para
-  quitar OpenQ, executa <code>oqman uninstall</code>; pregunta antes. Con <code>--purge</code> quita tamén o Rust, as
-  dependencias e a caché de compilación de oqman. En Windows tamén podes quitalo desde <em>Configuración →
-  Aplicacións → Aplicacións instaladas</em>. Os teus espectáculos nunca se tocan.</p>
+  <p>Para obter unha versión máis nova, executa <code>oqup update</code>: volve instalar OpenQ cando sae unha versión nova,
+  do mesmo xeito ca a última vez. <code>oqup versions</code> amosa as versións que podes instalar, e
+  <code>oqup install --ref v0.4.0</code> instala unha delas. Para quitar OpenQ, executa <code>oqup uninstall</code>;
+  pregunta antes. Con <code>--purge</code> quita tamén as descargas, o Rust, as dependencias e a caché de compilación de
+  OQup. En Windows tamén podes quitalo desde <em>Configuración → Aplicacións → Aplicacións instaladas</em>. Os teus
+  espectáculos nunca se tocan.</p>
+  <p>Se só necesitas cues, <code>oqup install --no-lighting</code> instala OpenQ sen o espazo de iluminación (sen vista
+  Iluminación, cues de luz, descargas de aparatos nin OQVis). Os espectáculos cun deseño de iluminación séguense abrindo,
+  consérvano e reproducen as súas cues de luz. <code>oqup install --lighting</code> vólveo engadir; <code>--no-oqvis</code>
+  mantén a iluminación pero deixa fóra OQVis.</p>
 </section>
 
 <div class="shot"><img src="../img/screenshot.gl.webp" width="1600" height="1466" alt="OpenQ levando un espectáculo: o botón GO, a cue en espera, unha lista con cues de audio, vídeo, texto, grupo, fundido e rede, e as cues que están a soar" loading="lazy"></div>

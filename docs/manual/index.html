@@ -228,26 +228,22 @@ footer { margin-top: 56px; padding-top: 18px; border-top: 1px solid var(--border
 <section id="start">
   <h2><span class="n">01</span>Getting started</h2>
   <h3>Installing</h3>
-  <p>OpenQ is built on your own computer by its installer, <a href="https://github.com/iagonunez/oqman">oqman</a>. The installer downloads the source code of the
-  newest version, installs what the build needs (Rust, a C compiler, and FFmpeg for video), builds OpenQ and adds it
-  to your applications. Your shows are never touched.</p>
-  <div class="note tip"><span class="label">Before you start</span><p>You need an internet connection, several gigabytes of
-  free disk space, and an administrator password on Linux and Windows (it is used to install system packages). The first
-  install is the longest, because the whole program is compiled; on an older computer it can take a long time. Later
-  updates are quicker, because the dependencies are already built.</p></div>
+  <p>OpenQ is installed by its installer, <a href="https://github.com/iagonunez/OQup">OQup</a>. OQup downloads the newest
+  release of OpenQ for your system, checks it, adds the FFmpeg libraries it uses for video (an LGPL build) and installs it
+  with a menu entry. With the lighting workspace (the default) it also installs <strong>OQVis</strong>, the 3D visualiser
+  that <a href="#lighting-oqvis">Open in OQVis</a> starts. Your shows are never touched.</p>
+  <div class="note tip"><span class="label">Before you start</span><p>You need an internet connection. On Linux OQup may
+  need your password to install a few system libraries (sound, devices); it asks first.</p></div>
 
   <h4>Linux</h4>
   <ol>
     <li>Open a terminal, paste the command below and press Enter:
-<pre><code>curl --proto '=https' --tlsv1.2 -fsSL https://github.com/iagonunez/oqman/releases/latest/download/install.sh | sh</code></pre></li>
-    <li>The first step downloads the installer, checks it against the published checksum and puts it in
+<pre><code>curl --proto '=https' --tlsv1.2 -fsSL https://github.com/iagonunez/OQup/releases/latest/download/install.sh | sh</code></pre></li>
+    <li>The first step downloads OQup, checks it against the published checksum and puts it in
     <code>~/.local/bin</code>. Then it starts.</li>
-    <li>When it lists the system packages it needs (a C compiler, libclang, the ALSA and PipeWire audio headers, udev and
-    FFmpeg), it asks before installing them with your distribution's package manager. Answer yes; the package manager
-    asks for your password.</li>
-    <li>If the computer has no Rust, oqman installs a private copy in its own folder. Any Rust already on the system is
-    left alone.</li>
-    <li>The build prints each crate it compiles. Leave the terminal open until it says that OpenQ is installed.</li>
+    <li>If system libraries OpenQ needs are missing (ALSA, PipeWire, udev), OQup lists them and asks before installing
+    them with your distribution's package manager. Answer yes; the package manager asks for your password.</li>
+    <li>Leave the terminal open until it says that OpenQ is installed.</li>
     <li>Open OpenQ from your applications menu (search for "OpenQ"), or type <code>openq</code> in a terminal.</li>
   </ol>
   <p>If the terminal says <code>openq: command not found</code>, <code>~/.local/bin</code> is not in your PATH yet. Add it
@@ -259,43 +255,43 @@ echo 'export PATH="$HOME/.local/bin:$PATH"' &gt;&gt; ~/.bashrc   # bash (zsh: ~/
   <ol>
     <li>Open Terminal (press ⌘ Space and type "Terminal").</li>
     <li>Paste the command below and press Enter:
-<pre><code>curl --proto '=https' --tlsv1.2 -fsSL https://github.com/iagonunez/oqman/releases/latest/download/install.sh | sh</code></pre></li>
-    <li>If the Mac has no Apple Command Line Tools yet, macOS opens Apple's installer. Accept Apple's licence, let it
-    finish, then run the same command again.</li>
-    <li>oqman builds FFmpeg from its source code, which takes a while. On an Intel Mac it also builds NASM, the assembler
-    FFmpeg uses.</li>
-    <li>The app is placed at <code>~/Applications/OpenQ.app</code>, the Applications folder in your home folder. Open it
-    from the Finder (Go → Home → Applications) or with Spotlight. Because you built it on this Mac, macOS does not show
-    the "unidentified developer" warning.</li>
+<pre><code>curl --proto '=https' --tlsv1.2 -fsSL https://github.com/iagonunez/OQup/releases/latest/download/install.sh | sh</code></pre></li>
+    <li>The app is placed at <code>~/Applications/OpenQ.app</code>, the Applications folder in your home folder, with
+    FFmpeg inside it. Open it from the Finder (Go → Home → Applications) or with Spotlight.</li>
   </ol>
 
   <h4>Windows</h4>
   <ol>
     <li>Open PowerShell: press the Start key, type <em>PowerShell</em> and press Enter.</li>
     <li>Paste the command below and press Enter:
-<pre><code>powershell -ExecutionPolicy Bypass -c "irm https://github.com/iagonunez/oqman/releases/latest/download/install.ps1 | iex"</code></pre></li>
-    <li>If the computer has no Microsoft C++ Build Tools, their installer opens with the "Desktop development with C++"
-    workload selected. Accept Microsoft's licence and let it finish; it is large and can take a while. oqman then carries
-    on in the same window.</li>
-    <li>oqman downloads FFmpeg (the shared LGPL build) and libclang from LLVM, then compiles OpenQ.</li>
+<pre><code>powershell -ExecutionPolicy Bypass -c "irm https://github.com/iagonunez/OQup/releases/latest/download/install.ps1 | iex"</code></pre></li>
     <li>When it is done, OpenQ is in the Start menu and listed under <em>Settings → Apps → Installed apps</em>.</li>
   </ol>
 
+  <h4>Building on your own computer</h4>
+  <p><code>oqup install --build-source</code> compiles OpenQ (and OQVis) from the source code on your computer instead of
+  downloading the release. OQup installs what the build needs first: a private copy of Rust if there is none, a C
+  compiler and libclang, and FFmpeg (on Linux from your distribution's packages, after asking; on macOS Apple's Command
+  Line Tools, then FFmpeg compiled from its source; on Windows Microsoft's C++ Build Tools, whose installer opens for you
+  to accept). It needs several gigabytes of free space and the first build takes a long time; later ones are quicker.</p>
+
   <h4>If something goes wrong</h4>
   <ul>
-    <li><code>oqman doctor</code> shows what is installed and what the build still needs.</li>
-    <li>If the build stops, read the last lines it printed, fix the cause (usually a missing package or a cancelled
-    installer) and run the command again. What already compiled is kept, so the second try is quicker.</li>
+    <li><code>oqup doctor</code> shows what is installed and what an install still needs.</li>
+    <li>If the install stops, read the last lines it printed, fix the cause (usually a missing package or a cancelled
+    installer) and run the command again.</li>
   </ul>
 
   <h4>Updating and removing</h4>
-  <p>To get a newer version, run <code>oqman update</code>: it rebuilds OpenQ when a new version is released. To remove
-  OpenQ, run <code>oqman uninstall</code>; it asks first. Add <code>--purge</code> to remove oqman's Rust, dependencies and
-  build cache as well. On Windows you can also remove OpenQ from <em>Settings → Apps → Installed apps</em>. Your shows
-  are never touched.</p>
-  <p>If you only need cues, <code>oqman install --no-lighting</code> builds OpenQ without the lighting workspace (no
-  Lighting view, Light cues or fixture downloads); the build is smaller and faster. Shows with a lighting
-  design still open, keep it and play their Light cues. <code>oqman install --lighting</code> adds it back.</p>
+  <p>To get a newer version, run <code>oqup update</code>: it installs OpenQ again when a new version is released, the same
+  way as last time. <code>oqup versions</code> lists the versions you can install, and <code>oqup install --ref v0.4.0</code>
+  installs one of them. To remove OpenQ, run <code>oqup uninstall</code>; it asks first. Add <code>--purge</code> to remove
+  OQup's downloads, Rust, dependencies and build cache as well. On Windows you can also remove OpenQ from
+  <em>Settings → Apps → Installed apps</em>. Your shows are never touched.</p>
+  <p>If you only need cues, <code>oqup install --no-lighting</code> installs OpenQ without the lighting workspace (no
+  Lighting view, Light cues, fixture downloads or OQVis). Shows with a lighting design still open, keep it and play their
+  Light cues. <code>oqup install --lighting</code> adds it back; <code>--no-oqvis</code> keeps the lighting but leaves
+  OQVis out.</p>
   <p>To run a copy you are working on from source instead:</p>
 <pre><code>cargo run --release                  # start with an empty show
 cargo run --release -- show.openq    # open a saved show</code></pre>
@@ -769,12 +765,13 @@ cargo run --release -- show.openq    # open a saved show</code></pre>
   all of them, out over the given time. Light cues fire together with sound and video, so a lighting change can sit on the
   same GO as an effect or a video.</p>
   <figure>
-    <img src="img/light-cue.webp" width="1100" height="444" alt="Cue list with Light cues targeting lighting cues 1/1 to 1/4, and the Settings tab of the selected Light cue.">
+    <img src="img/light-cue.webp" width="1100" height="783" alt="Cue list with Light cues targeting lighting cues 1/1 to 1/4, and the Settings tab of the selected Light cue.">
     <figcaption>Light cues in the cue list. The Target column shows the lighting cue each one fires.</figcaption>
   </figure>
   <div class="note tip"><span class="label">Stop</span><p>A Stop cue aimed at a Light cue releases that cue's sequence. With
-  <em>Stop all also fades the lighting out</em> (Sequences page), Stop all, Panic and Stop cues without a target release every
-  sequence too, over the <em>Release fade</em>.</p></div>
+  <em>Stop cues without a target also fade the lighting out</em> (Sequences page), Stop cues without a target release every
+  sequence too, over the <em>Release fade</em>. Stop all and Panic (<kbd>Esc</kbd>) stop sound and pictures only: the lighting
+  stays as it is, so a stopped cue list never blacks out the stage.</p></div>
   <p>Lighting fades only through Light cues: a lighting cue fades with its own times, and the next lighting cue or a
   Release takes it on from there. Fade cues don't act on Light cues.</p>
 
@@ -787,14 +784,14 @@ cargo run --release -- show.openq    # open a saved show</code></pre>
   <em>break</em> per input, set in its fixture type) gets one address per break: click its slot count to set the universe
   and address of the other breaks.</p>
   <figure>
-    <img src="img/lighting-patch.webp" width="1100" height="462" alt="Patch sheet with eight RGB washes, two spots and a pixel bar, with address, position and rotation columns.">
-    <figcaption>The patch sheet. Positions are in metres: x to the right, y up, z towards the audience.</figcaption>
+    <img src="img/lighting-patch.webp" width="1100" height="484" alt="Patch sheet with eight RGB washes, two spots and a pixel bar, with address, position and rotation columns.">
+    <figcaption>The patch sheet. Positions are in metres, on the stage axes MVR files use: x across the stage, y depth (+ upstage), z height.</figcaption>
   </figure>
   <p>Fixtures with several cells, such as LED bars, are controlled cell by cell too: cell 3 of fixture 101 is <code>101.3</code>.
   <em>Plan</em> shows the rig from above. Click to select (<kbd>Ctrl</kbd> adds), drag to move the selection, drag empty space to
-  pan and scroll to zoom. With fixtures selected, <em>Arrange</em> spreads them along a line, an arc or a grid.</p>
+  pan and scroll to zoom. <a href="#focus-points">Focus points</a> show as green crosses; drag one to move it. With fixtures selected, <em>Arrange</em> spreads them along a line, an arc or a grid.</p>
   <figure>
-    <img src="img/lighting-plan.webp" width="1100" height="389" alt="Top view of the rig: a stage outline with a riser, two lighting bars LX1 and LX2, and fixtures; LX1 is selected with its handles.">
+    <img src="img/lighting-plan.webp" width="1100" height="796" alt="Top view of the rig: a stage outline with a riser, two lighting bars LX1 and LX2, and fixtures; LX1 is selected with its handles.">
     <figcaption>The Plan view with the stage, a riser and two bars. The tick on each fixture shows which way it faces.</figcaption>
   </figure>
   <p>To make the plan look like the real venue, draw on it: choose <em>Bar</em> or <em>Rectangle</em> next to <em>Draw</em>
@@ -812,9 +809,12 @@ cargo run --release -- show.openq    # open a saved show</code></pre>
   for the next show. <em>Fixture types</em> opens the editor: channels and their attributes, 16-bit fine channels, defaults,
   the value used by Highlight, and <strong>ranges</strong>: the named parts of a channel, such as the slots of a colour wheel or
   a gobo wheel. A range can have a colour and a picture (<em>Image (gobo)</em>), shown in the programmer's drop-down for that channel;
-  GDTF files bring the gobo pictures and the colours of the fixture's LEDs, which the colour picker uses.</p>
+  GDTF files bring the gobo pictures and the colours of the fixture's LEDs, which the colour picker uses. For moving heads the
+  editor sets the pan, tilt and zoom angles at the lowest and the highest DMX value (a file that turns the other way has them
+  reversed); GDTF files also bring where the yoke, the head and the lens sit, so OpenQ aims from the lens as visualisers draw
+  it.</p>
   <figure>
-    <img src="img/fixture-types.webp" width="1100" height="778" alt="Fixture type editor for a moving spot, listing channels with attribute, fine channel, default and ranges.">
+    <img src="img/fixture-types.webp" width="1100" height="875" alt="Fixture type editor for a moving spot, listing channels with attribute, fine channel, default and ranges.">
     <figcaption>The fixture type editor.</figcaption>
   </figure>
   <p><strong>MVR files</strong> carry a rig between programs. <em>Import MVR…</em> (on the Sheet and the Plan) adds the fixtures
@@ -838,7 +838,7 @@ cargo run --release -- show.openq    # open a saved show</code></pre>
   </ul>
   <p>The changes are saved with the show, so the next export keeps them.</p>
   <figure>
-    <img src="img/lighting-plot.webp" width="1100" height="733" alt="Plot editor: an A3 page with the stage, bars, fixture symbols and labels, a legend, and the side column for the selected items.">
+    <img src="img/lighting-plot.webp" width="1100" height="721" alt="Plot editor: an A3 page with the stage, bars, fixture symbols and labels, a legend, and the side column for the selected items.">
     <figcaption>The plot editor.</figcaption>
   </figure>
 
@@ -847,13 +847,14 @@ cargo run --release -- show.openq    # open a saved show</code></pre>
   tiles adds all of them, and a right-click selects only that fixture. Groups and the command line select too. The panel on the
   right sets their values, one page per feature: <em>Intensity</em>, <em>Colour</em>, <em>Position</em> (drag the pad to aim),
   <em>Beam</em> and <em>Control</em>. Drag a bar to set a value, or scroll over it for 1&nbsp;% steps. Channels with ranges have
-  a button per range, such as each gobo.</p>
+  a button per range, such as each gobo. Attributes that change smoothly (dimmer, colour mixing, pan and tilt, zoom, focus,
+  iris, frost, fog…) always get a bar; if the fixture file names ranges of them, the ranges are a picker below it.</p>
   <p>The colour picker shows every colour you can see, and brightens the ones the selected fixture can make: the shape between
   its LED colours. Colours outside it are dimmed, and a click there takes the nearest colour it can make. Each fixture mixes
   the colour with its own LEDs. The LED colours come from the fixture type (GDTF files have them); without them OpenQ uses
   typical LED colours, and says so under the picker.</p>
   <figure>
-    <img src="img/lighting-programmer.webp" width="1100" height="791" alt="Programmer page: groups, presets and effects as cards in the left column, fixture tiles with eight washes selected, and the colour page with the colour range of the washes.">
+    <img src="img/lighting-programmer.webp" width="1100" height="702" alt="Programmer page: groups, presets and effects as cards in the left column, fixture tiles with eight washes selected, and the colour page with the colour range of the washes.">
     <figcaption>The programmer. Fixtures with values in the programmer show an orange dot.</figcaption>
   </figure>
   <p>Programmer values override the playback while they are set, and they are what <em>Record cue</em> stores. <em>Clear
@@ -872,6 +873,33 @@ cargo run --release -- show.openq    # open a saved show</code></pre>
     <li><strong>Capture input</strong> takes what the <a href="#lighting-io">DMX inputs</a> receive into the programmer,
     so a look built on another desk can be recorded here.</li>
   </ul>
+  <h3 id="focus-points">Focus points</h3>
+  <p>A <strong>focus point</strong> is a named place on stage, such as centre stage, the downstage corners or a riser. Cues aim
+  moving heads <em>at a point</em>, not at pan and tilt values: OpenQ works the pan and tilt out from each fixture's position,
+  rotation and angles. Move the point (drag it on Patch → Plan) or a fixture, and every cue aimed at it follows.</p>
+  <figure>
+    <img src="img/lighting-points.webp" width="1100" height="656" alt="Programmer with the focus points Centre, DSL and DSR in the left column, two spots aimed at DSL, and the Position page with the offset from the point and the Spread round the point row.">
+    <figcaption>Two spots aimed at the point DSL. The Position page shows where they aim, measured from the point.</figcaption>
+  </figure>
+  <ul>
+    <li><strong>Make one</strong>: aim fixtures at a place by hand, then <span class="ms" aria-hidden="true">&#xe145;</span> in
+    <em>Focus points</em> puts a point there (on the floor for one fixture, where the beams cross for several).</li>
+    <li><strong>Aim at one</strong>: click the point's card (or <code>point 2</code> on the command line). The selected fixtures
+    turn to it, and the row under the cards edits its name or deletes it.</li>
+    <li><strong>Aim beside it</strong>: move a fixture aimed at a point by hand and it keeps the point: the Position page shows
+    the <em>offset</em> from the point (x across, y depth, z height), and the cue still follows the point. <em>At the point</em>
+    puts the offset back to 0, <em>Detach</em> keeps the aim as plain pan and tilt, <em>Flip</em> reaches the same place the
+    other way round (pan half a turn round, tilt the other side).</li>
+    <li><strong>Spread round the point</strong> (two fixtures or more): lays the selected fixtures out round their point as a
+    <em>Line</em>, an <em>Arc</em> or a <em>Circle</em>, in the order they were selected, with its width or radius and its
+    rotation. The cue keeps the form and follows the point.</li>
+  </ul>
+  <p><strong>Correct the rig</strong>: when the real rig doesn't hang where the patch says, aim fixtures at a point, then move
+  them by hand onto the real place. Pick the group that hangs together (a truss) and which axes to correct (height, height and
+  depth, or all), and <em>Correct</em> moves those fixtures in the patch, and the plot bar they hang on, so their beams meet
+  the points. Every cue aimed at points follows; the points stay where they are. <em>Aim at the points</em> puts the moved
+  fixtures back on their points.</p>
+
   <h3>Command line and keypad</h3>
   <p>The command line above the pages takes desk-style commands; <em>Keypad</em> opens on-screen keys for a touch screen
   (<em>Clear line</em> empties the command line).
@@ -884,6 +912,7 @@ cargo run --release -- show.openq    # open a saved show</code></pre>
       <tr><td><code>group 2 + 7 - 3 at full</code></td><td>Group 2, plus fixture 7, minus fixture 3, at full. <code>out</code> is 0.</td></tr>
       <tr><td><code>1 thru 4 preset 3</code></td><td>Applies preset 3.</td></tr>
       <tr><td><code>effect 2</code></td><td>Runs effect 2 on the selection.</td></tr>
+      <tr><td><code>201 thru 208 point 2</code></td><td>Aims the selection at <a href="#focus-points">focus point</a> 2 (also <code>at point 2</code>).</td></tr>
       <tr><td><code>gobo star</code>, <code>wheel 3</code></td><td>Picks a range by name (the start is enough) or number.</td></tr>
       <tr><td><code>record cue 5 / 2</code></td><td>Records the programmer as cue 5 of sequence 2. Also <code>record group 4</code>, <code>record preset 6</code>.</td></tr>
       <tr><td><code>update</code>, <code>clear</code>, <code>blind</code>, <code>highlight</code></td><td>Same as the buttons.</td></tr>
@@ -900,7 +929,7 @@ cargo run --release -- show.openq    # open a saved show</code></pre>
   the fixtures. With <em>Size follows the sound</em> the effect grows with how loud OpenQ is playing: <em>Gain</em> sets how
   much, <em>Floor</em> how much is left in silence, and the bar next to them shows the level now.</p>
   <figure>
-    <img src="img/lighting-effects.webp" width="1100" height="660" alt="Effects page with a formula effect: settings, preview of red, green and blue across twelve fixtures, and the rainbow formula with its slider.">
+    <img src="img/lighting-effects.webp" width="1100" height="737" alt="Effects page with a formula effect: settings, preview of red, green and blue across twelve fixtures, and the rainbow formula with its slider.">
     <figcaption>A formula effect: the formula makes the colour table, the preview shows it across the selected fixtures.</figcaption>
   </figure>
   <p>Run an effect from the programmer (the effects pool, or <code>effect 2</code>), then record it into a cue. It keeps running
@@ -1046,7 +1075,7 @@ save_effect("wander.oqfx", "Wander", ["Pan", "Tilt"], STEPS, HEADS,
   <p>A sequence is a cue stack. Lighting cues <strong>track</strong>: a cue stores only what changes, and everything else
   carries on from the cues before it. Each cue has a fade, a separate down fade for intensity going down, and a delay.</p>
   <figure>
-    <img src="img/lighting-sequences.webp" width="1100" height="307" alt="Sequences page with sequence Main and its four cues, their fade, down fade and delay times.">
+    <img src="img/lighting-sequences.webp" width="1100" height="322" alt="Sequences page with sequence Main and its four cues, their fade, down fade and delay times.">
     <figcaption>A sequence. The arrow marks its current cue.</figcaption>
   </figure>
   <ul>
@@ -1082,7 +1111,7 @@ save_effect("wander.oqfx", "Wander", ["Pan", "Tilt"], STEPS, HEADS,
   <p><em>Open in a window</em> puts the Playback page in a window of its own; choose a <em>Display</em> to have it fill a
   touch screen. Each computer remembers whether its window is open and where, so it comes back after a restart.</p>
   <figure>
-    <img src="img/lighting-playback.webp" width="1100" height="402" alt="Playback page: grand master, blackout and tempo, sequence cards with GO and Release, and a page of executor buttons.">
+    <img src="img/lighting-playback.webp" width="1100" height="553" alt="Playback page: grand master, blackout and tempo, sequence cards with GO and Release, and a page of executor buttons.">
     <figcaption>The Playback page. In Show mode it plays only; executors are added and edited in Edit mode.</figcaption>
   </figure>
 
@@ -1120,7 +1149,7 @@ save_effect("wander.oqfx", "Wander", ["Pan", "Tilt"], STEPS, HEADS,
   the left, the number on the wire on the right (Art-Net counts from 0). Every output runs on its own, so a slow or unplugged
   device doesn't hold up the others, and a lost device is reopened by itself.</p>
   <figure>
-    <img src="img/lighting-outputs.webp" width="1100" height="448" alt="Outputs page with an Art-Net output sending, a disabled sACN output, and an sACN input set to merge.">
+    <img src="img/lighting-outputs.webp" width="1100" height="443" alt="Outputs page with an Art-Net output sending, a disabled sACN output, and an sACN input set to merge.">
     <figcaption>Outputs and inputs, each with its live status.</figcaption>
   </figure>
   <p><strong>Inputs</strong> receive Art-Net or sACN from another desk. Each one either <em>merges</em> with OpenQ's output
@@ -1134,13 +1163,17 @@ save_effect("wander.oqfx", "Wander", ["Pan", "Tilt"], STEPS, HEADS,
   <h3><span class="ms" aria-hidden="true">&#xe9b0;</span> DMX monitor</h3>
   <p>The DMX monitor shows every slot of a universe as it goes out, inputs included. A yellow line marks where each fixture starts.</p>
   <figure>
-    <img src="img/lighting-monitor.webp" width="1100" height="353" alt="DMX monitor grid of universe 1 with values on the first slots.">
+    <img src="img/lighting-monitor.webp" width="1100" height="368" alt="DMX monitor grid of universe 1 with values on the first slots.">
     <figcaption>The DMX monitor.</figcaption>
   </figure>
   <h3>Remote devices and visualisers</h3>
   <p>A <a href="#remote">remote device</a> gets the lighting design and its changes, and shows the main device's executors
   and DMX output; its GO and faders act on the main device. A device with the edit role can change the design too.
   A visualiser can follow OpenQ the same way, or read the DMX from Art-Net or sACN and the rig from an MVR export.</p>
+  <p id="lighting-oqvis"><span class="menu">View → Open in OQVis</span> (also on Patch → Plan) shows the rig in
+  <strong>OQVis</strong>, the 3D visualiser installed with OpenQ: OpenQ saves the patch as an MVR file and starts OQVis on it.
+  Choose it again while OQVis runs and only the file is rewritten; OQVis reloads it. OQVis gets the DMX over Art-Net, sACN or
+  its own link to OpenQ. If OpenQ can't find OQVis, it asks where the program is and remembers it.</p>
 </section>
 
 <section id="remote">

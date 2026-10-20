@@ -1699,7 +1699,7 @@ pub struct Lighting {
     pub button_pages: Vec<String>,
     /// Size of the playback buttons' cards on the Playback page and window (1 = normal).
     pub button_scale: f32,
-    /// OpenQ's Stop all (and Stop cues without a target) also fade the lighting out.
+    /// Stop cues without a target also fade the lighting out (Stop all / Panic never touch the lighting).
     pub stop_all_releases: bool,
     /// Fade used when a Stop cue releases a sequence, seconds.
     pub release_fade: f64,

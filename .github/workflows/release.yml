@@ -1,0 +1,179 @@
+# A `v*` tag builds OpenQ for each system and publishes a release that OQup (https://github.com/iagonunez/OQup)
+# installs from: users always install through OQup, which downloads these archives (checked against GitHub's SHA-256
+# digest of each asset) plus the LGPL FFmpeg libraries, or builds the same tag from source with
+# `oqup install --build-source`. Can also be run by hand (builds only, no release).
+#
+# Assets (target = x86_64/aarch64-unknown-linux-gnu, aarch64/x86_64-apple-darwin, x86_64-pc-windows-msvc):
+#   openq-<tag>-<target>.tar.gz|.zip        default features (video, PipeWire, lighting)
+#   openq-cues-<tag>-<target>.tar.gz|.zip   without lighting (`oqup install --no-lighting`)
+#   ffmpeg-<version>-lgpl-<target>.tar.gz   macOS only: the LGPL FFmpeg the macOS builds link (compiled here from the
+#                                           official tarball; Linux and Windows use BtbN's LGPL shared builds, which
+#                                           OQup downloads from BtbN itself)
+#   SHA256SUMS
+# Archive layout (one top folder): openq[.exe], LICENSE.md, NOTICE.md, THIRD_PARTY_LICENSES.md, VERSION,
+# assets/icon/*, assets/fonts/*.txt (font licences). FFmpeg is never inside: the program finds it next to itself
+# (Windows), in `lib/` (Linux, rpath $ORIGIN/lib) or in the bundle's Frameworks (macOS, rpath).
+#
+# FFmpeg: keep FFMPEG_VERSION/FFMPEG_SHA256/FFMPEG_SERIES and the macOS configure flags in step with OQup
+# (src/platform/macos.rs, src/platform/{linux,windows}.rs).
+name: Release
+
+on:
+  push:
+    tags: ["v*"]
+  workflow_dispatch:
+
+permissions:
+  contents: write
+  id-token: write
+  attestations: write
+
+env:
+  CARGO_TERM_COLOR: always
+  FFMPEG_VERSION: "9.0.2"
+  FFMPEG_SHA256: "8c3850283eb25fa026482078a04051e0be17347b09ef81a0849bec15a96e002e"
+  FFMPEG_SERIES: "9.0"
+  FFMPEG_CONFIG_REV: "1"
+
+jobs:
+  ffmpeg-macos:
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - { os: macos-15, target: aarch64-apple-darwin }
+          - { os: macos-15-intel, target: x86_64-apple-darwin }
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/cache@v4
+        id: cache
+        with:
+          path: ffmpeg
+          key: ffmpeg-${{ env.FFMPEG_VERSION }}-r${{ env.FFMPEG_CONFIG_REV }}-${{ matrix.target }}
+      - name: Compile FFmpeg (LGPL only)
+        if: steps.cache.outputs.cache-hit != 'true'
+        env: { MACOSX_DEPLOYMENT_TARGET: "11.0" }
+        run: |
+          [[ "${{ matrix.target }}" == x86_64-* ]] && brew install nasm
+          curl -fsSLo ffmpeg.tar.xz "https://ffmpeg.org/releases/ffmpeg-$FFMPEG_VERSION.tar.xz"
+          echo "$FFMPEG_SHA256  ffmpeg.tar.xz" | shasum -a 256 -c
+          mkdir src && tar -xf ffmpeg.tar.xz -C src --strip-components=1
+          prefix="$PWD/ffmpeg"; mkdir -p "$prefix/share/oqup"
+          cd src
+          ./configure --prefix="$prefix" --install-name-dir=@rpath --enable-shared --disable-static --disable-gpl \
+            --disable-nonfree --disable-version3 --disable-programs --disable-doc --disable-autodetect \
+            --enable-videotoolbox --enable-audiotoolbox --enable-avfoundation --enable-zlib --enable-bzlib --enable-pic \
+            > "$prefix/share/oqup/configure-output.txt"
+          grep -qx "License: LGPL version 2.1 or later" "$prefix/share/oqup/configure-output.txt"
+          make -j"$(sysctl -n hw.ncpu)" && make install
+          cp COPYING.LGPLv2.1 LICENSE.md "$prefix/share/oqup/"
+      - name: Package
+        run: |
+          name="ffmpeg-$FFMPEG_VERSION-lgpl-${{ matrix.target }}"
+          mkdir -p dist && cp -R ffmpeg "dist/$name" && (cd dist && tar -czf "$name.tar.gz" "$name" && rm -r "$name")
+      - uses: actions/upload-artifact@v4
+        with: { name: "ffmpeg-${{ matrix.target }}", path: dist/* }
+
+  build:
+    needs: ffmpeg-macos
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-22.04, ubuntu-22.04-arm, macos-15, macos-15-intel, windows-latest]
+        variant: [full, cues]
+        include:
+          - { os: ubuntu-22.04, target: x86_64-unknown-linux-gnu, btbn: linux64 }     # older glibc = more distributions
+          - { os: ubuntu-22.04-arm, target: aarch64-unknown-linux-gnu, btbn: linuxarm64 }
+          - { os: macos-15, target: aarch64-apple-darwin }
+          - { os: macos-15-intel, target: x86_64-apple-darwin }
+          - { os: windows-latest, target: x86_64-pc-windows-msvc, btbn: win64 }
+          - { variant: full, prefix: openq, cargo_features: "" }
+          - { variant: cues, prefix: openq-cues, cargo_features: "--no-default-features --features video,pipewire" }
+    runs-on: ${{ matrix.os }}
+    defaults: { run: { shell: bash } }
+    steps:
+      - uses: actions/checkout@v4
+      - run: rustup toolchain install stable --profile minimal --target ${{ matrix.target }} && rustup default stable
+      - name: System libraries (Linux)
+        if: runner.os == 'Linux'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y pkg-config clang libclang-dev libasound2-dev libudev-dev libpipewire-0.3-dev
+      - name: FFmpeg (BtbN LGPL shared build)
+        if: runner.os != 'macOS'
+        run: |
+          ext=tar.xz; [[ "${{ matrix.btbn }}" == win64 ]] && ext=zip
+          file="ffmpeg-n$FFMPEG_SERIES-latest-${{ matrix.btbn }}-lgpl-shared-$FFMPEG_SERIES.$ext"
+          curl -fsSLo "$RUNNER_TEMP/ffmpeg.$ext" "https://github.com/BtbN/FFmpeg-Builds/releases/download/latest/$file"
+          mkdir "$RUNNER_TEMP/ffmpeg"
+          if [[ $ext == zip ]]; then 7z x -o"$RUNNER_TEMP/unzip" "$RUNNER_TEMP/ffmpeg.zip" >/dev/null && mv "$RUNNER_TEMP"/unzip/*/* "$RUNNER_TEMP/ffmpeg/";
+          else tar -xf "$RUNNER_TEMP/ffmpeg.$ext" -C "$RUNNER_TEMP/ffmpeg" --strip-components=1; fi
+          echo "FFMPEG_DIR=$RUNNER_TEMP/ffmpeg" >> "$GITHUB_ENV"
+          echo "PKG_CONFIG_PATH=$RUNNER_TEMP/ffmpeg/lib/pkgconfig" >> "$GITHUB_ENV"
+          [[ "${{ runner.os }}" == Windows ]] && echo "LIBCLANG_PATH=C:\\Program Files\\LLVM\\bin" >> "$GITHUB_ENV"
+          true
+      - name: FFmpeg (macOS, compiled above)
+        if: runner.os == 'macOS'
+        uses: actions/download-artifact@v4
+        with: { name: "ffmpeg-${{ matrix.target }}", path: ffmpeg-dl }
+      - name: Unpack FFmpeg (macOS)
+        if: runner.os == 'macOS'
+        run: |
+          mkdir "$RUNNER_TEMP/ffmpeg" && tar -xzf ffmpeg-dl/*.tar.gz -C "$RUNNER_TEMP/ffmpeg" --strip-components=1
+          echo "FFMPEG_DIR=$RUNNER_TEMP/ffmpeg" >> "$GITHUB_ENV"
+          echo "PKG_CONFIG_PATH=$RUNNER_TEMP/ffmpeg/lib/pkgconfig" >> "$GITHUB_ENV"
+      - name: Build
+        run: |
+          case "${{ runner.os }}" in
+            # DT_RPATH (not RUNPATH) so FFmpeg's own libraries find each other in lib/ too.
+            Linux) export RUSTFLAGS='-C link-arg=-Wl,-rpath,$ORIGIN/lib -C link-arg=-Wl,--disable-new-dtags' ;;
+            macOS) export RUSTFLAGS='-C link-arg=-Wl,-rpath,@executable_path/../Frameworks' MACOSX_DEPLOYMENT_TARGET=11.0 ;;
+            # No VC++ runtime needed on the user's computer.
+            Windows) export RUSTFLAGS='-C target-feature=+crt-static' ;;
+          esac
+          cargo build --release --locked --target ${{ matrix.target }} --bin openq ${{ matrix.cargo_features }}
+      - name: Check the FFmpeg links
+        run: |
+          exe="target/${{ matrix.target }}/release/openq"
+          case "${{ runner.os }}" in
+            Linux) readelf -d "$exe" | grep -F 'RPATH' | grep -F '$ORIGIN/lib' ;;
+            macOS) ! otool -L "$exe" | grep -E 'libav|libsw' | grep -v '@rpath' ;;
+          esac
+      - name: Package
+        run: |
+          tag="${GITHUB_REF_NAME}"; [[ "$GITHUB_REF_TYPE" == tag ]] || tag="dev-${GITHUB_SHA::12}"
+          name="${{ matrix.prefix }}-$tag-${{ matrix.target }}"
+          ext=""; [[ "${{ matrix.target }}" == *windows* ]] && ext=".exe"
+          d="dist/$name"; mkdir -p "$d/assets/icon" "$d/assets/fonts"
+          cp "target/${{ matrix.target }}/release/openq$ext" LICENSE.md NOTICE.md THIRD_PARTY_LICENSES.md "$d/"
+          cp assets/icon/* "$d/assets/icon/" && cp assets/fonts/*.txt "$d/assets/fonts/"
+          grep -m1 '^version' Cargo.toml | cut -d'"' -f2 > "$d/VERSION"
+          cd dist
+          if [[ -n "$ext" ]]; then 7z a -tzip "$name.zip" "$name" >/dev/null; else tar -czf "$name.tar.gz" "$name"; fi
+          rm -r "$name"
+      - uses: actions/attest-build-provenance@v2
+        if: github.ref_type == 'tag'
+        with: { subject-path: "dist/*" }
+      - uses: actions/upload-artifact@v4
+        with: { name: "${{ matrix.prefix }}-${{ matrix.target }}", path: dist/* }
+
+  release:
+    if: github.ref_type == 'tag'
+    needs: [ffmpeg-macos, build]
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/download-artifact@v4
+        with: { path: dist, merge-multiple: true }
+      - name: Publish
+        env: { GH_TOKEN: "${{ github.token }}" }
+        run: |
+          (cd dist && sha256sum * > SHA256SUMS)
+          cat > notes.md <<NOTES
+          OpenQ $GITHUB_REF_NAME. Install or update it with [OQup](https://github.com/iagonunez/OQup): it downloads the
+          archive for your system and the LGPL FFmpeg libraries (BtbN's builds on Linux and Windows, the
+          \`ffmpeg-*\` archives here on macOS), or builds this version from source with \`--build-source\`.
+
+          \`SHA256SUMS\` lists every file's checksum; \`gh attestation verify <file> -R $GITHUB_REPOSITORY\` checks where
+          it was built.
+          NOTES
+          gh release create "$GITHUB_REF_NAME" dist/* --repo "$GITHUB_REPOSITORY" --title "OpenQ $GITHUB_REF_NAME" --notes-file notes.md --verify-tag

@@ -29,7 +29,7 @@ window and GPU, `tools/ui_perf.sh` drives the app with `OPENQ_DEBUG_SCRIPT` (tim
 
 **Stress tests** (`tests/stress.rs`) are `#[ignore]`d so everyday `cargo test` stays fast. Run
 `tools/stress.sh` before tagging a version and after big features; `.github/workflows/ci.yml` runs it
-on every `v*` tag (run it by hand on the commit first, since oqman offers a tag as soon as it exists). It needs no sound card (audio goes to a virtual output that records what
+on every `v*` tag (run it by hand on the commit first, since OQup offers a tag as soon as it exists). It needs no sound card (audio goes to a virtual output that records what
 it plays) and covers:
 
 - engine fuzzing (hundreds of random shows under random transport and edits) and scale (thousands
@@ -69,12 +69,12 @@ minute). Each run prints its seed (`OPENQ_FUZZ_SEED` repeats it); a failing inpu
 
 User manual: **Help → User manual** (F1) in the app, or open `docs/manual/index.html` in a browser. API documentation: `cargo doc --no-deps --open`.
 
-Video uses the FFmpeg libraries (the system's on Linux; on Windows and macOS oqman installs an
+Video uses the FFmpeg libraries (the system's on Linux; on Windows and macOS OQup installs an
 LGPL-only build inside the app), plus clang at build time, so anything FFmpeg can play works, with no codec plugins to
 install. Build without video with `--no-default-features`.
 
 **Lighting** is the cargo feature `lighting` (on by default; it turns on `fixture-download`). Without it OpenQ is cues only: no Cues/Lighting switch, playback window or Light
-cue type; lighting designs in a show still load, are saved back and play (`oqman install --no-lighting`
+cue type; lighting designs in a show still load, are saved back and play (`oqup install --no-lighting`
 builds that way).
 
 **Lighting effect formulas** (`light::formula`) are a small arithmetic language OpenQ works out into
@@ -85,8 +85,8 @@ They are data, kept in shows and `.oqfx` files.
 `fixture-download`, on by default; ring needs a C compiler for the target, so the cross-compile checks
 run with `--no-default-features`). `cargo test oflsite -- --ignored` talks to the real site.
 
-**Versions** are `vX.Y.Z` tags; there are no binary releases. oqman
-(<https://github.com/iagonunez/oqman>, its own repository) builds the newest tag on the user's
+**Versions** are `vX.Y.Z` tags; there are no binary releases. OQup
+(<https://github.com/iagonunez/OQup>, its own repository) builds the newest tag on the user's
 computer: BtbN's LGPL-only FFmpeg on Windows, FFmpeg compiled from source without GPL parts on macOS,
 the distribution's FFmpeg on Linux. Its "End to end" workflow checks a full install on all three.
 

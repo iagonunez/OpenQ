@@ -72,18 +72,9 @@ pub fn apply(show: &mut Show, cmd: Command, now: Instant) -> Result<(), String> 
     let Show { ws, engine, media, .. } = show;
     match cmd {
         Command::Go => engine.go(ws, media, now),
-        Command::Stop => {
-            if ws.lighting.stop_all_releases {
-                media.light.release_all(ws.settings.panic_fade, now);
-            }
-            engine.stop_all(media, now, ws.settings.panic_fade)
-        }
-        Command::Panic => {
-            if ws.lighting.stop_all_releases {
-                media.light.release_all(0.0, now);
-            }
-            engine.stop_all(media, now, 0.0)
-        }
+        // Stop all and Panic (Esc) stop sound and pictures only: the lighting stays as it is.
+        Command::Stop => engine.stop_all(media, now, ws.settings.panic_fade),
+        Command::Panic => engine.stop_all(media, now, 0.0),
         Command::PauseAll => engine.pause_all(media, now),
         Command::ResumeAll => engine.resume_all(media, now),
         Command::PlayheadNext | Command::PlayheadPrevious => {
@@ -143,4 +134,50 @@ pub fn apply(show: &mut Show, cmd: Command, now: Instant) -> Result<(), String> 
         }
     }
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::light::library;
+    use crate::light::model::{Attribute, Fixture, LightCue, Lighting, Sequence};
+    use std::time::Duration;
+
+    fn wait(mut f: impl FnMut() -> bool) -> bool {
+        let t = Instant::now();
+        while t.elapsed() < Duration::from_secs(2) {
+            if f() {
+                return true;
+            }
+            std::thread::sleep(Duration::from_millis(5));
+        }
+        false
+    }
+
+    /// Stop all and Panic (Esc) stop sound and pictures but leave the lighting as it is, even with
+    /// "Stop cues without a target also fade the lighting out" on.
+    #[test]
+    fn stop_all_leaves_the_lighting() {
+        let mut l = Lighting::default();
+        let t = library::generic("generic/dimmer").unwrap();
+        l.add_type(&t);
+        l.fixtures.push(Fixture { id: 1, fixture_type: t.id.clone(), mode: t.modes[0].name.clone(), address: 1, ..Default::default() });
+        let mut c = LightCue { fade: 0.0, ..Default::default() };
+        c.values.entry(1).or_default().insert(Attribute::Dimmer, 1.0.into());
+        let id = c.id;
+        l.sequences.push(Sequence { id: 1, cues: vec![c].into(), ..Default::default() });
+        l.stop_all_releases = true;
+
+        let mut show = Show::new(crate::media::Prober::new());
+        show.ws.lighting = l;
+        show.sync_lighting();
+        show.media.light.go_cue(id, Instant::now());
+        let on = |s: &Show| s.media.light.status().first().is_some_and(|s| s.active && s.cue == Some(id));
+        assert!(wait(|| on(&show)));
+        for cmd in [Command::Stop, Command::Panic] {
+            apply(&mut show, cmd, Instant::now()).unwrap();
+            std::thread::sleep(Duration::from_millis(100));
+            assert!(on(&show), "{cmd:?} left the sequence running");
+        }
+    }
 }

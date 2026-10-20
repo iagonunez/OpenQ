@@ -66,8 +66,8 @@ Notable cases:
   > as a whole, with its complete source.
   > Distributing the source code is not affected.
 
-  OpenQ isn't distributed as binaries: the installer, oqman
-  (<https://github.com/iagonunez/oqman>), builds it on the user's own computer, which is not
+  OpenQ isn't distributed as binaries: the installer, OQup
+  (<https://github.com/iagonunez/OQup>), builds it on the user's own computer, which is not
   distribution. On Windows and macOS it still uses FFmpeg 9.0 shared libraries configured without
   GPL, version-3 or nonfree parts (BtbN's `lgpl-shared` build on Windows; compiled from the
   official source on macOS) and refuses any other configuration, so the installed app can be

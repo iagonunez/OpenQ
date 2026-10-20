@@ -27,6 +27,9 @@
 //!   The caller names the group: which fixtures share a truss is never guessed.
 //! * [`locate`] — where beams meet (two beams or more cross, or one meets a height): where a new
 //!   point goes when the operator makes one from aimed fixtures.
+//!
+//! [`Spread`] lays the aims of several fixtures out round one point (line, arc, circle) as offsets,
+//! so a cue keeps the form and follows the point.
 
 use super::model::{Attribute, Fixture, FixtureId, Lighting, Physical, PointId, ShapeKind, Value};
 
@@ -602,6 +605,83 @@ pub fn rig_offset(aims: &[Aim], axes: Axes) -> Result<Fit<[f32; 3]>, FocusError>
     Ok(Fit { value: d.map(|x| x as f32), miss })
 }
 
+/// The form [`Spread`] lays fixtures' aims out in round a focus point.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Default)]
+pub enum SpreadShape {
+    /// A straight line through the point, the point in its middle.
+    #[default]
+    Line,
+    /// Part of a circle round the point, its middle in the `turn` direction.
+    Arc,
+    /// A whole circle round the point, evenly spaced.
+    Circle,
+}
+
+impl SpreadShape {
+    /// Every form, in the order the UI lists them.
+    pub const ALL: [SpreadShape; 3] = [SpreadShape::Line, SpreadShape::Arc, SpreadShape::Circle];
+
+    /// Shown name.
+    pub fn label(self) -> &'static str {
+        match self {
+            SpreadShape::Line => crate::i18n::t("Line"),
+            SpreadShape::Arc => crate::i18n::t("Arc"),
+            SpreadShape::Circle => crate::i18n::t("Circle"),
+        }
+    }
+}
+
+/// Where a group of fixtures aimed at one focus point aim round it: offsets on the point's
+/// height plane (the plan view), so the cue keeps the form and follows the point when it moves.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct Spread {
+    /// Line, arc or circle.
+    pub shape: SpreadShape,
+    /// Line: length from the first fixture to the last; arc and circle: radius. Metres.
+    pub size: f32,
+    /// Arc only: degrees from the first fixture to the last.
+    pub span: f32,
+    /// Direction of the form, degrees about the vertical (as [`super::place::Layout::Arc`]: 0 =
+    /// towards the audience, 90 = stage left, +x). At 0 a line runs across the stage, an arc
+    /// bulges downstage of the point and a circle starts downstage of it.
+    pub turn: f32,
+}
+
+impl Default for Spread {
+    fn default() -> Self {
+        Self { shape: SpreadShape::Line, size: 4.0, span: 180.0, turn: 0.0 }
+    }
+}
+
+impl Spread {
+    /// Offsets (patch axes, y = 0) for `n` fixtures, first to last: a line or an arc goes from
+    /// stage right to stage left at `turn` 0, a circle turns the same way. One fixture aims at
+    /// the middle of a line or arc. Millimetres; within the distance limit.
+    pub fn offsets(&self, n: usize) -> Vec<[f32; 3]> {
+        let m = crate::limits::MAX_DISTANCE;
+        let size = if self.size.is_finite() { self.size.clamp(0.0, m) } else { 0.0 };
+        let finite = |v: f32| if v.is_finite() { v } else { 0.0 };
+        let (span, turn) = (finite(self.span).clamp(0.0, 360.0), finite(self.turn));
+        // Position 0…1 along the form (the middle for one fixture).
+        let k = |i: usize| if n <= 1 { 0.5 } else { i as f32 / (n - 1) as f32 };
+        let at = |deg: f32, r: f32| {
+            let a = deg.to_radians();
+            [r * a.sin(), 0.0, r * a.cos()]
+        };
+        (0..n)
+            .map(|i| {
+                let p = match self.shape {
+                    // Along the direction 90° on from `turn`, centred on the point.
+                    SpreadShape::Line => at(turn + 90.0, size * (k(i) - 0.5)),
+                    SpreadShape::Arc => at(turn - span / 2.0 + span * k(i), size),
+                    SpreadShape::Circle => at(turn + 360.0 * i as f32 / n.max(1) as f32, size),
+                };
+                p.map(|v| ((v * 1000.0).round() / 1000.0).clamp(-m, m) + 0.0)
+            })
+            .collect()
+    }
+}
+
 /// How close a fixture must be to a plot bar to hang on it, metres.
 const ON_BAR: f32 = 0.05;
 
@@ -638,6 +718,27 @@ pub fn shift(l: &mut Lighting, ids: &[FixtureId], by: [f32; 3]) {
 mod tests {
     use super::*;
     use crate::light::model::{FocusPoint, PlotShape};
+
+    #[test]
+    fn spread_round_a_point() {
+        let s = |shape, size, span, turn| Spread { shape, size, span, turn };
+        let xs = |v: Vec<[f32; 3]>| v.iter().map(|p| [p[0], p[2]]).collect::<Vec<_>>();
+        // A line across the stage, stage right to stage left, centred on the point.
+        assert_eq!(xs(s(SpreadShape::Line, 4.0, 0.0, 0.0).offsets(5)), [[-2.0, 0.0], [-1.0, 0.0], [0.0, 0.0], [1.0, 0.0], [2.0, 0.0]]);
+        assert_eq!(s(SpreadShape::Line, 4.0, 0.0, 0.0).offsets(1), [[0.0; 3]], "one fixture: on the point");
+        // Turned a quarter: up and down stage.
+        assert_eq!(xs(s(SpreadShape::Line, 2.0, 0.0, 90.0).offsets(2)), [[0.0, 1.0], [0.0, -1.0]]);
+        // A half circle bulging downstage, ends on the line's ends.
+        assert_eq!(xs(s(SpreadShape::Arc, 2.0, 180.0, 0.0).offsets(3)), [[-2.0, 0.0], [0.0, 2.0], [2.0, 0.0]]);
+        assert_eq!(xs(s(SpreadShape::Arc, 2.0, 90.0, 0.0).offsets(1)), [[0.0, 2.0]], "one fixture: the arc's middle");
+        // A whole circle, evenly spaced (no two fixtures on the same place).
+        assert_eq!(xs(s(SpreadShape::Circle, 3.0, 0.0, 0.0).offsets(4)), [[0.0, 3.0], [3.0, 0.0], [0.0, -3.0], [-3.0, 0.0]]);
+        assert!(s(SpreadShape::Circle, 1.0, 0.0, 0.0).offsets(4).iter().all(|p| p[1] == 0.0), "on the point's height");
+        // Wild settings stay finite and in range.
+        let wild = s(SpreadShape::Arc, f32::INFINITY, f32::NAN, 1e30).offsets(3);
+        assert!(wild.iter().flatten().all(|v| v.is_finite() && v.abs() <= crate::limits::MAX_DISTANCE));
+        assert!(s(SpreadShape::Line, 4.0, 0.0, 0.0).offsets(0).is_empty());
+    }
 
     fn mover(position: [f32; 3], rotation: [f32; 3]) -> Fixture {
         Fixture { position, rotation, ..Default::default() }

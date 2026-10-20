@@ -8,6 +8,8 @@
 //! ([`Value::Point`] `offset`). So a cue can aim fixtures at the point itself, or spread them
 //! round it (an arc, a line), and still follow the point when it moves. Only fixtures the operator
 //! aimed from a point refer to one; other pan/tilt moves stay plain levels.
+//! The Position page's "Spread round the point" row lays the selected fixtures out round their
+//! point as a line, an arc or a circle ([`focus::Spread`]) in one go.
 //!
 //! The same offsets serve calibration: a fixture aimed at a point and moved onto the real place
 //! tells where its truss really hangs. The operator picks the group to correct (nothing is guessed
@@ -17,7 +19,7 @@
 use super::lighting::{CardLook, card_grid, pool_card};
 use super::{App, icons, theme};
 use crate::i18n::t;
-use crate::light::focus::{self, Aim, Axes, FocusError};
+use crate::light::focus::{self, Aim, Axes, FocusError, SpreadShape};
 use crate::light::model::{from_stage, split_id, to_stage, Attribute, FixtureId, FocusPoint, GroupId, Lighting, PointId, Value};
 use egui::{DragValue, RichText, Ui};
 use crate::light::focus::reference;
@@ -163,7 +165,65 @@ impl App {
                 }
             });
         });
+        if refs.len() > 1 {
+            self.point_spread_row(ui, &refs);
+        }
         ui.add_space(4.0);
+    }
+
+    /// Position page: lay the selected units aimed from points out round their point as a line,
+    /// an arc or a circle (offsets on the point's height plane, in selection order; units aimed
+    /// at different points are spread round each one). Applied on every change of the settings
+    /// and with the button; each unit keeps its height offset.
+    fn point_spread_row(&mut self, ui: &mut Ui, refs: &[(FixtureId, PointId, [f32; 3])]) {
+        let before = self.light.point_spread;
+        let s = &mut self.light.point_spread;
+        let mut apply = false;
+        theme::wrapped_row(ui, |ui| {
+            theme::keep_together(ui, "point_spread", |ui| {
+                ui.label(t("Spread round the point"))
+                    .on_hover_text(t("Aim the selected fixtures round their point, in the order they were selected: the cue keeps the form and follows the point"));
+                egui::ComboBox::from_id_salt("point_spread_shape").selected_text(s.shape.label()).show_ui(ui, |ui| {
+                    for shape in SpreadShape::ALL {
+                        ui.selectable_value(&mut s.shape, shape, shape.label());
+                    }
+                });
+            });
+            theme::keep_together(ui, "point_spread_values", |ui| {
+                let (size, tip) = if s.shape == SpreadShape::Line {
+                    (t("Width"), t("From the first fixture to the last"))
+                } else {
+                    (t("Radius"), t("Distance from the point"))
+                };
+                ui.add(DragValue::new(&mut s.size).speed(0.02).range(0.0..=crate::limits::MAX_DISTANCE).max_decimals(2).prefix(format!("{size} ")).suffix(" m")).on_hover_text(tip);
+                if s.shape == SpreadShape::Arc {
+                    ui.add(DragValue::new(&mut s.span).speed(0.5).range(0.0..=360.0).max_decimals(1).prefix(format!("{} ", t("Angle"))).suffix("°"))
+                        .on_hover_text(t("Degrees from the first fixture to the last"));
+                }
+                ui.add(DragValue::new(&mut s.turn).speed(0.5).range(-360.0..=360.0).max_decimals(1).prefix(format!("{} ", t("Rotation"))).suffix("°"))
+                    .on_hover_text(t("Direction of the form seen from above: at 0 a line runs across the stage and an arc bulges downstage"));
+                apply = ui.button(t("Spread out")).on_hover_text(t("Spread the selected fixtures round their point")).clicked();
+            });
+        });
+        if !apply && self.light.point_spread == before {
+            return;
+        }
+        // Units of each point, in selection order.
+        let mut points: Vec<PointId> = refs.iter().map(|r| r.1).collect();
+        points.sort_unstable();
+        points.dedup();
+        for point in points {
+            let units: Vec<FixtureId> = refs.iter().filter(|r| r.1 == point).map(|r| r.0).collect();
+            for (f, o) in units.iter().zip(self.light.point_spread.offsets(units.len())) {
+                if let Some(values) = self.light.programmer.get_mut(f) {
+                    for x in values.values_mut() {
+                        if let Value::Point { offset, .. } = x {
+                            *offset = [o[0], offset[1], o[2]];
+                        }
+                    }
+                }
+            }
+        }
     }
 
     /// Focus points as cards: click aims the selection at one and shows its settings (name,

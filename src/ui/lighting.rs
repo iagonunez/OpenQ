@@ -214,6 +214,8 @@ pub(crate) struct LightUi {
     /// Rig correction: the group that moves (None = the aimed fixtures) and along which axes.
     pub(super) fix_group: Option<crate::light::model::GroupId>,
     pub(super) fix_axes: crate::light::focus::Axes,
+    /// Last settings of the Position page's "Spread round the point" row.
+    pub(super) point_spread: crate::light::focus::Spread,
 }
 
 /// Arrange tool: a layout kind and the settings of each.
@@ -553,6 +555,13 @@ impl App {
                 .clicked()
             {
                 self.deferred.push(super::Deferred::ExportPatch(false));
+            }
+            if ui
+                .add_enabled(!l.fixtures.is_empty(), egui::Button::new(theme::with_icon(icons::VIEW_IN_AR, t("Open in OQVis"))))
+                .on_hover_text(t("Show the patch in the OQVis 3D visualiser"))
+                .clicked()
+            {
+                self.deferred.push(super::Deferred::OQVis);
             }
             if ui
                 .add_enabled(!l.fixtures.is_empty(), egui::Button::new(theme::with_icon(icons::EDIT, t("Plot…"))))
@@ -3714,8 +3723,8 @@ impl App {
         });        ui.add_space(8.0);
         ui.separator();
         ui.label(theme::caption(t("With the cue list")));
-        ui.checkbox(&mut l.stop_all_releases, t("Stop all also fades the lighting out"))
-            .on_hover_text(t("Stop all, Panic and Stop cues without a target release every sequence"));
+        ui.checkbox(&mut l.stop_all_releases, t("Stop cues without a target also fade the lighting out"))
+            .on_hover_text(t("They release every sequence. Stop all and Panic (Esc) never touch the lighting"));
         ui.horizontal(|ui| {
             ui.label(t("Release fade"));
             ui.add(DragValue::new(&mut l.release_fade).range(0.0..=600.0).speed(0.05).suffix(" s"))

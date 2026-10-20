@@ -230,27 +230,23 @@ footer { margin-top: 56px; padding-top: 18px; border-top: 1px solid var(--border
 <section id="start">
   <h2><span class="n">01</span>Primeros pasos</h2>
   <h3>Instalación</h3>
-  <p>OpenQ se compila en tu propio ordenador con su instalador, <a href="https://github.com/iagonunez/oqman">oqman</a>. El instalador descarga el código de la versión más
-  reciente, instala lo que necesita la compilación (Rust, un compilador de C y FFmpeg para el vídeo), compila OpenQ y lo
-  añade a tus aplicaciones. Tus espectáculos nunca se tocan.</p>
-  <div class="note tip"><span class="label">Antes de empezar</span><p>Necesitas conexión a internet, varios gigabytes de
-  espacio libre en el disco y, en Linux y Windows, la contraseña de administrador (se usa para instalar paquetes del
-  sistema). La primera instalación es la más larga, porque compila el programa entero; en un ordenador antiguo puede tardar
-  mucho. Las actualizaciones posteriores son más rápidas, porque las dependencias ya están compiladas.</p></div>
+  <p>OpenQ se instala con su instalador, <a href="https://github.com/iagonunez/OQup">OQup</a>. OQup descarga la versión más
+  reciente de OpenQ para tu sistema, la comprueba, añade las bibliotecas de FFmpeg que usa para el vídeo (una versión LGPL)
+  y la instala con una entrada en el menú. Con el espacio de iluminación (lo predeterminado) instala también
+  <strong>OQVis</strong>, el visualizador 3D que abre <a href="#lighting-oqvis">Abrir en OQVis</a>. Tus espectáculos nunca
+  se tocan.</p>
+  <div class="note tip"><span class="label">Antes de empezar</span><p>Necesitas conexión a internet. En Linux, OQup puede
+  pedir tu contraseña para instalar algunas bibliotecas del sistema (sonido, dispositivos); pregunta antes.</p></div>
 
   <h4>Linux</h4>
   <ol>
     <li>Abre una terminal, pega la orden de abajo y pulsa Intro:
-<pre><code>curl --proto '=https' --tlsv1.2 -fsSL https://github.com/iagonunez/oqman/releases/latest/download/install.sh | sh</code></pre></li>
-    <li>El primer paso descarga el instalador, comprueba la suma de control publicada y lo guarda en
+<pre><code>curl --proto '=https' --tlsv1.2 -fsSL https://github.com/iagonunez/OQup/releases/latest/download/install.sh | sh</code></pre></li>
+    <li>El primer paso descarga OQup, comprueba la suma de control publicada y lo guarda en
     <code>~/.local/bin</code>. Después arranca.</li>
-    <li>Cuando muestre los paquetes del sistema que necesita (un compilador de C, libclang, las cabeceras de audio ALSA y
-    PipeWire, udev y FFmpeg), pregunta antes de instalarlos con el gestor de paquetes de tu distribución. Responde que sí;
-    el gestor pedirá tu contraseña.</li>
-    <li>Si el ordenador no tiene Rust, oqman instala una copia privada en su propia carpeta. El Rust que ya haya en el
-    sistema no se toca.</li>
-    <li>La compilación muestra cada paquete que compila. Deja la terminal abierta hasta que diga que OpenQ está
-    instalado.</li>
+    <li>Si faltan bibliotecas del sistema que OpenQ necesita (ALSA, PipeWire, udev), OQup las muestra y pregunta antes de
+    instalarlas con el gestor de paquetes de tu distribución. Responde que sí; el gestor pedirá tu contraseña.</li>
+    <li>Deja la terminal abierta hasta que diga que OpenQ está instalado.</li>
     <li>Abre OpenQ desde el menú de aplicaciones (busca "OpenQ"), o escribe <code>openq</code> en una terminal.</li>
   </ol>
   <p>Si la terminal dice <code>openq: orden no encontrada</code>, <code>~/.local/bin</code> todavía no está en tu PATH.
@@ -262,45 +258,45 @@ echo 'export PATH="$HOME/.local/bin:$PATH"' &gt;&gt; ~/.bashrc   # bash (zsh: ~/
   <ol>
     <li>Abre Terminal (pulsa ⌘ Espacio y escribe "Terminal").</li>
     <li>Pega la orden de abajo y pulsa Intro:
-<pre><code>curl --proto '=https' --tlsv1.2 -fsSL https://github.com/iagonunez/oqman/releases/latest/download/install.sh | sh</code></pre></li>
-    <li>Si el Mac todavía no tiene las Command Line Tools de Apple, macOS abre su instalador. Acepta la licencia de Apple,
-    espera a que termine y vuelve a ejecutar la misma orden.</li>
-    <li>oqman compila FFmpeg desde su código fuente, lo que tarda un rato. En un Mac Intel compila también NASM, el
-    ensamblador que usa FFmpeg.</li>
-    <li>La app queda en <code>~/Applications/OpenQ.app</code>, la carpeta Applications de tu carpeta personal. Ábrela desde
-    el Finder (Ir → Carpeta personal → Applications) o con Spotlight. Como la has compilado tú en este Mac, macOS no muestra
-    el aviso de "desarrollador no identificado".</li>
+<pre><code>curl --proto '=https' --tlsv1.2 -fsSL https://github.com/iagonunez/OQup/releases/latest/download/install.sh | sh</code></pre></li>
+    <li>La app queda en <code>~/Applications/OpenQ.app</code>, la carpeta Applications de tu carpeta personal, con FFmpeg
+    dentro. Ábrela desde el Finder (Ir → Carpeta personal → Applications) o con Spotlight.</li>
   </ol>
 
   <h4>Windows</h4>
   <ol>
     <li>Abre PowerShell: pulsa la tecla Inicio, escribe <em>PowerShell</em> y pulsa Intro.</li>
     <li>Pega la orden de abajo y pulsa Intro:
-<pre><code>powershell -ExecutionPolicy Bypass -c "irm https://github.com/iagonunez/oqman/releases/latest/download/install.ps1 | iex"</code></pre></li>
-    <li>Si el ordenador no tiene las C++ Build Tools de Microsoft, se abre su instalador con la carga de trabajo "Desarrollo
-    para el escritorio con C++" marcada. Acepta la licencia de Microsoft y espera a que termine; es grande y puede tardar.
-    Después oqman continúa solo en la misma ventana.</li>
-    <li>oqman descarga FFmpeg (la versión compartida LGPL) y libclang de LLVM, y compila OpenQ.</li>
+<pre><code>powershell -ExecutionPolicy Bypass -c "irm https://github.com/iagonunez/OQup/releases/latest/download/install.ps1 | iex"</code></pre></li>
     <li>Al terminar, OpenQ está en el menú Inicio y en <em>Configuración → Aplicaciones → Aplicaciones instaladas</em>.</li>
   </ol>
 
+  <h4>Compilar en tu ordenador</h4>
+  <p><code>oqup install --build-source</code> compila OpenQ (y OQVis) desde el código fuente en tu ordenador en vez de
+  descargar la versión publicada. Antes, OQup instala lo que necesita la compilación: una copia privada de Rust si no hay
+  ninguna, un compilador de C y libclang, y FFmpeg (en Linux con los paquetes de tu distribución, preguntando antes; en
+  macOS las Command Line Tools de Apple y después FFmpeg compilado desde su código; en Windows las C++ Build Tools de
+  Microsoft, cuyo instalador se abre para que lo aceptes). Necesita varios gigabytes libres y la primera compilación tarda
+  mucho; las siguientes son más rápidas.</p>
+
   <h4>Si algo falla</h4>
   <ul>
-    <li><code>oqman doctor</code> muestra qué está instalado y qué le falta a la compilación.</li>
-    <li>Si la compilación se detiene, lee las últimas líneas que muestra, corrige la causa (casi siempre un paquete que falta
-    o un instalador cancelado) y vuelve a ejecutar la orden. Lo que ya se compiló se conserva, así que el segundo intento
-    es más rápido.</li>
+    <li><code>oqup doctor</code> muestra qué está instalado y qué le falta a una instalación.</li>
+    <li>Si la instalación se detiene, lee las últimas líneas que muestra, corrige la causa (casi siempre un paquete que
+    falta o un instalador cancelado) y vuelve a ejecutar la orden.</li>
   </ul>
 
   <h4>Actualizar y desinstalar</h4>
-  <p>Para obtener una versión más nueva, ejecuta <code>oqman update</code>: recompila OpenQ cuando sale una versión nueva.
-  Para quitar OpenQ, ejecuta <code>oqman uninstall</code>; pregunta antes. Con <code>--purge</code> quita también el Rust, las
-  dependencias y la caché de compilación de oqman. En Windows también puedes quitarlo desde <em>Configuración →
-  Aplicaciones → Aplicaciones instaladas</em>. Tus espectáculos nunca se tocan.</p>
-  <p>Si solo necesitas cues, <code>oqman install --no-lighting</code> compila OpenQ sin el espacio de iluminación (sin
-  vista Iluminación, cues Light ni descargas de aparatos); la compilación es más pequeña y rápida. Los
-  espectáculos con un diseño de iluminación se siguen abriendo, lo conservan y reproducen sus cues Light.
-  <code>oqman install --lighting</code> lo vuelve a añadir.</p>
+  <p>Para obtener una versión más nueva, ejecuta <code>oqup update</code>: vuelve a instalar OpenQ cuando sale una versión
+  nueva, de la misma forma que la última vez. <code>oqup versions</code> muestra las versiones que puedes instalar, y
+  <code>oqup install --ref v0.4.0</code> instala una de ellas. Para quitar OpenQ, ejecuta <code>oqup uninstall</code>;
+  pregunta antes. Con <code>--purge</code> quita también las descargas, el Rust, las dependencias y la caché de compilación
+  de OQup. En Windows también puedes quitarlo desde <em>Configuración → Aplicaciones → Aplicaciones instaladas</em>. Tus
+  espectáculos nunca se tocan.</p>
+  <p>Si solo necesitas cues, <code>oqup install --no-lighting</code> instala OpenQ sin el espacio de iluminación (sin vista
+  Iluminación, cues de luz, descargas de aparatos ni OQVis). Los espectáculos con un diseño de iluminación se siguen
+  abriendo, lo conservan y reproducen sus cues de luz. <code>oqup install --lighting</code> lo vuelve a añadir;
+  <code>--no-oqvis</code> mantiene la iluminación pero deja fuera OQVis.</p>
   <p>Para ejecutar una copia en la que estés trabajando desde el código fuente:</p>
 <pre><code>cargo run --release                  # empezar con un espectáculo vacío
 cargo run --release -- show.openq    # abrir un espectáculo guardado</code></pre>
@@ -777,12 +773,14 @@ cargo run --release -- show.openq    # abrir un espectáculo guardado</code></pr
   <em>Liberación</em> apaga una secuencia, o todas, en el tiempo indicado. Las cues de luz se lanzan junto con el sonido y el
   vídeo, así que un cambio de luz puede ir en el mismo GO que un efecto o un vídeo.</p>
   <figure>
-    <img src="img/light-cue.webp" width="1100" height="444" alt="Lista de cues con cues de luz que apuntan a las cues de iluminación 1/1 a 1/4, y la pestaña Ajustes de la cue de luz seleccionada.">
+    <img src="img/es/light-cue.webp" width="1100" height="783" alt="Lista de cues con cues de luz que apuntan a las cues de iluminación 1/1 a 1/4, y la pestaña Ajustes de la cue de luz seleccionada.">
     <figcaption>Cues de luz en la lista de cues. La columna Destino muestra la cue de iluminación que lanza cada una.</figcaption>
   </figure>
   <div class="note tip"><span class="label">Parar</span><p>Una cue de parar dirigida a una cue de luz libera la secuencia de esa
-  cue. Con <em>Parar todo también apaga la iluminación</em> (página Secuencias), Parar todo (también la parada inmediata) y las cues
-  de parar sin destino liberan también todas las secuencias, con el <em>Fundido al liberar</em>.</p></div>
+  cue. Con <em>Las cues Parar sin destino también apagan la iluminación</em> (página Secuencias), las cues de parar sin destino
+  liberan también todas las secuencias, con el <em>Fundido al liberar</em>. Parar todo y la parada inmediata (<kbd>Esc</kbd>)
+  paran solo el sonido y las imágenes: la iluminación sigue como está, así que parar la lista de cues nunca deja el escenario
+  a oscuras.</p></div>
   <p>La iluminación solo funde mediante cues de luz: una cue de iluminación funde con sus propios tiempos, y la siguiente cue
   de iluminación o una liberación siguen desde ahí. Las cues Fade no actúan sobre cues de luz.</p>
 
@@ -795,15 +793,15 @@ cargo run --release -- show.openq    # abrir un espectáculo guardado</code></pr
   <em>break</em> por entrada, definido en su tipo de aparato) tiene una dirección por break: pulsa su número de canales para
   poner el universo y la dirección de los demás breaks.</p>
   <figure>
-    <img src="img/es/lighting-patch.webp" width="1100" height="462" alt="Tabla de patch con ocho washes RGB, dos spots y una barra de píxeles, con columnas de dirección, posición y rotación.">
-    <figcaption>La tabla de patch. Las posiciones van en metros: x hacia la derecha, y hacia arriba, z hacia el público.</figcaption>
+    <img src="img/es/lighting-patch.webp" width="1100" height="484" alt="Tabla de patch con ocho washes RGB, dos spots y una barra de píxeles, con columnas de dirección, posición y rotación.">
+    <figcaption>La tabla de patch. Las posiciones van en metros, en los ejes de escenario que usan los archivos MVR: x a lo ancho, y profundidad (+ hacia el foro), z altura.</figcaption>
   </figure>
   <p>Los aparatos de varias celdas, como las barras LED, se controlan también celda a celda: la celda 3 del aparato 101 es
   <code>101.3</code>. <em>Planta</em> muestra el montaje desde arriba. Haz clic para seleccionar (<kbd>Ctrl</kbd> añade),
-  arrastra para mover la selección, arrastra en un hueco para desplazar la vista y usa la rueda para acercar. Con aparatos
+  arrastra para mover la selección, arrastra en un hueco para desplazar la vista y usa la rueda para acercar. Los <a href="#focus-points">puntos de enfoque</a> se ven como cruces verdes; arrastra uno para moverlo. Con aparatos
   seleccionados, <em>Colocar</em> los reparte en línea, en arco o en cuadrícula.</p>
   <figure>
-    <img src="img/es/lighting-plan.webp" width="1100" height="389" alt="Vista desde arriba del montaje: el borde del escenario con una tarima, dos varas LX1 y LX2 y los aparatos; LX1 está seleccionada con sus tiradores.">
+    <img src="img/es/lighting-plan.webp" width="1100" height="810" alt="Vista desde arriba del montaje: el borde del escenario con una tarima, dos varas LX1 y LX2 y los aparatos; LX1 está seleccionada con sus tiradores.">
     <figcaption>La vista Planta con el escenario, una tarima y dos varas. La marca de cada aparato indica hacia dónde mira.</figcaption>
   </figure>
   <p>Para que la planta se parezca al teatro real, dibuja en ella: elige <em>Vara</em> o <em>Rectángulo</em> junto a
@@ -821,9 +819,11 @@ cargo run --release -- show.openq    # abrir un espectáculo guardado</code></pr
   16 bits, valores por defecto, el valor que usa Resaltar y los <strong>rangos</strong>: las partes con nombre de un canal, como
   las posiciones de una rueda de color o de gobos. Un rango puede tener un color y una imagen (<em>Imagen (gobo)</em>),
   que se ven en el desplegable de ese canal en el programador; los archivos GDTF traen las imágenes de los gobos y los colores
-  de los LED del aparato, que usa el selector de color.</p>
+  de los LED del aparato, que usa el selector de color. Para las cabezas móviles, el editor fija los ángulos de pan, tilt y zoom en el valor DMX más bajo y en el más alto (un
+  archivo que gira al revés los trae invertidos); los archivos GDTF traen además dónde están la horquilla, la cabeza y la
+  lente, así que OpenQ apunta desde la lente como lo dibujan los visualizadores.</p>
   <figure>
-    <img src="img/fixture-types.webp" width="1100" height="778" alt="Editor de tipos de aparato de un spot móvil, con los canales, su atributo, canal fino, valor por defecto y rangos.">
+    <img src="img/es/fixture-types.webp" width="1100" height="875" alt="Editor de tipos de aparato de un spot móvil, con los canales, su atributo, canal fino, valor por defecto y rangos.">
     <figcaption>El editor de tipos de aparato.</figcaption>
   </figure>
   <p>Los <strong>archivos MVR</strong> llevan una implantación de un programa a otro. <em>Importar MVR…</em> (en la Tabla y la
@@ -849,7 +849,7 @@ cargo run --release -- show.openq    # abrir un espectáculo guardado</code></pr
   </ul>
   <p>Los cambios se guardan con el espectáculo, así que la siguiente exportación los conserva.</p>
   <figure>
-    <img src="img/es/lighting-plot.webp" width="1100" height="733" alt="Editor del plano: una página A3 con el escenario, varas, símbolos de aparatos y etiquetas, una leyenda y la columna lateral de los elementos seleccionados.">
+    <img src="img/es/lighting-plot.webp" width="1100" height="721" alt="Editor del plano: una página A3 con el escenario, varas, símbolos de aparatos y etiquetas, una leyenda y la columna lateral de los elementos seleccionados.">
     <figcaption>El editor del plano.</figcaption>
   </figure>
 
@@ -859,13 +859,15 @@ cargo run --release -- show.openq    # abrir un espectáculo guardado</code></pr
   también seleccionan. El panel de la derecha ajusta sus valores, con una página por familia: <em>Intensidad</em>,
   <em>Color</em>, <em>Posición</em> (arrastra en el recuadro para apuntar), <em>Haz</em> y <em>Control</em>. Arrastra una
   barra para fijar un valor, o usa la rueda encima para pasos del 1&nbsp;%. Los canales con rangos tienen un botón por rango,
-  por ejemplo uno por gobo.</p>
+  por ejemplo uno por gobo.
+  Los atributos que cambian de forma continua (intensidad, mezcla de color, pan y tilt, zoom, foco, iris, frost, humo…)
+  siempre tienen una barra; si el archivo del aparato nombra rangos de ellos, los rangos son un selector debajo.</p>
   <p>El selector de color muestra todos los colores visibles e ilumina los que puede dar el aparato seleccionado: la forma
   entre los colores de sus LED. Los de fuera se ven apagados, y un clic ahí toma el color más cercano que puede dar. Cada
   aparato mezcla el color con sus propios LED. Los colores de los LED vienen del tipo de aparato (los archivos GDTF los
   traen); sin ellos OpenQ usa colores de LED típicos, y lo indica bajo el selector.</p>
   <figure>
-    <img src="img/es/lighting-programmer.webp" width="1100" height="791" alt="Página Programador: grupos, presets y efectos como tarjetas en la columna de la izquierda, fichas de aparatos con ocho washes seleccionados, y la página de color con el rango de color de los washes.">
+    <img src="img/es/lighting-programmer.webp" width="1100" height="702" alt="Página Programador: grupos, presets y efectos como tarjetas en la columna de la izquierda, fichas de aparatos con ocho washes seleccionados, y la página de color con el rango de color de los washes.">
     <figcaption>El programador. Los aparatos con valores en el programador llevan un punto naranja.</figcaption>
   </figure>
   <p>Los valores del programador mandan sobre la reproducción mientras están puestos, y son lo que guarda <em>Grabar cue</em>.
@@ -884,6 +886,34 @@ cargo run --release -- show.openq    # abrir un espectáculo guardado</code></pr
     <li><strong>Capturar entrada</strong> lleva al programador lo que reciben las <a href="#lighting-io">entradas DMX</a>,
     para grabar aquí un estado hecho en otra mesa.</li>
   </ul>
+  <h3 id="focus-points">Puntos de enfoque</h3>
+  <p>Un <strong>punto de enfoque</strong> es un lugar del escenario con nombre, como el centro, las esquinas del proscenio o una
+  tarima. Las cues apuntan las cabezas móviles <em>a un punto</em>, no a valores de pan y tilt: OpenQ calcula el pan y el tilt
+  a partir de la posición, la rotación y los ángulos de cada aparato. Mueve el punto (arrástralo en Patch → Planta) o un
+  aparato, y todas las cues que apuntan a él lo siguen.</p>
+  <figure>
+    <img src="img/es/lighting-points.webp" width="1100" height="656" alt="Programador con los puntos de enfoque Centre, DSL y DSR en la columna izquierda, dos spots apuntando a DSL, y la página Posición con el desplazamiento desde el punto y la fila Repartir alrededor del punto.">
+    <figcaption>Dos spots apuntando al punto DSL. La página Posición muestra adónde apuntan, medido desde el punto.</figcaption>
+  </figure>
+  <ul>
+    <li><strong>Crear uno</strong>: apunta aparatos a un lugar a mano y después <span class="ms" aria-hidden="true">&#xe145;</span>
+    en <em>Puntos de enfoque</em> pone ahí un punto (en el suelo para un aparato, donde se cruzan los haces para varios).</li>
+    <li><strong>Apuntar a uno</strong>: haz clic en la tarjeta del punto (o <code>point 2</code> en la línea de órdenes). Los
+    aparatos seleccionados giran hacia él, y la fila bajo las tarjetas cambia su nombre o lo borra.</li>
+    <li><strong>Apuntar al lado</strong>: mueve a mano un aparato que apunta a un punto y conserva el punto: la página Posición
+    muestra el <em>desplazamiento</em> desde el punto (x a lo ancho, y profundidad, z altura), y la cue sigue al punto.
+    <em>En el punto</em> vuelve a poner el desplazamiento a 0, <em>Desvincular</em> guarda el apuntado como pan y tilt normales,
+    <em>Voltear</em> llega al mismo sitio al revés (pan media vuelta, tilt al otro lado).</li>
+    <li><strong>Repartir alrededor del punto</strong> (dos aparatos o más): coloca los aparatos seleccionados alrededor de su
+    punto en <em>Línea</em>, <em>Arco</em> o <em>Círculo</em>, en el orden en que se seleccionaron, con su ancho o radio y su
+    rotación. La cue conserva la forma y sigue al punto.</li>
+  </ul>
+  <p><strong>Corregir el rig</strong>: cuando el montaje real no cuelga donde dice el patch, apunta aparatos a un punto y
+  muévelos a mano hasta el sitio real. Elige el grupo que cuelga junto (una vara o un truss) y qué ejes corregir (altura,
+  altura y profundidad, o todos), y <em>Corregir</em> mueve esos aparatos en el patch, y la vara del plano de la que cuelgan,
+  para que sus haces lleguen a los puntos. Todas las cues que apuntan a puntos lo siguen; los puntos se quedan donde están.
+  <em>Apuntar a los puntos</em> devuelve los aparatos movidos a sus puntos.</p>
+
   <h3>Línea de órdenes y teclado</h3>
   <p>La línea de órdenes, encima de las páginas, acepta órdenes al estilo de una mesa (en inglés); <em>Teclado</em> abre teclas
   en pantalla para una pantalla táctil (<em>Borrar línea</em> vacía la línea de órdenes). Las palabras se pueden abreviar a dos letras (<code>th</code>, <code>gr</code>, <code>rec</code>).</p>
@@ -895,6 +925,7 @@ cargo run --release -- show.openq    # abrir un espectáculo guardado</code></pr
       <tr><td><code>group 2 + 7 - 3 at full</code></td><td>El grupo 2, más el aparato 7, menos el 3, a tope. <code>out</code> es 0.</td></tr>
       <tr><td><code>1 thru 4 preset 3</code></td><td>Aplica el preset 3.</td></tr>
       <tr><td><code>effect 2</code></td><td>Lanza el efecto 2 en la selección.</td></tr>
+      <tr><td><code>201 thru 208 point 2</code></td><td>Apunta la selección al <a href="#focus-points">punto de enfoque</a> 2 (también <code>at point 2</code>).</td></tr>
       <tr><td><code>gobo star</code>, <code>wheel 3</code></td><td>Elige un rango por nombre (basta el principio) o número.</td></tr>
       <tr><td><code>record cue 5 / 2</code></td><td>Graba el programador como cue 5 de la secuencia 2. También <code>record group 4</code>, <code>record preset 6</code>.</td></tr>
       <tr><td><code>update</code>, <code>clear</code>, <code>blind</code>, <code>highlight</code></td><td>Lo mismo que los botones.</td></tr>
@@ -912,7 +943,7 @@ cargo run --release -- show.openq    # abrir un espectáculo guardado</code></pr
   volumen al que suena OpenQ: <em>Ganancia</em> dice cuánto, <em>Mínimo</em> cuánto queda en silencio, y la barra de al lado
   muestra el nivel del momento.</p>
   <figure>
-    <img src="img/lighting-effects.webp" width="1100" height="660" alt="Página Efectos con un efecto de fórmula: ajustes, vista previa de rojo, verde y azul en doce aparatos, y la fórmula del arcoíris con su deslizador.">
+    <img src="img/es/lighting-effects.webp" width="1100" height="737" alt="Página Efectos con un efecto de fórmula: ajustes, vista previa de rojo, verde y azul en doce aparatos, y la fórmula del arcoíris con su deslizador.">
     <figcaption>Un efecto de fórmula: la fórmula crea la tabla de colores y la vista previa la muestra en los aparatos seleccionados.</figcaption>
   </figure>
   <p>Lanza un efecto desde el programador (los efectos o <code>effect 2</code>) y grábalo en una cue. Sigue funcionando en las
@@ -1066,7 +1097,7 @@ save_effect("wander.oqfx", "Wander", ["Pan", "Tilt"], STEPS, HEADS,
   guarda lo que cambia, y lo demás sigue como lo dejaron las cues anteriores. Cada cue tiene un fade, un fade de bajada aparte
   para la intensidad que baja, y un delay.</p>
   <figure>
-    <img src="img/lighting-sequences.webp" width="1100" height="307" alt="Página Secuencias con la secuencia Main y sus cuatro cues, con sus tiempos de fade, bajada y delay.">
+    <img src="img/es/lighting-sequences.webp" width="1100" height="322" alt="Página Secuencias con la secuencia Main y sus cuatro cues, con sus tiempos de fade, bajada y delay.">
     <figcaption>Una secuencia. La flecha marca su cue actual.</figcaption>
   </figure>
   <ul>
@@ -1104,7 +1135,7 @@ save_effect("wander.oqfx", "Wander", ["Pan", "Tilt"], STEPS, HEADS,
   <p><em>Abrir en una ventana</em> pone la página Reproducción en una ventana propia; elige una <em>Pantalla</em> para que ocupe
   una pantalla táctil. Cada ordenador recuerda si su ventana está abierta y dónde, así que vuelve tras reiniciar.</p>
   <figure>
-    <img src="img/es/lighting-playback.webp" width="1100" height="402" alt="Página Reproducción: gran máster, blackout y tempo, tarjetas de secuencia con GO y Liberación, y una página de botones de ejecutor.">
+    <img src="img/es/lighting-playback.webp" width="1100" height="553" alt="Página Reproducción: gran máster, blackout y tempo, tarjetas de secuencia con GO y Liberación, y una página de botones de ejecutor.">
     <figcaption>La página Reproducción. En modo función solo reproduce; los ejecutores se añaden y editan en modo edición.</figcaption>
   </figure>
 
@@ -1143,7 +1174,7 @@ save_effect("wander.oqfx", "Wander", ["Pan", "Tilt"], STEPS, HEADS,
   la izquierda y el número en el cable a la derecha (Art-Net cuenta desde 0). Cada salida funciona por su cuenta, así que un
   dispositivo lento o desconectado no frena a los demás, y uno perdido se vuelve a abrir solo.</p>
   <figure>
-    <img src="img/lighting-outputs.webp" width="1100" height="448" alt="Página Salidas con una salida Art-Net enviando, una salida sACN desactivada y una entrada sACN que mezcla.">
+    <img src="img/es/lighting-outputs.webp" width="1100" height="443" alt="Página Salidas con una salida Art-Net enviando, una salida sACN desactivada y una entrada sACN que mezcla.">
     <figcaption>Salidas y entradas, cada una con su estado en directo.</figcaption>
   </figure>
   <p>Las <strong>entradas</strong> reciben Art-Net o sACN de otra mesa. Cada una <em>mezcla</em> con la salida de OpenQ (gana el
@@ -1158,7 +1189,7 @@ save_effect("wander.oqfx", "Wander", ["Pan", "Tilt"], STEPS, HEADS,
   <p>El monitor DMX muestra cada canal de un universo tal como sale, entradas incluidas. Una línea amarilla marca dónde empieza
   cada aparato.</p>
   <figure>
-    <img src="img/lighting-monitor.webp" width="1100" height="353" alt="Cuadrícula del monitor DMX del universo 1 con valores en los primeros canales.">
+    <img src="img/es/lighting-monitor.webp" width="1100" height="368" alt="Cuadrícula del monitor DMX del universo 1 con valores en los primeros canales.">
     <figcaption>El monitor DMX.</figcaption>
   </figure>
   <h3>Dispositivos remotos y visualizadores</h3>
@@ -1166,6 +1197,11 @@ save_effect("wander.oqfx", "Wander", ["Pan", "Tilt"], STEPS, HEADS,
   salida DMX del dispositivo principal; su GO y sus faders actúan en el dispositivo principal. Un dispositivo con el rol de
   edición también puede cambiar el diseño. Un visualizador puede seguir a OpenQ del mismo modo, o leer el DMX por Art-Net o sACN
   y el montaje de un MVR exportado.</p>
+  <p id="lighting-oqvis"><span class="menu">Ver → Abrir en OQVis</span> (también en Patch → Planta) muestra el montaje en
+  <strong>OQVis</strong>, el visualizador 3D que se instala con OpenQ: OpenQ guarda el patch como archivo MVR y abre OQVis con
+  él. Si lo eliges otra vez mientras OQVis está abierto, solo se reescribe el archivo y OQVis lo vuelve a cargar. OQVis recibe
+  el DMX por Art-Net, sACN o su propio enlace con OpenQ. Si OpenQ no encuentra OQVis, pregunta dónde está el programa y lo
+  recuerda.</p>
 </section>
 
 <section id="remote">

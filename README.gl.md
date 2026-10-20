@@ -33,30 +33,33 @@ en producións comerciais.
 
 ## 📦 Instalación
 
-OpenQ compílase desde o código fonte no teu ordenador con **[oqman](https://github.com/iagonunez/oqman)**,
-un instalador ao estilo de rustup. Instala Rust e as dependencias de compilación se faltan (en
-Windows e macOS un FFmpeg só LGPL, en Linux os paquetes da túa distribución, preguntando antes),
-compila a versión etiquetada máis recente e instala a aplicación coa súa entrada no menú.
-`oqman update` volve compilar cando sae unha versión nova; `oqman uninstall` elimínaa.
-`oqman install --no-lighting` instala só os cues, sen o espazo de iluminación (`--lighting` volve engadilo).
+OpenQ instálase con **[OQup](https://github.com/iagonunez/OQup)**, un instalador ao estilo de
+rustup. Descarga a versión máis recente de OpenQ para o teu sistema coas bibliotecas FFmpeg só LGPL
+que usa (en Linux instala ademais as bibliotecas de son e dispositivos que falten cos paquetes da
+túa distribución, preguntando antes), engade o visualizador 3D OQVis para o espazo de iluminación e
+instala a aplicación coa súa entrada no menú. `oqup update` instala unha versión nova cando sae,
+`oqup versions` amósaas e `oqup uninstall` elimínaa. `oqup install --build-source` compila OpenQ no
+teu ordenador (instalando Rust e as dependencias de compilación se faltan).
+`oqup install --no-lighting` instala só os cues, sen o espazo de iluminación nin OQVis
+(`--lighting` volve engadilo).
 
 ### 🐧 Linux e 🍎 macOS
 
 ```sh
-curl --proto '=https' --tlsv1.2 -fsSL https://github.com/iagonunez/oqman/releases/latest/download/install.sh | sh
+curl --proto '=https' --tlsv1.2 -fsSL https://github.com/iagonunez/OQup/releases/latest/download/install.sh | sh
 ```
 
 ### 🪟 Windows 10/11 (64 bits), en PowerShell
 
 ```powershell
-powershell -ExecutionPolicy Bypass -c "irm https://github.com/iagonunez/oqman/releases/latest/download/install.ps1 | iex"
+powershell -ExecutionPolicy Bypass -c "irm https://github.com/iagonunez/OQup/releases/latest/download/install.ps1 | iex"
 ```
 
 A aplicación instálase en `~/Applications/OpenQ.app` (macOS, asinada ad hoc ou co teu Developer ID:
-`--sign`), `%LOCALAPPDATA%\Programs\OpenQ` (Windows) ou `~/.local/bin/openq` (Linux). O README de
-oqman enumera cada descarga, a súa orixe e a súa licenza.
+`--sign`), `%LOCALAPPDATA%\Programs\OpenQ` (Windows) ou `~/.local/share/oqup/app` cunha ligazón en
+`~/.local/bin/openq` (Linux). O README de OQup enumera cada descarga, a súa orixe e a súa licenza.
 
-### 🛠️ Á man (Linux; é o que fai oqman alí)
+### 🛠️ Desde o código, á man (Linux; o que fai alí `oqup install --build-source`)
 
 ```sh
 # Debian/Ubuntu

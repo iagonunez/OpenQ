@@ -7,8 +7,8 @@ from pathlib import Path
 
 DOCS = Path(__file__).resolve().parent.parent / "docs"
 REPO = "https://github.com/iagonunez/OpenQ"
-SH = "curl --proto '=https' --tlsv1.2 -fsSL https://github.com/iagonunez/oqman/releases/latest/download/install.sh | sh"
-PS = 'powershell -ExecutionPolicy Bypass -c "irm https://github.com/iagonunez/oqman/releases/latest/download/install.ps1 | iex"'
+SH = "curl --proto '=https' --tlsv1.2 -fsSL https://github.com/iagonunez/OQup/releases/latest/download/install.sh | sh"
+PS = 'powershell -ExecutionPolicy Bypass -c "irm https://github.com/iagonunez/OQup/releases/latest/download/install.ps1 | iex"'
 
 TEXT = {
     "en": {
@@ -22,10 +22,10 @@ TEXT = {
         "install": "Install OpenQ",
         "guide_title": "Step by step",
         "where_unix": "In a terminal:", "where_win": "In PowerShell:",
-        "after_linux": "Installs the build tools from your distribution's packages (it asks first), builds OpenQ and adds it to your applications menu.",
-        "after_macos": "macOS 11 or later. On a Mac without Apple's Command Line Tools, macOS asks to install them first; run the command again afterwards. OpenQ ends up in Applications in your home folder.",
-        "after_windows": "Windows 10/11, 64-bit. Without Microsoft's C++ Build Tools, their installer opens first: accept it and let it finish. OpenQ is then in the Start menu.",
-        "more": "The installer, <a href=\"https://github.com/iagonunez/oqman\">oqman</a>, builds OpenQ on your computer. Later: <code>oqman update</code> · <code>oqman uninstall</code>.",
+        "after_linux": "Downloads the newest release (x86_64 or ARM64; a distribution from 2022 or later), installs missing sound and device libraries from your distribution's packages (it asks first) and adds OpenQ to your applications menu.",
+        "after_macos": "macOS 11 or later, Apple silicon or Intel. OpenQ ends up in Applications in your home folder.",
+        "after_windows": "Windows 10/11, 64-bit. OpenQ is then in the Start menu.",
+        "more": "The installer, <a href=\"https://github.com/iagonunez/OQup\">OQup</a>, downloads OpenQ with the LGPL FFmpeg libraries it uses and, with lighting, the OQVis 3D visualiser. Later: <code>oqup update</code> · <code>oqup versions</code> · <code>oqup uninstall</code>; <code>oqup install --build-source</code> compiles it on your computer instead, <code>--no-lighting</code> installs the cues only.",
         "copy": "Copy", "copied": "Copied",
         "shot_alt": "OpenQ running a show: the GO button, the standby cue, a cue list with audio, video, text, group, fade and network cues, and the cues that are playing",
         "what": "What it does",
@@ -54,10 +54,10 @@ TEXT = {
         "install": "Instala OpenQ",
         "guide_title": "Paso a paso",
         "where_unix": "En un terminal:", "where_win": "En PowerShell:",
-        "after_linux": "Instala las herramientas de compilación con los paquetes de tu distribución (pregunta antes), compila OpenQ y lo añade al menú de aplicaciones.",
-        "after_macos": "macOS 11 o posterior. En un Mac sin las Command Line Tools de Apple, macOS pide instalarlas primero; después vuelve a ejecutar la orden. OpenQ queda en Aplicaciones dentro de tu carpeta personal.",
-        "after_windows": "Windows 10/11 de 64 bits. Sin las C++ Build Tools de Microsoft, primero se abre su instalador: acéptalo y deja que termine. Después OpenQ está en el menú Inicio.",
-        "more": "El instalador, <a href=\"https://github.com/iagonunez/oqman\">oqman</a>, compila OpenQ en tu ordenador. Más adelante: <code>oqman update</code> · <code>oqman uninstall</code>.",
+        "after_linux": "Descarga la versión más reciente (x86_64 o ARM64; una distribución de 2022 o posterior), instala las bibliotecas de sonido y dispositivos que falten con los paquetes de tu distribución (pregunta antes) y añade OpenQ al menú de aplicaciones.",
+        "after_macos": "macOS 11 o posterior, Apple silicon o Intel. OpenQ queda en Aplicaciones dentro de tu carpeta personal.",
+        "after_windows": "Windows 10/11 de 64 bits. Después OpenQ está en el menú Inicio.",
+        "more": "El instalador, <a href=\"https://github.com/iagonunez/OQup\">OQup</a>, descarga OpenQ con las bibliotecas FFmpeg LGPL que usa y, con iluminación, el visualizador 3D OQVis. Más adelante: <code>oqup update</code> · <code>oqup versions</code> · <code>oqup uninstall</code>; <code>oqup install --build-source</code> lo compila en tu ordenador, <code>--no-lighting</code> instala solo las cues.",
         "copy": "Copiar", "copied": "Copiado",
         "shot_alt": "OpenQ llevando un espectáculo: el botón GO, la cue en espera, una lista con cues de audio, vídeo, texto, grupo, fundido y red, y las cues que están sonando",
         "what": "Qué hace",
@@ -86,10 +86,10 @@ TEXT = {
         "install": "Instala OpenQ",
         "guide_title": "Paso a paso",
         "where_unix": "Nun terminal:", "where_win": "En PowerShell:",
-        "after_linux": "Instala as ferramentas de compilación cos paquetes da túa distribución (pregunta antes), compila OpenQ e engádeo ao menú de aplicacións.",
-        "after_macos": "macOS 11 ou posterior. Nun Mac sen as Command Line Tools de Apple, macOS pide instalalas primeiro; despois volve executar a orde. OpenQ queda en Aplicacións dentro do teu cartafol persoal.",
-        "after_windows": "Windows 10/11 de 64 bits. Sen as C++ Build Tools de Microsoft, primeiro ábrese o seu instalador: acéptao e deixa que remate. Despois OpenQ está no menú Inicio.",
-        "more": "O instalador, <a href=\"https://github.com/iagonunez/oqman\">oqman</a>, compila OpenQ no teu ordenador. Máis adiante: <code>oqman update</code> · <code>oqman uninstall</code>.",
+        "after_linux": "Descarga a versión máis recente (x86_64 ou ARM64; unha distribución de 2022 ou posterior), instala as bibliotecas de son e dispositivos que falten cos paquetes da túa distribución (pregunta antes) e engade OpenQ ao menú de aplicacións.",
+        "after_macos": "macOS 11 ou posterior, Apple silicon ou Intel. OpenQ queda en Aplicacións dentro do teu cartafol persoal.",
+        "after_windows": "Windows 10/11 de 64 bits. Despois OpenQ está no menú Inicio.",
+        "more": "O instalador, <a href=\"https://github.com/iagonunez/OQup\">OQup</a>, descarga OpenQ coas bibliotecas FFmpeg LGPL que usa e, con iluminación, o visualizador 3D OQVis. Máis adiante: <code>oqup update</code> · <code>oqup versions</code> · <code>oqup uninstall</code>; <code>oqup install --build-source</code> compílao no teu ordenador, <code>--no-lighting</code> instala só as cues.",
         "copy": "Copiar", "copied": "Copiado",
         "shot_alt": "OpenQ levando un espectáculo: o botón GO, a cue en espera, unha lista con cues de audio, vídeo, texto, grupo, fundido e rede, e as cues que están a soar",
         "what": "Que fai",
