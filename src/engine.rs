@@ -17,7 +17,8 @@ use crate::model::{Cue, CueId, CueKind, FadeCurve, GroupMode, KindTag, LightingC
 use std::collections::{HashMap, HashSet};
 use std::time::{Duration, Instant};
 
-/// How far ahead of their due time starts are handed to the backend.
+/// How far ahead of their due time starts are handed to the backend, at least (the backend adds
+/// its own buffering, [`Backend::lookahead`]).
 pub const LOOKAHEAD: Duration = Duration::from_millis(25);
 const MAX_PRELOAD: usize = 16;
 /// A cue fired more often than this within one tick is in a loop with no time in it (a Start
@@ -64,6 +65,11 @@ pub trait Backend {
     fn duration(&self, cue: &Cue) -> Option<f64>;
     /// Called every tick before the engine runs.
     fn update(&mut self, now: Instant);
+    /// How far ahead starts must be handed over to land on time: [`LOOKAHEAD`] (engine ticks
+    /// delayed by the show lock) plus how far ahead the backend renders.
+    fn lookahead(&self) -> Duration {
+        LOOKAHEAD
+    }
     /// True when the last [`Backend::set_preloaded`] skipped cues that aren't ready yet (files
     /// still being probed in the background) and the preload set should be offered again.
     /// Backends throttle this themselves.
@@ -128,7 +134,7 @@ impl Instance {
     /// Seconds elapsed in the pre-wait (0..pre_wait).
     pub fn pre_wait_elapsed(&self, now: Instant) -> f64 {
         let now = self.effective_now(now);
-        (self.pre_wait - secs_between(now, self.action_at)).clamp(0.0, self.pre_wait)
+        (self.pre_wait - secs_between(now, self.action_at)).clamp(0.0, self.pre_wait.max(0.0))
     }
 
     /// Seconds since the action started (0 during pre-wait).
@@ -266,16 +272,19 @@ impl Engine {
         self.instances = instances
             .iter()
             .map(|s| {
-                let action_at = if s.started && s.pre_wait_elapsed >= s.pre_wait {
+                // The main device's times, checked: a negative or NaN pre-wait made
+                // `pre_wait_elapsed` panic.
+                let pre_wait = if s.pre_wait.is_finite() { s.pre_wait.clamp(0.0, crate::limits::MAX_TIME) } else { 0.0 };
+                let action_at = if s.started && s.pre_wait_elapsed >= pre_wait {
                     before(now, s.action_elapsed)
                 } else {
-                    after(now, s.pre_wait - s.pre_wait_elapsed)
+                    after(now, pre_wait - s.pre_wait_elapsed)
                 };
                 let inst = Instance {
                     kind: s.kind,
-                    fired_at: before(action_at, s.pre_wait),
+                    fired_at: before(action_at, pre_wait),
                     action_at,
-                    pre_wait: s.pre_wait,
+                    pre_wait,
                     paused_at: s.paused.then_some(now),
                     started: s.started,
                     action_done: s.action_done,
@@ -609,7 +618,7 @@ impl Engine {
             }
         }
 
-        let horizon = now + LOOKAHEAD;
+        let horizon = now + be.lookahead();
         // Passes over the running cues until nothing changes (bounded for safety).
         for _ in 0..1_000 {
             if !self.pass(ws, be, now, horizon) {
@@ -1032,6 +1041,25 @@ mod tests {
     use super::*;
 
     /// Wild times (a damaged show file, a replica's edit) neither panic nor overflow the clock.
+    /// Times mirrored from a main device can't make the replica's engine panic (a negative
+    /// pre-wait did, found by fuzzing).
+    #[test]
+    fn mirrored_times_are_checked() {
+        let snap: InstanceSnapshot = serde_json::from_str(
+            r#"{"action_done":false,"action_duration":0.5,"action_elapsed":0.1,"continue_done":true,
+            "id":"ca7237c2-e61c-4eea-bf27-ce42930bd313","kind":"Audio","parent":null,"paused":false,
+            "pre_wait":-1e-300,"pre_wait_elapsed":0.0,"started":true}"#,
+        )
+        .unwrap();
+        let mut e = Engine::default();
+        let now = Instant::now();
+        for pre_wait in [-1e-300, -5.0, f64::NAN, f64::INFINITY, 1e300] {
+            e.mirror(None, false, &[InstanceSnapshot { pre_wait, ..snap.clone() }], Vec::new(), now);
+            let i = &e.instances[&snap.id];
+            let _ = (i.pre_wait_elapsed(now), e.snapshot(now, |_| None));
+        }
+    }
+
     #[test]
     fn wild_times_are_safe() {
         let now = Instant::now();

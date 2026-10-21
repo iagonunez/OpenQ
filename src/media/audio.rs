@@ -223,6 +223,8 @@ struct Health {
     audio_ns: AtomicU64,
     /// Highest busy/audio ratio of a single callback, in millionths.
     peak_ppm: AtomicU64,
+    /// Longest buffer a callback filled, in nanoseconds of sound.
+    block_ns: AtomicU64,
 }
 
 /// How much of the audio thread's time budget the mixer uses. Above 1.0 the device runs dry
@@ -651,6 +653,7 @@ impl Mixer {
         let audio = (data.len() / self.channels.max(1)) as u64 * 1_000_000_000 / self.clock.rate.max(1) as u64;
         self.health.busy_ns.fetch_add(busy, Ordering::Relaxed);
         self.health.audio_ns.fetch_add(audio, Ordering::Relaxed);
+        self.health.block_ns.fetch_max(audio, Ordering::Relaxed);
         if let Some(ppm) = (busy * 1_000_000).checked_div(audio) {
             self.health.peak_ppm.fetch_max(ppm, Ordering::Relaxed);
         }
@@ -1156,6 +1159,12 @@ impl AudioOutput {
         }
     }
 
+    /// Longest buffer the device has asked for at once. A start reaches the mixer only if it
+    /// arrives before the callback that renders it, up to this long before its time.
+    pub fn block(&self) -> Duration {
+        Duration::from_nanos(self.health.block_ns.load(Ordering::Relaxed))
+    }
+
     /// Voices the mixer holds or is about to (playing and preloaded).
     pub fn voice_count(&self) -> usize {
         self.voices.len() + self.preloaded.len()
@@ -1628,6 +1637,18 @@ fn run_virtual(mixer: &mut Mixer, shutdown: &AtomicBool, mut capture: Option<rtr
 mod tests {
     use super::*;
     use crate::model::{Eq, EqBand, EqKind};
+
+    /// The output reports the longest buffer its device asked for (the virtual one pulls 256
+    /// frames at a time), which the engine adds to how early it hands starts over.
+    #[test]
+    fn output_reports_its_block() {
+        let out = AudioOutput::open_virtual(48_000, 2, None).unwrap();
+        let t = Instant::now();
+        while out.block().is_zero() && t.elapsed() < Duration::from_secs(2) {
+            std::thread::sleep(Duration::from_millis(2));
+        }
+        assert_eq!(out.block(), Duration::from_nanos(256 * 1_000_000_000 / 48_000));
+    }
 
     /// When the garbage queue is full the audio thread keeps what it retires and hands it over
     /// once there is room, instead of freeing it in the callback.

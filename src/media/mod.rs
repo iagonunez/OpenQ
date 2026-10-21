@@ -626,6 +626,9 @@ struct PendingAudio {
 
 /// How often to try reopening a lost audio device.
 pub const AUDIO_RETRY: std::time::Duration = std::time::Duration::from_secs(2);
+/// Most an audio device's buffer adds to the start lookahead (a broken driver could report
+/// anything).
+const MAX_BLOCK_LEAD: std::time::Duration = std::time::Duration::from_millis(250);
 
 /// Reopening a lost audio output in the background (opening a device can take a while, and the
 /// engine thread must keep ticking meanwhile).
@@ -1065,6 +1068,13 @@ impl Backend for Media {
 
     fn preload_retry(&mut self, now: Instant) -> bool {
         self.preload_retry.is_some_and(|t| now >= t)
+    }
+
+    fn lookahead(&self) -> std::time::Duration {
+        // A sound server can render 20 ms or more at once (PipeWire's default quantum is 1024
+        // frames): 25 ms ahead missed those blocks whenever the show lock delayed a tick.
+        let block = self.audio.as_ref().map_or(std::time::Duration::ZERO, |a| a.block());
+        crate::engine::LOOKAHEAD + block.min(MAX_BLOCK_LEAD)
     }
 
     fn start(&mut self, cue: &Cue, at: Instant) -> Result<(), String> {

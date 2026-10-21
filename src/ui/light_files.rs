@@ -130,7 +130,7 @@ impl App {
                 }
             };
             crate::limits::lighting(&mut show.ws.lighting);
-            show.edited();
+            show.edited_outside_cues();
             for n in &notes {
                 log::warn!("import ({}): {n}", path.display());
             }

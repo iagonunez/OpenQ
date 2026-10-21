@@ -15,13 +15,15 @@ pub(super) struct DisplayList {
     pub error: Option<String>,
     /// When the list was last asked for (it is refreshed while stages are on displays).
     pub asked: Option<std::time::Instant>,
+    /// The list is the main device's (this is a replica): not refreshed here.
+    pub remote: bool,
 }
 
 impl App {
     pub(super) fn refresh_displays(&self, ctx: &egui::Context) {
         {
             let mut d = self.displays.lock();
-            if d.loading {
+            if d.loading || d.remote {
                 return;
             }
             d.loading = true;
@@ -32,6 +34,9 @@ impl App {
             let r = displays::list();
             let mut d = list.lock();
             d.loading = false;
+            if d.remote {
+                return;
+            }
             d.loaded = true;
             match r {
                 Ok(l) => {
@@ -68,11 +73,13 @@ impl App {
         if let Some(e) = &d.error {
             ui.label(egui::RichText::new(e).color(RED));
         }
+        let remote = d.remote;
         drop(d);
-        if ui.button(super::theme::with_icon(super::icons::REFRESH, t("Refresh displays"))).clicked() {
+        if !remote && ui.button(super::theme::with_icon(super::icons::REFRESH, t("Refresh displays"))).clicked() {
             self.refresh_displays(ui.ctx());
         }
-        if changed && st.output.is_some() {
+        // A replica's choice is the main device's (after its operator allows it): no window here.
+        if changed && st.output.is_some() && !self.remote.is_replica() {
             self.stage_open.insert(st.id);
         }
         changed

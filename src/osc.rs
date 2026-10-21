@@ -20,9 +20,11 @@
 //! OSC has no login, so everything received is checked before it reaches the show
 //! ([`sanitize`]): plain addresses only (printable ASCII, no patterns), a few numeric or boolean
 //! arguments, and only the addresses above or mapped in the show (anything else is refused).
-//! Messages beyond [`MAX_RATE`] a second are dropped, and warnings about refused messages are
-//! rate-limited too, so a flood can neither hold the show nor fill the error log.
+//! Each sender gets [`MAX_RATE`] messages a second (one flooding host doesn't starve the real
+//! surfaces) and all of them together [`MAX_TOTAL_RATE`]; the rest are dropped. Warnings about
+//! refused messages are rate-limited too, so a flood can neither hold the show nor fill the error log.
 
+use crate::remote::discovery::Budget;
 use crate::show::SharedShow;
 use std::net::UdpSocket;
 use std::sync::Arc;
@@ -36,8 +38,12 @@ const POLL: Duration = Duration::from_millis(50);
 pub const MAX_ADDRESS: usize = 128;
 /// Most arguments in one message.
 pub const MAX_ARGS: usize = 4;
-/// Messages handled per second at most (a fader sends tens); the rest are dropped.
+/// Messages handled per second from one sender at most (a fader sends tens); the rest are dropped.
 pub const MAX_RATE: u32 = 500;
+/// Messages handled per second from all senders together (bounds the time spent under the show lock).
+pub const MAX_TOTAL_RATE: u32 = 2000;
+/// Senders given their own budget; beyond that (forged addresses, say) new senders share one.
+const MAX_SOURCES: usize = 64;
 /// Messages taken from one packet (bundles included).
 const MAX_PER_PACKET: usize = 32;
 /// Warnings about refused messages written per minute at most.
@@ -77,7 +83,7 @@ impl OscServer {
         let stop2 = stop.clone();
         let thread = std::thread::Builder::new().name("openq-osc".into()).spawn(move || {
             let mut buf = [0u8; rosc::decoder::MTU];
-            let mut rate = crate::remote::discovery::Budget::new(MAX_RATE);
+            let mut rate = Rates::default();
             let mut warnings = Warnings::default();
             while !stop2.load(Ordering::Acquire) {
                 let Ok((n, from)) = sock.recv_from(&mut buf) else { continue };
@@ -90,8 +96,8 @@ impl OscServer {
                             continue;
                         }
                         for m in msgs {
-                            if !rate.take() {
-                                warnings.warn(|| format!("OSC from {from}: more than {MAX_RATE} messages a second, dropping"));
+                            if let Err(e) = rate.take(from.ip()) {
+                                warnings.warn(|| format!("OSC from {from}: {e}, dropping"));
                                 continue;
                             }
                             // Address shown escaped: it comes from anyone on the network.
@@ -124,6 +130,41 @@ fn flatten(p: rosc::OscPacket, out: &mut Vec<rosc::OscMessage>) {
     match p {
         rosc::OscPacket::Message(m) => out.push(m),
         rosc::OscPacket::Bundle(b) => b.content.into_iter().for_each(|p| flatten(p, out)),
+    }
+}
+
+/// Rate budgets: one per sender (up to [`MAX_SOURCES`], then one shared by the rest) and one for all.
+struct Rates {
+    total: Budget,
+    sources: std::collections::HashMap<std::net::IpAddr, Budget>,
+    others: Budget,
+}
+
+impl Default for Rates {
+    fn default() -> Self {
+        Self { total: Budget::new(MAX_TOTAL_RATE), sources: Default::default(), others: Budget::new(MAX_RATE) }
+    }
+}
+
+impl Rates {
+    /// Use one message's worth for `from`; Err says which budget ran out.
+    fn take(&mut self, from: std::net::IpAddr) -> Result<(), String> {
+        if self.sources.len() >= MAX_SOURCES && !self.sources.contains_key(&from) {
+            // Senders quiet for a while give their place up.
+            self.sources.retain(|_, b| b.window.elapsed() < Duration::from_secs(10));
+        }
+        let own = if self.sources.len() < MAX_SOURCES || self.sources.contains_key(&from) {
+            self.sources.entry(from).or_insert_with(|| Budget::new(MAX_RATE))
+        } else {
+            &mut self.others
+        };
+        if !own.take() {
+            return Err(format!("more than {MAX_RATE} messages a second"));
+        }
+        if !self.total.take() {
+            return Err(format!("more than {MAX_TOTAL_RATE} messages a second from all senders"));
+        }
+        Ok(())
     }
 }
 
@@ -299,6 +340,24 @@ mod tests {
         handle_message(&show, &hub, &msg("/light/blackout", vec![])).unwrap();
         assert!(show.lock().media.light.masters().blackout);
         assert!(handle_message(&show, &hub, &msg("/nothing/here", vec![])).is_err());
+    }
+
+    /// A flooding sender uses up only its own budget: another sender still gets through.
+    #[test]
+    fn each_sender_has_its_own_budget() {
+        let mut rates = Rates::default();
+        let (flood, surface) = ("10.0.0.9".parse().unwrap(), "10.0.0.2".parse().unwrap());
+        let taken = (0..MAX_RATE * 3).filter(|_| rates.take(flood).is_ok()).count();
+        assert_eq!(taken, MAX_RATE as usize);
+        assert!(rates.take(surface).is_ok());
+        // Forged senders past MAX_SOURCES share one budget, and all together stop at the total.
+        let mut ok = 0;
+        for i in 0..10_000u32 {
+            let ip = std::net::IpAddr::from(std::net::Ipv4Addr::from(0x0b00_0000 + i));
+            ok += rates.take(ip).is_ok() as u32;
+        }
+        assert!(ok <= MAX_TOTAL_RATE, "{ok}");
+        assert!(rates.sources.len() <= MAX_SOURCES);
     }
 
     /// Turning OSC off must really close the port: it can be bound again right away (re-enabling

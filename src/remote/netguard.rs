@@ -1,7 +1,8 @@
-//! Network settings in a replica's edit wait for the main device's operator.
+//! Network settings (and stage displays) in a replica's edit wait for the main device's operator.
 //!
 //! Where the show sends to or listens on (Network cue destinations, lighting DMX outputs and
-//! inputs) decides what the main device does on its network. A replica's edit that changes any of
+//! inputs) decides what the main device does on its network, and which display a stage goes
+//! fullscreen on decides what covers the operator's screens. A replica's edit that changes any of
 //! it is taken without those changes ([`hold_workspace`], [`hold_cues`], [`hold_lighting`]); the
 //! changes become a [`NetworkRequest`] that the operator allows ([`NetworkChange::apply`]) or
 //! denies on the main device. The replica gets the show back as it is meanwhile.
@@ -9,7 +10,7 @@
 use crate::light::dmx::{OutputConfig, OutputProtocol};
 use crate::light::dmxin::InputConfig;
 use crate::light::patch::LightingPatch;
-use crate::model::{Cue, CueId, CueKind, Workspace};
+use crate::model::{Cue, CueId, CueKind, StageId, Workspace};
 
 /// A network cue's destination change held back.
 #[derive(Clone, Debug, PartialEq)]
@@ -24,6 +25,17 @@ pub struct HeldCue {
     pub wanted: (String, u16),
 }
 
+/// A stage display change held back.
+#[derive(Clone, Debug, PartialEq)]
+pub struct HeldStage {
+    /// The stage.
+    pub id: StageId,
+    /// Its name, for the operator.
+    pub name: String,
+    /// Display wanted (None: a window).
+    pub wanted: Option<String>,
+}
+
 /// Network settings changes held back from one edit.
 #[derive(Clone, Debug, Default, PartialEq)]
 pub struct NetworkChange {
@@ -33,6 +45,8 @@ pub struct NetworkChange {
     pub outputs: Option<Vec<OutputConfig>>,
     /// Wanted DMX inputs (whole list), if they changed.
     pub inputs: Option<Vec<InputConfig>>,
+    /// Stages whose display changed.
+    pub stages: Vec<HeldStage>,
 }
 
 /// A held change waiting for the operator.
@@ -52,7 +66,7 @@ pub const MAX_REQUESTS: usize = 16;
 impl NetworkChange {
     /// Nothing held.
     pub fn is_empty(&self) -> bool {
-        self.cues.is_empty() && self.outputs.is_none() && self.inputs.is_none()
+        self.cues.is_empty() && self.outputs.is_none() && self.inputs.is_none() && self.stages.is_empty()
     }
 
     /// Take the changes into `ws` (allowed by the operator). Cues deleted since are skipped.
@@ -67,6 +81,11 @@ impl NetworkChange {
         }
         if let Some(i) = &self.inputs {
             ws.lighting.inputs = i.clone();
+        }
+        for h in &self.stages {
+            if let Some(st) = ws.stages.iter_mut().find(|s| s.id == h.id) {
+                st.output = h.wanted.clone();
+            }
         }
     }
 
@@ -95,6 +114,12 @@ impl NetworkChange {
                 })
                 .collect();
             out.push(crate::tr!("DMX inputs: {list}", list = if list.is_empty() { "–".to_string() } else { list.join(", ") }));
+        }
+        for h in &self.stages {
+            out.push(match &h.wanted {
+                Some(d) => crate::tr!("Stage {stage}: fullscreen on {display}", stage = h.name.as_str(), display = d.as_str()),
+                None => crate::tr!("Stage {stage}: in a window", stage = h.name.as_str()),
+            });
         }
         // Hosts and names come from the replica: no control characters, nothing endless.
         out.into_iter().map(|l| l.chars().filter(|c| !c.is_control()).take(400).collect()).collect()
@@ -167,6 +192,14 @@ pub fn hold_workspace(current: &Workspace, new: &mut Workspace, change: &mut Net
     if new.lighting.inputs != current.lighting.inputs {
         change.inputs = Some(std::mem::replace(&mut new.lighting.inputs, current.lighting.inputs.clone()));
     }
+    for st in &mut new.stages {
+        // A new stage starts in a window.
+        let before = current.stages.iter().find(|s| s.id == st.id).and_then(|s| s.output.clone());
+        if st.output != before {
+            let wanted = std::mem::replace(&mut st.output, before);
+            change.stages.push(HeldStage { id: st.id, name: st.name.clone(), wanted });
+        }
+    }
 }
 
 /// Hold back the network settings changes of changed cues from a replica.
@@ -220,6 +253,16 @@ mod tests {
         assert_eq!(dest(&new.cue_list.cues[1]).unwrap().0, "", "a new cue sends nowhere yet");
         assert!(new.lighting.outputs.is_empty());
         assert_eq!(change.describe().len(), 3);
+
+        // A stage sent to a display: held, then applied.
+        let mut staged = new.clone();
+        staged.stages.push(crate::model::Stage { output: Some("HDMI-A-1".into()), ..Default::default() });
+        let mut stage_change = NetworkChange::default();
+        hold_workspace(&new, &mut staged, &mut stage_change);
+        assert_eq!(staged.stages.last().unwrap().output, None, "the new stage stays in a window");
+        assert_eq!(stage_change.stages.len(), 1);
+        stage_change.apply(&mut staged);
+        assert_eq!(staged.stages.last().unwrap().output.as_deref(), Some("HDMI-A-1"));
 
         // Allowed: the wanted values land in the show.
         change.apply(&mut new);

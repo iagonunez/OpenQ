@@ -352,7 +352,7 @@ impl App {
         }
         if sync != show.ws.cue_list.info.timecode && self.can_edit_show() {
             show.ws.cue_list.info.timecode = sync;
-            show.edited();
+            show.edited_outside_cues();
         }
         self.show_list_timecode = open;
     }

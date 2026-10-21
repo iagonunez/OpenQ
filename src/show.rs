@@ -285,8 +285,8 @@ impl Show {
         ws.settings.audio_device = mine.audio_device.clone();
         ws.settings.osc_enabled = mine.osc_enabled;
         ws.settings.osc_port = mine.osc_port;
-        // Displays are this computer's (a replica lists its own): stage outputs are chosen here,
-        // so a replica can't put fullscreen windows over the operator's screens either.
+        // A replica's display choices wait for the operator (`remote::netguard`, which already
+        // put these back); kept here too, so nothing else can move the operator's screens.
         for st in &mut ws.stages {
             st.output = self.ws.stages.iter().find(|s| s.id == st.id).and_then(|s| s.output.clone());
         }

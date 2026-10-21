@@ -720,7 +720,7 @@ impl App {
                     // Importing again replaces the type (patched fixtures keep their mode by name).
                     replace_in_show(l, ty.clone());
                 }
-                show.edited();
+                show.edited_outside_cues();
                 self.light.set_add_type(&id);
                 self.light.types.edit = Some(TypeEdit::new(last.clone(), Origin::Show));
                 let msg = match (imported.len(), notes) {

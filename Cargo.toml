@@ -49,6 +49,8 @@ cosmic-text = "0.19.0"
 resvg = { version = "0.48.1", default-features = false, features = ["text", "system-fonts", "memmap-fonts", "svgz", "raster-images"] }
 # Fixture search and download from the Open Fixture Library website (HTTPS, rustls).
 ureq = { version = "3.4.2", default-features = false, features = ["rustls", "gzip"], optional = true }
+# Network interfaces (remote discovery broadcasts on each one).
+if-addrs = "0.15.0"
 
 # macOS: native menu bar and the window-button position.
 [target.'cfg(target_os = "macos")'.dependencies]

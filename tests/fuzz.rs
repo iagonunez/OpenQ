@@ -1258,6 +1258,10 @@ fn apply_as_replica(show: &mut Show, synced: &mut Option<Workspace>, waveforms: 
             }
             waveforms.insert(p, w.map(Arc::new));
         }
+        ServerMsg::Displays(list) => {
+            let list: Vec<_> = list.into_iter().take(openq::displays::MAX_REMOTE).map(openq::displays::Display::cleaned).collect();
+            assert!(list.iter().all(|d| d.name.chars().count() <= 64));
+        }
         ServerMsg::Welcome { .. } | ServerMsg::Role(_) | ServerMsg::Refused(_) => {}
     }
     show.tick(now);
@@ -1423,6 +1427,12 @@ fn fuzz_remote_messages() {
         ServerMsg::MediaInfo(vec![(media.clone(), info)]),
         ServerMsg::Waveform(media.clone(), Ok(openq::media::decoder::waveform(&media).unwrap())),
         ServerMsg::Role(Role::Control),
+        ServerMsg::Displays(vec![openq::displays::Display {
+            name: "HDMI-A-1".into(),
+            size: [1920, 1080],
+            position: [0, 0],
+            refresh_hz: Some(60.0),
+        }]),
     ]
     .into_iter()
     .chain(lp.map(ServerMsg::Lighting))

@@ -34,6 +34,15 @@ const MAX_HANDSHAKES_PER_ADDRESS: usize = 2;
 const MAX_FAILURE_ENTRIES: usize = 4096;
 /// Largest message taken from a device that can't edit (commands, selections, pings).
 const SMALL_MESSAGE: usize = 1 << 20;
+/// Largest message taken from an editor. Its edits are the cues (50 000 of them are ~52 MB of
+/// JSON) and lighting diffs, so this is far below [`secure::MAX_MESSAGE`], which a main device's
+/// whole design may need: an editor can't make the main device inflate and parse a gigabyte.
+const EDIT_MESSAGE: usize = 256 << 20;
+/// Edits taken from one device per second: a replica sends at most 10 (`ui::remote`'s edit
+/// interval), so this only slows a misbehaving one. Beyond it the connection waits (nothing is lost).
+const EDITS_PER_SECOND: u32 = 20;
+/// Of those, whole-workspace edits (`Edit`/`Reshape`: parsed, checked and compared in full).
+const WHOLE_EDITS_PER_SECOND: u32 = 4;
 /// Waveform requests one connection may have waiting.
 const WAVEFORM_QUEUE: usize = 64;
 /// Replicas get state at most this often, and at least once a second as a heartbeat.
@@ -84,6 +93,8 @@ struct Shared {
     handshaking: Mutex<HashMap<IpAddr, usize>>,
     /// The main device is in show mode: nobody edits, Edit-role devices act as Control.
     show_mode: AtomicBool,
+    /// The main device's displays, with a generation that changes with the list.
+    displays: Mutex<(u64, Vec<crate::displays::Display>)>,
     events: Mutex<VecDeque<String>>,
     stop: Arc<AtomicBool>,
     next_conn: AtomicU64,
@@ -176,6 +187,7 @@ impl Server {
             per_address: Mutex::new(HashMap::new()),
             handshaking: Mutex::new(HashMap::new()),
             show_mode: AtomicBool::new(false),
+            displays: Mutex::new((0, Vec::new())),
             events: Mutex::new(VecDeque::new()),
             stop: stop.clone(),
             next_conn: AtomicU64::new(1),
@@ -238,6 +250,14 @@ impl Server {
     pub fn set_show_mode(&self, on: bool) {
         if self.shared.show_mode.swap(on, Ordering::AcqRel) != on {
             self.shared.event(if on { "Show mode: editing from devices is off".into() } else { "Edit mode: devices with the edit role may edit".into() });
+        }
+    }
+
+    /// Tell the server this computer's displays (replicas pick stage outputs from them).
+    pub fn set_displays(&self, list: &[crate::displays::Display]) {
+        let mut d = self.shared.displays.lock();
+        if d.1 != list {
+            *d = (d.0 + 1, list.to_vec());
         }
     }
 
@@ -536,14 +556,22 @@ fn receive_loop(
     notices: &std::sync::mpsc::Sender<ServerMsg>,
 ) -> anyhow::Result<()> {
     let mut waveforms = Waveforms::new(notices.clone());
+    let mut edits = super::discovery::Budget::new(EDITS_PER_SECOND);
+    let mut whole_edits = super::discovery::Budget::new(WHOLE_EDITS_PER_SECOND);
     while !closed.load(Ordering::Relaxed) && !shared.stop.load(Ordering::Relaxed) {
         // Only an editor may send big messages (a whole show): the others can't make the main
         // device hold one in memory.
         let editor = role_of(shared, device).is_some_and(Role::can_edit);
-        rx.set_limit(if editor { secure::MAX_MESSAGE } else { SMALL_MESSAGE });
+        rx.set_limit(if editor { EDIT_MESSAGE } else { SMALL_MESSAGE });
         let msg: ClientMsg = rx.recv()?;
         // Look the role up for every message, so changes and removals apply at once.
         let Some(role) = role_of(shared, device) else { return Ok(()) };
+        if matches!(msg, ClientMsg::Patch { .. } | ClientMsg::Reshape { .. } | ClientMsg::Edit(_)) {
+            edits.take_or_wait();
+            if !matches!(msg, ClientMsg::Patch { .. }) {
+                whole_edits.take_or_wait();
+            }
+        }
         match msg {
             ClientMsg::Ping => {}
             ClientMsg::Resync => flags.resync.store(true, Ordering::Release),
@@ -745,6 +773,7 @@ fn send_loop(
     let mut media_sent: HashSet<PathBuf> = HashSet::new();
     // DMX output as last sent to a replica that asked for it (None: send everything next).
     let mut dmx_sent: Option<crate::light::dmx::DmxFrame> = None;
+    let mut displays_sent = None;
     while !closed.load(Ordering::Relaxed) && !shared.stop.load(Ordering::Relaxed) {
         match role_of(shared, device) {
             None => {
@@ -759,6 +788,14 @@ fn send_loop(
         }
         while let Ok(n) = notices.try_recv() {
             tx.send(&n)?;
+        }
+        let displays = {
+            let d = shared.displays.lock();
+            (displays_sent != Some(d.0)).then(|| (d.0, d.1.clone()))
+        };
+        if let Some((generation, list)) = displays {
+            tx.send(&ServerMsg::Displays(list))?;
+            displays_sent = Some(generation);
         }
 
         if flags.resync.swap(false, Ordering::AcqRel) {

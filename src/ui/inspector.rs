@@ -393,14 +393,16 @@ impl App {
         }
         if show.ws.cue_list.find(id) != Some(&*cue) {
             let cue = cue.clone();
+            // A group's copy carries its children, which may differ too.
+            let mut same_children = true;
             if let Some(c) = show.ws.cue_list.find_mut(id) {
+                same_children = c.children() == cue.children();
                 *c = cue.clone();
             }
             if show.engine.instances.contains_key(&id) {
                 show.media.update_live(&cue);
             }
-            // A group's copy carries its children, which may differ too.
-            if cue.is_group() { show.edited() } else { show.edited_cues([id]) }
+            if same_children { show.edited_cues([id]) } else { show.edited() }
         }
     }
 }

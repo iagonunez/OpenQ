@@ -1,6 +1,10 @@
 //! Finding OpenQ instances on the local network: a replica broadcasts a query on UDP and
 //! every main device with remote access on answers with its id, name and port. Nothing secret
 //! is exchanged; pairing and authentication happen over TCP afterwards.
+//!
+//! The query goes to 255.255.255.255 (which most systems send out of one interface only), to
+//! each interface's own broadcast address (a computer on a show network and on the venue's) and
+//! to loopback. Other subnets and VLANs aren't reached: type the address there.
 
 use super::{DISCOVERY_PORT, PROTOCOL};
 use serde::{Deserialize, Serialize};
@@ -18,7 +22,7 @@ const ANSWERS_PER_SECOND: u32 = 20;
 /// At most `per_second` events in each one-second window.
 pub(crate) struct Budget {
     per_second: u32,
-    window: Instant,
+    pub(crate) window: Instant,
     used: u32,
 }
 
@@ -36,6 +40,15 @@ impl Budget {
         }
         self.used += 1;
         self.used <= self.per_second
+    }
+
+    /// Use one, first waiting for the next window if this one's are used up (back-pressure: the
+    /// sender waits instead of losing what it sent).
+    pub(crate) fn take_or_wait(&mut self) {
+        if !self.take() {
+            std::thread::sleep(Duration::from_secs(1).saturating_sub(self.window.elapsed()));
+            self.take();
+        }
     }
 }
 
@@ -95,7 +108,7 @@ pub fn respond(
 pub fn search(wait: Duration) -> std::io::Result<Vec<Found>> {
     let sock = UdpSocket::bind((Ipv4Addr::UNSPECIFIED, 0))?;
     sock.set_broadcast(true)?;
-    for dest in [Ipv4Addr::BROADCAST, Ipv4Addr::LOCALHOST] {
+    for dest in destinations() {
         let _ = sock.send_to(QUERY, (dest, DISCOVERY_PORT));
     }
     let deadline = Instant::now() + wait;
@@ -117,6 +130,30 @@ pub fn search(wait: Duration) -> std::io::Result<Vec<Found>> {
     Ok(found)
 }
 
+/// Where discovery queries go: the limited broadcast, each IPv4 interface's broadcast address
+/// and loopback.
+fn destinations() -> Vec<Ipv4Addr> {
+    let mut out = vec![Ipv4Addr::BROADCAST];
+    for iface in if_addrs::get_if_addrs().unwrap_or_default() {
+        if let if_addrs::IfAddr::V4(a) = &iface.addr
+            && !a.ip.is_loopback()
+            && !iface.is_p2p()
+        {
+            let b = a.broadcast.unwrap_or_else(|| directed_broadcast(a.ip, a.netmask));
+            if !out.contains(&b) {
+                out.push(b);
+            }
+        }
+    }
+    out.push(Ipv4Addr::LOCALHOST);
+    out
+}
+
+/// The broadcast address of `ip`'s subnet.
+fn directed_broadcast(ip: Ipv4Addr, netmask: Ipv4Addr) -> Ipv4Addr {
+    Ipv4Addr::from(u32::from(ip) | !u32::from(netmask))
+}
+
 /// This machine's LAN addresses as far as the OS routing table tells (no packets are sent).
 pub fn local_addresses() -> Vec<std::net::IpAddr> {
     let mut out = Vec::new();
@@ -131,4 +168,18 @@ pub fn local_addresses() -> Vec<std::net::IpAddr> {
         }
     }
     out
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn broadcast_addresses() {
+        let b = directed_broadcast(Ipv4Addr::new(10, 1, 2, 3), Ipv4Addr::new(255, 255, 0, 0));
+        assert_eq!(b, Ipv4Addr::new(10, 1, 255, 255));
+        let d = destinations();
+        assert_eq!(d.first(), Some(&Ipv4Addr::BROADCAST));
+        assert_eq!(d.last(), Some(&Ipv4Addr::LOCALHOST));
+    }
 }

@@ -99,6 +99,15 @@ enum Discarding {
     Recover(crate::recovery::Orphan),
 }
 
+/// Something that stops everything playing, waiting for the operator's go-ahead in the "Cues are
+/// playing" window.
+enum Risky {
+    /// Replacing the show or quitting.
+    Discard(Discarding),
+    /// Another audio output device (None: the system default).
+    AudioDevice(Option<String>),
+}
+
 impl Discarding {
     /// The deferred action that carries on once the user has answered.
     fn resume(self) -> Deferred {
@@ -242,6 +251,10 @@ pub struct App {
     discard_prompt: Option<Discarding>,
     /// The user chose Discard: the next [`App::may_discard`] goes ahead without asking.
     discard_ok: bool,
+    /// The "Cues are playing" window is open, for this action.
+    running_prompt: Option<Risky>,
+    /// The user went ahead although cues play: the next [`App::may_discard`] doesn't ask about them.
+    running_ok: bool,
     frame_count: u64,
     mode: Mode,
     inline: Option<cue_list::InlineEdit>,
@@ -330,6 +343,8 @@ impl App {
             allow_close: false,
             discard_prompt: None,
             discard_ok: false,
+            running_prompt: None,
+            running_ok: false,
             frame_count: 0,
             mode: Mode::Edit,
             inline: None,
@@ -583,20 +598,24 @@ impl App {
     }
 
     fn renumber_all(&mut self, show: &mut Show) {
-        fn rec(list: &mut [Cue], n: &mut u32) {
+        fn rec(list: &mut [Cue], n: &mut u32, changed: &mut Vec<CueId>) {
             for c in list {
                 if !c.is_group() || !c.number.is_empty() {
                     *n += 1;
-                    c.number = n.to_string();
+                    let number = n.to_string();
+                    if c.number != number {
+                        c.number = number;
+                        changed.push(c.id);
+                    }
                 }
                 if let Some(ch) = c.children_mut() {
-                    rec(ch, n);
+                    rec(ch, n, changed);
                 }
             }
         }
-        let mut n = 0;
-        rec(&mut show.ws.cue_list.cues, &mut n);
-        show.edited();
+        let (mut n, mut changed) = (0, Vec::new());
+        rec(&mut show.ws.cue_list.cues, &mut n, &mut changed);
+        show.edited_cues(changed);
     }
 
     // ------------------------------------------------------------------ input
@@ -1058,7 +1077,7 @@ impl App {
                     });
                 }
                 if edited {
-                    show.edited();
+                    show.edited_outside_cues();
                 }
                 ui.separator();
                 if ui.button(wi(I::CROP_FREE, t("Stages & mapping…"))).clicked() {
@@ -1896,7 +1915,7 @@ impl App {
             if let Some(a) = &mut show.media.audio {
                 a.set_master(show.ws.settings.master_volume_db);
             }
-            show.edited();
+            show.edited_outside_cues();
         }
     }
 
@@ -1955,23 +1974,13 @@ impl App {
         let before = show.ws.settings.speakers.clone();
         room::speaker_editor(ui, &mut show.ws.settings.speakers, channels);
         if show.ws.settings.speakers != before {
-            show.edited();
+            show.edited_outside_cues();
         }
         if chosen != current {
-            show.ws.settings.audio_device = chosen;
-            let now = Instant::now();
-            let Show {
-                engine, media, ws, ..
-            } = show;
-            engine.stop_all(media, now, 0.0);
-            media.reopen_audio(
-                ws.settings.audio_device.as_deref(),
-                ws.settings.master_volume_db,
-            );
-            engine.workspace_changed();
-            show.edited();
-            if let Some(e) = &show.media.audio_error {
-                self.notify_error(tr!("Audio device failed: {e}", e));
+            if show.engine.is_active() && !show.replica {
+                self.running_prompt = Some(Risky::AudioDevice(chosen));
+            } else {
+                self.set_audio_device(show, chosen);
             }
         }
     }
@@ -2099,7 +2108,7 @@ impl App {
             show.ws.stages.push(st);
         }
         if show.ws.stages != before {
-            show.edited();
+            show.edited_outside_cues();
         }
     }
 
@@ -2109,7 +2118,16 @@ impl App {
     /// "Unsaved changes" window opens and runs `then` again after the answer. In-app rather than a system message box:
     /// on Linux that needs zenity, and without it every answer was "no", so the window could never be closed.
     fn may_discard(&mut self, then: Discarding) -> bool {
-        if std::mem::take(&mut self.discard_ok) || !self.show.lock().dirty {
+        let (running, dirty) = {
+            let s = self.show.lock();
+            (s.engine.is_active() && !s.replica, s.dirty)
+        };
+        // Cues playing come first: nothing stops the show without the operator saying so.
+        if !std::mem::take(&mut self.running_ok) && running {
+            self.running_prompt = Some(Risky::Discard(then));
+            return false;
+        }
+        if std::mem::take(&mut self.discard_ok) || !dirty {
             return true;
         }
         self.discard_prompt = Some(then);
@@ -2145,6 +2163,65 @@ impl App {
         }
         if let Some(answer) = answer {
             self.answer_discard(answer);
+        }
+    }
+
+    /// The "Cues are playing" window (Stop and go on / Cancel), before something that stops them all.
+    fn running_window(&mut self, ctx: &egui::Context, show: &mut Show) {
+        let Some(risky) = &self.running_prompt else { return };
+        let what = match risky {
+            Risky::Discard(Discarding::Quit) => t("Quitting stops everything that is playing."),
+            Risky::Discard(_) => t("Opening another show stops everything that is playing."),
+            Risky::AudioDevice(_) => t("Changing the audio device stops everything that is playing."),
+        };
+        let mut answer = None;
+        let modal = egui::Modal::new(egui::Id::new("cues-playing")).show(ctx, |ui| {
+            ui.set_width(380.0);
+            ui.label(RichText::new(theme::with_icon(icons::WARNING, t("Cues are playing"))).size(15.0).strong());
+            ui.add_space(6.0);
+            ui.label(what);
+            ui.add_space(10.0);
+            ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                if ui.button(t("Stop and go on")).clicked() {
+                    answer = Some(true);
+                }
+                if ui.button(t("Cancel")).clicked() {
+                    answer = Some(false);
+                }
+            });
+        });
+        if modal.should_close() && answer.is_none() {
+            answer = Some(false);
+        }
+        if let Some(go_on) = answer {
+            self.answer_running(show, go_on);
+        }
+    }
+
+    /// The answer to the "Cues are playing" window: go on (stopping them) or cancel.
+    fn answer_running(&mut self, show: &mut Show, go_on: bool) {
+        match self.running_prompt.take() {
+            Some(Risky::Discard(then)) if go_on => {
+                self.running_ok = true;
+                self.deferred.push(then.resume());
+            }
+            Some(Risky::Discard(Discarding::Recover(o))) => self.recovery.orphans.insert(0, o),
+            Some(Risky::AudioDevice(device)) if go_on => self.set_audio_device(show, device),
+            _ => {}
+        }
+    }
+
+    /// Switch the audio output (stops all playback).
+    fn set_audio_device(&mut self, show: &mut Show, device: Option<String>) {
+        show.ws.settings.audio_device = device;
+        let now = Instant::now();
+        let Show { engine, media, ws, .. } = show;
+        engine.stop_all(media, now, 0.0);
+        media.reopen_audio(ws.settings.audio_device.as_deref(), ws.settings.master_volume_db);
+        engine.workspace_changed();
+        show.edited_outside_cues();
+        if let Some(e) = &show.media.audio_error {
+            self.notify_error(tr!("Audio device failed: {e}", e));
         }
     }
 
@@ -2306,7 +2383,7 @@ impl App {
                                 _ => {}
                             }
                         }
-                        s.edited();
+                        s.edited_cues([id]);
                         self.prober.get(&p);
                     }
                 }
@@ -2521,7 +2598,7 @@ impl App {
             }
             if std::env::var_os("OPENQ_SCREENSHOT_NETREQ").is_some() {
                 // A replica's held network change, as the operator sees it.
-                use crate::remote::netguard::{HeldCue, NetworkChange};
+                use crate::remote::netguard::{HeldCue, HeldStage, NetworkChange};
                 let change = NetworkChange {
                     cues: vec![HeldCue {
                         id: crate::model::CueId::new_v4(),
@@ -2531,6 +2608,7 @@ impl App {
                     }],
                     outputs: Some(vec![crate::light::dmx::OutputConfig::default()]),
                     inputs: None,
+                    stages: vec![HeldStage { id: crate::model::StageId::new_v4(), name: "Cyc".into(), wanted: Some("HDMI-A-1".into()) }],
                 };
                 show.request_network_change("Tablet", change.clone());
                 show.request_network_change("Tablet", change);
@@ -2934,6 +3012,7 @@ impl App {
                 self.recovery_window(&ctx);
             }
             self.discard_window(&ctx);
+            self.running_window(&ctx, show);
             self.track_undo(&ctx, show);
             self.sync_osc(&ctx, show);
             self.sync_surfaces(&ctx, show);
@@ -2980,9 +3059,14 @@ impl App {
                 ctx.request_repaint_after(Duration::from_millis(100));
             }
 
-            if ctx.input(|i| i.viewport().close_requested()) && show.dirty && !self.allow_close {
+            let running = show.engine.is_active() && !show.replica;
+            if ctx.input(|i| i.viewport().close_requested()) && (show.dirty || running) && !self.allow_close {
                 ctx.send_viewport_cmd(egui::ViewportCommand::CancelClose);
-                self.discard_prompt.get_or_insert(Discarding::Quit);
+                if running {
+                    self.running_prompt.get_or_insert(Risky::Discard(Discarding::Quit));
+                } else {
+                    self.discard_prompt.get_or_insert(Discarding::Quit);
+                }
                 ctx.request_repaint();
             }
         }
@@ -3048,6 +3132,45 @@ mod tests {
         app.answer_discard(Some(false));
         assert!(closes(&frame(&mut app, false)), "Discard didn't close the window");
         assert!(!cancels(&frame(&mut app, true)), "the close that follows Discard was held back");
+    }
+
+    /// Quitting or changing the audio device while cues play asks first; Cancel leaves them playing.
+    #[test]
+    fn running_cues_are_not_stopped_without_asking() {
+        let prober = Prober::new();
+        let shared: SharedShow = Arc::new(parking_lot::Mutex::new(Show::new(prober.clone())));
+        let mut app = App::new(shared.clone(), prober);
+        app.ask_language = false;
+        let ctx = egui::Context::default();
+        theme::install(&ctx);
+        let frame = |app: &mut App, close: bool| {
+            let mut input = egui::RawInput::default();
+            if close {
+                input.viewports.entry(egui::ViewportId::ROOT).or_default().events.push(egui::ViewportEvent::Close);
+            }
+            let out = ctx.run_ui(input, |ui| app.draw(ui, None));
+            out.viewport_output.get(&egui::ViewportId::ROOT).map(|v| v.commands.clone()).unwrap_or_default()
+        };
+        {
+            let mut s = shared.lock();
+            s.ws.cue_list.cues.push(Cue::new(CueKind::Wait { duration: 60.0 }));
+            let Show { ws, engine, media, .. } = &mut *s;
+            engine.set_playhead(ws.cue_list.first());
+            engine.go(ws, media, Instant::now());
+            assert!(engine.is_active());
+        }
+        let cmds = frame(&mut app, true);
+        assert!(cmds.contains(&egui::ViewportCommand::CancelClose));
+        assert!(matches!(app.running_prompt, Some(Risky::Discard(Discarding::Quit))));
+        app.answer_running(&mut shared.lock(), false);
+        assert!(shared.lock().engine.is_active(), "Cancel stopped the cues");
+
+        app.running_prompt = Some(Risky::AudioDevice(Some("nowhere".into())));
+        app.answer_running(&mut shared.lock(), false);
+        assert_eq!(shared.lock().ws.settings.audio_device, None);
+        app.running_prompt = Some(Risky::Discard(Discarding::Quit));
+        app.answer_running(&mut shared.lock(), true);
+        assert!(app.running_ok && matches!(app.deferred.last(), Some(Deferred::Quit)));
     }
 
     /// The OSC checkbox: on starts the listener, off stops it (it once stayed running, and shown

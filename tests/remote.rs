@@ -116,6 +116,26 @@ fn pair_sync_control_and_revoke() {
         })
     });
 
+    // The main device's displays reach the replica; a replica's stage display choice waits
+    // for the operator.
+    let hdmi = openq::displays::Display { name: "HDMI-A-1".into(), size: [1920, 1080], position: [0, 0], refresh_hz: None };
+    server.set_displays(std::slice::from_ref(&hdmi));
+    wait_for("display list", || {
+        link.drain().into_iter().find_map(|m| matches!(&m, ServerMsg::Displays(l) if l == std::slice::from_ref(&hdmi)).then_some(()))
+    });
+    let mut staged = show.lock().ws.clone();
+    staged.stages.push(openq::model::Stage { output: Some("HDMI-A-1".into()), ..Default::default() });
+    let stage = staged.stages.last().unwrap().id;
+    link.send(ClientMsg::Edit(Box::new(staged)));
+    wait_for("display request", || (!show.lock().network_requests.is_empty()).then_some(()));
+    {
+        let mut s = show.lock();
+        assert_eq!(s.ws.stages.iter().find(|st| st.id == stage).unwrap().output, None, "nothing moves before the operator allows it");
+        let id = s.network_requests[0].id;
+        s.answer_network_request(id, true);
+        assert_eq!(s.ws.stages.iter().find(|st| st.id == stage).unwrap().output.as_deref(), Some("HDMI-A-1"));
+    }
+
     // Show mode on the main device: nobody edits, an Edit-role device acts as Control (its
     // stored role stays Edit) and gets it back in edit mode.
     server.set_show_mode(true);

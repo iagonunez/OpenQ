@@ -46,7 +46,7 @@ pub const DEFAULT_PORT: u16 = 53200;
 /// UDP port for discovery queries.
 pub const DISCOVERY_PORT: u16 = 53201;
 /// Wire protocol version; both ends must match.
-pub const PROTOCOL: u32 = 3;
+pub const PROTOCOL: u32 = 4;
 
 /// What a paired device may do.
 #[derive(Serialize, Deserialize, Clone, Copy, PartialEq, Eq, Debug, Default)]
@@ -365,6 +365,10 @@ pub enum ServerMsg {
     Role(Role),
     /// A request was refused (e.g. not allowed by the role).
     Refused(String),
+    /// The main device's system displays, which its stages can go fullscreen on (sent on
+    /// connecting and when the list changes). A replica picks from these; its choices wait for
+    /// the operator ([`netguard`]).
+    Displays(Vec<crate::displays::Display>),
 }
 
 /// Replica → main device.

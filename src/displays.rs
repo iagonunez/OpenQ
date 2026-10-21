@@ -7,7 +7,7 @@
 use std::process::Command;
 
 /// A monitor attached to this machine.
-#[derive(Clone, Debug, PartialEq)]
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize)]
 pub struct Display {
     /// Output name as the OS reports it (e.g. `HDMI-A-1`).
     pub name: String,
@@ -19,7 +19,18 @@ pub struct Display {
     pub refresh_hz: Option<f32>,
 }
 
+/// Most displays taken from a main device's list (more is junk).
+pub const MAX_REMOTE: usize = 32;
+
 impl Display {
+    /// A display named by another computer (a main device's list on a replica): name without
+    /// control characters and at most 64 characters, no refresh rate that isn't a number.
+    pub fn cleaned(mut self) -> Self {
+        self.name = self.name.chars().filter(|c| !c.is_control()).take(64).collect();
+        self.refresh_hz = self.refresh_hz.filter(|r| r.is_finite() && *r > 0.0 && *r < 1000.0);
+        self
+    }
+
     /// "name — W×H @ Hz" for menus.
     pub fn label(&self) -> String {
         let hz = self.refresh_hz.map(|r| format!(" @ {r:.0} Hz")).unwrap_or_default();

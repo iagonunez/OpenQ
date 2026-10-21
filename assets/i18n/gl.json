@@ -1423,5 +1423,13 @@
  "Can't start OQVis: {e}": "Non se pode iniciar OQVis: {e}",
  "Where is OQVis?": "Onde está OQVis?",
  "OQVis not found: install it or pick the program": "Non se atopa OQVis: instálao ou escolle o programa",
- "OQVis started with the rig": "OQVis iniciado co rig"
+ "OQVis started with the rig": "OQVis iniciado co rig",
+ "Stage {stage}: fullscreen on {display}": "Escenario {stage}: pantalla completa en {display}",
+ "Stage {stage}: in a window": "Escenario {stage}: nunha xanela",
+ "Stage displays decide what goes fullscreen over this computer's screens.": "As pantallas dos escenarios deciden que se amosa a pantalla completa sobre as pantallas deste ordenador.",
+ "Cues are playing": "Hai cues en marcha",
+ "Stop and go on": "Parar e seguir",
+ "Quitting stops everything that is playing.": "Saír detén todo o que se está a reproducir.",
+ "Opening another show stops everything that is playing.": "Abrir outro espectáculo detén todo o que se está a reproducir.",
+ "Changing the audio device stops everything that is playing.": "Cambiar o dispositivo de audio detén todo o que se está a reproducir."
 }

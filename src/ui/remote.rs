@@ -191,6 +191,10 @@ impl App {
         // Devices may edit only while this main device is in edit mode.
         if let Some(server) = &self.remote.server {
             server.set_show_mode(self.mode == Mode::Show);
+            let d = self.displays.lock();
+            if d.loaded && !d.remote {
+                server.set_displays(&d.list);
+            }
         }
         let Some(link) = &self.remote.link else { return };
         match link.state() {
@@ -258,6 +262,8 @@ impl App {
 
     fn leave_replica(&mut self, show: &mut Show) {
         let Some(mut r) = self.remote.replica.take() else { return };
+        // This computer's own displays again.
+        *self.displays.lock() = Default::default();
         show.replica = false;
         show.sync_lighting();
         show.engine.mirror(None, false, &[], Vec::new(), Instant::now());
@@ -397,10 +403,50 @@ impl App {
                     notices.push(tr!("Your role is now: {role}", role = role.label()));
                 }
                 ServerMsg::Refused(why) => notices.push(why),
+                ServerMsg::Displays(list) => {
+                    let mut d = self.displays.lock();
+                    d.list = list.into_iter().take(crate::displays::MAX_REMOTE).map(crate::displays::Display::cleaned).collect();
+                    (d.loaded, d.remote, d.error) = (true, true, None);
+                }
             }
         }
 
         // Local edits go to the main device (or are undone if not allowed).
+        let unchecked = r.checked_gen != Some(show.edit_gen);
+        // Edits that said which cues they changed are checked by those cues alone (comparing or
+        // cloning a 50 000-cue show takes milliseconds under the lock).
+        if unchecked
+            && r.role.can_edit()
+            && r.last_edit.elapsed() >= EDIT_INTERVAL
+            && let Some(synced) = &mut r.synced
+            && let Some(ids) = r.checked_gen.and_then(|g| show.changes.since(g, show.edit_gen))
+            && crate::changes::same_rest(synced, &show.ws)
+        {
+            // None: a cue isn't in both copies (or stopped or became a group): compare in full.
+            let mut cues = Some(Vec::new());
+            for id in &ids {
+                match (show.ws.cue_list.find(*id), synced.cue_list.find(*id)) {
+                    (Some(c), Some(old)) if c.is_group() == old.is_group() => {
+                        if !c.shallow_eq(old)
+                            && let Some(list) = &mut cues
+                        {
+                            list.push(c.shallow_clone());
+                        }
+                    }
+                    _ => cues = None,
+                }
+            }
+            if let Some(cues) = cues {
+                let lighting = crate::light::patch::diff(&synced.lighting, &show.ws.lighting);
+                if !cues.is_empty() || lighting.is_some() {
+                    crate::remote::apply_cue_patch(synced, &cues);
+                    synced.lighting = show.ws.lighting.clone();
+                    link.send(ClientMsg::Patch { cues, lighting: lighting.map(Box::new) });
+                    r.last_edit = now;
+                }
+                r.checked_gen = Some(show.edit_gen);
+            }
+        }
         let unchecked = r.checked_gen != Some(show.edit_gen);
         if let Some(synced) = &r.synced
             && unchecked
@@ -475,6 +521,9 @@ impl App {
                 });
                 ui.add_space(4.0);
                 ui.label(RichText::new(t("Allow only changes you expect: they decide which computers this one sends to.")).small().color(theme::TEXT_DIM));
+                if !r.change.stages.is_empty() {
+                    ui.label(RichText::new(t("Stage displays decide what goes fullscreen over this computer's screens.")).small().color(theme::TEXT_DIM));
+                }
                 ui.add_space(6.0);
                 ui.horizontal(|ui| {
                     if ui.button(theme::with_icon(icons::CHECK_CIRCLE, t("Allow"))).clicked() {
