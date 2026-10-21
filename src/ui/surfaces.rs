@@ -83,6 +83,57 @@ impl App {
         }
     }
 
+    /// The MIDI Show Control rows of the surface grid: on/off, device and group IDs, command
+    /// format, and the last message answered.
+    fn msc_row(&mut self, ui: &mut Ui, show: &mut Show) {
+        let can_edit = self.can_edit_show();
+        let m = &mut show.ws.settings.surfaces.msc;
+        let before = m.clone();
+        ui.label(t("MIDI Show Control"));
+        ui.add_enabled(can_edit, egui::Checkbox::new(&mut m.enabled, t("Answer MSC commands")))
+            .on_hover_text(t("GO, STOP, RESUME, LOAD and more from a lighting console or another show program, by cue number and list"));
+        ui.end_row();
+        if *m != before {
+            show.edited_outside_cues();
+        }
+        let m = &mut show.ws.settings.surfaces.msc;
+        if !m.enabled {
+            return;
+        }
+        let before = m.clone();
+        ui.label("");
+        ui.horizontal(|ui| {
+            ui.add_enabled_ui(can_edit, |ui| {
+                ui.label(t("Device ID"));
+                ui.add(DragValue::new(&mut m.device).range(0..=111));
+                ui.label(t("Group"));
+                let mut group = m.group.unwrap_or(0);
+                if ui.add(DragValue::new(&mut group).range(0..=15).custom_formatter(|v, _| if v == 0.0 { t("none").to_string() } else { format!("{v:.0}") })).changed() {
+                    m.group = (group > 0).then_some(group);
+                }
+                let label = m.format.map_or_else(|| t("Any format").to_string(), crate::msc::format_label);
+                egui::ComboBox::from_id_salt("msc-format").width(140.0).selected_text(label).show_ui(ui, |ui| {
+                    ui.selectable_value(&mut m.format, None, t("Any format"));
+                    for (code, _) in crate::msc::FORMATS {
+                        ui.selectable_value(&mut m.format, Some(code), crate::msc::format_label(code));
+                    }
+                })
+                .response
+                .on_hover_text(t("The command format answered (all-types messages are always answered)"));
+            });
+        });
+        ui.end_row();
+        if *m != before {
+            show.edited_outside_cues();
+        }
+        ui.label("");
+        match self.surfaces.last_msc() {
+            Some((text, _)) => ui.label(RichText::new(text).font(theme::mono(12.0))),
+            None => ui.label(RichText::new(t("no MSC yet (all-call, device 127, is always answered)")).weak().small()),
+        };
+        ui.end_row();
+    }
+
     /// Settings → Control surfaces.
     pub(super) fn settings_surfaces(&mut self, ui: &mut Ui, show: &mut Show) {
         super::devices::ensure(&self.inputs, ui.ctx());
@@ -164,6 +215,7 @@ impl App {
                 };
             });
             ui.end_row();
+            self.msc_row(ui, show);
             let can_edit = self.can_edit_show();
             let s = &mut show.ws.settings.surfaces;
             let before = (s.page_size, s.soft_takeover, s.osc_feedback_port);

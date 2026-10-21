@@ -1541,7 +1541,8 @@ impl Cue {
         c
     }
 
-    fn visit<'a>(&'a self, f: &mut impl FnMut(&'a Cue)) {
+    /// Call `f` on this cue and every cue inside it, depth first.
+    pub fn visit<'a>(&'a self, f: &mut impl FnMut(&'a Cue)) {
         f(self);
         for c in self.children() {
             c.visit(f);

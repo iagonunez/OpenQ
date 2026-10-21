@@ -1488,7 +1488,17 @@ fn fuzz_network_packets() {
         osc("/light/gm", vec![rosc::OscType::Double(1e300)]),
         osc("/light/tap", vec![rosc::OscType::Int(i32::MIN), rosc::OscType::String("x".repeat(1000)), rosc::OscType::Blob(vec![0; 2000])]),
     ];
-    let midi_seeds: [&[u8]; 6] = [&[0xb0, 1, 127], &[0x90, 60, 100], &[0xf8], &[0xfa], &[0xf1, 0x23], &[0xf0, 0x7f, 0x7f, 0x01, 0x01, 1, 2, 3, 4, 0xf7]];
+    let midi_seeds: [&[u8]; 8] = [
+        &[0xb0, 1, 127],
+        &[0x90, 60, 100],
+        &[0xf8],
+        &[0xfa],
+        &[0xf1, 0x23],
+        &[0xf0, 0x7f, 0x7f, 0x01, 0x01, 1, 2, 3, 4, 0xf7],
+        // MSC GO 1.5 in list 1, TIMED_GO.
+        &[0xf0, 0x7f, 0x01, 0x02, 0x10, 0x01, b'1', b'.', b'5', 0, b'1', 0xf7],
+        &[0xf0, 0x7f, 0x7f, 0x02, 0x7f, 0x04, 0x61, 0, 2, 0, 0, b'2', 0xf7],
+    ];
 
     // Real listeners: a DMX input on its own ports, OSC on a show.
     let base = 44000 + (std::process::id() % 5000) as u16 * 2;
@@ -1497,6 +1507,7 @@ fn fuzz_network_packets() {
     let ws = Workspace { lighting: seed_lighting(), ..Default::default() };
     let show = virtual_show();
     show.lock().replace_workspace(ws, None);
+    show.lock().ws.settings.surfaces.msc = openq::msc::MscSettings { enabled: true, device: 1, ..Default::default() };
     let hub = openq::surface::SurfaceHub::new();
     let osc_port = base + 2;
     let _osc = openq::osc::OscServer::start_with(osc_port, show.clone(), hub.clone(), || {}).unwrap();
@@ -1523,6 +1534,9 @@ fn fuzz_network_packets() {
         let _ = sacn::parse(&p);
         let _ = sacn::parse_data(&p);
         let _ = openq::surface::parse_midi(&p);
+        if let Some(m) = openq::msc::parse(&p) {
+            hub.msc(&show, &m);
+        }
         let _ = clock.message(&p, n * 20_833);
         mtc.push(&p);
         let samples: Vec<f32> = p.iter().map(|b| *b as f32 / 127.5 - 1.0).collect();

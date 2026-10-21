@@ -42,7 +42,8 @@
 //!   apart from the live show; Light cues target its cues.
 //! * [`surface`] — MIDI/OSC control surfaces mapped onto executors, playback buttons, masters and GO
 //!   (learn mode, pages, soft takeover, feedback to LEDs and motor faders); the same MIDI input fires
-//!   cues by their MIDI trigger (note on, program change, control change).
+//!   cues by their MIDI trigger (note on, program change, control change). [`msc`] — MIDI Show Control
+//!   commands (GO, STOP, RESUME, LOAD… by cue number and list) read on that input.
 //! * [`osc`] — OSC input. [`remote`] — paired remote devices (encrypted, authenticated).
 //! * [`displays`] — system monitors for stage outputs. [`ui`] — the egui application.
 //! * `vout` (feature `video`) — video output in its own process (`openq --video-output`): stage
@@ -114,6 +115,7 @@ pub mod geometry;
 pub mod light;
 pub mod media;
 pub mod model;
+pub mod msc;
 pub mod osc;
 pub mod recovery;
 pub mod remote;

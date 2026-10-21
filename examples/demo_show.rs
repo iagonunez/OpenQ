@@ -1540,7 +1540,14 @@ fn settings() -> openq::model::Settings {
         osc_enabled: true,
         osc_port: 53000,
         speakers,
-        surfaces: SurfaceSettings { mappings, midi_clock: true, page_size: 5, soft_takeover: true, osc_feedback_port: 9000 },
+        surfaces: SurfaceSettings {
+            mappings,
+            midi_clock: true,
+            page_size: 5,
+            soft_takeover: true,
+            osc_feedback_port: 9000,
+            msc: openq::msc::MscSettings { enabled: true, device: 1, group: Some(1), format: Some(0x10) },
+        },
         ..Default::default()
     }
 }

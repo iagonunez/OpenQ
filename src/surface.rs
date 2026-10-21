@@ -29,6 +29,7 @@
 //! faders, button LEDs for running executors, playback buttons that are on, blackout, pages);
 //! [`SurfaceFeedback`] sends the changes to a MIDI output and to the OSC app that last sent
 //! (at [`SurfaceSettings::osc_feedback_port`]).
+//! MIDI Show Control on the same input goes to [`SurfaceHub::msc`] ([`crate::msc`]).
 
 use crate::control::{Command, CueAction, LightControl};
 use crate::model::{CueId, CueList, MidiTrigger, MidiTriggerKind};
@@ -237,6 +238,8 @@ pub struct SurfaceSettings {
     /// OSC feedback goes to the address the last OSC control came from, at this port (0 = no
     /// OSC feedback).
     pub osc_feedback_port: u16,
+    /// MIDI Show Control commands arriving on the MIDI input.
+    pub msc: crate::msc::MscSettings,
 }
 
 impl SurfaceSettings {
@@ -675,6 +678,10 @@ struct HubState {
     pending: Vec<Command>,
     /// Last tempo measured from MIDI clock, and when.
     clock: Option<(f32, Instant)>,
+    /// The last MSC message for this show (what it did or why not), and when.
+    last_msc: Option<(String, Instant)>,
+    /// When a refused MSC message was last logged (a flood logs once a second).
+    msc_warned: Option<Instant>,
 }
 
 /// What every surface input shares. Cheap to clone (one shared state).
@@ -745,6 +752,53 @@ impl SurfaceHub {
         if let Err(e) = crate::control::apply(&mut show, cmd, now) {
             log::warn!("MIDI clock: {e}");
         }
+    }
+
+    /// An MSC message ([`crate::msc`]): if the show answers it, run its commands (queued for the
+    /// UI on a replica, like the other inputs). Returns true if it was for this show.
+    pub fn msc(&self, show: &SharedShow, msg: &crate::msc::Msc) -> bool {
+        let now = Instant::now();
+        let mut show = show.lock();
+        if !show.ws.settings.surfaces.msc.answers(msg) {
+            return false;
+        }
+        let mut st = self.state.lock();
+        let result = crate::msc::commands(&show.ws.cue_list, msg);
+        let label = msg.label();
+        let mut problem = None;
+        st.last_msc = Some((
+            match &result {
+                Ok(_) => label.clone(),
+                Err(e) => format!("{label}: {e}"),
+            },
+            now,
+        ));
+        match result {
+            Ok(cmds) if show.replica => st.pending.extend(cmds),
+            Ok(cmds) => {
+                drop(st);
+                for c in cmds {
+                    if let Err(e) = crate::control::apply(&mut show, c, now) {
+                        problem = Some(e);
+                        break;
+                    }
+                }
+                st = self.state.lock();
+            }
+            Err(e) => problem = Some(e),
+        }
+        if let Some(e) = problem
+            && st.msc_warned.is_none_or(|w| now.duration_since(w) >= Duration::from_secs(1))
+        {
+            st.msc_warned = Some(now);
+            log::warn!("MSC {label}: {e}");
+        }
+        true
+    }
+
+    /// The last MSC message the show answered (with what went wrong, if anything) and when.
+    pub fn last_msc(&self) -> Option<(String, Instant)> {
+        self.state.lock().last_msc.clone()
     }
 
     /// The tempo MIDI clock gave in the last two seconds.
@@ -1022,8 +1076,8 @@ impl MidiSurface {
                     let (show, hub, repaint) = (show.clone(), hub.clone(), repaint.clone());
                     let conn = (|| {
                         let mut m = midir::MidiInput::new("OpenQ").map_err(|e| e.to_string())?;
-                        // Timing messages too: MIDI clock (cheap, 24 per beat).
-                        m.ignore(midir::Ignore::SysexAndActiveSense);
+                        // Timing messages too: MIDI clock (cheap, 24 per beat); SysEx for MSC.
+                        m.ignore(midir::Ignore::ActiveSense);
                         let ports = m.ports();
                         let p = ports.iter().find(|p| m.port_name(p).ok().as_deref() == Some(name.as_str())).ok_or_else(|| format!("MIDI input not found: {name}"))?.clone();
                         let (epoch, mut clock) = (Instant::now(), MidiClock::default());
@@ -1041,6 +1095,15 @@ impl MidiSurface {
                                             log::warn!("MIDI clock: {e:#}");
                                         }
                                         repaint();
+                                    }
+                                } else if msg.first() == Some(&0xf0) {
+                                    if let Some(m) = crate::msc::parse(msg) {
+                                        let r = crate::recovery::catch(|| Ok(hub.msc(&show, &m)));
+                                        match r {
+                                            Err(e) => log::warn!("MSC: {e:#}"),
+                                            Ok(true) => repaint(),
+                                            Ok(false) => {}
+                                        }
                                     }
                                 } else if let Some((input, value)) = parse_midi(msg) {
                                     // A failure on one message must not end the connection.
@@ -1264,6 +1327,32 @@ mod tests {
         assert!(fired(cc.clone(), 0.0).is_empty());
         assert!(fired(SurfaceInput::Osc("/x".into()), 1.0).is_empty());
         assert_eq!(cc.midi_trigger(), Some(MidiTrigger { kind: MidiTriggerKind::Control, channel: Some(0), number: 20 }));
+    }
+
+    /// MSC on the main device: only messages for this show act; GO by number runs the cue and
+    /// moves the playhead on; a refused message is shown as the last MSC.
+    #[test]
+    fn msc_acts_on_the_show() {
+        use crate::model::{Cue, CueKind};
+        let show: SharedShow = Arc::new(Mutex::new(crate::show::Show::new(crate::media::Prober::new())));
+        let wait = |n: &str| Cue { number: n.into(), ..Cue::new(CueKind::Wait { duration: 60.0 }) };
+        let (one, two, three) = (wait("1"), wait("2"), wait("3"));
+        let ids = (two.id, three.id);
+        show.lock().ws.cue_list.cues = vec![one, two, three];
+        let hub = SurfaceHub::new();
+        let go = |device, number: &[u8]| crate::msc::parse(&[&[0xf0, 0x7f, device, 0x02, 0x10, 0x01][..], number, &[0xf7]].concat()).unwrap();
+        assert!(!hub.msc(&show, &go(1, b"2")), "off");
+        show.lock().ws.settings.surfaces.msc = crate::msc::MscSettings { enabled: true, device: 1, ..Default::default() };
+        assert!(!hub.msc(&show, &go(2, b"2")), "another device");
+        assert!(hub.msc(&show, &go(1, b"2")));
+        {
+            let s = show.lock();
+            assert!(s.engine.instances.contains_key(&ids.0));
+            assert_eq!(s.engine.playhead, Some(ids.1));
+        }
+        assert_eq!(hub.last_msc().unwrap().0, "GO 2");
+        assert!(hub.msc(&show, &go(0x7f, b"9")), "all-call");
+        assert!(hub.last_msc().unwrap().0.starts_with("GO 9: "));
     }
 
     /// Learn mode keeps the next input instead of acting on it; replicas queue commands.

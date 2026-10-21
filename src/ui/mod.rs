@@ -2721,6 +2721,7 @@ pub(crate) fn translated_names() -> Vec<&'static str> {
     for k in crate::effects::VideoFxKind::ALL {
         v.extend(k.params().iter().flat_map(|p| [p.name, p.unit]));
     }
+    v.extend(crate::msc::FORMATS.iter().map(|(_, n)| *n));
     v.retain(|s| s.chars().any(|c| c.is_alphabetic()));
     v
 }
