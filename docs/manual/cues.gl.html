@@ -21,6 +21,7 @@
     <li class="cur"><a href="cues.gl.html" aria-current="page">Cues e tempos</a>
      <ol class="sub">
       <li class="s2"><a href="#cues">Tipos de cue</a></li>
+      <li class="s3"><a href="#midi-triggers">Disparadores MIDI</a></li>
       <li class="s2"><a href="#timing">Tempos e continuacións</a></li>
       <li class="s3"><a href="#groups">Grupos</a></li>
       <li class="s2"><a href="#fades">Fundidos</a></li>
@@ -69,7 +70,17 @@
   Básico tamén axusta a <strong>pre-espera</strong>, o modo de <strong>continuación</strong> e a <strong>post-espera</strong> da
   cue e, para cues de audio e vídeo, o <strong>ficheiro de medios</strong>.</p>
   <p>A lapela <strong>Disparadores</strong> reúne as formas de disparar unha cue ademais de GO: un <strong>atallo</strong>, unha tecla
-  que dispara a cue directamente estea onde estea o cabezal, e un <a href="#timecode">disparador por código de tempo</a>.</p>
+  que dispara a cue directamente estea onde estea o cabezal, un <a href="#midi-triggers">disparador MIDI</a> e un <a href="#timecode">disparador por código de tempo</a>.</p>
+  <h3 id="midi-triggers">Disparadores MIDI</h3>
+  <p>Unha cue pode dispararse ao chegar unha mensaxe MIDI: unha <strong>nota activada</strong>, un <strong>cambio de programa</strong>
+  ou un <strong>cambio de control</strong> (dispárase cando o valor sobe a 64 ou máis, como fai un botón que manda 127/0). Na
+  lapela <strong>Disparadores</strong> marca <em>Disparar con</em> e escolle o tipo, o número e a canle (ou <em>Calquera</em>), ou
+  preme <em>Aprender</em> e manda a mensaxe dende o teclado, o pad ou a mesa. A cue dispárase estea onde estea o cabezal, unha
+  vez por pulsación; as cues desarmadas non se disparan.</p>
+  <p>As mensaxes chegan pola entrada MIDI deste ordenador, escollida en <span class="menu">Axustes → Superficies de control</span>
+  (<em>Configurar…</em> na tarxeta ábrea). A mesma entrada pode levar tamén asignacións de
+  <a href="lighting.gl.html#surfaces">superficies de control</a> e MTC; para levar toda a lista con cambios de programa, asigna alí
+  un cambio de programa a <em>GO</em>.</p>
 </section>
 
 <section id="timing">
@@ -143,7 +154,7 @@
   seguir o LTC da banda mentres outra se leva á man.</p>
   <h3 id="timecode-triggers">Disparadores por código de tempo</h3>
   <figure>
-    <img src="img/gl/triggers.webp" width="1400" height="255" alt="Lapela Disparadores: unha tarxeta de atallo e unha tarxeta de código de tempo co tempo de disparo, a fonte da lista e o que está a recibir.">
+    <img src="img/gl/triggers.webp" width="1400" height="216" alt="Lapela Disparadores: unha tarxeta de atallo, unha tarxeta MIDI cun disparador por cambio de programa e unha tarxeta de código de tempo co tempo de disparo, a fonte da lista e o que está a recibir.">
     <figcaption>A lapela Disparadores dunha cue que se dispara en 01:00:05:00.</figcaption>
   </figure>
   <p>Na lapela <strong>Disparadores</strong> dunha cue, marca <em>Disparar en</em> e escribe o tempo (hh:mm:ss:ff). Cando o código de

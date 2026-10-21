@@ -242,6 +242,10 @@ pub fn cue(c: &mut Cue) {
     if let Some(t) = &mut c.timecode_trigger {
         time(t);
     }
+    if let Some(m) = &mut c.midi_trigger {
+        m.number = m.number.min(127);
+        m.channel = m.channel.map(|ch| ch.min(15));
+    }
     match &mut c.kind {
         CueKind::Audio(a) => {
             db(&mut a.volume_db);

@@ -1315,6 +1315,7 @@ impl Gen {
             t.bg_padding = 36.0;
         });
         phones.hotkey = Some("P".into());
+        phones.midi_trigger = Some(openq::model::MidiTrigger { kind: openq::model::MidiTriggerKind::Note, channel: Some(9), number: 36 });
         out.push(phones);
         out.push(self.sfx("Phone ring (announcement)", "phone_alerts_and_rings"));
         let mut bell = self.sfx("Beginners bell", "medium_bell_ringing_near");
@@ -1530,6 +1531,7 @@ fn settings() -> openq::model::Settings {
         Mapping { input: SurfaceInput::MidiNote { channel: 0, number: 53 }, action: SurfaceAction::PlaybackButton(1) },
         Mapping { input: SurfaceInput::MidiNote { channel: 0, number: 54 }, action: SurfaceAction::PagePrevious },
         Mapping { input: SurfaceInput::MidiNote { channel: 0, number: 55 }, action: SurfaceAction::PageNext },
+        Mapping { input: SurfaceInput::MidiProgram { channel: 0, number: 0 }, action: SurfaceAction::Go },
     ]);
     openq::model::Settings {
         panic_fade: 2.0,

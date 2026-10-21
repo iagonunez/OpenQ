@@ -21,6 +21,7 @@
     <li class="cur"><a href="cues.html" aria-current="page">Cues and timing</a>
      <ol class="sub">
       <li class="s2"><a href="#cues">Cue types</a></li>
+      <li class="s3"><a href="#midi-triggers">MIDI triggers</a></li>
       <li class="s2"><a href="#timing">Timing and continues</a></li>
       <li class="s3"><a href="#groups">Groups</a></li>
       <li class="s2"><a href="#fades">Fades</a></li>
@@ -69,7 +70,16 @@
   sets the cue's <strong>pre-wait</strong>, <strong>continue</strong> mode and <strong>post-wait</strong>, and, for audio
   and video cues, the <strong>media file</strong>.</p>
   <p>The <strong>Triggers</strong> tab holds the ways to fire a cue besides GO: a <strong>hotkey</strong>, a key that
-  fires the cue directly whatever the playhead is on, and a <a href="#timecode">timecode trigger</a>.</p>
+  fires the cue directly whatever the playhead is on, a <a href="#midi-triggers">MIDI trigger</a> and a <a href="#timecode">timecode trigger</a>.</p>
+  <h3 id="midi-triggers">MIDI triggers</h3>
+  <p>A cue can fire when a MIDI message arrives: a <strong>note on</strong>, a <strong>program change</strong> or a
+  <strong>control change</strong> (it fires when the value rises to 64 or more, as a button sending 127/0 does). On the
+  <strong>Triggers</strong> tab tick <em>Fire on</em>, pick the kind, the number and the channel (or <em>Any</em>), or click
+  <em>Learn</em> and send the message from the keyboard, pad or desk. The cue fires whatever the playhead is on, once per
+  press; disarmed cues don't fire.</p>
+  <p>Messages come in on this computer's MIDI input, chosen in <span class="menu">Settings → Control surfaces</span>
+  (<em>Set up…</em> on the card opens it). The same input can also carry <a href="lighting.html#surfaces">control surface</a>
+  mappings and MTC; to run the whole list from program changes, map a program change to <em>GO</em> there.</p>
 </section>
 
 <section id="timing">
@@ -143,7 +153,7 @@
   follow the band's LTC while another is run by hand.</p>
   <h3 id="timecode-triggers">Timecode triggers</h3>
   <figure>
-    <img src="img/triggers.webp" width="1400" height="255" alt="Triggers tab: a hotkey card, and a timecode card with the trigger time, the list's timecode source and what it is receiving.">
+    <img src="img/triggers.webp" width="1400" height="216" alt="Triggers tab: a hotkey card, a MIDI card with a program change trigger, and a timecode card with the trigger time, the list's timecode source and what it is receiving.">
     <figcaption>The Triggers tab of a cue that fires at 01:00:05:00.</figcaption>
   </figure>
   <p>On a cue's <strong>Triggers</strong> tab, tick <em>Fire at</em> and type the time (hh:mm:ss:ff). When the list's

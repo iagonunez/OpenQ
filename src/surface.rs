@@ -16,6 +16,10 @@
 //! when the device comes back. The same port can carry MIDI clock: with
 //! [`SurfaceSettings::midi_clock`] on, [`MidiClock`] turns it into the effects tempo.
 //!
+//! Cue triggers: a cue's [`MidiTrigger`] fires it ([`triggered`]) when its message arrives on the
+//! same MIDI input; a program change is a press each time (so a "GO on program change" is just
+//! a mapping to [`SurfaceAction::Go`]).
+//!
 //! Pages: with [`SurfaceSettings::page_size`] set, the surface's page (Page next/previous
 //! buttons; per computer, kept in the hub) shifts its executors by that many sequences, and
 //! picks the Playback page's button page its playback buttons reach.
@@ -26,7 +30,8 @@
 //! [`SurfaceFeedback`] sends the changes to a MIDI output and to the OSC app that last sent
 //! (at [`SurfaceSettings::osc_feedback_port`]).
 
-use crate::control::{Command, LightControl};
+use crate::control::{Command, CueAction, LightControl};
+use crate::model::{CueId, CueList, MidiTrigger, MidiTriggerKind};
 use crate::light::Lighting;
 use crate::light::model::{ButtonId, LightButton, SequenceId};
 use crate::light::engine::Masters;
@@ -56,6 +61,13 @@ pub enum SurfaceInput {
         /// Note number.
         number: u8,
     },
+    /// MIDI program change (`channel` 0..=15): a press each time it arrives.
+    MidiProgram {
+        /// MIDI channel, 0-based.
+        channel: u8,
+        /// Program number.
+        number: u8,
+    },
     /// An OSC address (its first argument is the value).
     Osc(String),
 }
@@ -66,9 +78,29 @@ impl SurfaceInput {
         match self {
             SurfaceInput::MidiCc { channel, number } => format!("CC {number} · ch {}", channel + 1),
             SurfaceInput::MidiNote { channel, number } => format!("Note {number} · ch {}", channel + 1),
+            SurfaceInput::MidiProgram { channel, number } => format!("PC {number} · ch {}", channel + 1),
             SurfaceInput::Osc(a) => a.clone(),
         }
     }
+
+    /// The cue trigger that waits for this input (any channel taken as this one's), if it is MIDI.
+    pub fn midi_trigger(&self) -> Option<MidiTrigger> {
+        let (kind, channel, number) = match *self {
+            SurfaceInput::MidiCc { channel, number } => (MidiTriggerKind::Control, channel, number),
+            SurfaceInput::MidiNote { channel, number } => (MidiTriggerKind::Note, channel, number),
+            SurfaceInput::MidiProgram { channel, number } => (MidiTriggerKind::Program, channel, number),
+            SurfaceInput::Osc(_) => return None,
+        };
+        Some(MidiTrigger { kind, channel: Some(channel), number })
+    }
+}
+
+/// The armed cues (any list, any depth) whose MIDI trigger `input` fires. `pressed` is whether
+/// the input was just pressed (a note on, a CC rising through 64, any program change).
+pub fn triggered(cues: &CueList, input: &SurfaceInput, pressed: bool) -> Vec<CueId> {
+    let Some(got) = input.midi_trigger().filter(|_| pressed) else { return Vec::new() };
+    let fires = |t: &MidiTrigger| t.kind == got.kind && t.number == got.number && t.channel.is_none_or(|c| Some(c) == got.channel);
+    cues.iter_all().into_iter().filter(|c| c.armed && c.midi_trigger.as_ref().is_some_and(fires)).map(|c| c.id).collect()
 }
 
 /// What a control does. Executor numbers count from 1.
@@ -285,7 +317,8 @@ pub fn midi_message(input: &SurfaceInput, value: f32) -> Option<[u8; 3]> {
     match *input {
         SurfaceInput::MidiCc { channel, number } => Some([0xb0 | (channel & 0x0f), number & 0x7f, v]),
         SurfaceInput::MidiNote { channel, number } => Some([0x90 | (channel & 0x0f), number & 0x7f, if value >= 0.5 { 127 } else { 0 }]),
-        SurfaceInput::Osc(_) => None,
+        // A program change has nothing to show.
+        SurfaceInput::MidiProgram { .. } | SurfaceInput::Osc(_) => None,
     }
 }
 
@@ -293,6 +326,9 @@ pub fn midi_message(input: &SurfaceInput, value: f32) -> Option<[u8; 3]> {
 pub fn parse_midi(msg: &[u8]) -> Option<(SurfaceInput, f32)> {
     let (&status, data) = msg.split_first()?;
     let channel = status & 0x0f;
+    if status & 0xf0 == 0xc0 {
+        return Some((SurfaceInput::MidiProgram { channel, number: *data.first()? & 0x7f }, 1.0));
+    }
     let (number, value) = (*data.first()? & 0x7f, *data.get(1)? & 0x7f);
     match status & 0xf0 {
         0xb0 => Some((SurfaceInput::MidiCc { channel, number }, value as f32 / 127.0)),
@@ -569,7 +605,8 @@ pub fn resolve(
     now: Instant,
 ) -> Vec<Command> {
     let actions = settings.mappings.iter().filter(|m| &m.input == input).map(|m| m.action).chain(builtin);
-    // A value-less message is a press then a release.
+    // A value-less message (or a program change, which has no release) is a press then a release.
+    let value = if matches!(input, SurfaceInput::MidiProgram { .. }) { None } else { value };
     let (value, after) = match value {
         Some(v) => (v, v),
         None => (1.0, 0.0),
@@ -670,8 +707,12 @@ impl SurfaceHub {
         let status = show.media.light.status();
         let view = view(&show, &masters, &status);
         st.touched.insert(input.clone(), now);
-        let cmds = resolve(&show.ws.settings.surfaces, builtin, &view, &mut st.feel, &input, value, now);
-        let used = !cmds.is_empty() || builtin.is_some() || show.ws.settings.surfaces.mappings.iter().any(|m| m.input == input);
+        let was = st.feel.values.get(&input).copied().unwrap_or(0.0);
+        let pressed = matches!(input, SurfaceInput::MidiProgram { .. }) || value.is_none_or(|v| v >= 0.5 && was < 0.5);
+        let fired = triggered(&show.ws.cue_list, &input, pressed);
+        let mut cmds = resolve(&show.ws.settings.surfaces, builtin, &view, &mut st.feel, &input, value, now);
+        let used = !cmds.is_empty() || !fired.is_empty() || builtin.is_some() || show.ws.settings.surfaces.mappings.iter().any(|m| m.input == input);
+        cmds.extend(fired.into_iter().map(|id| Command::Cue(id, CueAction::Start)));
         if show.replica {
             st.pending.extend(cmds);
             return used;
@@ -1164,6 +1205,65 @@ mod tests {
         assert_eq!(osc_builtin("/light/executor/0/go"), None);
         assert_eq!(osc_builtin("/light/grandmaster"), Some(SurfaceAction::GrandMaster));
         assert_eq!(osc_builtin("/go"), None);
+    }
+
+    #[test]
+    fn program_changes_parse() {
+        assert_eq!(parse_midi(&[0xc3, 5]), Some((SurfaceInput::MidiProgram { channel: 3, number: 5 }, 1.0)));
+        assert_eq!(parse_midi(&[0xc0]), None, "short");
+        assert_eq!(midi_message(&SurfaceInput::MidiProgram { channel: 0, number: 5 }, 1.0), None, "no feedback");
+        // Each program change is a press, mapped GO fires every time.
+        let pc = SurfaceInput::MidiProgram { channel: 0, number: 5 };
+        let s = SurfaceSettings { mappings: vec![Mapping { input: pc.clone(), action: SurfaceAction::Go }], ..Default::default() };
+        let (mut feel, m) = (Feel::default(), Masters::default());
+        for _ in 0..2 {
+            assert!(matches!(run(&s, &mut feel, &pc, Some(1.0), &m, &[])[..], [Command::Go]));
+        }
+    }
+
+    /// Cues fire on their MIDI trigger: kind, number and channel (or any channel) must match,
+    /// once per press, armed cues only, in any list and group.
+    #[test]
+    fn midi_triggers_fire_cues() {
+        use crate::model::{Cue, CueKind};
+        let show: SharedShow = Arc::new(Mutex::new(crate::show::Show::new(crate::media::Prober::new())));
+        let wait = |trigger| Cue { midi_trigger: Some(trigger), ..Cue::new(CueKind::Wait { duration: 60.0 }) };
+        let note36 = wait(MidiTrigger { kind: MidiTriggerKind::Note, channel: Some(9), number: 36 });
+        let pc5 = wait(MidiTrigger { kind: MidiTriggerKind::Program, channel: None, number: 5 });
+        let cc20 = wait(MidiTrigger { kind: MidiTriggerKind::Control, channel: Some(0), number: 20 });
+        let mut off = wait(MidiTrigger { kind: MidiTriggerKind::Note, channel: None, number: 36 });
+        off.armed = false;
+        let ids = (note36.id, pc5.id, cc20.id);
+        {
+            let mut s = show.lock();
+            let group = Cue::new(CueKind::Group { mode: Default::default(), children: vec![cc20] });
+            s.ws.cue_list.cues = vec![note36, pc5, group, off];
+            // Replicas queue the commands: the test reads them there.
+            s.replica = true;
+        }
+        let hub = SurfaceHub::new();
+        let fired = |input: SurfaceInput, v: f32| {
+            hub.input(&show, input, Some(v), None);
+            hub.take_pending().into_iter().map(|c| match c {
+                Command::Cue(id, CueAction::Start) => id,
+                other => panic!("{other:?}"),
+            }).collect::<Vec<_>>()
+        };
+        let note = |channel| SurfaceInput::MidiNote { channel, number: 36 };
+        assert_eq!(fired(note(9), 1.0), vec![ids.0]);
+        assert!(fired(note(9), 1.0).is_empty(), "held");
+        assert!(fired(note(9), 0.0).is_empty(), "note off");
+        assert_eq!(fired(note(9), 1.0), vec![ids.0], "again");
+        assert!(fired(note(0), 1.0).is_empty(), "other channel");
+        let pc = |channel| SurfaceInput::MidiProgram { channel, number: 5 };
+        assert_eq!(fired(pc(2), 1.0), vec![ids.1], "any channel");
+        assert_eq!(fired(pc(7), 1.0), vec![ids.1], "every program change");
+        let cc = SurfaceInput::MidiCc { channel: 0, number: 20 };
+        assert_eq!(fired(cc.clone(), 1.0), vec![ids.2], "inside a group");
+        assert!(fired(cc.clone(), 0.9).is_empty());
+        assert!(fired(cc.clone(), 0.0).is_empty());
+        assert!(fired(SurfaceInput::Osc("/x".into()), 1.0).is_empty());
+        assert_eq!(cc.midi_trigger(), Some(MidiTrigger { kind: MidiTriggerKind::Control, channel: Some(0), number: 20 }));
     }
 
     /// Learn mode keeps the next input instead of acting on it; replicas queue commands.

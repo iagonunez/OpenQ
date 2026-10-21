@@ -143,6 +143,10 @@ struct Ctx<'a> {
     room: Vec<crate::spatial::Speaker>,
     /// The lighting design (Light cue targets).
     lighting: &'a crate::light::Lighting,
+    /// This computer's control surface MIDI input (cue MIDI triggers arrive there).
+    midi_port: Option<String>,
+    /// Learn mode is waiting for this cue's MIDI trigger.
+    learning_midi: bool,
 }
 
 impl Ctx<'_> {
@@ -218,6 +222,8 @@ impl App {
         let ctx = Ctx {
             list: &show.ws.cue_list,
             lighting: &show.ws.lighting,
+            midi_port: self.midi_port.clone(),
+            learning_midi: self.learn_into == Some(super::surfaces::LearnInto::Cue(id)) && self.surfaces.learning(),
             id,
             stages: &stages,
             out_channels: show.media.audio.as_ref().map_or(2, |a| a.channels),
@@ -286,11 +292,18 @@ impl App {
         let tab = self.inspector_tab;
         egui::ScrollArea::vertical().id_salt("inspector").auto_shrink([false, false]).show(ui, |ui| match tab {
             Tab::Basics => basics(ui, cue, &ctx, &mut pick_media),
-            Tab::Triggers => {
-                if triggers(ui, cue, &ctx) {
-                    self.show_list_timecode = true;
+            Tab::Triggers => match triggers(ui, cue, &ctx) {
+                Some(TriggerAsk::TimecodeSetup) => self.show_list_timecode = true,
+                Some(TriggerAsk::MidiSetup) => {
+                    self.show_settings = true;
+                    self.settings_tab = super::SettingsTab::Surfaces;
                 }
-            }
+                Some(TriggerAsk::Learn) => {
+                    self.surfaces.set_learning(!ctx.learning_midi);
+                    self.learn_into = (!ctx.learning_midi).then_some(super::surfaces::LearnInto::Cue(id));
+                }
+                None => {}
+            },
             Tab::AudioFx => match &mut cue.kind {
                 CueKind::Audio(a) => super::effects::audio_fx_tab(ui, &mut a.audio_fx),
                 CueKind::Video(v) => super::effects::audio_fx_tab(ui, &mut v.audio_fx),
@@ -1942,14 +1955,23 @@ fn camera_settings(ui: &mut Ui, c: &mut crate::model::CameraCue, ctx: &Ctx, refr
     });
 }
 
-/// Triggers: ways to fire the cue besides GO. Returns true when the user asks to set
-/// up the list's timecode.
-fn triggers(ui: &mut Ui, cue: &mut Cue, ctx: &Ctx) -> bool {
+/// What the Triggers tab asks the app for.
+enum TriggerAsk {
+    /// The list's timecode settings.
+    TimecodeSetup,
+    /// Settings → Control surfaces (the MIDI input).
+    MidiSetup,
+    /// Start or stop learning the cue's MIDI trigger.
+    Learn,
+}
+
+/// Triggers: ways to fire the cue besides GO.
+fn triggers(ui: &mut Ui, cue: &mut Cue, ctx: &Ctx) -> Option<TriggerAsk> {
     use super::icons as ic;
     use super::theme::Card;
     use crate::model::TimecodeSource;
-    let mut setup = false;
-    let specs = [Card::new(ic::KEYBOARD, t("Hotkey"), 340.0), Card::new(ic::TIMER_PLAY, t("Timecode"), 460.0)];
+    let mut ask = None;
+    let specs = [Card::new(ic::KEYBOARD, t("Hotkey"), 340.0), Card::new(ic::PIANO, t("MIDI"), 400.0), Card::new(ic::TIMER_PLAY, t("Timecode"), 460.0)];
     super::theme::cards(ui, "triggers", &specs, |ui, i| match i {
         0 => {
             egui::Grid::new("trig-key").num_columns(2).spacing([10.0, 6.0]).show(ui, |ui| {
@@ -1970,6 +1992,21 @@ fn triggers(ui: &mut Ui, cue: &mut Cue, ctx: &Ctx) -> bool {
             });
             ui.add_space(4.0);
             ui.label(RichText::new(t("Fires the cue directly, whatever the playhead is on.")).weak().small());
+        }
+        1 => {
+            if midi_trigger(ui, cue, ctx) {
+                ask = Some(TriggerAsk::Learn);
+            }
+            ui.horizontal(|ui| {
+                let (text, color) = match &ctx.midi_port {
+                    Some(p) => (tr!("Arrives on {port}", port = p), ui.visuals().weak_text_color()),
+                    None => (t("No MIDI input chosen on this computer").to_string(), if cue.midi_trigger.is_some() { super::widgets::AMBER } else { ui.visuals().weak_text_color() }),
+                };
+                ui.label(RichText::new(text).color(color).small());
+                if ui.small_button(t("Set up…")).on_hover_text(t("Settings → Control surfaces")).clicked() {
+                    ask = Some(TriggerAsk::MidiSetup);
+                }
+            });
         }
         _ => {
             let sync = &ctx.list_tc;
@@ -2004,7 +2041,7 @@ fn triggers(ui: &mut Ui, cue: &mut Cue, ctx: &Ctx) -> bool {
                     };
                     ui.label(RichText::new(text).color(color));
                     if ui.small_button(t("Set up…")).on_hover_text(t("The cue list's timecode settings")).clicked() {
-                        setup = true;
+                        ask = Some(TriggerAsk::TimecodeSetup);
                     }
                 });
                 ui.end_row();
@@ -2025,7 +2062,52 @@ fn triggers(ui: &mut Ui, cue: &mut Cue, ctx: &Ctx) -> bool {
             );
         }
     });
-    setup
+    ask
+}
+
+/// The MIDI trigger rows of the Triggers tab. Returns true when Learn is clicked.
+fn midi_trigger(ui: &mut Ui, cue: &mut Cue, ctx: &Ctx) -> bool {
+    use crate::model::{MidiTrigger, MidiTriggerKind};
+    let mut learn = false;
+    egui::Grid::new("trig-midi").num_columns(2).spacing([10.0, 6.0]).show(ui, |ui| {
+        ui.label(t("Fire on"));
+        ui.horizontal(|ui| {
+            let mut on = cue.midi_trigger.is_some();
+            if ui.checkbox(&mut on, "").on_hover_text(t("Fire when this MIDI message arrives")).changed() {
+                cue.midi_trigger = on.then(MidiTrigger::default);
+            }
+            match &mut cue.midi_trigger {
+                Some(m) => {
+                    ComboBox::from_id_salt("trig-midi-kind").selected_text(m.kind.label()).show_ui(ui, |ui| {
+                        for k in MidiTriggerKind::ALL {
+                            ui.selectable_value(&mut m.kind, k, k.label());
+                        }
+                    });
+                    ui.add(egui::DragValue::new(&mut m.number).range(0..=127));
+                }
+                None => {
+                    ui.label(RichText::new(t("off")).weak());
+                }
+            }
+            let text = if ctx.learning_midi { t("Press a key or pad…") } else { t("Learn") };
+            if ui.add(egui::Button::new(text).selected(ctx.learning_midi)).on_hover_text(t("Click, then send the MIDI message to learn it")).clicked() {
+                learn = true;
+            }
+        });
+        ui.end_row();
+        if let Some(m) = &mut cue.midi_trigger {
+            ui.label(t("Channel"));
+            let label = m.channel.map_or_else(|| t("Any").to_string(), |c| (c + 1).to_string());
+            ComboBox::from_id_salt("trig-midi-ch").selected_text(label).show_ui(ui, |ui| {
+                ui.selectable_value(&mut m.channel, None, t("Any"));
+                for c in 0..16u8 {
+                    ui.selectable_value(&mut m.channel, Some(c), (c + 1).to_string());
+                }
+            });
+            ui.end_row();
+        }
+    });
+    learn
 }
 
 #[cfg(test)]

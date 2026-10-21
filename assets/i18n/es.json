@@ -1431,5 +1431,19 @@
  "Stop and go on": "Parar y seguir",
  "Quitting stops everything that is playing.": "Salir detiene todo lo que se está reproduciendo.",
  "Opening another show stops everything that is playing.": "Abrir otro espectáculo detiene todo lo que se está reproduciendo.",
- "Changing the audio device stops everything that is playing.": "Cambiar el dispositivo de audio detiene todo lo que se está reproduciendo."
+ "Changing the audio device stops everything that is playing.": "Cambiar el dispositivo de audio detiene todo lo que se está reproduciendo.",
+ "Note on": "Nota activada",
+ "Program change": "Cambio de programa",
+ "Control change": "Cambio de control",
+ "any ch": "cualquier canal",
+ "Any": "Cualquiera",
+ "Arrives on {port}": "Llega por {port}",
+ "Click, then send the MIDI message to learn it": "Haz clic y envía el mensaje MIDI para aprenderlo",
+ "Fire on": "Disparar con",
+ "Fire when this MIDI message arrives": "Disparar cuando llegue este mensaje MIDI",
+ "Learn": "Aprender",
+ "MIDI": "MIDI",
+ "No MIDI input chosen on this computer": "No hay entrada MIDI elegida en este ordenador",
+ "Press a key or pad…": "Pulsa una tecla o pad…",
+ "Settings → Control surfaces": "Ajustes → Superficies de control"
 }

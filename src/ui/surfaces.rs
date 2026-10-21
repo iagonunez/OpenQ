@@ -15,6 +15,8 @@ pub(super) enum LearnInto {
     New,
     /// Mapping `i`.
     Row(usize),
+    /// The MIDI trigger of a cue (Triggers tab).
+    Cue(crate::model::CueId),
 }
 
 impl App {
@@ -35,26 +37,49 @@ impl App {
             _ => {}
         }
         if let Some(input) = self.surfaces.take_learned() {
-            let maps = &mut show.ws.settings.surfaces.mappings;
-            match self.learn_into.take() {
-                Some(LearnInto::Row(i)) if i < maps.len() => maps[i].input = input,
-                Some(_) => {
-                    // A new mapping: a fader for continuous controls, a GO for buttons.
-                    let action = match input {
-                        SurfaceInput::MidiCc { .. } => SurfaceAction::ExecutorLevel(1),
-                        _ => SurfaceAction::ExecutorGo(1),
-                    };
-                    maps.push(Mapping { input, action });
-                }
-                None => return,
-            }
-            show.edited_outside_cues();
+            self.use_learned(show, input);
         }
         if !self.surfaces.learning() {
             self.learn_into = None;
         }
         for c in self.surfaces.take_pending() {
             self.control(show, c);
+        }
+    }
+
+    /// Put a learned input where learn mode was started.
+    fn use_learned(&mut self, show: &mut Show, input: SurfaceInput) {
+        let maps = &mut show.ws.settings.surfaces.mappings;
+        match self.learn_into.take() {
+            Some(LearnInto::Cue(id)) => match input.midi_trigger() {
+                Some(trigger) => {
+                    if let Some(cue) = show.ws.cue_list.find_mut(id) {
+                        cue.midi_trigger = Some(trigger);
+                        show.edited_cues([id]);
+                    }
+                }
+                // An OSC input can't trigger a cue: keep waiting for a MIDI one.
+                None => {
+                    self.surfaces.set_learning(true);
+                    self.learn_into = Some(LearnInto::Cue(id));
+                }
+            },
+            Some(LearnInto::Row(i)) if i < maps.len() => {
+                maps[i].input = input;
+                show.edited_outside_cues();
+            }
+            Some(_) => {
+                // A new mapping: a fader for continuous controls, a GO for buttons (the main GO
+                // for a program change).
+                let action = match input {
+                    SurfaceInput::MidiCc { .. } => SurfaceAction::ExecutorLevel(1),
+                    SurfaceInput::MidiProgram { .. } => SurfaceAction::Go,
+                    _ => SurfaceAction::ExecutorGo(1),
+                };
+                maps.push(Mapping { input, action });
+                show.edited_outside_cues();
+            }
+            None => {}
         }
     }
 

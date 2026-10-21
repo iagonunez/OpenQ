@@ -24,6 +24,61 @@ pub fn gain_to_db(gain: f32) -> f32 {
     if gain <= 0.0 { MIN_DB } else { (20.0 * gain.log10()).max(MIN_DB) }
 }
 
+/// The kind of MIDI message a [`MidiTrigger`] waits for.
+#[derive(Serialize, Deserialize, Clone, Copy, PartialEq, Eq, Debug, Default)]
+pub enum MidiTriggerKind {
+    /// Note on (velocity above 0).
+    #[default]
+    Note,
+    /// Program change.
+    Program,
+    /// Control change rising to 64 or more (a button sending 127/0).
+    Control,
+}
+
+impl MidiTriggerKind {
+    /// Every kind, for menus.
+    pub const ALL: [MidiTriggerKind; 3] = [MidiTriggerKind::Note, MidiTriggerKind::Program, MidiTriggerKind::Control];
+
+    /// Name shown in the UI.
+    pub fn label(self) -> &'static str {
+        match self {
+            MidiTriggerKind::Note => crate::i18n::t("Note on"),
+            MidiTriggerKind::Program => crate::i18n::t("Program change"),
+            MidiTriggerKind::Control => crate::i18n::t("Control change"),
+        }
+    }
+}
+
+/// A MIDI message that fires a cue. It arrives on this computer's control surface MIDI input
+/// (Settings → Control surfaces), like the surface mappings.
+#[derive(Serialize, Deserialize, Clone, Copy, PartialEq, Eq, Debug, Default)]
+#[serde(default)]
+pub struct MidiTrigger {
+    /// Message kind.
+    pub kind: MidiTriggerKind,
+    /// MIDI channel, 0-based (0..=15); None = any channel.
+    pub channel: Option<u8>,
+    /// Note, program or controller number (0..=127).
+    pub number: u8,
+}
+
+impl MidiTrigger {
+    /// Short text for the UI ("Note 36 · ch 10", "PC 5 · any ch").
+    pub fn label(&self) -> String {
+        let n = self.number;
+        let what = match self.kind {
+            MidiTriggerKind::Note => format!("Note {n}"),
+            MidiTriggerKind::Program => format!("PC {n}"),
+            MidiTriggerKind::Control => format!("CC {n}"),
+        };
+        match self.channel {
+            Some(c) => format!("{what} · ch {}", c + 1),
+            None => format!("{what} · {}", crate::i18n::t("any ch")),
+        }
+    }
+}
+
 /// What happens after a cue fires.
 #[derive(Serialize, Deserialize, Clone, Copy, PartialEq, Eq, Debug, Default)]
 pub enum ContinueMode {
@@ -1353,6 +1408,9 @@ pub struct Cue {
     /// Fire when the list's incoming timecode reaches this time, in seconds of timecode.
     #[serde(default)]
     pub timecode_trigger: Option<f64>,
+    /// Fire when this MIDI message arrives.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub midi_trigger: Option<MidiTrigger>,
     /// Type and type-specific settings.
     pub kind: CueKind,
 }
@@ -1376,6 +1434,7 @@ impl Cue {
             continue_mode: self.continue_mode,
             hotkey: self.hotkey.clone(),
             timecode_trigger: self.timecode_trigger,
+            midi_trigger: self.midi_trigger,
             kind: match &self.kind {
                 CueKind::Group { mode, .. } => CueKind::Group { mode: *mode, children: Vec::new() },
                 k => k.clone(),
@@ -1386,7 +1445,7 @@ impl Cue {
     /// Equal apart from a group's children.
     pub fn shallow_eq(&self, other: &Cue) -> bool {
         // Naming every field: a new one fails to compile here until it is compared too.
-        let Cue { id: _, number: _, name: _, notes: _, color: _, armed: _, pre_wait: _, post_wait: _, continue_mode: _, hotkey: _, timecode_trigger: _, kind: _ } = self;
+        let Cue { id: _, number: _, name: _, notes: _, color: _, armed: _, pre_wait: _, post_wait: _, continue_mode: _, hotkey: _, timecode_trigger: _, midi_trigger: _, kind: _ } = self;
         let (a, b) = (self, other);
         a.id == b.id
             && a.number == b.number
@@ -1399,6 +1458,7 @@ impl Cue {
             && a.continue_mode == b.continue_mode
             && a.hotkey == b.hotkey
             && a.timecode_trigger == b.timecode_trigger
+            && a.midi_trigger == b.midi_trigger
             && match (&self.kind, &other.kind) {
                 (CueKind::Group { mode: a, .. }, CueKind::Group { mode: b, .. }) => a == b,
                 (CueKind::Group { .. }, _) | (_, CueKind::Group { .. }) => false,
@@ -1429,6 +1489,7 @@ impl Cue {
             continue_mode: ContinueMode::DoNotContinue,
             hotkey: None,
             timecode_trigger: None,
+            midi_trigger: None,
             kind,
         }
     }

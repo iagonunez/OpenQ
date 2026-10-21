@@ -21,6 +21,7 @@
     <li class="cur"><a href="cues.es.html" aria-current="page">Cues y tiempos</a>
      <ol class="sub">
       <li class="s2"><a href="#cues">Tipos de cue</a></li>
+      <li class="s3"><a href="#midi-triggers">Disparadores MIDI</a></li>
       <li class="s2"><a href="#timing">Tiempos y continuaciones</a></li>
       <li class="s3"><a href="#groups">Grupos</a></li>
       <li class="s2"><a href="#fades">Fundidos</a></li>
@@ -69,7 +70,17 @@
   Básico también ajusta la <strong>pre-espera</strong>, el modo de <strong>continuación</strong> y la <strong>post-espera</strong> de la
   cue y, para cues de audio y vídeo, el <strong>archivo de medios</strong>.</p>
   <p>La pestaña <strong>Disparadores</strong> reúne las formas de disparar una cue además de GO: un <strong>atajo</strong>, una tecla
-  que dispara la cue directamente esté donde esté el cabezal, y un <a href="#timecode">disparador por código de tiempo</a>.</p>
+  que dispara la cue directamente esté donde esté el cabezal, un <a href="#midi-triggers">disparador MIDI</a> y un <a href="#timecode">disparador por código de tiempo</a>.</p>
+  <h3 id="midi-triggers">Disparadores MIDI</h3>
+  <p>Una cue puede dispararse al llegar un mensaje MIDI: una <strong>nota activada</strong>, un <strong>cambio de programa</strong>
+  o un <strong>cambio de control</strong> (se dispara cuando el valor sube a 64 o más, como hace un botón que manda 127/0). En la
+  pestaña <strong>Disparadores</strong> marca <em>Disparar con</em> y elige el tipo, el número y el canal (o <em>Cualquiera</em>), o
+  pulsa <em>Aprender</em> y manda el mensaje desde el teclado, el pad o la mesa. La cue se dispara esté donde esté el cabezal, una
+  vez por pulsación; las cues desarmadas no se disparan.</p>
+  <p>Los mensajes llegan por la entrada MIDI de este ordenador, elegida en <span class="menu">Ajustes → Superficies de control</span>
+  (<em>Configurar…</em> en la tarjeta la abre). La misma entrada puede llevar también asignaciones de
+  <a href="lighting.es.html#surfaces">superficies de control</a> y MTC; para llevar toda la lista con cambios de programa, asigna allí
+  un cambio de programa a <em>GO</em>.</p>
 </section>
 
 <section id="timing">
@@ -143,7 +154,7 @@
   seguir el LTC de la banda mientras otra se lleva a mano.</p>
   <h3 id="timecode-triggers">Disparadores por código de tiempo</h3>
   <figure>
-    <img src="img/es/triggers.webp" width="1400" height="255" alt="Pestaña Disparadores: una tarjeta de atajo y una tarjeta de código de tiempo con el tiempo de disparo, la fuente de la lista y lo que está recibiendo.">
+    <img src="img/es/triggers.webp" width="1400" height="216" alt="Pestaña Disparadores: una tarjeta de atajo, una tarjeta MIDI con un disparador por cambio de programa y una tarjeta de código de tiempo con el tiempo de disparo, la fuente de la lista y lo que está recibiendo.">
     <figcaption>La pestaña Disparadores de una cue que se dispara en 01:00:05:00.</figcaption>
   </figure>
   <p>En la pestaña <strong>Disparadores</strong> de una cue, marca <em>Disparar en</em> y escribe el tiempo (hh:mm:ss:ff). Cuando el código de
