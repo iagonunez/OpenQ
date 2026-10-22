@@ -573,8 +573,10 @@ fn run(rx: mpsc::Receiver<LightCommand>, shared: Arc<Shared>) {
             }
             &merged
         };
-        for o in &outputs {
-            o.publish(out);
+        if crate::overrides::allowed(crate::overrides::Override::LightOut) {
+            for o in &outputs {
+                o.publish(out);
+            }
         }
         if let Some(mut f) = shared.frame.try_lock() {
             f.clone_from(out);

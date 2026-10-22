@@ -761,7 +761,7 @@ impl App {
         let broken = match (&cue.kind, media_path) {
             (CueKind::Audio(_) | CueKind::Video(_), None) => true,
             (_, Some(path)) => !self.prober.exists(path) || matches!(probe, Some(Err(_))),
-            _ => cue.kind.target_missing(&show.ws),
+            _ => crate::warnings::target_missing(&cue.kind, &show.ws),
         };
         let state = match inst {
             Some(i) if i.is_paused() => Some((icons::PAUSE, AMBER)),
@@ -802,6 +802,7 @@ impl App {
                 GroupMode::StartFirst => t("playlist"),
                 GroupMode::StartAll => t("all"),
                 GroupMode::StartRandom => t("random"),
+                GroupMode::Timeline => t("timeline"),
             };
             let name_end = clip(x, cols.target).text(pos2(x + 2.0, cy), Align2::LEFT_CENTER, cue.display_name(), font.clone(), text_color).right();
             // Mode pill.
@@ -889,7 +890,7 @@ impl App {
                     None => crate::i18n::t("missing target").into(),
                 },
                 None if matches!(k, CueKind::Stop { .. } | CueKind::Pause { .. }) => t("all cues").into(),
-                None if k.needs_target() => t("no target").into(),
+                None if crate::warnings::needs_target(k) => t("no target").into(),
                 None => String::new(),
             },
         };
@@ -1137,37 +1138,6 @@ fn apply_drop(cues: &mut CueList, dragging: &[CueId], target: DropTarget) {
             .map(|l| l.index)
             .unwrap_or_else(|| cues.list(parent).len());
         cues.insert(parent, idx, cue);
-    }
-}
-
-trait TargetExt {
-    fn needs_target(&self) -> bool;
-    fn target_missing(&self, ws: &crate::model::Workspace) -> bool;
-}
-
-impl TargetExt for CueKind {
-    /// Whether this kind of cue takes a target at all.
-    fn needs_target(&self) -> bool {
-        matches!(
-            self,
-            CueKind::Fade(_)
-                | CueKind::Start { .. }
-                | CueKind::Goto { .. }
-                | CueKind::Devamp { .. }
-                | CueKind::Arm { .. }
-                | CueKind::Disarm { .. }
-                | CueKind::Reset { .. }
-                | CueKind::Load { .. }
-                | CueKind::Target { .. }
-        )
-    }
-
-    /// A cue that needs a target but has none (or it was deleted).
-    fn target_missing(&self, ws: &crate::model::Workspace) -> bool {
-        match self.target() {
-            Some(t) => ws.cue_list.find(t).is_none(),
-            None => self.needs_target(),
-        }
     }
 }
 

@@ -252,6 +252,9 @@ pub fn handle_message(show: &SharedShow, hub: &crate::surface::SurfaceHub, m: &r
         hub.input(show, input, value(m), None);
         return Ok(());
     }
+    if !crate::overrides::allowed(crate::overrides::Override::OscIn) {
+        return Ok(());
+    }
     match handle(show, &m.addr) {
         Err(e) if e == UNKNOWN => {
             if hub.input(show, input, value(m), osc_builtin(&m.addr)) {

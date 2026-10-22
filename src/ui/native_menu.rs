@@ -49,6 +49,10 @@ enum Action {
     Manual,
     ErrorLog,
     About,
+    Overrides,
+    Warnings,
+    CopyProps,
+    PasteProps,
 }
 
 impl Action {
@@ -74,7 +78,7 @@ impl Action {
         use Action::*;
         [
             New, Open, Save, SaveAs, Bundle, Import, Quit, Undo, Redo, Duplicate, Delete, Group, Renumber, LevelLoudness, Settings, Go, Stop, Pause,
-            Resume, ToggleMode, Stages, Share, Connect, Disconnect, Preview, Log, OQVis, Manual, ErrorLog, About,
+            Resume, ToggleMode, Stages, Share, Connect, Disconnect, Preview, Log, OQVis, Manual, ErrorLog, About, Overrides, Warnings, CopyProps, PasteProps,
         ]
         .into_iter()
         .find(|a| a.id() == id)
@@ -199,6 +203,9 @@ impl NativeMenu {
                 &item(Action::Duplicate, t("Duplicate")),
                 &item(Action::Delete, t("Delete")),
                 &item(Action::Group, t("Group selected")),
+                &sep(),
+                &item(Action::CopyProps, t("Copy cue properties")),
+                &item(Action::PasteProps, t("Paste cue properties…")),
                 &b,
                 &item(Action::Renumber, t("Renumber all cues")),
                 &item(Action::LevelLoudness, t("Level selected cues to loudness target")),
@@ -221,6 +228,9 @@ impl NativeMenu {
                 &item(Action::Resume, t("Resume all")),
                 &a,
                 &mode,
+                &sep(),
+                &item(Action::Warnings, t("Warnings…")),
+                &item(Action::Overrides, t("Overrides…")),
             ],
         );
 
@@ -397,6 +407,10 @@ impl App {
             Action::Manual => self.open_manual(),
             Action::ErrorLog => self.open_error_log(),
             Action::About => self.show_about = true,
+            Action::Overrides => self.show_overrides = true,
+            Action::Warnings => self.warnings.open = true,
+            Action::CopyProps => self.copy_props(show),
+            Action::PasteProps => self.paste_props.open = self.paste_props.from.is_some(),
         }
     }
 }

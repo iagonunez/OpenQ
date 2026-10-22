@@ -330,7 +330,8 @@ impl App {
                 }
             }
             if self.selection.len() > 1 {
-                ui.label(RichText::new(tr!("({n} selected — editing the last)", n = self.selection.len())).weak());
+                ui.label(RichText::new(tr!("{n} selected: changes apply to all of them", n = self.selection.len())).color(super::theme::AMBER))
+                    .on_hover_text(t("Settings of this type change only on the selected cues of the same type."));
             }
         });
         ui.separator();
@@ -456,8 +457,12 @@ impl App {
         if refresh_devices {
             super::devices::refresh(&self.inputs, ui.ctx());
         }
-        if show.ws.cue_list.find(id) != Some(&*cue) {
+        if let Some(before) = show.ws.cue_list.find(id)
+            && before != &*cue
+        {
             let cue = cue.clone();
+            // Several cues selected: what changed on this one changes on them too.
+            let carried = if self.selection.len() > 1 { crate::multiedit::changes(before, &cue) } else { Vec::new() };
             // A group's copy carries its children, which may differ too.
             let mut same_children = true;
             if let Some(c) = show.ws.cue_list.find_mut(id) {
@@ -467,7 +472,20 @@ impl App {
             if show.engine.instances.contains_key(&id) {
                 show.media.update_live(&cue);
             }
-            if same_children { show.edited_cues([id]) } else { show.edited() }
+            let mut ids = vec![id];
+            if !carried.is_empty() {
+                for &other in self.selection.iter().filter(|s| **s != id) {
+                    let Some(c) = show.ws.cue_list.find_mut(other) else { continue };
+                    if crate::multiedit::apply(&carried, &cue, c) {
+                        ids.push(other);
+                        if show.engine.instances.contains_key(&other) {
+                            let c = c.shallow_clone();
+                            show.media.update_live(&c);
+                        }
+                    }
+                }
+            }
+            if same_children { show.edited_cues(ids) } else { show.edited() }
         }
     }
 }
@@ -1396,6 +1414,15 @@ fn settings_tab(ui: &mut Ui, cue: &mut Cue, ctx: &Ctx, refresh: &mut bool) {
                 ui.add_space(4.0);
                 ui.label(RichText::new(t("Drag cues onto the middle of a group row to put them inside it.")).weak().small());
             });
+            if *mode == GroupMode::Timeline {
+                ui.add_space(super::theme::ROW_GAP);
+                let specs = [Card::new(ic::TIMER_PLAY, t("Timeline"), 600.0)];
+                cards(ui, "group-timeline", &specs, |ui, _| {
+                    super::timeline::group_timeline(ui, children, ctx.prober, ctx.elapsed);
+                    ui.add_space(4.0);
+                    ui.label(RichText::new(t("Each child starts at its pre-wait after the group starts. Their continue modes are ignored.")).weak().small());
+                });
+            }
         }
         CueKind::Wait { duration } => {
             let specs = [Card::new(ic::HOURGLASS_EMPTY, t("Wait"), 300.0)];
@@ -2446,6 +2473,7 @@ fn triggers(ui: &mut Ui, cue: &mut Cue, ctx: &Ctx) -> Option<TriggerAsk> {
         Card::new(ic::PIANO, t("MIDI"), 400.0),
         Card::new(ic::TIMER_PLAY, t("Timecode"), 460.0),
         Card::new(ic::SCHEDULE, t("Wall clock"), 400.0),
+        Card::new(ic::REPLAY, t("Second trigger"), 340.0),
     ];
     super::theme::cards(ui, "triggers", &specs, |ui, i| match i {
         0 => {
@@ -2462,7 +2490,7 @@ fn triggers(ui: &mut Ui, cue: &mut Cue, ctx: &Ctx) -> Option<TriggerAsk> {
                 if r.changed() {
                     cue.hotkey = (!text.trim().is_empty()).then(|| text.trim().to_string());
                 }
-                r.on_hover_text(t("Key that fires this cue (e.g. F1, A, Num5). Not Space/P/R/Esc."));
+                r.on_hover_text(t("Key that fires this cue (e.g. F2, A, Num5). Not Space/P/R/Esc/F1."));
                 ui.end_row();
             });
             ui.add_space(4.0);
@@ -2484,6 +2512,23 @@ fn triggers(ui: &mut Ui, cue: &mut Cue, ctx: &Ctx) -> Option<TriggerAsk> {
             });
         }
         3 => wallclock_trigger(ui, cue),
+        4 => {
+            egui::Grid::new("trig-second").num_columns(2).spacing([10.0, 6.0]).show(ui, |ui| {
+                ui.label(t("While running"));
+                ComboBox::from_id_salt("second-trigger").width(200.0).selected_text(cue.second_trigger.label()).show_ui(ui, |ui| {
+                    for s in crate::model::SecondTrigger::ALL {
+                        ui.selectable_value(&mut cue.second_trigger, s, s.label());
+                    }
+                });
+                ui.end_row();
+            });
+            ui.add_space(4.0);
+            ui.label(
+                RichText::new(t("What the hotkey, MIDI, timecode or wall-clock trigger does when the cue is still running. GO always restarts it. Fading out takes the Stop-all fade time."))
+                    .weak()
+                    .small(),
+            );
+        }
         _ => {
             let sync = &ctx.list_tc;
             egui::Grid::new("trig-tc").num_columns(2).spacing([10.0, 6.0]).show(ui, |ui| {

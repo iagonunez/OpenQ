@@ -1436,6 +1436,9 @@ impl Backend for Media {
     /// Queues the message: the host name lookup and the send happen on the
     /// [`netsend::NetSender`] worker, never on the engine thread (a lookup can take seconds).
     fn send_network(&mut self, n: &NetworkCue) -> Result<(), String> {
+        if !crate::overrides::allowed(crate::overrides::Override::NetworkOut) {
+            return Ok(());
+        }
         let msg = rosc::OscPacket::Message(rosc::OscMessage { addr: n.address.clone(), args: parse_osc_args(&n.args) });
         let bytes = rosc::encoder::encode(&msg).map_err(|e| e.to_string())?;
         if self.net.is_none() {
@@ -1446,6 +1449,9 @@ impl Backend for Media {
 
     /// Queues the message for the [`midiout::MidiOut`] worker (opening a port can take a while).
     fn send_midi(&mut self, m: &crate::model::MidiCue) -> Result<(), String> {
+        if !crate::overrides::allowed(crate::overrides::Override::MidiOut) {
+            return Ok(());
+        }
         let bytes = m.bytes()?;
         if self.midi_out.is_none() {
             self.midi_out = Some(midiout::MidiOut::new().map_err(|e| e.to_string())?);

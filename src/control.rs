@@ -20,6 +20,9 @@ pub enum CueAction {
     Resume,
     /// Release a vamping slice so playback carries on past it.
     Devamp,
+    /// One of the cue's triggers fired (hotkey, MIDI): [`CueAction::Start`], or its
+    /// [`crate::model::SecondTrigger`] action while it still runs.
+    Trigger,
 }
 
 /// A lighting playback action (executors and masters). Design edits are not commands.
@@ -65,6 +68,8 @@ pub enum Command {
     SwitchList(usize),
     /// Lighting playback.
     Light(LightControl),
+    /// Turn one of the [`crate::overrides`] switches on or off.
+    Override(crate::overrides::Override, bool),
 }
 
 /// Apply a command to the show.
@@ -116,12 +121,14 @@ pub fn apply(show: &mut Show, cmd: Command, now: Instant) -> Result<(), String> 
                 LightControl::Tempo(bpm) => l.set_tempo(bpm),
             }
         }
+        Command::Override(o, on) => crate::overrides::set(o, on),
         Command::Cue(id, action) => {
             if ws.cue_list.find(id).is_none() {
                 return Err("no such cue".into());
             }
             match action {
                 CueAction::Start => engine.start_cue(ws, media, id, now),
+                CueAction::Trigger => engine.trigger_cue(ws, media, id, now),
                 CueAction::Stop => engine.stop_cue(ws, media, id),
                 CueAction::Pause => engine.pause_cue(ws, media, id, now),
                 CueAction::Resume => engine.resume_cue(ws, media, id, now),

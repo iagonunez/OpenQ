@@ -47,6 +47,11 @@
 //!   (learn mode, pages, soft takeover, feedback to LEDs and motor faders); the same MIDI input fires
 //!   cues by their MIDI trigger (note on, program change, control change). [`msc`] — MIDI Show Control
 //!   commands (GO, STOP, RESUME, LOAD… by cue number and list) read on that input.
+//! * [`overrides`] — global switches cutting MIDI, OSC, timecode, wall-clock triggers or DMX output for
+//!   the running show.
+//! * [`multiedit`] — an inspector edit carried to every selected cue; pasting chosen properties.
+//! * [`warnings`] — problems found in a show before playing it (missing files and targets, messages
+//!   that can't be sent, shared hotkeys).
 //! * [`osc`] — OSC input. [`remote`] — paired remote devices (encrypted, authenticated).
 //! * [`displays`] — system monitors for stage outputs. [`ui`] — the egui application.
 //! * `vout` (feature `video`) — video output in its own process (`openq --video-output`): stage
@@ -121,7 +126,9 @@ pub mod light;
 pub mod media;
 pub mod model;
 pub mod msc;
+pub mod multiedit;
 pub mod osc;
+pub mod overrides;
 pub mod recovery;
 pub mod remote;
 pub mod show;
@@ -132,3 +139,4 @@ pub mod ui;
 #[cfg(feature = "video")]
 pub mod vout;
 pub mod wallclock;
+pub mod warnings;

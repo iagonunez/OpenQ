@@ -39,6 +39,8 @@ struct Replica {
     title: String,
     dirty: bool,
     meters: Vec<f32>,
+    /// The main device's overrides that are off.
+    overrides_off: u16,
     /// Last workspace both sides agree on; local differences are edits to send.
     synced: Option<Workspace>,
     /// [`Show::edit_gen`] at which the show was last known to match `synced`: comparing the two
@@ -95,6 +97,11 @@ impl RemoteUi {
     /// Connected to (or connecting to) a main device.
     pub(super) fn is_replica(&self) -> bool {
         self.replica.is_some()
+    }
+
+    /// The overrides that are off where the show plays: the main device's on a replica.
+    pub(super) fn overrides_off(&self) -> u16 {
+        self.replica.as_ref().map_or_else(crate::overrides::off_bits, |r| r.overrides_off)
     }
 
     pub(super) fn role(&self) -> Option<Role> {
@@ -250,6 +257,7 @@ impl App {
             title: String::new(),
             dirty: false,
             meters: Vec::new(),
+            overrides_off: 0,
             synced: None,
             checked_gen: None,
             last_edit: Instant::now(),
@@ -391,6 +399,7 @@ impl App {
                     r.mirrored_playhead = playhead;
                     r.meters = s.meters;
                     r.dirty = s.dirty;
+                    r.overrides_off = s.overrides_off;
                 }
                 ServerMsg::MediaInfo(list) => {
                     for (p, info) in list {

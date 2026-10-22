@@ -46,7 +46,7 @@ pub const DEFAULT_PORT: u16 = 53200;
 /// UDP port for discovery queries.
 pub const DISCOVERY_PORT: u16 = 53201;
 /// Wire protocol version; both ends must match.
-pub const PROTOCOL: u32 = 4;
+pub const PROTOCOL: u32 = 5;
 
 /// What a paired device may do.
 #[derive(Serialize, Deserialize, Clone, Copy, PartialEq, Eq, Debug, Default)]
@@ -308,6 +308,9 @@ pub struct LiveState {
     /// Lighting masters and sequence states.
     #[serde(default)]
     pub lighting: LightLive,
+    /// The main device's [`crate::overrides`] that are off ([`crate::overrides::off_bits`]).
+    #[serde(default)]
+    pub overrides_off: u16,
 }
 
 /// Live lighting state mirrored to replicas (their executors show the main device's).

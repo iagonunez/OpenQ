@@ -18,7 +18,7 @@
 //! and acts on them at once in the meantime. It remembers what each cue was before, so a Reset cue
 //! can put it back.
 
-use crate::model::{Cue, CueId, CueKind, FadeCurve, GroupMode, KindTag, LightingCue, MIN_DB, NetworkCue, Workspace};
+use crate::model::{Cue, CueId, CueKind, FadeCurve, GroupMode, KindTag, LightingCue, MIN_DB, NetworkCue, SecondTrigger, Workspace};
 use std::collections::{HashMap, HashSet};
 use std::time::{Duration, Instant};
 
@@ -248,6 +248,8 @@ pub struct Engine {
     last_go: Option<Instant>,
     preload_dirty: bool,
     panic: Option<(Instant, Vec<CueId>)>,
+    /// Cues fading out after a second trigger, and when they stop.
+    fading_out: Vec<(Instant, CueId)>,
     /// Groups with running children, kept up to date during a tick pass.
     busy_parents: HashSet<CueId>,
     /// How often each cue was fired during the current tick (loop detection).
@@ -435,6 +437,62 @@ impl Engine {
         self.tick(ws, be, now);
     }
 
+    /// One of the cue's triggers fired (hotkey, MIDI, wall clock, timecode): start it, or, while
+    /// it still runs, do its [`SecondTrigger`] action.
+    pub fn trigger_cue(&mut self, ws: &Workspace, be: &mut dyn Backend, id: CueId, now: Instant) {
+        let Some(cue) = ws.cue_list.find(id) else { return };
+        let Some(inst) = self.instances.get(&id) else {
+            return self.start_cue(ws, be, id, now);
+        };
+        let paused = inst.paused_at.is_some();
+        match cue.second_trigger {
+            SecondTrigger::Restart => self.start_cue(ws, be, id, now),
+            SecondTrigger::Ignore => {}
+            SecondTrigger::Stop => self.stop_cue(ws, be, id),
+            SecondTrigger::PauseResume if paused => self.resume_cue(ws, be, id, now),
+            SecondTrigger::PauseResume => self.pause_cue(ws, be, id, now),
+            SecondTrigger::FadeOut => self.fade_out_cue(ws, be, id, now, ws.settings.panic_fade),
+        }
+    }
+
+    /// Fade one cue (and what it started) out over `fade` seconds, then stop it. Called again
+    /// while it fades (or with `fade == 0`), it stops at once.
+    pub fn fade_out_cue(&mut self, ws: &Workspace, be: &mut dyn Backend, id: CueId, now: Instant, fade: f64) {
+        if fade <= 0.0 || self.fading_out.iter().any(|f| f.1 == id) {
+            self.fading_out.retain(|f| f.1 != id);
+            return self.stop_cue(ws, be, id);
+        }
+        let req = FadeRequest {
+            volume_db: Some(MIN_DB),
+            opacity: Some(0.0),
+            geometry: None,
+            objects: None,
+            video_fx: None,
+            out_levels: None,
+            audio_fx: None,
+            duration: fade,
+            curve: FadeCurve::Linear,
+        };
+        for k in self.instance_subtree(ws, id) {
+            let Some(inst) = self.instances.get_mut(&k) else { continue };
+            // Nothing new starts while it fades: no continues, no pre-waits running out.
+            inst.continue_done = true;
+            if inst.kind.is_media() && inst.started && !inst.action_done && inst.paused_at.is_none() {
+                be.fade(k, &req, now);
+            } else if k != id && !inst.started {
+                self.instances.remove(&k);
+            }
+        }
+        if let Some(inst) = self.instances.get_mut(&id)
+            && !inst.started
+        {
+            // Still in its pre-wait: there is nothing to fade.
+            self.fading_out.retain(|f| f.1 != id);
+            return self.stop_cue(ws, be, id);
+        }
+        self.fading_out.push((after(now, fade), id));
+    }
+
     fn fire(&mut self, ws: &Workspace, be: &mut dyn Backend, id: CueId, at: Instant, parent: Option<CueId>) {
         let Some(cue) = ws.cue_list.find(id) else { return };
         let n = self.fired_in_tick.entry(id).or_insert(0);
@@ -449,6 +507,8 @@ impl Engine {
             }
             return;
         }
+        // Started again: a fade-out from a second trigger no longer applies.
+        self.fading_out.retain(|f| f.1 != id);
         if self.instances.contains_key(&id) {
             // Re-firing a running cue restarts it.
             self.stop_cue(ws, be, id);
@@ -468,6 +528,10 @@ impl Engine {
         if let Some(p) = parent {
             self.busy_parents.insert(p);
         }
+        // On a timeline every child has its own start time: none continues into the next.
+        let in_timeline = parent
+            .and_then(|p| ws.cue_list.find(p))
+            .is_some_and(|g| matches!(g.kind, CueKind::Group { mode: GroupMode::Timeline, .. }));
         self.instances.insert(
             id,
             Instance {
@@ -479,7 +543,7 @@ impl Engine {
                 started: false,
                 action_done: false,
                 action_duration: None,
-                continue_done: false,
+                continue_done: in_timeline,
                 parent,
                 fade: None,
             },
@@ -698,6 +762,14 @@ impl Engine {
                 if self.instances.remove(&k).is_some() {
                     be.stop(k);
                 }
+            }
+        }
+
+        if self.fading_out.iter().any(|f| now >= f.0) {
+            let (done, rest): (Vec<_>, Vec<_>) = std::mem::take(&mut self.fading_out).into_iter().partition(|f| now >= f.0);
+            self.fading_out = rest;
+            for (_, id) in done {
+                self.stop_cue(ws, be, id);
             }
         }
 
@@ -1087,7 +1159,7 @@ impl Engine {
                     return Some(0.0);
                 }
                 match mode {
-                    GroupMode::StartAll => {
+                    GroupMode::StartAll | GroupMode::Timeline => {
                         for c in children {
                             self.fire(ws, be, c.id, at, Some(cue.id));
                         }
@@ -1514,6 +1586,87 @@ mod tests {
         e.tick(&w, &mut m, t0 + ms(1000));
         assert!(e.instances.contains_key(&gi));
         e.tick(&w, &mut m, t0 + ms(2100));
+        assert!(e.instances.is_empty());
+    }
+
+    /// A trigger firing a running cue does its second-trigger action; GO always restarts.
+    #[test]
+    fn second_trigger_actions() {
+        use crate::model::SecondTrigger;
+        let run = |second: SecondTrigger| {
+            let mut a = cue("a", KindTag::Audio);
+            a.second_trigger = second;
+            let ai = a.id;
+            let mut w = ws(vec![a]);
+            w.settings.panic_fade = 1.0;
+            let mut e = Engine::new();
+            let mut m = Mock::default();
+            let t0 = Instant::now();
+            e.trigger_cue(&w, &mut m, ai, t0);
+            assert!(m.started.contains_key(&ai));
+            m.events.clear();
+            e.trigger_cue(&w, &mut m, ai, t0 + ms(500));
+            (e, m, w, ai, t0)
+        };
+        let (e, m, ..) = run(SecondTrigger::Restart);
+        assert_eq!(m.events.iter().filter(|e| e.starts_with("start")).count(), 1, "{:?}", m.events);
+        assert!(e.instances.values().next().is_some());
+        let (e, m, ..) = run(SecondTrigger::Ignore);
+        assert!(m.events.is_empty(), "{:?}", m.events);
+        assert_eq!(e.instances.len(), 1);
+        let (e, ..) = run(SecondTrigger::Stop);
+        assert!(e.instances.is_empty());
+        let (mut e, mut m, w, ai, t0) = run(SecondTrigger::PauseResume);
+        assert!(e.instances[&ai].paused_at.is_some());
+        e.trigger_cue(&w, &mut m, ai, t0 + ms(600));
+        assert!(e.instances[&ai].paused_at.is_none());
+        let (mut e, mut m, w, ai, t0) = run(SecondTrigger::FadeOut);
+        assert!(m.events.iter().any(|e| e.starts_with("fade")), "{:?}", m.events);
+        e.tick(&w, &mut m, t0 + ms(1000));
+        assert!(e.instances.contains_key(&ai), "still fading");
+        e.tick(&w, &mut m, t0 + ms(1600));
+        assert!(e.instances.is_empty(), "stopped after the fade");
+        // A third press while it fades stops it at once.
+        let (mut e, mut m, w, ai, t0) = run(SecondTrigger::FadeOut);
+        e.trigger_cue(&w, &mut m, ai, t0 + ms(700));
+        assert!(e.instances.is_empty());
+        // GO on a fading cue restarts it, and the old fade-out no longer stops it.
+        let (mut e, mut m, w, ai, t0) = run(SecondTrigger::FadeOut);
+        e.start_cue(&w, &mut m, ai, t0 + ms(700));
+        e.tick(&w, &mut m, t0 + ms(2000));
+        assert!(e.instances.contains_key(&ai));
+    }
+
+    /// A timeline group starts each child after its own pre-wait, and the children's continue
+    /// modes don't fire their next sibling.
+    #[test]
+    fn timeline_group_starts_children_at_their_times() {
+        let mut x = cue("x", KindTag::Audio);
+        x.pre_wait = 0.0;
+        x.continue_mode = ContinueMode::AutoContinue;
+        let mut y = cue("y", KindTag::Audio);
+        y.pre_wait = 2.0;
+        let mut z = cue("z", KindTag::Audio);
+        z.pre_wait = 1.0;
+        let (xi, yi, zi) = (x.id, y.id, z.id);
+        let mut g = cue("G", KindTag::Group);
+        g.kind = CueKind::Group { mode: GroupMode::Timeline, children: vec![x, y, z] };
+        let gi = g.id;
+        let w = ws(vec![g]);
+        let mut e = Engine::new();
+        let mut m = Mock::default();
+        let t0 = Instant::now();
+        e.start_cue(&w, &mut m, gi, t0);
+        assert!(m.started.contains_key(&xi));
+        assert!(!m.started.contains_key(&yi), "x's auto-continue must not start y");
+        e.tick(&w, &mut m, t0 + ms(1000));
+        assert_eq!(m.started.get(&zi), Some(&(t0 + ms(1000))));
+        assert!(!m.started.contains_key(&yi));
+        e.tick(&w, &mut m, t0 + ms(2000));
+        assert_eq!(m.started.get(&yi), Some(&(t0 + ms(2000))));
+        m.finished.extend([xi, yi, zi]);
+        e.tick(&w, &mut m, t0 + ms(3000));
+        e.tick(&w, &mut m, t0 + ms(3001));
         assert!(e.instances.is_empty());
     }
 

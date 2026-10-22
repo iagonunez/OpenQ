@@ -1318,7 +1318,9 @@ impl Gen {
             t.bg_radius = 40.0;
             t.bg_padding = 36.0;
         });
-        phones.hotkey = Some("P".into());
+        // P is Pause all: a function key instead. A second press takes the slide away.
+        phones.hotkey = Some("F9".into());
+        phones.second_trigger = openq::model::SecondTrigger::Stop;
         phones.midi_trigger = Some(openq::model::MidiTrigger { kind: openq::model::MidiTriggerKind::Note, channel: Some(9), number: 36 });
         out.push(phones);
         let mut ring = self.sfx("Phone ring (announcement)", "phone_alerts_and_rings");
@@ -1337,6 +1339,8 @@ impl Gen {
         }
         // Rung by the clock on performance days (Tuesday to Saturday) if nobody GOes it first.
         bell.wallclock_trigger = Some(openq::model::WallClockTrigger { time: 19 * 3600 + 25 * 60, days: 0b0111110 });
+        // Already ringing (GOne by hand just before): the clock doesn't ring it again.
+        bell.second_trigger = openq::model::SecondTrigger::Ignore;
         out.push(bell);
         let mut lobby = self.sfx("Lobby call (lobby speakers patch)", "medium_bell_ringing_near");
         if let CueKind::Audio(a) = &mut lobby.kind {
@@ -1419,9 +1423,19 @@ impl Gen {
         count.post_wait = 120.0;
         count.continue_mode = ContinueMode::AutoContinue;
         out.push(count);
-        let bells: Vec<Cue> = (0..3).map(|k| self.sfx(&format!("Bar bell {}", k + 1), "medium_bell_ringing_near")).collect();
-        let mut bg = self.group("Bar bells (all)", GroupMode::StartAll, bells);
+        // Three bells on a timeline: 0 s, 1.5 s and 4 s after the group starts.
+        let bells: Vec<Cue> = [0.0, 1.5, 4.0]
+            .into_iter()
+            .enumerate()
+            .map(|(k, at)| {
+                let mut c = self.sfx(&format!("Bar bell {}", k + 1), "medium_bell_ringing_near");
+                c.pre_wait = at;
+                c
+            })
+            .collect();
+        let mut bg = self.group("Bar bells (timeline)", GroupMode::Timeline, bells);
         bg.hotkey = Some("B".into());
+        bg.second_trigger = openq::model::SecondTrigger::FadeOut;
         out.push(bg);
         let mut half = self.lx(2);
         half.name = format!("{} (beginners)", half.name);
@@ -1477,7 +1491,9 @@ impl Gen {
         files.sort();
         let names: Vec<String> = files.iter().map(|p| p.trim_start_matches("sfx/").rsplit_once('.').map_or(p.as_str(), |(s, _)| s).to_string()).collect();
         stems.extend(names.iter().map(String::as_str));
-        let keys: Vec<String> = (1..=12).map(|k| format!("F{k}")).chain(('A'..='Z').filter(|c| !matches!(c, 'P' | 'B')).map(|c| c.to_string())).collect();
+        // Not the keys OpenQ itself uses (F1 manual, P pause, R resume) nor ones other cues have (F9, B).
+        let keys: Vec<String> =
+            (2..=12).filter(|k| *k != 9).map(|k| format!("F{k}")).chain(('A'..='Z').filter(|c| !matches!(c, 'P' | 'B' | 'R')).map(|c| c.to_string())).collect();
         let mut media = 0;
         // A few banks (groups) of related spares, then single cues.
         let bank: Vec<Cue> = ["door_close_and_lock", "heavy_door_close", "creaking_wooden_door", "knock_on_wooden_door"]
@@ -1507,7 +1523,6 @@ impl Gen {
             i += 1;
         }
         let mut panic = self.numbered("PANIC: stop everything", CueKind::Stop { target: None });
-        panic.hotkey = Some("Escape".into());
         panic.color = CueColor::Red;
         out.push(panic);
         out

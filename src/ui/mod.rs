@@ -18,10 +18,12 @@ mod light_playback;
 mod light_points;
 mod lighting;
 mod manual;
+mod multi;
 #[cfg(target_os = "macos")]
 mod native_menu;
 mod oqvis;
 mod outputs;
+mod overrides;
 mod plot_editor;
 #[cfg(all(test, feature = "video"))]
 mod perf_tests;
@@ -35,6 +37,8 @@ mod scale;
 mod stage;
 mod surfaces;
 mod theme;
+mod timeline;
+mod warnings;
 mod waveform;
 mod widgets;
 
@@ -217,6 +221,12 @@ pub struct App {
     /// The current list's Timecode window is open.
     show_list_timecode: bool,
     show_about: bool,
+    /// Show → Overrides is open.
+    show_overrides: bool,
+    /// Show → Warnings.
+    warnings: warnings::WarningsUi,
+    /// Edit → Copy / Paste cue properties.
+    paste_props: multi::PasteProps,
     remote: remote::RemoteUi,
     /// OQVis started from here (View → Open in OQVis).
     oqvis: oqvis::OQVis,
@@ -321,6 +331,9 @@ impl App {
             inputs: Default::default(),
             show_list_timecode: false,
             show_about: false,
+            show_overrides: false,
+            warnings: Default::default(),
+            paste_props: Default::default(),
             remote: Default::default(),
             oqvis: Default::default(),
             #[cfg(feature = "video")]
@@ -732,7 +745,7 @@ impl App {
             .collect();
         for (k, id) in hotkeys {
             if ctx.input_mut(|i| i.consume_key(Modifiers::NONE, k)) {
-                self.control(show, Command::Cue(id, CueAction::Start));
+                self.control(show, Command::Cue(id, CueAction::Trigger));
             }
         }
 
@@ -1045,6 +1058,16 @@ impl App {
                     self.group_selected(show);
                 }
                 ui.separator();
+                if ui.add_enabled(!self.selection.is_empty(), egui::Button::new(wi(I::CONTENT_COPY, t("Copy cue properties")))).clicked() {
+                    self.copy_props(show);
+                }
+                if ui
+                    .add_enabled(self.paste_props.from.is_some() && !self.selection.is_empty(), egui::Button::new(wi(I::CONTENT_COPY, t("Paste cue properties…"))))
+                    .clicked()
+                {
+                    self.paste_props.open = true;
+                }
+                ui.separator();
                 if ui.button(wi(I::REFRESH, t("Renumber all cues"))).clicked() {
                     self.renumber_all(show);
                 }
@@ -1112,6 +1135,13 @@ impl App {
                     .clicked()
                 {
                     self.toggle_mode();
+                }
+                ui.separator();
+                if ui.button(wi(I::WARNING, t("Warnings…"))).clicked() {
+                    self.warnings.open = true;
+                }
+                if ui.button(wi(I::BLOCK, t("Overrides…"))).clicked() {
+                    self.show_overrides = true;
                 }
             });
             ui.menu_button(t("Video"), |ui| {
@@ -1860,6 +1890,8 @@ impl App {
                 (None, Some(_)) => item(ui, icons::SETTINGS_REMOTE, t("OSC error").into(), RED),
                 _ => {}
             }
+            ui.add_space(10.0);
+            self.overrides_status(ui);
             if let Some((text, replica)) = self.remote.status() {
                 ui.add_space(10.0);
                 let glyph = if replica { icons::CABLE } else { icons::LAN };
@@ -2630,7 +2662,7 @@ impl App {
 impl App {
     /// Dev hook for automated visual checks: with `OPENQ_SCREENSHOT=out.ppm` the app presses GO
     /// `OPENQ_SCREENSHOT_GOS` times (default 0), captures its window a couple of frames later and exits.
-    /// `OPENQ_SCREENSHOT_CUE` / `OPENQ_SCREENSHOT_TAB` pick the cue and inspector tab shown
+    /// `OPENQ_SCREENSHOT_CUE` (`<number>` or `<list tab>:<number>`) / `OPENQ_SCREENSHOT_TAB` pick the cue and inspector tab shown
     /// (`OPENQ_SCREENSHOT_ANIM_TIME` sets the Animation tab playhead);
     /// `OPENQ_SCREENSHOT_LIGHTING=<page>` opens the Lighting workspace on a page (`playback`: the
     /// Playback page with its sequence and button cards; `colour`: the
@@ -2644,6 +2676,9 @@ impl App {
     /// `OPENQ_SCREENSHOT_STAGE=<n>` also saves stage n's output (1 = the first), as the video
     /// output process draws it, next to the capture (`<path>.stage.png`;
     /// `OPENQ_SCREENSHOT_MAPPING=1` turns on the first stage's mapping test pattern).
+    /// `OPENQ_SCREENSHOT_SELECT=<n>,<n>…` adds cues to the selection (the inspector then edits them all);
+    /// `OPENQ_SCREENSHOT_WINDOW=overrides|warnings|paste` opens that window (`overrides` turns MIDI input
+    /// and DMX output off; `paste` copies the selected cue's properties first).
     fn debug_screenshot(&mut self, ctx: &egui::Context, show: &mut Show) {
         let Some(path) = std::env::var_os("OPENQ_SCREENSHOT") else {
             return;
@@ -2659,6 +2694,16 @@ impl App {
         if self.frame_count == 1 {
             // Optional: select cue N and an inspector tab (time|levels|eq|geometry|animation|settings).
             if let Ok(n) = std::env::var("OPENQ_SCREENSHOT_CUE") {
+                // "<tab>:<number>" brings that list forward first.
+                let n = match n.split_once(':') {
+                    Some((tab, n)) => {
+                        if let Ok(tab) = tab.parse() {
+                            self.control(show, Command::SwitchList(tab));
+                        }
+                        n.to_string()
+                    }
+                    None => n,
+                };
                 let id = show
                     .ws
                     .cue_list
@@ -2831,6 +2876,29 @@ impl App {
             }
             if std::env::var_os("OPENQ_SCREENSHOT_ABOUT").is_some() {
                 self.show_about = true;
+            }
+            if let Ok(list) = std::env::var("OPENQ_SCREENSHOT_SELECT") {
+                let primary = self.primary();
+                for n in list.split(',') {
+                    if let Some(c) = show.ws.cue_list.iter_all().iter().find(|c| c.number == n.trim()) {
+                        self.selection.insert(0, c.id);
+                    }
+                }
+                self.selection.retain(|id| Some(*id) != primary);
+                self.selection.extend(primary);
+            }
+            match std::env::var("OPENQ_SCREENSHOT_WINDOW").as_deref() {
+                Ok("overrides") => {
+                    crate::overrides::set(crate::overrides::Override::MidiIn, false);
+                    crate::overrides::set(crate::overrides::Override::LightOut, false);
+                    self.show_overrides = true;
+                }
+                Ok("warnings") => self.warnings.open = true,
+                Ok("paste") => {
+                    self.copy_props(show);
+                    self.paste_props.open = true;
+                }
+                _ => {}
             }
             if std::env::var_os("OPENQ_SCREENSHOT_PREVIEW").is_some() {
                 self.show_preview = true;
@@ -3218,6 +3286,9 @@ impl App {
             self.geometry_preview(&ctx, show);
             self.remote_window(&ctx, show);
             self.network_requests_window(&ctx, show);
+            self.overrides_window(&ctx, show);
+            self.warnings_window(&ctx, show);
+            self.paste_props_window(&ctx, show);
             if lighting::ENABLED {
                 self.playback_window(&ctx, show);
             }

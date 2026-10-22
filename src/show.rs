@@ -190,6 +190,7 @@ impl Show {
             };
             seen.push(info.name.clone());
             if let Some(&last) = self.tc_last.get(&info.name)
+                && crate::overrides::allowed(crate::overrides::Override::TimecodeIn)
                 && pos.secs > last
                 && pos.secs - last < 1.0
             {
@@ -200,17 +201,20 @@ impl Show {
         self.tc_last.retain(|k, _| seen.contains(k));
         let Show { ws, engine, media, .. } = self;
         for id in due {
-            engine.start_cue(ws, media, id, now);
+            engine.trigger_cue(ws, media, id, now);
         }
     }
 
     /// Fire armed cues whose wall-clock trigger time has just come.
     fn follow_wallclock(&mut self, now: Instant) {
-        let due = self.wallclock.poll(&self.ws.cue_list, self.edit_gen, now);
+        let mut due = self.wallclock.poll(&self.ws.cue_list, self.edit_gen, now);
+        if !crate::overrides::allowed(crate::overrides::Override::WallClock) {
+            due.clear();
+        }
         let Show { ws, engine, media, .. } = self;
         for id in due {
             if ws.cue_list.find(id).is_some_and(|c| engine.is_armed(c)) {
-                engine.start_cue(ws, media, id, now);
+                engine.trigger_cue(ws, media, id, now);
             }
         }
     }

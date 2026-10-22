@@ -55,6 +55,9 @@ impl TcGen {
                     continue;
                 }
                 enc.fill(&mut buf[..n]);
+                if !crate::overrides::allowed(crate::overrides::Override::TimecodeOut) {
+                    buf[..n].fill(0.0);
+                }
                 if let Ok(chunk) = tx.write_chunk_uninit(n) {
                     chunk.fill_from_iter(buf[..n].iter().copied());
                 }
@@ -88,6 +91,7 @@ impl TcGen {
                 }
             };
             let mut sent: u64 = 0;
+            let mut was_off = false;
             wait_until(base, &stop);
             while !stop.load(Ordering::Acquire) {
                 if paused.lock().is_some() {
@@ -103,14 +107,20 @@ impl TcGen {
                     continue;
                 }
                 let tc = Timecode::from_frame_count(frame, rate);
-                if full {
+                let on = crate::overrides::allowed(crate::overrides::Override::TimecodeOut);
+                // Back on: receivers need a full frame to locate again.
+                full |= on && was_off;
+                was_off = !on;
+                if !on {
+                    full = false;
+                } else if full {
                     full = false;
                     if let Err(e) = conn.send(&mtc_full_frame(tc, rate)) {
                         errors.lock().push(format!("MTC: {e}"));
                         return;
                     }
                 }
-                if let Err(e) = conn.send(&mtc_quarter_frame(tc, rate, piece)) {
+                if on && let Err(e) = conn.send(&mtc_quarter_frame(tc, rate, piece)) {
                     errors.lock().push(format!("MTC: {e}"));
                     return;
                 }

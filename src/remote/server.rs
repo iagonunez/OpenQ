@@ -827,6 +827,7 @@ fn send_loop(
                     sequences: show.media.light.status(),
                     selection: show.light_selection.clone(),
                 },
+                overrides_off: crate::overrides::off_bits(),
             };
             let dmx = want_dmx.then(|| show.media.light.frame());
             (taken, title_of(&show.path), state, show.media.prober.clone(), dmx, media)

@@ -1432,6 +1432,7 @@ fn fuzz_remote_messages() {
             meters: vec![0.5; 2],
             dirty: true,
             lighting: LightLive { masters: s.media.light.masters().clone(), sequences: s.media.light.status(), selection: vec![1] },
+            overrides_off: 0b101,
         }
     };
     let seeds: Vec<Value> = [

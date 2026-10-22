@@ -710,6 +710,13 @@ impl SurfaceHub {
             st.learned = Some(input);
             return true;
         }
+        let cut = match input {
+            SurfaceInput::Osc(_) => crate::overrides::Override::OscIn,
+            _ => crate::overrides::Override::MidiIn,
+        };
+        if !crate::overrides::allowed(cut) {
+            return true;
+        }
         let masters = show.media.light.masters().clone();
         let status = show.media.light.status();
         let view = view(&show, &masters, &status);
@@ -719,7 +726,7 @@ impl SurfaceHub {
         let fired = triggered(&show.ws.cue_list, &input, pressed);
         let mut cmds = resolve(&show.ws.settings.surfaces, builtin, &view, &mut st.feel, &input, value, now);
         let used = !cmds.is_empty() || !fired.is_empty() || builtin.is_some() || show.ws.settings.surfaces.mappings.iter().any(|m| m.input == input);
-        cmds.extend(fired.into_iter().map(|id| Command::Cue(id, CueAction::Start)));
+        cmds.extend(fired.into_iter().map(|id| Command::Cue(id, CueAction::Trigger)));
         if show.replica {
             st.pending.extend(cmds);
             return used;
@@ -761,6 +768,9 @@ impl SurfaceHub {
         let mut show = show.lock();
         if !show.ws.settings.surfaces.msc.answers(msg) {
             return false;
+        }
+        if !crate::overrides::allowed(crate::overrides::Override::MidiIn) {
+            return true;
         }
         let mut st = self.state.lock();
         let result = crate::msc::commands(&show.ws.cue_list, msg);
@@ -991,7 +1001,12 @@ impl SurfaceFeedback {
                             peer = to;
                             sent.forget(false, true);
                         }
-                        let (midi, osc) = sent.changes(&wanted);
+                        let (mut midi, osc) = sent.changes(&wanted);
+                        // MIDI output cut by the overrides: send nothing, then everything once it's back.
+                        if !crate::overrides::allowed(crate::overrides::Override::MidiOut) {
+                            sent.forget(true, false);
+                            midi.clear();
+                        }
                         if let Some(c) = &mut conn {
                             for m in midi {
                                 if let Err(e) = c.send(&m) {
@@ -1308,7 +1323,7 @@ mod tests {
         let fired = |input: SurfaceInput, v: f32| {
             hub.input(&show, input, Some(v), None);
             hub.take_pending().into_iter().map(|c| match c {
-                Command::Cue(id, CueAction::Start) => id,
+                Command::Cue(id, CueAction::Trigger) => id,
                 other => panic!("{other:?}"),
             }).collect::<Vec<_>>()
         };

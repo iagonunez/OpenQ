@@ -134,6 +134,44 @@ impl ContinueMode {
     }
 }
 
+/// What a trigger (hotkey, MIDI trigger, wall clock, timecode) does when it fires a cue that is
+/// still running. GO, OSC and Start cues always restart it.
+#[derive(Serialize, Deserialize, Clone, Copy, PartialEq, Eq, Debug, Default)]
+pub enum SecondTrigger {
+    /// Start it again from the top.
+    #[default]
+    Restart,
+    /// Nothing: it carries on.
+    Ignore,
+    /// Stop it at once.
+    Stop,
+    /// Pause it, or resume it when paused.
+    PauseResume,
+    /// Fade it out over the show's Stop-all fade time, then stop it (a third press stops it at once).
+    FadeOut,
+}
+
+impl SecondTrigger {
+    /// Every action, for menus.
+    pub const ALL: [SecondTrigger; 5] =
+        [SecondTrigger::Restart, SecondTrigger::Ignore, SecondTrigger::Stop, SecondTrigger::PauseResume, SecondTrigger::FadeOut];
+
+    /// Name shown in the UI.
+    pub fn label(self) -> &'static str {
+        match self {
+            SecondTrigger::Restart => crate::i18n::t("Restart it"),
+            SecondTrigger::Ignore => crate::i18n::t("Do nothing"),
+            SecondTrigger::Stop => crate::i18n::t("Stop it"),
+            SecondTrigger::PauseResume => crate::i18n::t("Pause / resume it"),
+            SecondTrigger::FadeOut => crate::i18n::t("Fade it out and stop"),
+        }
+    }
+
+    fn is_default(&self) -> bool {
+        *self == SecondTrigger::Restart
+    }
+}
+
 /// How a Group cue plays its children.
 #[derive(Serialize, Deserialize, Clone, Copy, PartialEq, Eq, Debug, Default)]
 pub enum GroupMode {
@@ -146,15 +184,19 @@ pub enum GroupMode {
     StartAll,
     /// Fire one child at random.
     StartRandom,
+    /// Start every child at its place on a timeline: a child's pre-wait is its start time from
+    /// the group's start, and the children's continue modes are ignored.
+    Timeline,
 }
 
 impl GroupMode {
     /// Every mode, for menus.
-    pub const ALL: [GroupMode; 4] = [
+    pub const ALL: [GroupMode; 5] = [
         GroupMode::StartFirstAndEnter,
         GroupMode::StartFirst,
         GroupMode::StartAll,
         GroupMode::StartRandom,
+        GroupMode::Timeline,
     ];
 
     /// Name shown in the UI.
@@ -164,6 +206,7 @@ impl GroupMode {
             GroupMode::StartFirst => crate::i18n::t("Start first child and go to next cue (playlist)"),
             GroupMode::StartAll => crate::i18n::t("Start all children simultaneously"),
             GroupMode::StartRandom => crate::i18n::t("Start random child and go to next cue"),
+            GroupMode::Timeline => crate::i18n::t("Timeline: start children at their times"),
         }
     }
 }
@@ -1781,6 +1824,9 @@ pub struct Cue {
     /// Fire at this time of day.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub wallclock_trigger: Option<WallClockTrigger>,
+    /// What a trigger does when it fires this cue while it still runs.
+    #[serde(default, skip_serializing_if = "SecondTrigger::is_default")]
+    pub second_trigger: SecondTrigger,
     /// Type and type-specific settings.
     pub kind: CueKind,
 }
@@ -1844,6 +1890,7 @@ impl Cue {
             timecode_trigger: self.timecode_trigger,
             midi_trigger: self.midi_trigger,
             wallclock_trigger: self.wallclock_trigger,
+            second_trigger: self.second_trigger,
             kind: match &self.kind {
                 CueKind::Group { mode, .. } => CueKind::Group { mode: *mode, children: Vec::new() },
                 k => k.clone(),
@@ -1854,7 +1901,7 @@ impl Cue {
     /// Equal apart from a group's children.
     pub fn shallow_eq(&self, other: &Cue) -> bool {
         // Naming every field: a new one fails to compile here until it is compared too.
-        let Cue { id: _, number: _, name: _, notes: _, color: _, armed: _, pre_wait: _, post_wait: _, continue_mode: _, hotkey: _, timecode_trigger: _, midi_trigger: _, wallclock_trigger: _, kind: _ } = self;
+        let Cue { id: _, number: _, name: _, notes: _, color: _, armed: _, pre_wait: _, post_wait: _, continue_mode: _, hotkey: _, timecode_trigger: _, midi_trigger: _, wallclock_trigger: _, second_trigger: _, kind: _ } = self;
         let (a, b) = (self, other);
         a.id == b.id
             && a.number == b.number
@@ -1869,6 +1916,7 @@ impl Cue {
             && a.timecode_trigger == b.timecode_trigger
             && a.midi_trigger == b.midi_trigger
             && a.wallclock_trigger == b.wallclock_trigger
+            && a.second_trigger == b.second_trigger
             && match (&self.kind, &other.kind) {
                 (CueKind::Group { mode: a, .. }, CueKind::Group { mode: b, .. }) => a == b,
                 (CueKind::Group { .. }, _) | (_, CueKind::Group { .. }) => false,
@@ -1901,6 +1949,7 @@ impl Cue {
             timecode_trigger: None,
             midi_trigger: None,
             wallclock_trigger: None,
+            second_trigger: SecondTrigger::Restart,
             kind,
         }
     }
