@@ -22,6 +22,7 @@
       <li class="s2"><a href="#start">Installing and first show</a></li>
       <li class="s3"><a href="#installing">Installing</a></li>
       <li class="s3"><a href="#your-first-show">Your first show</a></li>
+      <li class="s3"><a href="#bundling-a-show">Bundling a show</a></li>
       <li class="s2"><a href="#window">The main window</a></li>
       <li class="s3"><a href="#working-with-the-cue-list">Working with the cue list</a></li>
       <li class="s3"><a href="#cue-lists">Cue lists</a></li>
@@ -131,6 +132,11 @@ cargo run --release -- show.openq    # open a saved show</code></pre>
   </ol>
   <div class="note tip"><span class="label">Tip</span><p>Keep the show file in the same folder as its media.
   Then the folder can be copied to another computer and opened there unchanged.</p></div>
+  <h3 id="bundling-a-show">Bundling a show</h3>
+  <p><span class="menu">File → Bundle show…</span> copies the show and every sound and movie it plays into one folder:
+  pick where, and OpenQ makes a folder named after the show with the show file in it and the media in
+  <code>audio/</code> and <code>video/</code>. Copy that folder to another computer, or keep it as an archive. Files
+  missing from the disk are listed and left out. The show you have open doesn't change.</p>
 </section>
 
 <section id="window">
@@ -217,6 +223,8 @@ cargo run --release -- show.openq    # open a saved show</code></pre>
       <tr><td>Control surfaces</td><td>This computer's MIDI input and the show's <a href="lighting.html#surfaces">control surface mappings</a>, with learn.</td></tr>
     </tbody>
   </table></div>
+  <p>Settings → General also holds the <strong>loudness target</strong> for levelling cues
+  (<a href="audio.html#loudness">Loudness</a>); Settings → Audio, the <a href="audio.html#audio-patches">audio patches</a>.</p>
   <figure class="narrow">
     <img src="img/room.webp" width="731" height="465" alt="The room editor: a square room with four speakers FL, FR, RL, RR and a table of their outputs and positions.">
     <figcaption>The room for object audio. Drag the speakers, or type their positions.</figcaption>

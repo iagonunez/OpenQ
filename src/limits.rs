@@ -77,6 +77,8 @@ pub const MAX_EQ_DB: f32 = 24.0;
 pub const EQ_FREQ: (f32, f32) = (20.0, 20_000.0);
 /// EQ band Q.
 pub const EQ_Q: (f32, f32) = (0.1, 18.0);
+/// Loudness target for levelling cues, LUFS.
+pub const LOUDNESS_TARGET: (f64, f64) = (-60.0, 0.0);
 /// Playback rate (varispeed).
 pub const RATE: (f32, f32) = (0.25, 4.0);
 /// Farthest a fixture, a focus point, a plot shape or a label sits from the plot's origin, metres.
@@ -210,6 +212,13 @@ pub fn workspace(ws: &mut Workspace) {
     fade(&mut s.panic_fade);
     db(&mut s.master_volume_db);
     f64_in(&mut s.double_go_protection, 0.0, MAX_DOUBLE_GO);
+    f64_in(&mut s.loudness_target, LOUDNESS_TARGET.0, LOUDNESS_TARGET.1);
+    s.patches.truncate(crate::model::MAX_PATCHES);
+    for p in &mut s.patches {
+        if p.name.len() > 64 {
+            p.name = p.name.chars().take(64).collect();
+        }
+    }
     s.speakers.truncate(MAX_SPEAKERS);
     for sp in &mut s.speakers {
         f32_in(&mut sp.x, -ROOM, ROOM);
@@ -242,6 +251,10 @@ pub fn cue(c: &mut Cue) {
     if let Some(t) = &mut c.timecode_trigger {
         time(t);
     }
+    if let Some(w) = &mut c.wallclock_trigger {
+        w.time = w.time.min(86_399);
+        w.days &= 0x7f;
+    }
     if let Some(m) = &mut c.midi_trigger {
         m.number = m.number.min(127);
         m.channel = m.channel.map(|ch| ch.min(15));
@@ -258,6 +271,7 @@ pub fn cue(c: &mut Cue) {
             f32_in(&mut a.rate, RATE.0, RATE.1);
             eq(&mut a.eq);
             routing(&mut a.routing, &mut a.out_levels);
+            gangs(&mut a.gangs, &mut a.patch);
             a.slices.truncate(MAX_KEYS);
             for s in &mut a.slices {
                 time(&mut s.time);
@@ -280,6 +294,7 @@ pub fn cue(c: &mut Cue) {
             geometry(&mut v.geometry);
             time(&mut v.still_duration);
             routing(&mut v.routing, &mut v.out_levels);
+            gangs(&mut v.gangs, &mut v.patch);
             animation(&mut v.animation);
             video_fx(&mut v.video_fx);
             audio_fx(&mut v.audio_fx);
@@ -326,8 +341,37 @@ pub fn cue(c: &mut Cue) {
             if let Some(v) = &mut f.video_fx {
                 video_fx(v);
             }
+            if let Some(l) = &mut f.out_levels {
+                l.truncate(crate::model::MAX_OUT_CHANNELS);
+                l.iter_mut().for_each(db);
+            }
+            if let Some(v) = &mut f.audio_fx {
+                audio_fx(v);
+            }
         }
-        CueKind::Wait { duration } => time(duration),
+        CueKind::Wait { duration } | CueKind::Load { time: duration, .. } => time(duration),
+        CueKind::Midi(m) => {
+            m.channel = m.channel.min(15);
+            m.number = m.number.min(127);
+            m.value = m.value.min(16_383);
+            m.msc_device = m.msc_device.min(127);
+            m.msc_format &= 0x7f;
+            m.msc_command &= 0x7f;
+            for s in [&mut m.msc_cue, &mut m.msc_list] {
+                if s.len() > 64 {
+                    *s = s.chars().take(64).collect();
+                }
+            }
+            if m.sysex.len() > 4 * crate::model::MAX_SYSEX {
+                m.sysex = m.sysex.chars().take(4 * crate::model::MAX_SYSEX).collect();
+            }
+        }
+        CueKind::Timecode(tc) => {
+            time(&mut tc.start);
+            time(&mut tc.duration);
+            db(&mut tc.volume_db);
+            tc.channel = tc.channel.min(crate::model::MAX_OUT_CHANNELS as u16 - 1);
+        }
         CueKind::Light(l) => fade(&mut l.fade),
         CueKind::Mic(m) => {
             m.channels = m.channels.clamp(1, MAX_SRC_CHANNELS as u16);
@@ -336,6 +380,7 @@ pub fn cue(c: &mut Cue) {
             f32_in(&mut m.pan, -1.0, 1.0);
             eq(&mut m.eq);
             routing(&mut m.routing, &mut m.out_levels);
+            gangs(&mut m.gangs, &mut m.patch);
             time(&mut m.duration);
             fade(&mut m.fade_in);
             audio_fx(&mut m.audio_fx);
@@ -398,6 +443,18 @@ fn routing(r: &mut Option<Vec<Vec<f32>>>, out_levels: &mut Vec<f32>) {
     for v in out_levels {
         db(v);
     }
+}
+
+/// Crosspoint gang letters (A..Z) within the matrix size, and the audio patch number.
+fn gangs(g: &mut Vec<Vec<u8>>, patch: &mut u8) {
+    g.truncate(MAX_SRC_CHANNELS);
+    for row in g {
+        row.truncate(MAX_OUT_CHANNELS);
+        for v in row {
+            *v = (*v).min(26);
+        }
+    }
+    *patch = (*patch).min(crate::model::MAX_PATCHES as u8);
 }
 
 fn objects(o: &mut Vec<AudioObject>) {

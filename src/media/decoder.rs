@@ -30,6 +30,9 @@ pub struct DecodeParams {
     pub fade_out: f64,
     /// Shape of both fades.
     pub fade_curve: crate::model::FadeCurve,
+    /// File time already played, in seconds: playback starts that far into the segments (a Load
+    /// cue loaded the cue part way through).
+    pub skip: f64,
 }
 
 /// Peak overview of a file for waveform display.
@@ -41,6 +44,9 @@ pub struct Waveform {
     pub bucket_secs: f64,
     /// File duration in seconds.
     pub duration: f64,
+    /// Integrated loudness of the whole file, LUFS (None: silent or shorter than 0.4 s).
+    #[serde(default)]
+    pub loudness: Option<f64>,
     /// Coarser copies of `peaks` (level k merges 2^(k+1) buckets), made on first use, so a
     /// zoomed-out view of a long file doesn't scan every bucket per column.
     #[serde(skip)]
@@ -54,7 +60,7 @@ fn merge(a: [f32; 2], b: [f32; 2]) -> [f32; 2] {
 impl Waveform {
     /// A waveform from its peaks.
     pub fn new(peaks: Vec<[f32; 2]>, bucket_secs: f64, duration: f64) -> Self {
-        Self { peaks, bucket_secs, duration, levels: Default::default() }
+        Self { peaks, bucket_secs, duration, loudness: None, levels: Default::default() }
     }
 
     /// (min, max) over the time range [t0, t1).
@@ -89,9 +95,10 @@ impl Waveform {
     }
 }
 
-/// Decode the whole file into a 10 ms peak overview.
+/// Decode the whole file into a 10 ms peak overview, measuring its loudness on the way.
 pub fn waveform(path: &Path) -> anyhow::Result<Waveform> {
     let mut o = open(path)?;
+    let mut meter: Option<crate::loudness::Meter> = None;
     let per_bucket = (o.rate as usize / 100).max(1);
     let mut peaks = Vec::new();
     let mut cur = [0f32, 0f32];
@@ -120,6 +127,7 @@ pub fn waveform(path: &Path) -> anyhow::Result<Waveform> {
         let frames = buf.frames();
         buf.copy_to_vecs_planar::<f32>(&mut planar);
         clean_samples(&mut planar);
+        meter.get_or_insert_with(|| crate::loudness::Meter::new(o.rate, planar.len())).push(&planar, frames);
         for f in 0..frames {
             for ch in planar.iter() {
                 let v = ch[f];
@@ -142,6 +150,7 @@ pub fn waveform(path: &Path) -> anyhow::Result<Waveform> {
         peaks,
         bucket_secs: per_bucket as f64 / o.rate as f64,
         duration: total as f64 / o.rate as f64,
+        loudness: meter.and_then(|m| m.integrated()),
         ..Default::default()
     })
 }
@@ -223,7 +232,8 @@ pub fn spawn(path: PathBuf, params: DecodeParams, out_rate: u32, tx: rtrb::Produ
             scratch: Vec::new(),
             fill_limit,
             envelope: Envelope {
-                written: 0,
+                // A start part way through is past the integrated fade-in by as much.
+                written: (params.skip.max(0.0) / params.rate.clamp(0.05, 8.0) * out_rate as f64) as u64,
                 fade_in: (params.fade_in.max(0.0) * out_rate as f64) as u64,
                 fade_out: None,
                 curve: params.fade_curve,
@@ -259,20 +269,38 @@ impl std::error::Error for Stopped {}
 
 fn run(path: &Path, p: &DecodeParams, out_rate: u32, sink: &mut Sink) -> anyhow::Result<()> {
     let rate = if p.rate.is_finite() && p.rate > 0.0 { p.rate.clamp(0.05, 8.0) } else { 1.0 };
-    let file_len = if p.fade_out > 0.0 { open(path).ok().and_then(|o| o.duration) } else { None };
+    let mut skip = if p.skip.is_finite() { p.skip.max(0.0) } else { 0.0 };
+    let file_len = if p.fade_out > 0.0 || skip > 0.0 { open(path).ok().and_then(|o| o.duration) } else { None };
     for (si, seg) in p.segments.iter().enumerate() {
         let mut passes = 0u32;
         loop {
+            // Skip whole passes, then start the first one played part way in.
+            let mut from = seg.start;
+            if skip > 0.0 {
+                let len = (seg.end.or(file_len).unwrap_or(f64::INFINITY) - seg.start).max(0.0);
+                if skip >= len && len > 1e-6 {
+                    skip -= len;
+                    passes += 1;
+                    if seg.plays.is_some_and(|n| passes >= n) {
+                        break;
+                    }
+                    continue;
+                }
+                from = seg.start + skip.min(len);
+                skip = 0.0;
+            }
             // Once the rest of the playback has a known length, place the integrated fade-out.
-            if sink.envelope.fade_out.is_none()
+            if p.fade_out > 0.0
+                && sink.envelope.fade_out.is_none()
                 && let Some(len) = file_len
                 && let Some(rest) = remaining_file_time(&p.segments[si..], passes, len)
             {
+                let rest = (rest - (from - seg.start)).max(0.0);
                 let out_frames = (rest / rate * out_rate as f64) as u64;
                 let fade = ((p.fade_out * out_rate as f64) as u64).min(out_frames);
                 sink.envelope.fade_out = Some((sink.envelope.written + out_frames - fade, fade));
             }
-            play_pass(path, seg.start, seg.end, rate, out_rate, sink)?;
+            play_pass(path, from, seg.end, rate, out_rate, sink)?;
             passes += 1;
             if sink.shared.stop.load(Ordering::Acquire) {
                 return Err(Stopped.into());
@@ -647,6 +675,7 @@ pub(crate) mod tests {
         write_wav(&path, 48000, 2.0);
         let seg = |plays| vec![Segment { start: 0.0, end: None, plays }];
         let params = |fade_in, fade_out, plays| DecodeParams {
+            skip: 0.0,
             segments: seg(plays),
             rate: 1.0,
             channels: 1,
@@ -664,6 +693,27 @@ pub(crate) mod tests {
         let out = decode_all(&path, params(0.0, 0.5, Some(2)), 48000);
         assert!((peak(&out[94000..98000]) - 0.5).abs() < 0.01, "faded at the loop point");
         assert!(peak(&out[out.len() - 480..]) < 0.02);
+        std::fs::remove_file(path).unwrap();
+    }
+
+    /// A start part way through skips whole passes, then starts the next one that far in, past the fade-in.
+    #[test]
+    fn skip_starts_part_way_through() {
+        let path = std::env::temp_dir().join(format!("openq-skip-{}.wav", std::process::id()));
+        write_wav(&path, 48000, 2.0);
+        let params = |skip| DecodeParams {
+            skip,
+            segments: vec![Segment { start: 0.0, end: None, plays: Some(2) }],
+            rate: 1.0,
+            channels: 1,
+            fade_in: 0.5,
+            fade_out: 0.0,
+            fade_curve: FadeCurve::Linear,
+        };
+        let out = decode_all(&path, params(2.5), 48000);
+        assert!((out.len() as i64 - 72000).abs() < 100, "{} samples", out.len());
+        assert!((peak(&out[..480]) - 0.5).abs() < 0.02, "no fade-in again: {}", peak(&out[..480]));
+        assert!(decode_all(&path, params(10.0), 48000).len() < 100, "skipped past the end");
         std::fs::remove_file(path).unwrap();
     }
 

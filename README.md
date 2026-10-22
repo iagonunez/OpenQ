@@ -99,13 +99,14 @@ cargo build --release && ./target/release/openq
 
 | | Feature | What it does |
 |---|---|---|
-| 🎬 | **15 cue types** | Audio, Video, Text, Camera, Mic, Group, Wait, Memo, Fade, Start, Stop, Pause, Go To, Devamp and Network (OSC). |
+| 🎬 | **23 cue types** | Audio, Video, Text, Camera, Mic, Group, Wait, Memo, Fade, Start, Stop, Pause, Go To, Devamp, Network (OSC), MIDI, Timecode, Light, and Arm, Disarm, Reset, Load and Target to change other cues as the show runs. |
 | 🗂️ | **Cue lists** | Several lists per show in tabs (the main sequence, a list of effects to fire by hand…); cues keep playing when you switch. |
 | ⏱️ | **Timing** | Pre-wait, post-wait, auto-continue and auto-follow. Chained cues start on the exact sample, however long the chain. |
 | 📁 | **Groups** | Enter the group, playlist, start everything at once, or a random child. |
 | 🔒 | **Edit and show mode** | Build the show in edit mode; show mode locks the list and gives you big, readable rows for the booth. |
 | 🔊 | **Audio playback** | Trims, loops, fade in/out, varispeed and slices that vamp until a Devamp cue releases them. |
-| 🎚️ | **Mixer and routing** | Level, pan, output faders and a crosspoint matrix per cue, with dB on every crosspoint. |
+| 🎚️ | **Mixer and routing** | Level, pan, output faders and a crosspoint matrix per cue (up to 64 outputs), with dB on every crosspoint and ganged crosspoints. Extra output devices as audio patches. |
+| 📏 | **Loudness** | Every sound file's loudness measured in LUFS; level one cue or a whole selection to the show's target. |
 | 📈 | **EQ** | Up to 8 bands per cue (pass filters, shelves, peaks), with a draggable response curve. |
 | 🎛️ | **Audio effects** | Delay, reverb, compressor, limiter, gate, distortion, chorus and bitcrusher chains that can be edited live. |
 | 🔈 | **Object audio** | Place each channel in a room of speakers (stereo to 7.1 or your own layout); Fade cues fly sounds around. |
@@ -118,9 +119,11 @@ cargo build --release && ./target/release/openq
 | 📽️ | **Stages and projection mapping** | Any number of outputs, fullscreen on any display, with corner-pin keystone and a mapping test pattern. |
 | 🌅 | **Edge blending** | Split one picture across several projectors with soft, gamma-corrected overlaps. |
 | 📷 | **Camera cues** | Show a live camera or capture card as a layer on stage. |
-| 🌗 | **Fades** | Fade level, opacity, geometry, video effects and object positions, with preset or custom curves. |
-| 🕰️ | **Timecode** | Each cue list can follow LTC or MTC and fire cues at their timecode trigger. |
-| ⌨️ | **Hotkeys** | Fire any cue straight from its own key. |
+| 🌗 | **Fades** | Fade level, output faders, audio and video effects, opacity, geometry and object positions, with preset or custom curves. |
+| 🕰️ | **Timecode** | Each cue list can follow LTC or MTC and fire cues at their timecode trigger; Timecode cues send LTC or MTC. |
+| ⌨️ | **Triggers** | Fire any cue from its own key, a MIDI message or a time of day. |
+| 🎹 | **MIDI out** | MIDI cues send notes, control and program changes, MIDI Show Control and SysEx. |
+| 📦 | **Bundle show** | Copy a show and all its media into one folder to move or archive it. |
 | 📡 | **OSC** | Control OpenQ from other gear over OSC, and send OSC to lighting desks with Network cues. |
 | 📱 | **Remote devices** | Pair a laptop or a tablet to follow the show, run it or edit it, over an encrypted link. |
 | 🛟 | **Crash safety** | Autosave and recovery, atomic saves, audio devices that reconnect by themselves, and an error log. |

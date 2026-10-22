@@ -22,12 +22,16 @@
      <ol class="sub">
       <li class="s2"><a href="#cues">Cue types</a></li>
       <li class="s3"><a href="#midi-triggers">MIDI triggers</a></li>
+      <li class="s3"><a href="#wall-clock-triggers">Wall-clock triggers</a></li>
+      <li class="s3"><a href="#cues-that-change-cues">Cues that change other cues</a></li>
+      <li class="s3"><a href="#midi-cues">MIDI cues</a></li>
       <li class="s2"><a href="#timing">Timing and continues</a></li>
       <li class="s3"><a href="#groups">Groups</a></li>
       <li class="s2"><a href="#fades">Fades</a></li>
       <li class="s2"><a href="#timecode">Timecode</a></li>
       <li class="s3"><a href="#setting-up-a-cue-list">Setting up a cue list</a></li>
       <li class="s3"><a href="#timecode-triggers">Timecode triggers</a></li>
+      <li class="s3"><a href="#sending-timecode">Sending timecode</a></li>
      </ol>
     </li>
     <li><a href="audio.html">Audio</a></li>
@@ -64,6 +68,13 @@
     <div class="type"><b><span class="ms" aria-hidden="true">&#xe31d;</span>Mic</b><span class="d">Plays a live audio input, such as a microphone, through the mixer.</span></div>
     <div class="type"><b><span class="ms" aria-hidden="true">&#xe412;</span>Camera</b><span class="d">Shows a live camera or capture card on a stage.</span></div>
     <div class="type"><b><span class="ms" aria-hidden="true">&#xe90f;</span>Light</b><span class="d">Plays a cue of the lighting design, or releases its sequences (see <a href="lighting.html#lighting">Lighting</a>).</span></div>
+    <div class="type"><b><span class="ms" aria-hidden="true">&#xf0be;</span>Arm</b><span class="d">Arms another cue, so GO and its triggers fire it again.</span></div>
+    <div class="type"><b><span class="ms" aria-hidden="true">&#xf08c;</span>Disarm</b><span class="d">Disarms another cue: GO and its triggers skip it.</span></div>
+    <div class="type"><b><span class="ms" aria-hidden="true">&#xe042;</span>Reset</b><span class="d">Stops another cue at once and undoes what Arm, Disarm, Target and Load cues did to it.</span></div>
+    <div class="type"><b><span class="ms" aria-hidden="true">&#xf4ba;</span>Load</b><span class="d">Gets another cue ready to start part way through.</span></div>
+    <div class="type"><b><span class="ms" aria-hidden="true">&#xe55c;</span>Target</b><span class="d">Points a Fade, Start, Stop, Load… cue at a different cue.</span></div>
+    <div class="type"><b><span class="ms" aria-hidden="true">&#xe521;</span>MIDI</b><span class="d">Sends a MIDI message: note, control or program change, pitch bend, MIDI Show Control or SysEx.</span></div>
+    <div class="type"><b><span class="ms" aria-hidden="true">&#xe01b;</span>Timecode</b><span class="d">Sends timecode (LTC on an audio output, or MTC) from a start time while it runs.</span></div>
   </div>
   <p>Every cue has a <strong>number</strong> (free text, like <code>4.2</code>), a <strong>name</strong>, <strong>notes</strong>,
   a <strong>colour</strong> and an <strong>armed</strong> switch, all on the Basics tab. A disarmed cue is skipped by GO. Basics also
@@ -80,6 +91,32 @@
   <p>Messages come in on this computer's MIDI input, chosen in <span class="menu">Settings → Control surfaces</span>
   (<em>Set up…</em> on the card opens it). The same input can also carry <a href="lighting.html#surfaces">control surface</a>
   mappings and MTC; to run the whole list from program changes, map a program change to <em>GO</em> there.</p>
+  <h3 id="wall-clock-triggers">Wall-clock triggers</h3>
+  <p>The <strong>Wall clock</strong> card on the Triggers tab fires a cue at a time of day on this computer's clock:
+  tick <em>Fire at</em>, set the hours, minutes and seconds, and pick the <strong>days</strong> it fires on (none picked
+  = every day). The cue fires as the clock passes that time. If the clock is changed or the computer was asleep, nothing
+  fires for the time skipped. Disarmed cues don't fire.</p>
+  <h3 id="cues-that-change-cues">Cues that change other cues</h3>
+  <ul>
+    <li><strong>Arm</strong> and <strong>Disarm</strong> switch the target's <em>armed</em> setting, as if you had ticked it
+    on its Basics tab. A cue that runs straight after (an auto-continue) already sees the change.</li>
+    <li><strong>Target</strong> changes what another cue acts on: <em>Change the target of</em> is the cue to change (a Fade,
+    Start, Stop, Pause, Go To, Devamp, Arm, Load… cue), <em>New target</em> the cue it will act on from then on. A playlist
+    can, for example, loop from its second track after the first time round.</li>
+    <li><strong>Load</strong> gets the target ready to start part way through: its next start begins <em>Load to time</em>
+    seconds in, counting its pre-wait. Sound files and movies start from that point; a target that is already running
+    jumps there. It works once: the start after that is from the beginning again. A looping movie can't be loaded.</li>
+    <li><strong>Reset</strong> stops the target (and the cues inside it) at once and puts back what Arm, Disarm, Target and
+    Load cues changed on them since the show was opened.</li>
+  </ul>
+  <p>Arm, Disarm and Target cues change the show like an edit, so save it afterwards if the change should stay.</p>
+  <h3 id="midi-cues">MIDI cues</h3>
+  <p>A MIDI cue sends one message out of a MIDI output: pick the <strong>output</strong> (or <em>First MIDI output</em>)
+  and the <strong>message</strong>. Notes and control changes take a channel, a number and a value; program change a
+  program; pitch bend a value from 0 to 16383 (8192 is the centre). <strong>MIDI Show Control</strong> sends a command (GO,
+  STOP, RESUME, LOAD…) with a cue number and list to a device ID (127 = all devices) in a command format, so OpenQ can
+  run a lighting desk or another show computer. <strong>SysEx</strong> sends any System Exclusive message typed in hex
+  (<code>F0 … F7</code>). The bytes that will be sent are shown under the settings.</p>
 </section>
 
 <section id="timing">
@@ -135,6 +172,10 @@
     doesn't have fade in from nothing. <em>Take the target's effects</em> copies them again after you change the target.</li>
     <li><strong>Objects</strong>, for targets in <a href="audio.html#audio">object audio</a> mode: the positions and spread to move
     the objects to, edited on the same room view.</li>
+    <li><strong>Output faders</strong>, for sound: the level of each output after the routing matrix (the target's
+    Levels tab faders). Use it to move a sound from the front speakers to the surrounds.</li>
+    <li><strong>Audio effects</strong>: the target's <a href="audio.html#audio-fx">Audio FX</a> settings glide to the
+    values set here. An effect switched on or off, or one of another kind, changes at the start of the fade.</li>
   </ul>
   <p>Light cues can't be the target of a Fade cue: lighting fades with its own Light cues (see <a href="lighting.html#lighting">Lighting</a>).</p>
   <p>Tick <strong>Stop target</strong> for a fade-out: the target stops when the fade ends. Pausing a fade freezes it, and resuming it continues
@@ -161,6 +202,12 @@
   shows what the list follows and what it is receiving; <em>Set up…</em> opens the list's timecode settings.</p>
   <p>Only timecode running forward fires cues. When the source jumps (a locate or a rewind) or stops, nothing fires,
   and triggering picks up again from the new position, so rehearsing a section by rolling back the source is safe.</p>
+  <h3 id="sending-timecode">Sending timecode</h3>
+  <p>A <strong>Timecode</strong> cue sends timecode while it runs, for a lighting desk, a video server or another show
+  computer to follow. Choose <strong>LTC</strong> (an audio signal on one output channel of the audio device, at the level
+  set) or <strong>MTC</strong> (out of a MIDI output), the frame rate and the <strong>start</strong> time. The code runs
+  from the start time for the cue's duration (0 = until it is stopped); pausing the cue holds the code, and resuming it
+  carries on.</p>
 </section>
 <!--/content-->
 

@@ -20,6 +20,7 @@ enum Action {
     Open,
     Save,
     SaveAs,
+    Bundle,
     Import,
     Quit,
     Undo,
@@ -28,6 +29,7 @@ enum Action {
     Delete,
     Group,
     Renumber,
+    LevelLoudness,
     Settings,
     NewCue(usize),
     Go,
@@ -71,7 +73,7 @@ impl Action {
         }
         use Action::*;
         [
-            New, Open, Save, SaveAs, Import, Quit, Undo, Redo, Duplicate, Delete, Group, Renumber, Settings, Go, Stop, Pause,
+            New, Open, Save, SaveAs, Bundle, Import, Quit, Undo, Redo, Duplicate, Delete, Group, Renumber, LevelLoudness, Settings, Go, Stop, Pause,
             Resume, ToggleMode, Stages, Share, Connect, Disconnect, Preview, Log, OQVis, Manual, ErrorLog, About,
         ]
         .into_iter()
@@ -179,6 +181,7 @@ impl NativeMenu {
                 &item(Action::Open, t("Open…")),
                 &item(Action::Save, t("Save")),
                 &item(Action::SaveAs, t("Save As…")),
+                &item(Action::Bundle, t("Bundle show…")),
                 &a,
                 &item(Action::Import, t("Import media files…")),
             ],
@@ -198,6 +201,7 @@ impl NativeMenu {
                 &item(Action::Group, t("Group selected")),
                 &b,
                 &item(Action::Renumber, t("Renumber all cues")),
+                &item(Action::LevelLoudness, t("Level selected cues to loudness target")),
             ],
         );
 
@@ -341,6 +345,7 @@ impl App {
             Action::Open => self.deferred.push(Deferred::Open),
             Action::Save => self.deferred.push(Deferred::Save),
             Action::SaveAs => self.deferred.push(Deferred::SaveAs),
+            Action::Bundle => self.deferred.push(Deferred::Bundle),
             Action::Import => self.deferred.push(Deferred::AddMediaCues),
             Action::Quit => ctx.send_viewport_cmd(egui::ViewportCommand::Close),
             Action::Undo => self.undo(show),
@@ -349,6 +354,7 @@ impl App {
             Action::Delete => self.delete_selected(show),
             Action::Group => self.group_selected(show),
             Action::Renumber => self.renumber_all(show),
+            Action::LevelLoudness => self.level_loudness(show),
             Action::Settings => self.show_settings = true,
             Action::NewCue(i) => {
                 if let Some(tag) = KindTag::ALL.get(i).filter(|t| t.enabled()) {

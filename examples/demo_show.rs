@@ -1288,11 +1288,15 @@ impl Gen {
         }
         let first = tracks[0].id;
         // The last track follows into this: the playlist loops until it is faded out.
+        let second = tracks[1].id;
         let start_again = self.numbered("Play the first track again", CueKind::Start { target: Some(first) });
+        let again_id = start_again.id;
         tracks.push(start_again);
         let playlist = self.group("Preshow playlist", GroupMode::StartFirst, tracks);
         let playlist_id = playlist.id;
         out.push(playlist);
+        // Skips the first track from the second time round.
+        out.push(self.numbered("Loop the playlist from track 2", CueKind::Target { target: Some(again_id), new_target: Some(second) }));
         let foyer = self.numbered(
             "Foyer camera to lobby screen",
             CueKind::Camera(CameraCue {
@@ -1317,13 +1321,44 @@ impl Gen {
         phones.hotkey = Some("P".into());
         phones.midi_trigger = Some(openq::model::MidiTrigger { kind: openq::model::MidiTriggerKind::Note, channel: Some(9), number: 36 });
         out.push(phones);
-        out.push(self.sfx("Phone ring (announcement)", "phone_alerts_and_rings"));
+        let mut ring = self.sfx("Phone ring (announcement)", "phone_alerts_and_rings");
+        if let CueKind::Audio(a) = &mut ring.kind {
+            // The mono file to both pros, ganged: one drag moves both.
+            a.routing = Some(vec![vec![0.0, -3.0]]);
+            a.gangs = vec![vec![1, 1]];
+            a.volume_db = openq::loudness::gain_to(-16.0, openq::loudness::DEFAULT_TARGET);
+        }
+        let ring_id = ring.id;
+        out.push(ring);
         let mut bell = self.sfx("Beginners bell", "medium_bell_ringing_near");
         if let CueKind::Audio(a) = &mut bell.kind {
             a.volume_db = -6.0;
             a.end_time = Some(4.0);
         }
+        // Rung by the clock on performance days (Tuesday to Saturday) if nobody GOes it first.
+        bell.wallclock_trigger = Some(openq::model::WallClockTrigger { time: 19 * 3600 + 25 * 60, days: 0b0111110 });
         out.push(bell);
+        let mut lobby = self.sfx("Lobby call (lobby speakers patch)", "medium_bell_ringing_near");
+        if let CueKind::Audio(a) = &mut lobby.kind {
+            a.patch = 1;
+        }
+        lobby.notes = "Plays through the \"Lobby speakers\" audio patch: pick its device in Settings → Audio.".into();
+        out.push(lobby);
+        let mut band = self.numbered(
+            "Tell the band: MSC GO 1",
+            CueKind::Midi(openq::model::MidiCue { msc_cue: "1".into(), msc_list: "1".into(), message: openq::model::MidiMessageKind::Msc, ..Default::default() }),
+        );
+        band.notes = "MIDI Show Control to the band's playback rig (first MIDI output).".into();
+        out.push(band);
+        out.push(self.numbered(
+            "Keys to patch 12",
+            CueKind::Midi(openq::model::MidiCue { message: openq::model::MidiMessageKind::Program, channel: 1, number: 11, ..Default::default() }),
+        ));
+        // Operator tools for the phone announcement.
+        out.push(self.numbered("No phone ring tonight", CueKind::Disarm { target: Some(ring_id) }));
+        out.push(self.numbered("Phone ring back on", CueKind::Arm { target: Some(ring_id) }));
+        out.push(self.numbered("Load the phone ring 1 s in", CueKind::Load { target: Some(ring_id), time: 1.0 }));
+        out.push(self.numbered("Phone ring as it was", CueKind::Reset { target: Some(ring_id) }));
         let mut out_pl = self.fade("Preshow music out", playlist_id, |f| {
             f.duration = 6.0;
             f.volume_db = Some(MIN_DB);
@@ -1332,6 +1367,17 @@ impl Gen {
         out_pl.number = self.next_number();
         out_pl.continue_mode = ContinueMode::AutoContinue;
         out_pl.post_wait = 3.0;
+        let mut to_back = self.fade("Preshow music to the surrounds", playlist_id, |f| {
+            f.duration = 8.0;
+            f.volume_db = None;
+            f.stop_target_when_done = false;
+            f.out_levels = Some(vec![-24.0, -24.0, 0.0, 0.0]);
+            let mut comp = AudioEffect::new(AudioFxKind::Compressor);
+            comp.params[0] = -30.0;
+            f.audio_fx = Some(vec![comp]);
+        });
+        to_back.number = self.next_number();
+        out.push(to_back);
         out.push(out_pl);
         out.push(self.lx(2));
 
@@ -1388,6 +1434,11 @@ impl Gen {
         let mut m = self.memo("Storm sequence on timecode", "Follows MTC from the band's playback rig at 10:00:00:00. Nothing here needs a GO.");
         m.color = CueColor::Blue;
         out.push(m);
+        // Rehearsals without the band: send that timecode ourselves.
+        out.push(self.numbered(
+            "Rehearsal: MTC from 09:59:55:00",
+            CueKind::Timecode(openq::model::TimecodeCue { output: openq::model::TimecodeOutput::Mtc, start: TC_START - 5.0, duration: 70.0, ..Default::default() }),
+        ));
         let hits = [("thunder_crack", 2.0), ("rolling_thunder", 9.5), ("low_thunder_rolls", 17.0), ("thunder_crack", 23.0), ("distant_thunder", 31.0), ("thunder_crack", 38.0), ("rolling_thunder", 44.5), ("low_thunder_rolls", 52.0)];
         for (k, (stem, t)) in hits.iter().enumerate() {
             if self.lx_left(3) > 0 {
@@ -1548,6 +1599,8 @@ fn settings() -> openq::model::Settings {
             osc_feedback_port: 9000,
             msc: openq::msc::MscSettings { enabled: true, device: 1, group: Some(1), format: Some(0x10) },
         },
+        patches: vec![openq::model::AudioPatch { name: "Lobby speakers".into(), device: None }],
+        loudness_target: -20.0,
         ..Default::default()
     }
 }

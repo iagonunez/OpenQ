@@ -192,7 +192,12 @@ fn random_cue(rng: &mut fastrand::Rng, depth: usize, n: &mut usize) -> Cue {
         67..70 => CueKind::Pause { target: None },
         70..73 => CueKind::Goto { target: None },
         73..76 => CueKind::Devamp { target: None },
-        76..80 => CueKind::Network(NetworkCue { host: "127.0.0.1".into(), port: 9, address: "/x".into(), args: String::new() }),
+        76..78 => CueKind::Network(NetworkCue { host: "127.0.0.1".into(), port: 9, address: "/x".into(), args: String::new() }),
+        78 => CueKind::Arm { target: None },
+        79 => CueKind::Disarm { target: None },
+        80 => CueKind::Reset { target: None },
+        81 => CueKind::Load { target: None, time: rng.f64() },
+        82 => CueKind::Target { target: None, new_target: None },
         _ if depth < 3 => {
             let mode = [GroupMode::StartFirstAndEnter, GroupMode::StartFirst, GroupMode::StartAll, GroupMode::StartRandom][rng.usize(0..4)];
             let children = (0..rng.usize(0..6)).map(|_| random_cue(rng, depth + 1, n)).collect();
@@ -238,7 +243,15 @@ fn random_workspace(rng: &mut fastrand::Rng, count: usize) -> Workspace {
             CueKind::Fade(f) => f.target = pick(rng),
             CueKind::Start { target } | CueKind::Goto { target } | CueKind::Devamp { target } => *target = pick(rng),
             CueKind::Stop { target } | CueKind::Pause { target } => *target = if rng.bool() { pick(rng) } else { None },
-            _ => {}
+            CueKind::Target { target, new_target } => {
+                *target = pick(rng);
+                *new_target = pick(rng);
+            }
+            k => {
+                if let Some(t) = k.target_mut() {
+                    *t = pick(rng);
+                }
+            }
         });
     }
     ws

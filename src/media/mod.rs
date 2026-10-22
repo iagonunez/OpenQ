@@ -3,9 +3,11 @@
 pub mod audio;
 pub mod decoder;
 pub mod input;
+pub mod midiout;
 pub mod netsend;
 pub mod pool;
 pub mod still;
+pub mod tcgen;
 pub mod tcio;
 pub mod text;
 #[cfg(feature = "video")]
@@ -562,6 +564,14 @@ pub struct Media {
     pub prober: Arc<Prober>,
     /// Sends Network cue messages (started by the first one).
     net: Option<netsend::NetSender>,
+    /// MIDI cue sender, started on the first MIDI cue.
+    midi_out: Option<midiout::MidiOut>,
+    /// Generators of running Timecode cues.
+    timecode_out: HashMap<CueId, tcgen::TcGen>,
+    /// The audio patches' outputs (Settings → Audio), in order: patch n is `patches[n - 1]`.
+    patches: Vec<PatchOut>,
+    /// Master level, for the patches' outputs too.
+    master_db: f32,
     /// Open inputs of running Mic cues.
     mics: HashMap<CueId, MicInput>,
     /// Set while a lost audio output is being reopened.
@@ -622,6 +632,8 @@ struct PendingAudio {
     params: crate::model::AudioCue,
     at: Instant,
     paused: bool,
+    /// File time to skip (a Load cue loaded it part way through).
+    skip: f64,
 }
 
 /// How often to try reopening a lost audio device.
@@ -640,7 +652,135 @@ struct Reconnect {
     tries: u32,
 }
 
+/// An audio patch's output device, opened (and reopened when lost) on a thread of its own.
+struct PatchOut {
+    /// Device chosen for the patch (None = none chosen).
+    device: Option<String>,
+    out: Option<audio::AudioOutput>,
+    error: Option<String>,
+    opening: Option<std::sync::mpsc::Receiver<anyhow::Result<audio::AudioOutput>>>,
+    next_try: Instant,
+}
+
+impl PatchOut {
+    fn new(device: Option<String>) -> Self {
+        Self { device, out: None, error: None, opening: None, next_try: Instant::now() }
+    }
+
+    /// Open the device in the background if it isn't open (or was lost) and it's time to try.
+    fn watch(&mut self, now: Instant, master_db: f32, room: &[crate::spatial::Speaker], notes: &mut Vec<String>) {
+        if self.out.as_ref().is_some_and(|a| a.is_lost()) {
+            let a = self.out.take().expect("checked");
+            notes.push(format!("Audio patch output lost ({}); its sounds stopped. Reconnecting…", a.device_name));
+            self.error = Some("device lost; reconnecting".into());
+            self.next_try = now;
+        }
+        let Some(device) = self.device.clone() else {
+            self.error = None;
+            return;
+        };
+        if let Some(rx) = &self.opening {
+            match rx.try_recv() {
+                Ok(Ok(mut a)) => {
+                    a.set_master(master_db);
+                    a.set_room(room);
+                    if self.error.is_some() {
+                        notes.push(format!("Audio patch output back: {}", a.device_name));
+                    }
+                    self.out = Some(a);
+                    self.error = None;
+                    self.opening = None;
+                }
+                Ok(Err(e)) => {
+                    self.error = Some(format!("{e:#}"));
+                    self.opening = None;
+                    self.next_try = now + AUDIO_RETRY;
+                }
+                Err(std::sync::mpsc::TryRecvError::Empty) => {}
+                Err(std::sync::mpsc::TryRecvError::Disconnected) => {
+                    self.opening = None;
+                    self.next_try = now + AUDIO_RETRY;
+                }
+            }
+            return;
+        }
+        if self.out.is_none() && now >= self.next_try {
+            let (tx, rx) = std::sync::mpsc::channel();
+            let spawned = std::thread::Builder::new().name("openq-patch-open".into()).spawn(move || {
+                let _ = tx.send(crate::recovery::catch(|| audio::AudioOutput::open(Some(&device))));
+            });
+            match spawned {
+                Ok(_) => self.opening = Some(rx),
+                Err(_) => self.next_try = now + AUDIO_RETRY,
+            }
+        }
+    }
+}
+
 impl Media {
+    /// The output of audio patch `patch` (0 = the main device), or why there is none.
+    fn output(&mut self, patch: u8) -> Result<&mut audio::AudioOutput, String> {
+        if patch == 0 {
+            return match &mut self.audio {
+                Some(a) => Ok(a),
+                None => Err(format!("audio unavailable: {}", self.audio_error.as_deref().unwrap_or("?"))),
+            };
+        }
+        match self.patches.get_mut(patch as usize - 1) {
+            Some(PatchOut { out: Some(a), .. }) => Ok(a),
+            Some(PatchOut { device: None, .. }) => Err(format!("audio patch {patch} has no device")),
+            Some(p) => Err(format!("audio patch {patch} unavailable: {}", p.error.as_deref().unwrap_or("opening…"))),
+            None => Err(format!("there is no audio patch {patch}")),
+        }
+    }
+
+    /// Every open audio output: the main one, then the patches'.
+    fn outputs(&mut self) -> impl Iterator<Item = &mut audio::AudioOutput> {
+        self.audio.iter_mut().chain(self.patches.iter_mut().filter_map(|p| p.out.as_mut()))
+    }
+
+    /// Every open audio output (read only).
+    fn outputs_ref(&self) -> impl Iterator<Item = &audio::AudioOutput> {
+        self.audio.iter().chain(self.patches.iter().filter_map(|p| p.out.as_ref()))
+    }
+
+    /// The output playing `id`, if any.
+    fn output_of(&mut self, id: CueId) -> Option<&mut audio::AudioOutput> {
+        self.outputs().find(|a| a.has(id))
+    }
+
+    /// Output channel count of audio patch `patch` (0 = the main device), if it is open.
+    pub fn patch_channels(&self, patch: u8) -> Option<usize> {
+        if patch == 0 {
+            return self.audio.as_ref().map(|a| a.channels);
+        }
+        self.patches.get(patch as usize - 1)?.out.as_ref().map(|a| a.channels)
+    }
+
+    /// Device name of patch `patch` (0 = the main device) and why it isn't open.
+    pub fn patch_status(&self, patch: u8) -> (Option<String>, Option<String>) {
+        if patch == 0 {
+            return (self.audio.as_ref().map(|a| a.device_name.clone()), self.audio_error.clone());
+        }
+        match self.patches.get(patch as usize - 1) {
+            Some(p) => (p.out.as_ref().map(|a| a.device_name.clone()), p.error.clone()),
+            None => (None, Some("no such patch".into())),
+        }
+    }
+
+    /// Open (in the background) the devices of the show's audio patches; patches whose device
+    /// changed close and reopen, the others keep playing.
+    pub fn set_patches(&mut self, patches: &[crate::model::AudioPatch]) {
+        if self.patches.len() == patches.len() && self.patches.iter().zip(patches).all(|(a, b)| a.device == b.device) {
+            return;
+        }
+        let mut old = std::mem::take(&mut self.patches);
+        for (i, p) in patches.iter().enumerate() {
+            let keep = old.get_mut(i).filter(|o| o.device == p.device).map(|o| std::mem::replace(o, PatchOut::new(None)));
+            self.patches.push(keep.unwrap_or_else(|| PatchOut::new(p.device.clone())));
+        }
+    }
+
     /// Open the default audio device and the video system.
     pub fn new(prober: Arc<Prober>) -> Self {
         let (audio, audio_error) = match audio::AudioOutput::open(None) {
@@ -669,6 +809,10 @@ impl Media {
             video_error,
             prober,
             net: None,
+            midi_out: None,
+            timecode_out: HashMap::new(),
+            patches: Vec::new(),
+            master_db: 0.0,
             mics: HashMap::new(),
             reconnect: None,
             notes: Vec::new(),
@@ -679,13 +823,22 @@ impl Media {
         }
     }
 
+    /// Set the master level (dB) of every audio output.
+    pub fn set_master(&mut self, db: f32) {
+        self.master_db = db;
+        for a in self.outputs() {
+            a.set_master(db);
+        }
+    }
+
     /// Set the object-audio room (the workspace's speakers).
     pub fn set_room(&mut self, speakers: &[crate::spatial::Speaker]) {
         if self.room != speakers {
             self.room = speakers.to_vec();
         }
-        if let Some(a) = &mut self.audio {
-            a.set_room(&self.room);
+        let room = self.room.clone();
+        for a in self.outputs() {
+            a.set_room(&room);
         }
     }
 
@@ -697,12 +850,7 @@ impl Media {
         {
             return v.elapsed(id);
         }
-        if let Some(a) = &self.audio
-            && a.has(id)
-        {
-            return a.elapsed(id);
-        }
-        None
+        self.outputs_ref().find(|a| a.has(id)).and_then(|a| a.elapsed(id))
     }
 
     /// Release every player and the audio stream.
@@ -712,6 +860,7 @@ impl Media {
             self.video = None;
         }
         self.audio = None;
+        self.patches.clear();
     }
 
     /// Switch audio output device. Running audio cues must be stopped first.
@@ -748,12 +897,56 @@ impl Media {
             .collect();
         for (id, r) in ready {
             let p = self.pending_audio.remove(&id).expect("pending");
-            let r = r.and_then(|ch| match &mut self.audio {
-                Some(a) => a.start(id, &p.params, ch, p.at.max(now)),
-                None => Err("audio unavailable".into()),
-            });
+            let r = r.and_then(|ch| self.output(p.params.patch).and_then(|a| a.start_from(id, &p.params, ch, p.at.max(now), p.skip)));
             if let Err(e) = r {
                 self.notes.push(format!("{}: {e}", p.params.path.display()));
+            }
+        }
+    }
+
+    /// Start a Timecode cue's generator `offset` seconds after its start time.
+    fn start_timecode(&mut self, id: CueId, t: &crate::model::TimecodeCue, at: Instant, offset: f64) -> Result<(), String> {
+        use crate::model::TimecodeOutput;
+        self.timecode_out.remove(&id);
+        let start = t.start + offset.max(0.0);
+        let g = match t.output {
+            TimecodeOutput::Ltc => {
+                let Some(a) = &mut self.audio else {
+                    return Err(format!("audio unavailable: {}", self.audio_error.as_deref().unwrap_or("?")));
+                };
+                if t.channel as usize >= a.channels {
+                    return Err(format!("the audio device has no output {}", t.channel + 1));
+                }
+                let mix = audio::MixParams { volume_db: t.volume_db, routing: Some(t.ltc_routing()), ..audio::MixParams::default() };
+                let (tx, _) = a.add_external(id, &mix, 1, "LTC", 0.1);
+                tcgen::TcGen::ltc(tx, start, t.rate, a.rate, 1.0)
+            }
+            TimecodeOutput::Mtc => tcgen::TcGen::mtc(t.midi_port.clone(), start, t.rate, at),
+        };
+        self.timecode_out.insert(id, g);
+        Ok(())
+    }
+
+    /// Start an audio cue `skip` seconds of file time in.
+    fn start_audio(&mut self, id: CueId, p: &crate::model::AudioCue, at: Instant, skip: f64) -> Result<(), String> {
+        if p.path.as_os_str().is_empty() {
+            return Err("no audio file".into());
+        }
+        if !self.prober.exists(&p.path) {
+            return Err(format!("file not found: {}", p.path.display()));
+        }
+        self.pending_audio.remove(&id);
+        let info = self.prober.get(&p.path);
+        let a = self.output(p.patch)?;
+        match info {
+            Some(Ok(i)) => a.start_from(id, p, i.channels.max(1), at, skip),
+            Some(Err(e)) => Err(e),
+            None => {
+                // Normally preloading has probed it. Never probe here (engine thread,
+                // show locked): start when the background probe answers.
+                a.stop(id);
+                self.pending_audio.insert(id, PendingAudio { params: p.clone(), at, paused: false, skip });
+                Ok(())
             }
         }
     }
@@ -761,7 +954,7 @@ impl Media {
     /// How a video cue's soundtrack enters the mixer (None: no mixer, or the file has no audio).
     #[cfg(feature = "video")]
     fn video_tap(&self, v: &VideoCue) -> Option<video::AudioTap> {
-        let a = self.audio.as_ref()?;
+        let a = if v.patch == 0 { self.audio.as_ref()? } else { self.patches.get(v.patch as usize - 1)?.out.as_ref()? };
         if is_image_path(&v.path) {
             return None;
         }
@@ -833,10 +1026,11 @@ impl Media {
     /// Silence everything at once: every voice, layer and live input (last-resort recovery).
     pub fn stop_everything(&mut self) {
         self.pending_audio.clear();
-        if let Some(a) = &mut self.audio {
+        for a in self.outputs() {
             a.stop_all();
         }
         self.mics.clear();
+        self.timecode_out.clear();
         #[cfg(feature = "video")]
         if let Some(v) = &mut self.video {
             v.stop_all();
@@ -850,13 +1044,18 @@ impl Media {
                 if let Some(pending) = self.pending_audio.get_mut(&cue.id) {
                     pending.params = p.clone();
                 }
-                if let Some(a) = &mut self.audio {
+                if let Some(a) = self.output_of(cue.id) {
                     a.update_live(cue.id, &audio::MixParams::from(p));
                 }
             }
             CueKind::Mic(m) => {
-                if let Some(a) = &mut self.audio {
+                if let Some(a) = self.output_of(cue.id) {
                     a.update_live(cue.id, &audio::MixParams::from(m));
+                }
+            }
+            CueKind::Timecode(t) if t.output == crate::model::TimecodeOutput::Ltc => {
+                if let Some(a) = &mut self.audio {
+                    a.update_live(cue.id, &audio::MixParams { volume_db: t.volume_db, routing: Some(t.ltc_routing()), ..Default::default() });
                 }
             }
             #[cfg(feature = "video")]
@@ -873,7 +1072,7 @@ impl Media {
             }
             #[cfg(feature = "video")]
             CueKind::Video(p) => {
-                if let Some(a) = &mut self.audio {
+                if let Some(a) = self.output_of(cue.id) {
                     a.update_live(cue.id, &audio::MixParams::from(p));
                 }
                 if let Some(v) = &mut self.video {
@@ -891,9 +1090,7 @@ impl Media {
 
     /// Open a Mic cue's input and feed it into a new mixer voice.
     fn start_mic(&mut self, id: CueId, m: &crate::model::MicCue, at: Instant) -> Result<(), String> {
-        let Some(a) = &mut self.audio else {
-            return Err(format!("audio unavailable: {}", self.audio_error.as_deref().unwrap_or("?")));
-        };
+        let a = self.output(m.patch)?;
         let ch = (m.channels as usize).clamp(1, crate::model::MAX_SRC_CHANNELS);
         // Start silent and ramp up when there's a fade-in.
         let mut mix = audio::MixParams::from(m);
@@ -923,8 +1120,11 @@ impl Media {
 
     /// Mic inputs: take streams that finished opening, reopen lost ones.
     fn watch_mics(&mut self, now: Instant) {
-        let Some(a) = &mut self.audio else { return };
+        if self.mics.is_empty() {
+            return;
+        }
         let mut failed = Vec::new();
+        let mut fades = Vec::new();
         for (id, m) in self.mics.iter_mut() {
             if let Some(rx) = &m.opening {
                 match rx.try_recv() {
@@ -935,7 +1135,7 @@ impl Media {
                         }
                         m.sink.lock().set_input_rate(s.rate);
                         if let Some((db, secs, _)) = m.fade_in.take() {
-                            a.fade(*id, db, secs, crate::model::FadeCurve::SCurve, now);
+                            fades.push((*id, db, secs));
                         }
                         if m.lost {
                             m.lost = false;
@@ -966,9 +1166,16 @@ impl Media {
                 m.open();
             }
         }
+        for (id, db, secs) in fades {
+            if let Some(a) = self.output_of(id) {
+                a.fade(id, db, secs, crate::model::FadeCurve::SCurve, now);
+            }
+        }
         for (id, e) in failed {
             self.mics.remove(&id);
-            a.stop(id);
+            if let Some(a) = self.output_of(id) {
+                a.stop(id);
+            }
             self.notes.push(e);
         }
     }
@@ -1037,8 +1244,16 @@ impl Backend for Media {
             })
             .collect();
         self.preload_retry = waiting.then(|| Instant::now() + std::time::Duration::from_millis(50));
+        // Each output keeps the cues that play through it.
         if let Some(a) = &mut self.audio {
-            a.set_preloaded(&list);
+            let mine: Vec<_> = list.iter().filter(|c| c.1.patch == 0).copied().collect();
+            a.set_preloaded(&mine);
+        }
+        for (i, p) in self.patches.iter_mut().enumerate() {
+            if let Some(a) = &mut p.out {
+                let mine: Vec<_> = list.iter().filter(|c| c.1.patch as usize == i + 1).copied().collect();
+                a.set_preloaded(&mine);
+            }
         }
         #[cfg(feature = "video")]
         {
@@ -1073,35 +1288,32 @@ impl Backend for Media {
     fn lookahead(&self) -> std::time::Duration {
         // A sound server can render 20 ms or more at once (PipeWire's default quantum is 1024
         // frames): 25 ms ahead missed those blocks whenever the show lock delayed a tick.
-        let block = self.audio.as_ref().map_or(std::time::Duration::ZERO, |a| a.block());
+        let block = self.outputs_ref().map(|a| a.block()).max().unwrap_or(std::time::Duration::ZERO);
         crate::engine::LOOKAHEAD + block.min(MAX_BLOCK_LEAD)
+    }
+
+    fn start_from(&mut self, cue: &Cue, at: Instant, offset: f64) -> Result<(), String> {
+        match &cue.kind {
+            CueKind::Audio(p) => self.start_audio(cue.id, p, at, offset * p.rate.clamp(0.05, 8.0) as f64),
+            CueKind::Timecode(t) => self.start_timecode(cue.id, t, at, offset),
+            CueKind::Video(v) if offset > 0.0 && !is_image_path(&v.path) => {
+                if v.infinite_loop || v.play_count > 1 {
+                    return Err("a looping movie can't start part way through".into());
+                }
+                let mut c = cue.shallow_clone();
+                if let CueKind::Video(v) = &mut c.kind {
+                    v.start_time = v.start_time.max(0.0) + offset;
+                }
+                self.start(&c, at)
+            }
+            // Pictures, text and live inputs just show for the rest of their time.
+            _ => self.start(cue, at),
+        }
     }
 
     fn start(&mut self, cue: &Cue, at: Instant) -> Result<(), String> {
         match &cue.kind {
-            CueKind::Audio(p) => {
-                let Some(a) = &mut self.audio else {
-                    return Err(format!("audio unavailable: {}", self.audio_error.as_deref().unwrap_or("?")));
-                };
-                if p.path.as_os_str().is_empty() {
-                    return Err("no audio file".into());
-                }
-                if !self.prober.exists(&p.path) {
-                    return Err(format!("file not found: {}", p.path.display()));
-                }
-                self.pending_audio.remove(&cue.id);
-                match self.prober.get(&p.path) {
-                    Some(Ok(i)) => a.start(cue.id, p, i.channels.max(1), at),
-                    Some(Err(e)) => Err(e),
-                    None => {
-                        // Normally preloading has probed it. Never probe here (engine thread,
-                        // show locked): start when the background probe answers.
-                        a.stop(cue.id);
-                        self.pending_audio.insert(cue.id, PendingAudio { params: p.clone(), at, paused: false });
-                        Ok(())
-                    }
-                }
-            }
+            CueKind::Audio(p) => self.start_audio(cue.id, p, at, 0.0),
             #[cfg(feature = "video")]
             CueKind::Video(p) => {
                 if !p.path.as_os_str().is_empty() && !self.prober.exists(&p.path) {
@@ -1112,14 +1324,15 @@ impl Backend for Media {
                     return Err(format!("video unavailable: {}", self.video_error.as_deref().unwrap_or("?")));
                 };
                 v.start(cue.id, p, at, tap)?;
-                if let (Some(tap), Some(a)) = (tap, &mut self.audio) {
-                    let label = p.path.display().to_string();
-                    let (tx, state) = a.add_external(cue.id, &audio::MixParams::from(p), tap.channels, &label, 1.0);
+                let label = p.path.display().to_string();
+                let track = tap.and_then(|tap| Some(self.output(p.patch).ok()?.add_external(cue.id, &audio::MixParams::from(p), tap.channels, &label, 1.0)));
+                if let (Some((tx, state)), Some(v)) = (track, &mut self.video) {
                     v.attach_audio(cue.id, tx, state);
                 }
                 Ok(())
             }
             CueKind::Mic(m) => self.start_mic(cue.id, m, at),
+            CueKind::Timecode(t) => self.start_timecode(cue.id, t, at, 0.0),
             #[cfg(feature = "video")]
             CueKind::Camera(c) => match &mut self.video {
                 Some(v) => {
@@ -1144,7 +1357,8 @@ impl Backend for Media {
 
     fn stop(&mut self, id: CueId) {
         self.pending_audio.remove(&id);
-        if let Some(a) = &mut self.audio {
+        self.timecode_out.remove(&id);
+        for a in self.outputs() {
             a.stop(id);
         }
         self.mics.remove(&id);
@@ -1155,10 +1369,13 @@ impl Backend for Media {
     }
 
     fn pause(&mut self, id: CueId) {
+        if let Some(g) = self.timecode_out.get(&id) {
+            g.pause();
+        }
         if let Some(p) = self.pending_audio.get_mut(&id) {
             p.paused = true;
         }
-        if let Some(a) = &mut self.audio {
+        for a in self.outputs() {
             a.pause(id);
         }
         #[cfg(feature = "video")]
@@ -1168,11 +1385,14 @@ impl Backend for Media {
     }
 
     fn resume(&mut self, id: CueId, at: Instant) {
+        if let Some(g) = self.timecode_out.get(&id) {
+            g.resume(at);
+        }
         if let Some(p) = self.pending_audio.get_mut(&id) {
             p.paused = false;
             p.at = at;
         }
-        if let Some(a) = &mut self.audio {
+        for a in self.outputs() {
             a.resume(id, at);
         }
         #[cfg(feature = "video")]
@@ -1182,12 +1402,15 @@ impl Backend for Media {
     }
 
     fn fade(&mut self, id: CueId, f: &FadeRequest, at: Instant) {
-        if let Some(a) = &mut self.audio {
+        if let Some(a) = self.output_of(id) {
             if let Some(db) = f.volume_db {
                 a.fade(id, db, f.duration, f.curve, at);
             }
             if let Some(objs) = &f.objects {
                 a.fade_objects(id, objs, f.duration, f.curve, at);
+            }
+            if f.out_levels.is_some() || f.audio_fx.is_some() {
+                a.fade_mix(id, f.out_levels.as_deref(), f.audio_fx.as_deref(), f.duration, f.curve, at);
             }
         }
         #[cfg(feature = "video")]
@@ -1197,7 +1420,7 @@ impl Backend for Media {
     }
 
     fn hold_fade(&mut self, id: CueId) {
-        if let Some(a) = &mut self.audio {
+        for a in self.outputs() {
             a.hold(id);
         }
         #[cfg(feature = "video")]
@@ -1207,7 +1430,7 @@ impl Backend for Media {
     }
 
     fn devamp(&mut self, id: CueId) -> bool {
-        self.audio.as_mut().is_some_and(|a| a.devamp(id))
+        self.output_of(id).is_some_and(|a| a.devamp(id))
     }
 
     /// Queues the message: the host name lookup and the send happen on the
@@ -1221,11 +1444,24 @@ impl Backend for Media {
         self.net.as_ref().expect("just set").send(&n.host, n.port, bytes)
     }
 
+    /// Queues the message for the [`midiout::MidiOut`] worker (opening a port can take a while).
+    fn send_midi(&mut self, m: &crate::model::MidiCue) -> Result<(), String> {
+        let bytes = m.bytes()?;
+        if self.midi_out.is_none() {
+            self.midi_out = Some(midiout::MidiOut::new().map_err(|e| e.to_string())?);
+        }
+        self.midi_out.as_ref().expect("just set").send(m.port.as_deref(), bytes)
+    }
+
     fn is_finished(&self, id: CueId) -> bool {
         if self.pending_audio.contains_key(&id) {
             return false;
         }
-        let audio_done = self.audio.as_ref().is_none_or(|a| a.is_finished(id));
+        if let Some(g) = self.timecode_out.get(&id) {
+            // An LTC voice never ends by itself; MTC ends only when its port failed.
+            return g.ended();
+        }
+        let audio_done = self.outputs_ref().all(|a| a.is_finished(id));
         #[cfg(feature = "video")]
         let video_done = self.video.as_ref().is_none_or(|v| v.is_finished(id));
         #[cfg(not(feature = "video"))]
@@ -1241,6 +1477,7 @@ impl Backend for Media {
             CueKind::Text(t) => return (t.duration > 0.0).then_some(t.duration),
             CueKind::Mic(m) => return (m.duration > 0.0).then_some(m.duration),
             CueKind::Camera(c) => return (c.duration > 0.0).then_some(c.duration),
+            CueKind::Timecode(t) => return (t.duration > 0.0).then_some(t.duration),
             CueKind::Video(v) => self.prober.get(&v.path)?.ok()?.duration,
             _ => return None,
         };
@@ -1268,9 +1505,15 @@ impl Backend for Media {
 
     fn drain_errors(&mut self) -> Vec<String> {
         let mut out = std::mem::take(&mut self.notes);
-        out.extend(self.audio.as_mut().map(|a| a.drain_errors()).unwrap_or_default());
+        for a in self.outputs() {
+            out.extend(a.drain_errors());
+        }
         out.extend(self.light.drain_errors());
         out.extend(self.net.as_ref().map(|n| n.drain_errors()).unwrap_or_default());
+        out.extend(self.midi_out.as_ref().map(|n| n.drain_errors()).unwrap_or_default());
+        for g in self.timecode_out.values() {
+            out.extend(g.drain_errors());
+        }
         #[cfg(feature = "video")]
         if let Some(v) = &mut self.video {
             out.extend(v.drain_errors());
@@ -1286,13 +1529,22 @@ impl Backend for Media {
             self.light_audio = tap.as_ref().map(|t| t.id());
             self.light.set_audio(tap);
         }
+        let (master, room) = (self.master_db, self.room.clone());
+        for p in &mut self.patches {
+            p.watch(now, master, &room, &mut self.notes);
+        }
         self.watch_mics(now);
         self.start_pending_audio(now);
-        if let Some(a) = &mut self.audio {
+        for a in self.outputs() {
             a.advance_fades(now);
             a.update();
-            // Close the inputs of Mic cues whose voice has ended.
-            self.mics.retain(|id, _| !a.is_finished(*id));
+        }
+        // Close the inputs of Mic cues whose voice has ended.
+        if !self.mics.is_empty() {
+            let done: Vec<CueId> = self.mics.keys().copied().filter(|id| self.outputs_ref().all(|a| a.is_finished(*id))).collect();
+            for id in done {
+                self.mics.remove(&id);
+            }
         }
         #[cfg(feature = "video")]
         if let Some(v) = &mut self.video {
@@ -1427,6 +1679,33 @@ mod tests {
         // Release the probe stuck opening the FIFO.
         let _ = std::fs::OpenOptions::new().write(true).open(&fifo);
         let _ = std::fs::remove_file(&fifo);
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    /// A cue on an audio patch plays through that patch's output, not the main one; pausing,
+    /// fading and stopping find it there; a cue on a patch without a device fails.
+    #[test]
+    fn cues_play_through_their_audio_patch() {
+        use crate::engine::Backend;
+        let dir = std::env::temp_dir().join(format!("openq-patch-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let wav = dir.join("p.wav");
+        decoder::tests::write_wav(&wav, 48000, 0.5);
+        let mut media = Media::new(Prober::new());
+        media.prober.get_blocking(&wav).unwrap();
+        media.audio = Some(audio::AudioOutput::open_virtual(48000, 2, None).unwrap());
+        media.patches.push(PatchOut { out: Some(audio::AudioOutput::open_virtual(48000, 8, None).unwrap()), ..PatchOut::new(Some("virtual".into())) });
+        media.patches.push(PatchOut::new(None));
+        let cue = Cue::new(CueKind::Audio(crate::model::AudioCue { path: wav.clone(), patch: 1, ..Default::default() }));
+        assert_eq!(media.start(&cue, Instant::now()), Ok(()));
+        assert!(media.patches[0].out.as_ref().unwrap().has(cue.id));
+        assert!(!media.audio.as_ref().unwrap().has(cue.id));
+        assert_eq!(media.patch_channels(1), Some(8));
+        assert!(!media.is_finished(cue.id));
+        media.stop(cue.id);
+        assert!(!media.patches[0].out.as_ref().unwrap().has(cue.id));
+        let nowhere = Cue::new(CueKind::Audio(crate::model::AudioCue { path: wav, patch: 2, ..Default::default() }));
+        assert!(media.start(&nowhere, Instant::now()).unwrap_err().contains("no device"));
         let _ = std::fs::remove_dir_all(&dir);
     }
 

@@ -22,12 +22,16 @@
      <ol class="sub">
       <li class="s2"><a href="#cues">Tipos de cue</a></li>
       <li class="s3"><a href="#midi-triggers">Disparadores MIDI</a></li>
+      <li class="s3"><a href="#wall-clock-triggers">Disparadores de reloj</a></li>
+      <li class="s3"><a href="#cues-that-change-cues">Cues que cambian otras cues</a></li>
+      <li class="s3"><a href="#midi-cues">Cues MIDI</a></li>
       <li class="s2"><a href="#timing">Tiempos y continuaciones</a></li>
       <li class="s3"><a href="#groups">Grupos</a></li>
       <li class="s2"><a href="#fades">Fundidos</a></li>
       <li class="s2"><a href="#timecode">Código de tiempo</a></li>
       <li class="s3"><a href="#setting-up-a-cue-list">Configurar una lista de cues</a></li>
       <li class="s3"><a href="#timecode-triggers">Disparadores por código de tiempo</a></li>
+      <li class="s3"><a href="#sending-timecode">Enviar timecode</a></li>
      </ol>
     </li>
     <li><a href="audio.es.html">Audio</a></li>
@@ -64,6 +68,13 @@
     <div class="type"><b><span class="ms" aria-hidden="true">&#xe31d;</span>Micro</b><span class="d">Reproduce una entrada de audio en directo, como un micrófono, por el mezclador.</span></div>
     <div class="type"><b><span class="ms" aria-hidden="true">&#xe412;</span>Cámara</b><span class="d">Muestra una cámara o una capturadora en directo en un escenario.</span></div>
     <div class="type"><b><span class="ms" aria-hidden="true">&#xe90f;</span>Luz</b><span class="d">Reproduce una cue del diseño de iluminación, o libera sus secuencias (ver <a href="lighting.es.html#lighting">Iluminación</a>).</span></div>
+    <div class="type"><b><span class="ms" aria-hidden="true">&#xf0be;</span>Armar</b><span class="d">Arma otra cue, para que GO y sus disparadores la vuelvan a lanzar.</span></div>
+    <div class="type"><b><span class="ms" aria-hidden="true">&#xf08c;</span>Desarmar</b><span class="d">Desarma otra cue: GO y sus disparadores la saltan.</span></div>
+    <div class="type"><b><span class="ms" aria-hidden="true">&#xe042;</span>Restablecer</b><span class="d">Detiene otra cue al instante y deshace lo que le hicieron las cues Armar, Desarmar, Destino y Cargar.</span></div>
+    <div class="type"><b><span class="ms" aria-hidden="true">&#xf4ba;</span>Cargar</b><span class="d">Deja otra cue lista para empezar a mitad.</span></div>
+    <div class="type"><b><span class="ms" aria-hidden="true">&#xe55c;</span>Destino</b><span class="d">Apunta una cue Fade, Iniciar, Parar, Cargar… a otra cue.</span></div>
+    <div class="type"><b><span class="ms" aria-hidden="true">&#xe521;</span>MIDI</b><span class="d">Envía un mensaje MIDI: nota, control o cambio de programa, pitch bend, MIDI Show Control o SysEx.</span></div>
+    <div class="type"><b><span class="ms" aria-hidden="true">&#xe01b;</span>Timecode</b><span class="d">Envía timecode (LTC por una salida de audio, o MTC) desde un tiempo de inicio mientras está en marcha.</span></div>
   </div>
   <p>Cada cue tiene un <strong>número</strong> (texto libre, como <code>4.2</code>), un <strong>nombre</strong>, <strong>notas</strong>,
   un <strong>color</strong> y un interruptor <strong>Armada</strong>, todo en la pestaña Básico. GO se salta una cue desarmada.
@@ -81,6 +92,33 @@
   (<em>Configurar…</em> en la tarjeta la abre). La misma entrada puede llevar también asignaciones de
   <a href="lighting.es.html#surfaces">superficies de control</a> y MTC; para llevar toda la lista con cambios de programa, asigna allí
   un cambio de programa a <em>GO</em>.</p>
+  <h3 id="wall-clock-triggers">Disparadores de reloj</h3>
+  <p>La tarjeta <strong>Reloj</strong> de la pestaña Disparadores lanza una cue a una hora del día según el reloj de este
+  ordenador: marca <em>Disparar en</em>, pon horas, minutos y segundos, y elige los <strong>días</strong> en que se lanza
+  (ninguno elegido = todos los días). La cue se lanza cuando el reloj pasa por esa hora. Si se cambia la hora o el
+  ordenador estaba en suspensión, no se lanza nada por el tiempo saltado. Las cues desarmadas no se lanzan.</p>
+  <h3 id="cues-that-change-cues">Cues que cambian otras cues</h3>
+  <ul>
+    <li><strong>Armar</strong> y <strong>Desarmar</strong> cambian el ajuste <em>Armada</em> del destino, como si lo
+    marcaras en su pestaña Básico. Una cue que se lance justo después (con autocontinuar) ya ve el cambio.</li>
+    <li><strong>Destino</strong> cambia sobre qué actúa otra cue: <em>Cambiar el destino de</em> es la cue que se cambia
+    (una cue Fade, Iniciar, Parar, Pausa, Ir a, Devamp, Armar, Cargar…), <em>Nuevo destino</em> la cue sobre la que actuará
+    desde entonces. Así, por ejemplo, una lista de reproducción puede repetir desde su segunda pista tras la primera vuelta.</li>
+    <li><strong>Cargar</strong> deja el destino listo para empezar a mitad: su próximo inicio empieza <em>Cargar en el
+    tiempo</em> segundos dentro, contando su pre-espera. Los archivos de sonido y las películas empiezan desde ese punto; un
+    destino que ya está en marcha salta ahí. Vale una vez: el inicio siguiente vuelve a ser desde el principio. Una película
+    en bucle no se puede cargar.</li>
+    <li><strong>Restablecer</strong> detiene el destino (y las cues que contiene) al instante y devuelve lo que las cues
+    Armar, Desarmar, Destino y Cargar les cambiaron desde que se abrió el espectáculo.</li>
+  </ul>
+  <p>Las cues Armar, Desarmar y Destino cambian el espectáculo como una edición: guárdalo después si el cambio debe quedarse.</p>
+  <h3 id="midi-cues">Cues MIDI</h3>
+  <p>Una cue MIDI envía un mensaje por una salida MIDI: elige la <strong>salida</strong> (o <em>Primera salida MIDI</em>) y el
+  <strong>mensaje</strong>. Las notas y los cambios de control llevan canal, número y valor; el cambio de programa, un
+  programa; el pitch bend, un valor de 0 a 16383 (8192 es el centro). <strong>MIDI Show Control</strong> envía una orden
+  (GO, STOP, RESUME, LOAD…) con número de cue y lista a un ID de dispositivo (127 = todos) en un formato de orden, para que
+  OpenQ maneje una mesa de iluminación u otro ordenador de espectáculo. <strong>SysEx</strong> envía cualquier mensaje System
+  Exclusive escrito en hexadecimal (<code>F0 … F7</code>). Debajo de los ajustes se ven los bytes que se enviarán.</p>
 </section>
 
 <section id="timing">
@@ -136,6 +174,10 @@
     tiene entran fundiendo desde nada. <em>Tomar los efectos del destino</em> los vuelve a copiar después de cambiar de destino.</li>
     <li><strong>Objetos</strong>, para destinos en modo <a href="audio.es.html#audio">audio por objetos</a>: las posiciones y la dispersión a las
     que mover los objetos, editadas en la misma vista de sala.</li>
+    <li><strong>Faders de salida</strong>, para sonido: el nivel de cada salida tras la matriz de enrutado (los faders de
+    la pestaña Niveles del destino). Sirve para llevar un sonido de los altavoces frontales a los traseros.</li>
+    <li><strong>Efectos de audio</strong>: los ajustes de <a href="audio.es.html#audio-fx">Audio FX</a> del destino se
+    deslizan hasta los valores puestos aquí. Un efecto que se enciende o apaga, o uno de otro tipo, cambia al empezar el fundido.</li>
   </ul>
   <p>Una cue Fade no puede tener como destino una cue de luz: la iluminación funde con sus propias cues de luz (ver <a href="lighting.es.html#lighting">Iluminación</a>).</p>
   <p>Marca <strong>Parar el destino</strong> para un fundido de salida: el destino se para al terminar el fundido. Pausar un fundido lo
@@ -162,6 +204,12 @@
   La pestaña muestra qué sigue la lista y qué está recibiendo; <em>Configurar…</em> abre los ajustes de código de tiempo de la lista.</p>
   <p>Solo el código de tiempo que avanza dispara cues. Cuando la fuente salta (un locate o un rebobinado) o se para, no se dispara nada,
   y los disparos se retoman desde la nueva posición, así que ensayar una sección haciendo retroceder la fuente es seguro.</p>
+  <h3 id="sending-timecode">Enviar timecode</h3>
+  <p>Una cue <strong>Timecode</strong> envía timecode mientras está en marcha, para que lo siga una mesa de iluminación,
+  un servidor de vídeo u otro ordenador de espectáculo. Elige <strong>LTC</strong> (una señal de audio por un canal de salida
+  del dispositivo de audio, al nivel puesto) o <strong>MTC</strong> (por una salida MIDI), los cuadros por segundo y el
+  tiempo de <strong>inicio</strong>. El código corre desde el inicio durante la duración de la cue (0 = hasta que se
+  pare); pausar la cue detiene el código y reanudarla lo continúa.</p>
 </section>
 <!--/content-->
 

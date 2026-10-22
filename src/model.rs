@@ -79,6 +79,34 @@ impl MidiTrigger {
     }
 }
 
+/// A time of day that fires a cue, on this computer's clock and time zone.
+#[derive(Serialize, Deserialize, Clone, Copy, PartialEq, Eq, Debug, Default)]
+#[serde(default)]
+pub struct WallClockTrigger {
+    /// Seconds after local midnight (0..86400).
+    pub time: u32,
+    /// Days it fires on: bit 0 = Monday ... bit 6 = Sunday; 0 = every day.
+    pub days: u8,
+}
+
+impl WallClockTrigger {
+    /// Whether it fires on this weekday (0 = Monday ... 6 = Sunday).
+    pub fn on_day(&self, weekday: u8) -> bool {
+        self.days & 0x7f == 0 || self.days & (1 << weekday.min(6)) != 0
+    }
+
+    /// Short text for the UI ("21:30:00", "21:30:00 · Mon Fri").
+    pub fn label(&self) -> String {
+        let t = self.time.min(86_399);
+        let clock = format!("{:02}:{:02}:{:02}", t / 3600, t / 60 % 60, t % 60);
+        if self.days & 0x7f == 0 || self.days & 0x7f == 0x7f {
+            return clock;
+        }
+        let days: Vec<&str> = (0..7).filter(|d| self.days & (1 << d) != 0).map(|d| crate::wallclock::day_name(d)).collect();
+        format!("{clock} · {}", days.join(" "))
+    }
+}
+
 /// What happens after a cue fires.
 #[derive(Serialize, Deserialize, Clone, Copy, PartialEq, Eq, Debug, Default)]
 pub enum ContinueMode {
@@ -372,10 +400,10 @@ impl BlendMode {
     }
 }
 
-/// Most source channels a cue's routing matrix handles.
-pub const MAX_SRC_CHANNELS: usize = 8;
-/// Most output channels a cue's routing matrix handles.
-pub const MAX_OUT_CHANNELS: usize = 16;
+/// Most source channels a cue's routing matrix handles (file, soundtrack or input channels).
+pub const MAX_SRC_CHANNELS: usize = 64;
+/// Most output channels a cue's routing matrix handles (a cue's outputs on its audio patch).
+pub const MAX_OUT_CHANNELS: usize = 64;
 /// Most EQ bands per cue.
 pub const MAX_EQ_BANDS: usize = 8;
 
@@ -643,6 +671,13 @@ pub struct AudioCue {
     /// Object audio: place the channels in the room instead of using the routing matrix.
     #[serde(skip_serializing_if = "ObjectAudio::is_off")]
     pub objects: ObjectAudio,
+    /// Gang letters of the crosspoints, `[source][output]` like `routing` (0 = none, 1 = A...):
+    /// crosspoints with one letter move together when one is changed.
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub gangs: Vec<Vec<u8>>,
+    /// Audio patch it plays through: 0 = the main audio device, n = [`Settings::patches`]`[n - 1]`.
+    #[serde(skip_serializing_if = "is_zero")]
+    pub patch: u8,
 }
 
 impl AudioCue {
@@ -738,6 +773,8 @@ impl Default for AudioCue {
             out_levels: Vec::new(),
             audio_fx: Vec::new(),
             objects: ObjectAudio::default(),
+            gangs: Vec::new(),
+            patch: 0,
         }
     }
 }
@@ -790,6 +827,13 @@ pub struct VideoCue {
     /// Object audio for the soundtrack.
     #[serde(skip_serializing_if = "ObjectAudio::is_off")]
     pub objects: ObjectAudio,
+    /// Gang letters of the crosspoints, `[source][output]` like `routing` (0 = none, 1 = A...):
+    /// crosspoints with one letter move together when one is changed.
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub gangs: Vec<Vec<u8>>,
+    /// Audio patch it plays through: 0 = the main audio device, n = [`Settings::patches`]`[n - 1]`.
+    #[serde(skip_serializing_if = "is_zero")]
+    pub patch: u8,
 }
 
 impl Default for VideoCue {
@@ -815,6 +859,8 @@ impl Default for VideoCue {
             video_fx: Vec::new(),
             audio_fx: Vec::new(),
             objects: ObjectAudio::default(),
+            gangs: Vec::new(),
+            patch: 0,
         }
     }
 }
@@ -841,6 +887,10 @@ pub struct FadeCue {
     pub objects: Option<Vec<AudioObject>>,
     /// Fade the target's video effects to these settings (None = leave them alone).
     pub video_fx: Option<Vec<VideoEffect>>,
+    /// Fade the target's output faders to these levels, dB per output (None = leave them alone).
+    pub out_levels: Option<Vec<f32>>,
+    /// Fade the target's audio effects to these settings (None = leave them alone).
+    pub audio_fx: Option<Vec<AudioEffect>>,
 }
 
 impl Default for FadeCue {
@@ -855,6 +905,8 @@ impl Default for FadeCue {
             stop_target_when_done: true,
             objects: None,
             video_fx: None,
+            out_levels: None,
+            audio_fx: None,
         }
     }
 }
@@ -996,6 +1048,207 @@ impl Default for NetworkCue {
     }
 }
 
+/// The kind of message a MIDI cue sends.
+#[derive(Serialize, Deserialize, Clone, Copy, PartialEq, Eq, Debug, Default)]
+pub enum MidiMessageKind {
+    /// Note on (number = note, value = velocity).
+    #[default]
+    NoteOn,
+    /// Note off (number = note, value = release velocity).
+    NoteOff,
+    /// Control change (number = controller, value).
+    Control,
+    /// Program change (number = program).
+    Program,
+    /// Pitch bend (value 0..=16383, 8192 = centre).
+    PitchBend,
+    /// MIDI Show Control command.
+    Msc,
+    /// Any System Exclusive message, typed as hex bytes.
+    SysEx,
+}
+
+impl MidiMessageKind {
+    /// Every kind, for menus.
+    pub const ALL: [MidiMessageKind; 7] = [
+        MidiMessageKind::NoteOn,
+        MidiMessageKind::NoteOff,
+        MidiMessageKind::Control,
+        MidiMessageKind::Program,
+        MidiMessageKind::PitchBend,
+        MidiMessageKind::Msc,
+        MidiMessageKind::SysEx,
+    ];
+
+    /// Name shown in the UI.
+    pub fn label(self) -> &'static str {
+        match self {
+            MidiMessageKind::NoteOn => crate::i18n::t("Note on"),
+            MidiMessageKind::NoteOff => crate::i18n::t("Note off"),
+            MidiMessageKind::Control => crate::i18n::t("Control change"),
+            MidiMessageKind::Program => crate::i18n::t("Program change"),
+            MidiMessageKind::PitchBend => crate::i18n::t("Pitch bend"),
+            MidiMessageKind::Msc => crate::i18n::t("MIDI Show Control"),
+            MidiMessageKind::SysEx => crate::i18n::t("SysEx"),
+        }
+    }
+}
+
+/// Sends one MIDI message out of a MIDI port.
+#[derive(Serialize, Deserialize, Clone, PartialEq, Debug)]
+#[serde(default)]
+pub struct MidiCue {
+    /// MIDI output port name on the computer playing the show (None = the first output).
+    pub port: Option<String>,
+    /// What it sends.
+    pub message: MidiMessageKind,
+    /// MIDI channel, 0-based (0..=15).
+    pub channel: u8,
+    /// Note, controller or program number (0..=127).
+    pub number: u8,
+    /// Velocity or controller value (0..=127); pitch bend 0..=16383.
+    pub value: u16,
+    /// MSC: device ID it is sent to (0..=127, 127 = all-call).
+    pub msc_device: u8,
+    /// MSC: command format ([`crate::msc::FORMATS`]).
+    pub msc_format: u8,
+    /// MSC: command code ([`crate::msc::SEND_COMMANDS`]).
+    pub msc_command: u8,
+    /// MSC: cue number (may be empty).
+    pub msc_cue: String,
+    /// MSC: cue list (may be empty).
+    pub msc_list: String,
+    /// SysEx bytes as hex ("F0 7E 7F 06 01 F7").
+    pub sysex: String,
+}
+
+impl Default for MidiCue {
+    fn default() -> Self {
+        Self {
+            port: None,
+            message: MidiMessageKind::NoteOn,
+            channel: 0,
+            number: 60,
+            value: 100,
+            msc_device: 0x7f,
+            msc_format: 0x01,
+            msc_command: 0x01,
+            msc_cue: String::new(),
+            msc_list: String::new(),
+            sysex: "F0 7E 7F 06 01 F7".into(),
+        }
+    }
+}
+
+impl MidiCue {
+    /// The bytes it sends, or why it can't.
+    pub fn bytes(&self) -> Result<Vec<u8>, String> {
+        let ch = self.channel & 0x0f;
+        let (n, v) = (self.number & 0x7f, self.value.min(127) as u8);
+        Ok(match self.message {
+            MidiMessageKind::NoteOn => vec![0x90 | ch, n, v],
+            MidiMessageKind::NoteOff => vec![0x80 | ch, n, v],
+            MidiMessageKind::Control => vec![0xb0 | ch, n, v],
+            MidiMessageKind::Program => vec![0xc0 | ch, n],
+            MidiMessageKind::PitchBend => {
+                let b = self.value.min(16383);
+                vec![0xe0 | ch, (b & 0x7f) as u8, (b >> 7) as u8]
+            }
+            MidiMessageKind::Msc => crate::msc::encode(self.msc_device, self.msc_format, self.msc_command, &self.msc_cue, &self.msc_list),
+            MidiMessageKind::SysEx => parse_sysex(&self.sysex)?,
+        })
+    }
+
+    /// Short text for the cue list ("Note on 60 · ch 1", "MSC GO 12").
+    pub fn label(&self) -> String {
+        let ch = self.channel + 1;
+        match self.message {
+            MidiMessageKind::NoteOn | MidiMessageKind::NoteOff | MidiMessageKind::Control => format!("{} {} = {} · ch {ch}", self.message.label(), self.number, self.value.min(127)),
+            MidiMessageKind::Program => format!("{} {} · ch {ch}", self.message.label(), self.number),
+            MidiMessageKind::PitchBend => format!("{} {} · ch {ch}", self.message.label(), self.value.min(16383)),
+            MidiMessageKind::Msc => {
+                let cmd = crate::msc::SEND_COMMANDS.iter().find(|c| c.0 == self.msc_command).map_or_else(|| format!("{:02X}", self.msc_command), |c| c.1.to_string());
+                format!("MSC {cmd} {}", self.msc_cue).trim_end().to_string()
+            }
+            MidiMessageKind::SysEx => format!("SysEx {}", self.sysex.trim()),
+        }
+    }
+}
+
+/// Longest SysEx message a MIDI cue sends.
+pub const MAX_SYSEX: usize = 1024;
+
+/// SysEx bytes from hex text ("F0 7E 7F 06 01 F7"; spaces optional): starts with F0, ends with F7,
+/// data bytes below 80.
+pub fn parse_sysex(text: &str) -> Result<Vec<u8>, String> {
+    let hex: String = text.chars().filter(|c| !c.is_whitespace() && *c != ',').collect();
+    if !hex.len().is_multiple_of(2) || hex.len() / 2 > MAX_SYSEX {
+        return Err(crate::i18n::t("SysEx: type whole hex bytes (at most 1024)").into());
+    }
+    let bytes = (0..hex.len()).step_by(2).map(|i| u8::from_str_radix(&hex[i..i + 2], 16)).collect::<Result<Vec<u8>, _>>().map_err(|_| crate::i18n::t("SysEx: not hex bytes").to_string())?;
+    match bytes.as_slice() {
+        [0xf0, data @ .., 0xf7] if data.iter().all(|b| *b < 0x80) => Ok(bytes),
+        _ => Err(crate::i18n::t("SysEx starts with F0, ends with F7, and its data bytes are below 80").into()),
+    }
+}
+
+/// Where a Timecode cue sends its code.
+#[derive(Serialize, Deserialize, Clone, Copy, PartialEq, Eq, Debug, Default)]
+pub enum TimecodeOutput {
+    /// LTC audio on an output channel of the audio device.
+    #[default]
+    Ltc,
+    /// MIDI Time Code out of a MIDI port.
+    Mtc,
+}
+
+impl TimecodeOutput {
+    /// Both, for menus.
+    pub const ALL: [TimecodeOutput; 2] = [TimecodeOutput::Ltc, TimecodeOutput::Mtc];
+
+    /// Name shown in the UI.
+    pub fn label(self) -> &'static str {
+        match self {
+            TimecodeOutput::Ltc => crate::i18n::t("LTC (audio)"),
+            TimecodeOutput::Mtc => crate::i18n::t("MTC (MIDI)"),
+        }
+    }
+}
+
+/// Generates timecode from a start time, as long as it runs.
+#[derive(Serialize, Deserialize, Clone, PartialEq, Debug)]
+#[serde(default)]
+pub struct TimecodeCue {
+    /// LTC or MTC.
+    pub output: TimecodeOutput,
+    /// Frame rate.
+    pub rate: TimecodeRate,
+    /// First label sent, in label-seconds.
+    pub start: f64,
+    /// Seconds it runs (0 = until stopped).
+    pub duration: f64,
+    /// LTC level in dB.
+    pub volume_db: f32,
+    /// LTC: audio output channel, 0-based.
+    pub channel: u16,
+    /// MTC: MIDI output port on the computer playing the show (None = the first output).
+    pub midi_port: Option<String>,
+}
+
+impl Default for TimecodeCue {
+    fn default() -> Self {
+        Self { output: TimecodeOutput::Ltc, rate: TimecodeRate::Fps25, start: 3600.0, duration: 0.0, volume_db: -12.0, channel: 0, midi_port: None }
+    }
+}
+
+impl TimecodeCue {
+    /// The LTC voice's routing: its one source channel to [`TimecodeCue::channel`] only (dB).
+    pub fn ltc_routing(&self) -> Vec<Vec<f32>> {
+        let ch = self.channel as usize;
+        vec![(0..=ch).map(|o| if o == ch { 0.0 } else { MIN_DB }).collect()]
+    }
+}
+
 /// What a Light cue does with the lighting design.
 #[derive(Serialize, Deserialize, Clone, Copy, PartialEq, Eq, Debug, Default)]
 pub enum LightAction {
@@ -1063,6 +1316,13 @@ pub struct MicCue {
     /// Object audio: place the input channels in the room.
     #[serde(skip_serializing_if = "ObjectAudio::is_off")]
     pub objects: ObjectAudio,
+    /// Gang letters of the crosspoints, `[source][output]` like `routing` (0 = none, 1 = A...):
+    /// crosspoints with one letter move together when one is changed.
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub gangs: Vec<Vec<u8>>,
+    /// Audio patch it plays through: 0 = the main audio device, n = [`Settings::patches`]`[n - 1]`.
+    #[serde(skip_serializing_if = "is_zero")]
+    pub patch: u8,
 }
 
 impl Default for MicCue {
@@ -1080,6 +1340,8 @@ impl Default for MicCue {
             fade_in: 0.0,
             audio_fx: Vec::new(),
             objects: ObjectAudio::default(),
+            gangs: Vec::new(),
+            patch: 0,
         }
     }
 }
@@ -1199,6 +1461,41 @@ pub enum CueKind {
     Camera(CameraCue),
     /// Play a cue of the lighting design.
     Light(LightingCue),
+    /// Arm the target cue (GO and triggers fire it again).
+    Arm {
+        /// Cue acted on.
+        target: Option<CueId>,
+    },
+    /// Disarm the target cue (skipped by GO and triggers until armed).
+    Disarm {
+        /// Cue acted on.
+        target: Option<CueId>,
+    },
+    /// Stop the target cue at once and undo what Arm, Disarm, Target and Load cues did to it.
+    Reset {
+        /// Cue acted on.
+        target: Option<CueId>,
+    },
+    /// Get the target cue ready to start part way through: its next start begins `time` seconds in.
+    Load {
+        /// Cue acted on.
+        target: Option<CueId>,
+        /// Seconds into the target (pre-wait included) its next start begins at.
+        #[serde(default)]
+        time: f64,
+    },
+    /// Send a MIDI message.
+    Midi(MidiCue),
+    /// Generate timecode (LTC or MTC).
+    Timecode(TimecodeCue),
+    /// Point the target cue (a Fade, Start, Stop... cue) at another cue.
+    Target {
+        /// Cue whose target changes.
+        target: Option<CueId>,
+        /// Its new target (None = no target).
+        #[serde(default)]
+        new_target: Option<CueId>,
+    },
 }
 
 /// The type of a cue without its settings (for menus, icons and display).
@@ -1236,16 +1533,30 @@ pub enum KindTag {
     Camera,
     /// Light cue.
     Light,
+    /// Arm cue.
+    Arm,
+    /// Disarm cue.
+    Disarm,
+    /// Reset cue.
+    Reset,
+    /// Load cue.
+    Load,
+    /// Target cue.
+    Target,
+    /// MIDI cue.
+    Midi,
+    /// Timecode cue.
+    Timecode,
 }
 
 impl KindTag {
     /// Cues whose action is media playback handled by the media backend.
     pub fn is_media(self) -> bool {
-        matches!(self, KindTag::Audio | KindTag::Video | KindTag::Text | KindTag::Mic | KindTag::Camera)
+        matches!(self, KindTag::Audio | KindTag::Video | KindTag::Text | KindTag::Mic | KindTag::Camera | KindTag::Timecode)
     }
 
     /// Every type, in toolbox order (the first ten match Ctrl+1…0).
-    pub const ALL: [KindTag; 16] = [
+    pub const ALL: [KindTag; 23] = [
         KindTag::Audio,
         KindTag::Video,
         KindTag::Group,
@@ -1262,6 +1573,13 @@ impl KindTag {
         KindTag::Mic,
         KindTag::Camera,
         KindTag::Light,
+        KindTag::Arm,
+        KindTag::Disarm,
+        KindTag::Reset,
+        KindTag::Load,
+        KindTag::Target,
+        KindTag::Midi,
+        KindTag::Timecode,
     ];
 
     /// Whether this build offers the type (Light cues need the `lighting` feature).
@@ -1288,6 +1606,13 @@ impl KindTag {
             KindTag::Mic => crate::i18n::t("Mic"),
             KindTag::Camera => crate::i18n::t("Camera"),
             KindTag::Light => crate::i18n::t("Light"),
+            KindTag::Arm => crate::i18n::t("Arm"),
+            KindTag::Disarm => crate::i18n::t("Disarm"),
+            KindTag::Reset => crate::i18n::t("Reset"),
+            KindTag::Load => crate::i18n::t("Load"),
+            KindTag::Target => crate::i18n::t("Target"),
+            KindTag::Midi => crate::i18n::t("MIDI"),
+            KindTag::Timecode => crate::i18n::t("Timecode"),
         }
     }
 
@@ -1310,6 +1635,13 @@ impl KindTag {
             KindTag::Mic => CueKind::Mic(MicCue::default()),
             KindTag::Camera => CueKind::Camera(CameraCue::default()),
             KindTag::Light => CueKind::Light(LightingCue::default()),
+            KindTag::Arm => CueKind::Arm { target: None },
+            KindTag::Disarm => CueKind::Disarm { target: None },
+            KindTag::Reset => CueKind::Reset { target: None },
+            KindTag::Load => CueKind::Load { target: None, time: 0.0 },
+            KindTag::Target => CueKind::Target { target: None, new_target: None },
+            KindTag::Midi => CueKind::Midi(MidiCue::default()),
+            KindTag::Timecode => CueKind::Timecode(TimecodeCue::default()),
         }
     }
 }
@@ -1334,6 +1666,13 @@ impl CueKind {
             CueKind::Mic(_) => KindTag::Mic,
             CueKind::Camera(_) => KindTag::Camera,
             CueKind::Light(_) => KindTag::Light,
+            CueKind::Arm { .. } => KindTag::Arm,
+            CueKind::Disarm { .. } => KindTag::Disarm,
+            CueKind::Reset { .. } => KindTag::Reset,
+            CueKind::Load { .. } => KindTag::Load,
+            CueKind::Target { .. } => KindTag::Target,
+            CueKind::Midi(_) => KindTag::Midi,
+            CueKind::Timecode(_) => KindTag::Timecode,
         }
     }
 
@@ -1345,12 +1684,35 @@ impl CueKind {
             | CueKind::Stop { target }
             | CueKind::Pause { target }
             | CueKind::Goto { target }
-            | CueKind::Devamp { target } => *target,
+            | CueKind::Devamp { target }
+            | CueKind::Arm { target }
+            | CueKind::Disarm { target }
+            | CueKind::Reset { target }
+            | CueKind::Load { target, .. }
+            | CueKind::Target { target, .. } => *target,
             _ => None,
         }
     }
 
-    /// The target of Fade/Start/Stop/Pause/Goto/Devamp cues.
+    /// Whether this kind of cue acts on a target cue (has [`CueKind::target_mut`]).
+    pub fn takes_target(&self) -> bool {
+        matches!(
+            self,
+            CueKind::Fade(_)
+                | CueKind::Start { .. }
+                | CueKind::Stop { .. }
+                | CueKind::Pause { .. }
+                | CueKind::Goto { .. }
+                | CueKind::Devamp { .. }
+                | CueKind::Arm { .. }
+                | CueKind::Disarm { .. }
+                | CueKind::Reset { .. }
+                | CueKind::Load { .. }
+                | CueKind::Target { .. }
+        )
+    }
+
+    /// The target of Fade/Start/Stop/Pause/Goto/Devamp/Arm/Disarm/Reset/Load/Target cues.
     pub fn target_mut(&mut self) -> Option<&mut Option<CueId>> {
         match self {
             CueKind::Fade(f) => Some(&mut f.target),
@@ -1358,7 +1720,12 @@ impl CueKind {
             | CueKind::Stop { target }
             | CueKind::Pause { target }
             | CueKind::Goto { target }
-            | CueKind::Devamp { target } => Some(target),
+            | CueKind::Devamp { target }
+            | CueKind::Arm { target }
+            | CueKind::Disarm { target }
+            | CueKind::Reset { target }
+            | CueKind::Load { target, .. }
+            | CueKind::Target { target, .. } => Some(target),
             _ => None,
         }
     }
@@ -1411,12 +1778,53 @@ pub struct Cue {
     /// Fire when this MIDI message arrives.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub midi_trigger: Option<MidiTrigger>,
+    /// Fire at this time of day.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub wallclock_trigger: Option<WallClockTrigger>,
     /// Type and type-specific settings.
     pub kind: CueKind,
 }
 
 fn default_true() -> bool {
     true
+}
+
+fn is_zero(v: &u8) -> bool {
+    *v == 0
+}
+
+/// An extra audio output: another device that cues can play through (their I/O tab), besides the
+/// main one (Settings → Audio).
+#[derive(Serialize, Deserialize, Clone, PartialEq, Debug, Default)]
+#[serde(default)]
+pub struct AudioPatch {
+    /// Name shown when picking it.
+    pub name: String,
+    /// cpal output device id on the computer playing the show (None = not chosen yet).
+    pub device: Option<String>,
+}
+
+/// Most audio patches besides the main output.
+pub const MAX_PATCHES: usize = 8;
+
+/// Gang letter `g` (1 = A) for the UI.
+pub fn gang_letter(g: u8) -> char {
+    (b'A' + g.saturating_sub(1).min(25)) as char
+}
+
+/// Apply a crosspoint change of `delta` dB to every crosspoint in gang `gang` except
+/// `(src, out)`, which the user already changed.
+pub fn move_gang(routing: &mut [Vec<f32>], gangs: &[Vec<u8>], gang: u8, (src, out): (usize, usize), delta: f32) {
+    if gang == 0 || delta == 0.0 {
+        return;
+    }
+    for (s, row) in routing.iter_mut().enumerate() {
+        for (o, g) in row.iter_mut().enumerate() {
+            if (s, o) != (src, out) && gangs.get(s).and_then(|r| r.get(o)) == Some(&gang) {
+                *g = (*g + delta).clamp(MIN_DB, crate::limits::MAX_DB);
+            }
+        }
+    }
 }
 
 impl Cue {
@@ -1435,6 +1843,7 @@ impl Cue {
             hotkey: self.hotkey.clone(),
             timecode_trigger: self.timecode_trigger,
             midi_trigger: self.midi_trigger,
+            wallclock_trigger: self.wallclock_trigger,
             kind: match &self.kind {
                 CueKind::Group { mode, .. } => CueKind::Group { mode: *mode, children: Vec::new() },
                 k => k.clone(),
@@ -1445,7 +1854,7 @@ impl Cue {
     /// Equal apart from a group's children.
     pub fn shallow_eq(&self, other: &Cue) -> bool {
         // Naming every field: a new one fails to compile here until it is compared too.
-        let Cue { id: _, number: _, name: _, notes: _, color: _, armed: _, pre_wait: _, post_wait: _, continue_mode: _, hotkey: _, timecode_trigger: _, midi_trigger: _, kind: _ } = self;
+        let Cue { id: _, number: _, name: _, notes: _, color: _, armed: _, pre_wait: _, post_wait: _, continue_mode: _, hotkey: _, timecode_trigger: _, midi_trigger: _, wallclock_trigger: _, kind: _ } = self;
         let (a, b) = (self, other);
         a.id == b.id
             && a.number == b.number
@@ -1459,6 +1868,7 @@ impl Cue {
             && a.hotkey == b.hotkey
             && a.timecode_trigger == b.timecode_trigger
             && a.midi_trigger == b.midi_trigger
+            && a.wallclock_trigger == b.wallclock_trigger
             && match (&self.kind, &other.kind) {
                 (CueKind::Group { mode: a, .. }, CueKind::Group { mode: b, .. }) => a == b,
                 (CueKind::Group { .. }, _) | (_, CueKind::Group { .. }) => false,
@@ -1490,6 +1900,7 @@ impl Cue {
             hotkey: None,
             timecode_trigger: None,
             midi_trigger: None,
+            wallclock_trigger: None,
             kind,
         }
     }
@@ -2171,6 +2582,11 @@ pub struct Settings {
     /// MIDI/OSC control surfaces mapped onto executors, masters and GO.
     #[serde(skip_serializing_if = "crate::surface::SurfaceSettings::is_empty")]
     pub surfaces: crate::surface::SurfaceSettings,
+    /// Loudness Audio cues are levelled to, LUFS ([`crate::loudness`]).
+    pub loudness_target: f64,
+    /// Extra audio outputs cues can play through (the main one is `audio_device`).
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub patches: Vec<AudioPatch>,
 }
 
 impl Default for Settings {
@@ -2180,6 +2596,8 @@ impl Default for Settings {
             osc_port: 53000,
             speakers: Vec::new(),
             surfaces: Default::default(),
+            loudness_target: crate::loudness::DEFAULT_TARGET,
+            patches: Vec::new(),
         }
     }
 }
@@ -2334,6 +2752,18 @@ mod tests {
         assert_eq!(all.len(), 4);
         assert!(crate::engine::after_chain(&back, all[1].id).is_some());
         let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    /// Crosspoints in a gang move by the change made to one of them, within the level range.
+    #[test]
+    fn gangs_move_together() {
+        use super::*;
+        let mut r = vec![vec![0.0, -10.0], vec![-6.0, MIN_DB]];
+        let g = vec![vec![1, 1], vec![2, 1]];
+        r[0][0] = -3.0;
+        move_gang(&mut r, &g, 1, (0, 0), -3.0);
+        assert_eq!(r, vec![vec![-3.0, -13.0], vec![-6.0, MIN_DB]]);
+        assert_eq!(gang_letter(1), 'A');
     }
 
     /// The drawn curve's presets match the built-in ones, so turning a preset into a Custom curve

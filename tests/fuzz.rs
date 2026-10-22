@@ -512,7 +512,22 @@ fn seed_workspace(media: &Path) -> Workspace {
                 n.port = 9;
             }
             CueKind::Light(l) => l.sequence = Some(1),
-            _ => {}
+            // Never out of this computer's real MIDI ports.
+            CueKind::Midi(m) => m.port = Some("openq-fuzz-no-port".into()),
+            CueKind::Timecode(t) => t.midi_port = Some("openq-fuzz-no-port".into()),
+            CueKind::Target { target: t, new_target } => {
+                *t = target;
+                *new_target = Some(ids[(i * 3) % ids.len()]);
+            }
+            CueKind::Load { target: t, time } => {
+                *t = target;
+                *time = 0.2;
+            }
+            k => {
+                if let Some(t) = k.target_mut() {
+                    *t = target;
+                }
+            }
         }
     }
     let group = Cue::new(CueKind::Group { mode: openq::model::GroupMode::StartAll, children: cues[..4].iter().map(|c| Cue { id: CueId::new_v4(), ..c.clone() }).collect() });

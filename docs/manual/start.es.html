@@ -22,6 +22,7 @@
       <li class="s2"><a href="#start">Instalación y primer espectáculo</a></li>
       <li class="s3"><a href="#installing">Instalación</a></li>
       <li class="s3"><a href="#your-first-show">Tu primer espectáculo</a></li>
+      <li class="s3"><a href="#bundling-a-show">Empaquetar un espectáculo</a></li>
       <li class="s2"><a href="#window">La ventana principal</a></li>
       <li class="s3"><a href="#working-with-the-cue-list">Trabajar con la lista de cues</a></li>
       <li class="s3"><a href="#cue-lists">Listas de cues</a></li>
@@ -134,6 +135,11 @@ cargo run --release -- show.openq    # abrir un espectáculo guardado</code></pr
   </ol>
   <div class="note tip"><span class="label">Consejo</span><p>Guarda el archivo del espectáculo en la misma carpeta que sus medios.
   Así la carpeta se puede copiar a otro ordenador y abrirse allí sin cambios.</p></div>
+  <h3 id="bundling-a-show">Empaquetar un espectáculo</h3>
+  <p><span class="menu">Archivo → Empaquetar función…</span> copia el espectáculo y todos los sonidos y películas que usa en
+  una carpeta: elige dónde y OpenQ crea una carpeta con el nombre del espectáculo, con su archivo dentro y los
+  medios en <code>audio/</code> y <code>video/</code>. Copia esa carpeta a otro ordenador o guárdala como archivo. Los
+  archivos que faltan en el disco se listan y se dejan fuera. El espectáculo que tienes abierto no cambia.</p>
 </section>
 
 <section id="window">
@@ -222,6 +228,8 @@ cargo run --release -- show.openq    # abrir un espectáculo guardado</code></pr
       <tr><td>Superficies de control</td><td>La entrada MIDI de este ordenador y las <a href="lighting.es.html#surfaces">asignaciones de superficies de control</a> del espectáculo, con aprendizaje.</td></tr>
     </tbody>
   </table></div>
+  <p>Ajustes → General también tiene la <strong>sonoridad objetivo</strong> para nivelar cues
+  (<a href="audio.es.html#loudness">Sonoridad</a>); Ajustes → Audio, los <a href="audio.es.html#audio-patches">patches de audio</a>.</p>
   <figure class="narrow">
     <img src="img/es/room.webp" width="731" height="465" alt="El editor de sala: una sala cuadrada con cuatro altavoces FL, FR, RL, RR y una tabla con sus salidas y posiciones.">
     <figcaption>La sala para audio por objetos. Arrastra los altavoces o escribe sus posiciones.</figcaption>

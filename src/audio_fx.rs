@@ -250,6 +250,15 @@ impl FxChain {
         }
     }
 
+    /// Take new settings for the effects, in list order (a Fade cue fading them): every unit keeps
+    /// its running state. Kinds come from the chain; no allocation (safe on the audio thread).
+    pub fn retune(&mut self, params: &[[f32; 6]; MAX_AUDIO_FX]) {
+        let rate = self.rate;
+        for ((on, kind, u), p) in self.units.iter_mut().zip(params) {
+            u.retune(&AudioEffect { enabled: *on, kind: *kind, params: *p }, rate);
+        }
+    }
+
     /// Run one frame (`x` holds one sample per channel) through every enabled effect in order.
     #[inline]
     pub fn process(&mut self, x: &mut [f32]) {
@@ -263,75 +272,107 @@ impl FxChain {
     }
 }
 
+/// A unit of `e`'s kind with its running state for `ch` channels at `rate`, set to `e`'s settings.
 fn unit(e: &AudioEffect, ch: usize, rate: f32) -> Unit {
-    let v = |i: usize| e.get(i);
-    let pct = |i: usize| e.get(i) / 100.0;
-    match e.kind {
+    let mut u = match e.kind {
         AudioFxKind::Delay => Unit::Delay(Delay {
-            delay: v(0) * 0.001 * rate,
-            feedback: pct(1),
-            lp: lp_coef(v(2), rate),
-            mix: pct(3),
-            st: DelayState { lines: Lines::new(ch, (2.05 * rate) as usize), lp: vec![0.0; ch], cur: v(0) * 0.001 * rate },
+            delay: 0.0,
+            feedback: 0.0,
+            lp: 0.0,
+            mix: 0.0,
+            st: DelayState { lines: Lines::new(ch, (2.05 * rate) as usize), lp: vec![0.0; ch], cur: 0.0 },
         }),
-        AudioFxKind::Reverb => Unit::Reverb(Box::new(Reverb {
-            feedback: 0.7 + 0.28 * pct(0),
-            damp: 0.4 * pct(1),
-            pre: (v(2) * 0.001 * rate) as usize,
-            width: pct(3),
-            mix: pct(4),
-            st: ReverbState::new(ch, rate),
-        })),
-        AudioFxKind::Compressor => Unit::Compressor(Dynamics {
-            a: v(0),
-            b: v(1).max(1.0),
-            c: v(4),
-            attack: coef(v(2), rate),
-            release: coef(v(3), rate),
-            st: DynState::default(),
-        }),
-        AudioFxKind::Limiter => Unit::Limiter(Dynamics {
-            a: db_to_gain(v(0)),
-            b: 0.0,
-            c: 0.0,
-            attack: 0.0,
-            release: coef(v(1), rate),
-            st: DynState { env: 1.0, ..Default::default() },
-        }),
+        AudioFxKind::Reverb => Unit::Reverb(Box::new(Reverb { feedback: 0.0, damp: 0.0, pre: 0, width: 0.0, mix: 0.0, st: ReverbState::new(ch, rate) })),
+        AudioFxKind::Compressor => Unit::Compressor(Dynamics { a: 0.0, b: 1.0, c: 0.0, attack: 0.0, release: 0.0, st: DynState::default() }),
+        AudioFxKind::Limiter => Unit::Limiter(Dynamics { a: 1.0, b: 0.0, c: 0.0, attack: 0.0, release: 0.0, st: DynState { env: 1.0, ..Default::default() } }),
         AudioFxKind::Gate => Unit::Gate(Gate {
-            threshold: db_to_gain(v(0)),
-            floor: db_to_gain(-v(1)),
-            attack: coef(v(2), rate),
-            release: coef(v(4), rate),
-            hold: (v(3) * 0.001 * rate) as u32,
-            detect: coef(5.0, rate),
+            threshold: 0.0,
+            floor: 0.0,
+            attack: 0.0,
+            release: 0.0,
+            hold: 0,
+            detect: 0.0,
             st: DynState { env: 1.0, ..Default::default() },
         }),
-        AudioFxKind::Distortion => Unit::Distortion(Distortion {
-            drive: db_to_gain(v(0)),
-            lp: lp_coef(v(1), rate),
-            out: db_to_gain(v(2)),
-            mix: pct(3),
-            st: vec![0.0; ch],
-        }),
+        AudioFxKind::Distortion => Unit::Distortion(Distortion { drive: 1.0, lp: 0.0, out: 1.0, mix: 0.0, st: vec![0.0; ch] }),
         AudioFxKind::Chorus => Unit::Chorus(Chorus {
-            rate: std::f32::consts::TAU * v(0) / rate,
-            base: v(2) * 0.001 * rate,
-            depth: v(1) * 0.001 * rate,
-            feedback: pct(3),
-            mix: pct(4),
+            rate: 0.0,
+            base: 0.0,
+            depth: 0.0,
+            feedback: 0.0,
+            mix: 0.0,
             st: ChorusState { lines: Lines::new(ch, (0.045 * rate) as usize), phase: 0.0 },
         }),
-        AudioFxKind::Bitcrusher => Unit::Crusher(Crusher {
-            step: 2.0 / 2f32.powf(v(0).round()),
-            every: v(1).max(1.0),
-            mix: pct(2),
-            st: CrushState { held: vec![0.0; ch], count: f32::MAX },
-        }),
+        AudioFxKind::Bitcrusher => Unit::Crusher(Crusher { step: 1.0, every: 1.0, mix: 0.0, st: CrushState { held: vec![0.0; ch], count: f32::MAX } }),
+    };
+    u.retune(e, rate);
+    if let Unit::Delay(d) = &mut u {
+        // Start at the set time (it glides only when changed while running).
+        d.st.cur = d.delay;
     }
+    u
 }
 
 impl Unit {
+    /// Take `e`'s settings, keeping the running state (no allocation: safe on the audio thread).
+    /// `e` must be of this unit's kind.
+    fn retune(&mut self, e: &AudioEffect, rate: f32) {
+        let v = |i: usize| e.get(i);
+        let pct = |i: usize| e.get(i) / 100.0;
+        match self {
+            Unit::Delay(d) => {
+                d.delay = v(0) * 0.001 * rate;
+                d.feedback = pct(1);
+                d.lp = lp_coef(v(2), rate);
+                d.mix = pct(3);
+            }
+            Unit::Reverb(r) => {
+                r.feedback = 0.7 + 0.28 * pct(0);
+                r.damp = 0.4 * pct(1);
+                r.pre = (v(2) * 0.001 * rate) as usize;
+                r.width = pct(3);
+                r.mix = pct(4);
+            }
+            Unit::Compressor(d) => {
+                d.a = v(0);
+                d.b = v(1).max(1.0);
+                d.c = v(4);
+                d.attack = coef(v(2), rate);
+                d.release = coef(v(3), rate);
+            }
+            Unit::Limiter(d) => {
+                d.a = db_to_gain(v(0));
+                d.release = coef(v(1), rate);
+            }
+            Unit::Gate(g) => {
+                g.threshold = db_to_gain(v(0));
+                g.floor = db_to_gain(-v(1));
+                g.attack = coef(v(2), rate);
+                g.release = coef(v(4), rate);
+                g.hold = (v(3) * 0.001 * rate) as u32;
+                g.detect = coef(5.0, rate);
+            }
+            Unit::Distortion(d) => {
+                d.drive = db_to_gain(v(0));
+                d.lp = lp_coef(v(1), rate);
+                d.out = db_to_gain(v(2));
+                d.mix = pct(3);
+            }
+            Unit::Chorus(c) => {
+                c.rate = std::f32::consts::TAU * v(0) / rate;
+                c.base = v(2) * 0.001 * rate;
+                c.depth = v(1) * 0.001 * rate;
+                c.feedback = pct(3);
+                c.mix = pct(4);
+            }
+            Unit::Crusher(b) => {
+                b.step = 2.0 / 2f32.powf(v(0).round());
+                b.every = v(1).max(1.0);
+                b.mix = pct(2);
+            }
+        }
+    }
+
     #[inline]
     fn process(&mut self, x: &mut [f32]) {
         match self {

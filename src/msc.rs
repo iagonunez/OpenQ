@@ -1,6 +1,8 @@
 //! MIDI Show Control (MSC) in: SysEx commands from a stage manager's desk, a lighting console or
 //! another show program, read on the control surface MIDI input ([`crate::surface::MidiSurface`]).
 //!
+//! MIDI cues send MSC too ([`encode`]).
+//!
 //! A message is `F0 7F <device> 02 <command format> <command> <data> F7`. OpenQ answers its own
 //! device ID, its group ID (if set) and the all-call ID 7F, for one command format or any
 //! ([`MscSettings`]). The data of the cue commands is a cue number, a cue list and a cue path, each
@@ -192,6 +194,38 @@ pub fn parse(msg: &[u8]) -> Option<Msc> {
     Some(Msc { device: *device, format: *format, command, cue, list, path })
 }
 
+/// Commands a MIDI cue sends (code, the standard's name).
+pub const SEND_COMMANDS: [(u8, &str); 10] = [
+    (0x01, "GO"),
+    (0x02, "STOP"),
+    (0x03, "RESUME"),
+    (0x05, "LOAD"),
+    (0x08, "ALL_OFF"),
+    (0x0a, "RESET"),
+    (0x0b, "GO_OFF"),
+    (0x11, "STANDBY_+"),
+    (0x12, "STANDBY_-"),
+    (0x1b, "OPEN_CUE_LIST"),
+];
+
+/// An MSC message (the inverse of [`parse`]): cue number and list as ASCII, each optional; the list
+/// is sent only with a cue number, as the standard orders them. Characters MSC can't carry are
+/// dropped and the message is kept within [`MAX_LEN`].
+pub fn encode(device: u8, format: u8, command: u8, cue: &str, list: &str) -> Vec<u8> {
+    let field = |s: &str| -> Vec<u8> { s.chars().filter(|c| c.is_ascii_graphic() || *c == ' ').map(|c| c as u8).take(48).collect() };
+    let mut out = vec![0xf0, 0x7f, device & 0x7f, 0x02, format & 0x7f, command & 0x7f];
+    let (cue, list) = (field(cue.trim()), field(list.trim()));
+    if !cue.is_empty() {
+        out.extend(cue);
+        if !list.is_empty() {
+            out.push(0);
+            out.extend(list);
+        }
+    }
+    out.push(0xf7);
+    out
+}
+
 /// The lists in tab order: (tab, cues).
 fn tabs(cues: &CueList) -> Vec<(usize, &str, &[Cue])> {
     let mut out = vec![(cues.pos, cues.info.name.as_str(), cues.cues.as_slice())];
@@ -274,6 +308,22 @@ pub fn commands(cues: &CueList, m: &Msc) -> Result<Vec<Command>, String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// What a MIDI cue sends reads back as the same command.
+    #[test]
+    fn encoded_messages_parse_back() {
+        let m = parse(&encode(0x7f, 0x10, 0x01, "12.5", "2")).unwrap();
+        assert_eq!((m.device, m.format, m.command, m.cue.as_deref(), m.list.as_deref()), (0x7f, 0x10, MscCommand::Go, Some("12.5"), Some("2")));
+        assert_eq!(encode(1, 1, 0x08, "", "list"), vec![0xf0, 0x7f, 1, 2, 1, 8, 0xf7], "no list without a cue");
+        assert!(encode(1, 1, 1, &"9".repeat(500), &"x".repeat(500)).len() <= MAX_LEN);
+        use crate::model::{MidiCue, MidiMessageKind, parse_sysex};
+        let cue = |message, value| MidiCue { message, channel: 9, number: 36, value, ..Default::default() };
+        assert_eq!(cue(MidiMessageKind::NoteOn, 100).bytes().unwrap(), vec![0x99, 36, 100]);
+        assert_eq!(cue(MidiMessageKind::Program, 0).bytes().unwrap(), vec![0xc9, 36]);
+        assert_eq!(cue(MidiMessageKind::PitchBend, 8192).bytes().unwrap(), vec![0xe9, 0, 64]);
+        assert_eq!(parse_sysex("f0 7e 7f 06 01 f7").unwrap(), vec![0xf0, 0x7e, 0x7f, 6, 1, 0xf7]);
+        assert!(parse_sysex("F0 80 F7").is_err() && parse_sysex("7E F7").is_err() && parse_sysex("F0 7").is_err());
+    }
     use crate::model::{CueKind, OtherList};
 
     fn msg(command: u8, data: &[u8]) -> Vec<u8> {

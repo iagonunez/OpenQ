@@ -38,6 +38,10 @@ const MAX_METER_CHANNELS: usize = MAX_OUT_CHANNELS;
 /// Peak-hold slots written by the audio callback, one per reader.
 type Meters = Arc<[[AtomicU32; MAX_METER_CHANNELS]; 3]>;
 
+fn new_meters() -> Meters {
+    Arc::new(std::array::from_fn(|_| std::array::from_fn(|_| AtomicU32::new(0))))
+}
+
 /// Who is reading the meters; each has its own peak-hold slot.
 #[derive(Clone, Copy, Debug)]
 pub enum MeterReader {
@@ -349,6 +353,8 @@ enum Cmd {
     Eq { id: u64, coeffs: [Coeffs; MAX_EQ_BANDS], bands: usize },
     Matrix { id: u64, matrix: Box<Matrix> },
     Fx { id: u64, chain: Option<Box<FxChain>> },
+    /// New settings for the voice's effects, keeping their state (a Fade cue).
+    FxParams { id: u64, params: [[f32; 6]; crate::effects::MAX_AUDIO_FX] },
     /// Freeze any running gain ramp at its current value.
     Hold(u64),
     Master(f32),
@@ -572,7 +578,7 @@ impl Mixer {
                     if let Some(v) = self.voice(id) {
                         if bands != v.eq_bands {
                             // Band layout changed: start the filters from rest.
-                            v.eq_state = Default::default();
+                            v.eq_state = [[BiquadState::default(); MAX_EQ_BANDS]; MAX_SRC_CHANNELS];
                         }
                         v.eq = coeffs;
                         v.eq_bands = bands;
@@ -598,6 +604,11 @@ impl Mixer {
                     }
                     // The box (now holding the old matrix) is freed off the audio thread.
                     self.retire(Garbage::Matrix(matrix));
+                }
+                Cmd::FxParams { id, params } => {
+                    if let Some(fx) = self.voice(id).and_then(|v| v.fx.as_mut()) {
+                        fx.retune(&params);
+                    }
                 }
                 Cmd::Fx { id, mut chain } => {
                     if let Some(v) = self.voice(id) {
@@ -825,6 +836,57 @@ struct VoiceHandle {
     obj_sent: Option<Instant>,
     /// The cue's own object positions once a fade has taken them over.
     obj_base: Option<Vec<AudioObject>>,
+    /// A Fade cue fading the output faders or effect settings.
+    mix_fade: Option<MixFade>,
+    /// The cue's own output faders and effects once a fade has taken them over.
+    mix_base: Option<(Vec<f32>, Vec<AudioEffect>)>,
+}
+
+/// A Fade cue on a voice's output faders and effect settings, stepped every
+/// [`OBJECT_FADE_STEP`] (each step a matrix and/or effect settings for the mixer).
+struct MixFade {
+    levels: Option<(Vec<f32>, Vec<f32>)>,
+    fx: Option<(Vec<AudioEffect>, Vec<AudioEffect>)>,
+    start: Instant,
+    secs: f64,
+    curve: FadeCurve,
+    sent: Option<Instant>,
+}
+
+impl MixFade {
+    /// Progress (curve applied) at `now`, and whether it is over.
+    fn at(&self, now: Instant) -> (f32, bool) {
+        let t = if self.secs <= 0.0 { 1.0 } else { now.saturating_duration_since(self.start).as_secs_f64() / self.secs };
+        (self.curve.progress(t.clamp(0.0, 1.0) as f32), t >= 1.0 && now >= self.start)
+    }
+}
+
+/// Output fader levels `t` of the way from `a` to `b` (dB; missing entries are 0 dB).
+fn lerp_levels(a: &[f32], b: &[f32], t: f32) -> Vec<f32> {
+    (0..a.len().max(b.len())).map(|i| {
+        let (x, y) = (a.get(i).copied().unwrap_or(0.0), b.get(i).copied().unwrap_or(0.0));
+        x + (y - x) * t
+    }).collect()
+}
+
+/// Effect settings `t` of the way from `a` to `b` (same kinds in the same places).
+fn lerp_fx(a: &[AudioEffect], b: &[AudioEffect], t: f32) -> Vec<AudioEffect> {
+    b.iter().zip(a).map(|(to, from)| {
+        let mut e = *to;
+        for (p, (x, y)) in e.params.iter_mut().zip(from.params.iter().zip(&to.params)) {
+            *p = x + (y - x) * t;
+        }
+        e
+    }).collect()
+}
+
+/// The settings array the mixer takes for `fx`.
+fn fx_params(fx: &[AudioEffect]) -> [[f32; 6]; crate::effects::MAX_AUDIO_FX] {
+    let mut out = [[0.0; 6]; crate::effects::MAX_AUDIO_FX];
+    for (o, e) in out.iter_mut().zip(fx) {
+        *o = e.params;
+    }
+    out
 }
 
 /// An object-audio fade in progress on one voice.
@@ -1030,7 +1092,7 @@ impl AudioOutput {
         }
         let (cmd_tx, cmd_rx) = rtrb::RingBuffer::<Cmd>::new(2048);
         let (gb_tx, gb_rx) = rtrb::RingBuffer::<Garbage>::new(2048);
-        let meters: Meters = Arc::new(Default::default());
+        let meters: Meters = new_meters();
         let shutdown = Arc::new(AtomicBool::new(false));
         let health = Arc::new(Health::default());
         type Setup = anyhow::Result<(u32, usize, String, Arc<Clock>)>;
@@ -1198,7 +1260,7 @@ impl AudioOutput {
         }
     }
 
-    fn create_voice(&mut self, params: &AudioCue, src_channels: usize) -> VoiceHandle {
+    fn create_voice(&mut self, params: &AudioCue, src_channels: usize, skip: f64) -> VoiceHandle {
         let id = self.next_id;
         self.next_id += 1;
         let src = src_channels.clamp(1, MAX_SRC_CHANNELS);
@@ -1214,6 +1276,7 @@ impl AudioOutput {
                 fade_in: params.fade_in,
                 fade_out: params.fade_out,
                 fade_curve: params.fade_curve,
+                skip,
             },
             self.rate,
             tx,
@@ -1233,6 +1296,8 @@ impl AudioOutput {
             obj_fade: None,
             obj_sent: None,
             obj_base: None,
+            mix_fade: None,
+            mix_base: None,
         }
     }
 
@@ -1252,7 +1317,7 @@ impl AudioOutput {
             matrix_ramp_len: 1,
             eq,
             eq_bands,
-            eq_state: Default::default(),
+            eq_state: [[BiquadState::default(); MAX_EQ_BANDS]; MAX_SRC_CHANNELS],
             fx: FxChain::new(&mix.audio_fx, src, self.rate as f32),
             ramp: None,
             stop_after_ramp: false,
@@ -1294,6 +1359,8 @@ impl AudioOutput {
                 obj_fade: None,
                 obj_sent: None,
                 obj_base: None,
+                mix_fade: None,
+                mix_base: None,
             },
         );
         (tx, shared)
@@ -1320,7 +1387,85 @@ impl AudioOutput {
             let (mix, src) = (h.mix.clone(), h.src_channels);
             self.send_matrix(id, &mix, src);
         }
+        if let Some(f) = self.voices.get_mut(&cue).and_then(|h| h.mix_fade.take()) {
+            // Hold where it is: the values of this moment become the end of a fade that's over.
+            let (t, _) = f.at(Instant::now());
+            let levels = f.levels.map(|(a, b)| { let l = lerp_levels(&a, &b, t); (l.clone(), l) });
+            let fx = f.fx.map(|(a, b)| { let x = lerp_fx(&a, &b, t); (x.clone(), x) });
+            self.voices.get_mut(&cue).expect("voice").mix_fade = Some(MixFade { levels, fx, secs: 0.0, sent: None, ..f });
+            self.step_mix_fade(cue, Instant::now(), true);
+        }
         self.send(Cmd::Hold(id));
+    }
+
+    /// Fade a cue's output faders (dB per output) and/or effect settings to these over `secs`
+    /// (a Fade cue). Effects whose kinds differ from the voice's are swapped in at once.
+    pub fn fade_mix(&mut self, cue: CueId, out_levels: Option<&[f32]>, fx: Option<&[AudioEffect]>, secs: f64, curve: FadeCurve, at: Instant) {
+        let rate = self.rate as f32;
+        let Some(h) = self.voices.get_mut(&cue) else { return };
+        let (id, src) = (h.id, h.src_channels);
+        h.mix_base.get_or_insert_with(|| (h.mix.out_levels.clone(), h.mix.audio_fx.clone()));
+        let levels = out_levels.map(|to| (h.mix.out_levels.clone(), to.to_vec()));
+        let mut swap = None;
+        let fx = fx.map(|to| {
+            // Same kinds in the same places blend their settings; the rest switch now.
+            let from = &h.mix.audio_fx;
+            let start: Vec<AudioEffect> = to
+                .iter()
+                .enumerate()
+                .map(|(i, e)| match from.get(i) {
+                    Some(f) if f.kind == e.kind => AudioEffect { enabled: e.enabled, kind: e.kind, params: f.params },
+                    _ => *e,
+                })
+                .collect();
+            let shape = |v: &[AudioEffect]| v.iter().map(|e| (e.kind, e.enabled)).collect::<Vec<_>>();
+            if shape(&start) != shape(from) {
+                swap = Some(FxChain::new(&start, src, rate));
+                h.mix.audio_fx = start.clone();
+            }
+            (start, to.to_vec())
+        });
+        h.mix_fade = Some(MixFade { levels, fx, start: at, secs: secs.max(0.0), curve, sent: None });
+        if let Some(chain) = swap {
+            self.send(Cmd::Fx { id, chain });
+        }
+    }
+
+    /// One step of `cue`'s mix fade, if one is due at `now` (`force`: whatever the step time).
+    fn step_mix_fade(&mut self, cue: CueId, now: Instant, force: bool) {
+        let Some(h) = self.voices.get_mut(&cue) else { return };
+        let Some(f) = &h.mix_fade else { return };
+        if !force && (now < f.start || f.sent.is_some_and(|t| now.saturating_duration_since(t) < OBJECT_FADE_STEP)) {
+            return;
+        }
+        let (t, done) = f.at(now);
+        let mut matrix = false;
+        let mut params = None;
+        if let Some((a, b)) = &f.levels {
+            let l = lerp_levels(a, b, t);
+            matrix = l != h.mix.out_levels;
+            h.mix.out_levels = l;
+        }
+        if let Some((a, b)) = &f.fx {
+            let fx = lerp_fx(a, b, t);
+            if fx != h.mix.audio_fx {
+                params = Some(fx_params(&fx));
+                h.mix.audio_fx = fx;
+            }
+        }
+        if let Some(f) = &mut h.mix_fade {
+            f.sent = Some(now);
+        }
+        if done {
+            h.mix_fade = None;
+        }
+        let (id, mix, src) = (h.id, h.mix.clone(), h.src_channels);
+        if matrix {
+            self.send_matrix(id, &mix, src);
+        }
+        if let Some(params) = params {
+            self.send(Cmd::FxParams { id, params });
+        }
     }
 
     fn send_matrix(&mut self, id: u64, mix: &MixParams, src: usize) {
@@ -1379,6 +1524,10 @@ impl AudioOutput {
         for (id, mix, src) in send {
             self.send_matrix(id, &mix, src);
         }
+        let fading: Vec<CueId> = self.voices.iter().filter(|(_, h)| h.mix_fade.is_some()).map(|(c, _)| *c).collect();
+        for c in fading {
+            self.step_mix_fade(c, now, false);
+        }
     }
 
     /// Keep exactly these cues preloaded (buffered and ready to start instantly).
@@ -1397,7 +1546,7 @@ impl AudioOutput {
         }
         for (id, p, src) in cues {
             if !self.preloaded.contains_key(id) && self.voice_count() < MAX_VOICES {
-                let h = self.create_voice(p, *src);
+                let h = self.create_voice(p, *src, 0.0);
                 self.preloaded.insert(*id, h);
             }
         }
@@ -1405,6 +1554,12 @@ impl AudioOutput {
 
     /// Start an audio cue so its first sample plays at `at` (sample-accurate).
     pub fn start(&mut self, cue: CueId, params: &AudioCue, src_channels: usize, at: Instant) -> Result<(), String> {
+        self.start_from(cue, params, src_channels, at, 0.0)
+    }
+
+    /// [`AudioOutput::start`] `skip` seconds of file time into the cue's playback (a preloaded
+    /// voice, which starts at the beginning, is not used then).
+    pub fn start_from(&mut self, cue: CueId, params: &AudioCue, src_channels: usize, at: Instant, skip: f64) -> Result<(), String> {
         if params.path.as_os_str().is_empty() {
             return Err("no audio file".into());
         }
@@ -1415,12 +1570,12 @@ impl AudioOutput {
             return Err(format!("too many sounds at once (most is {MAX_VOICES})"));
         }
         let handle = match self.preloaded.remove(&cue) {
-            Some(h) if h.params.as_ref() == Some(params) && !h.shared.finished.load(Ordering::Acquire) => h,
+            Some(h) if skip <= 0.0 && h.params.as_ref() == Some(params) && !h.shared.finished.load(Ordering::Acquire) => h,
             Some(h) => {
                 self.send(Cmd::Stop(h.id));
-                self.create_voice(params, src_channels)
+                self.create_voice(params, src_channels, skip)
             }
-            None => self.create_voice(params, src_channels),
+            None => self.create_voice(params, src_channels, skip),
         };
         if let Some(err) = handle.shared.error.lock().clone() {
             self.send(Cmd::Stop(handle.id));
@@ -1484,6 +1639,17 @@ impl AudioOutput {
             } else {
                 h.obj_fade = None;
                 h.obj_base = None;
+            }
+        }
+        if let Some((levels, fx)) = &h.mix_base {
+            // A Fade cue took the faders/effects over: an edit of something else leaves them where
+            // the fade put them; an edit of them takes them back.
+            if params.out_levels == *levels && params.audio_fx == *fx {
+                params.out_levels = h.mix.out_levels.clone();
+                params.audio_fx = h.mix.audio_fx.clone();
+            } else {
+                h.mix_fade = None;
+                h.mix_base = None;
             }
         }
         let params = &params;
@@ -1666,7 +1832,7 @@ mod tests {
             master: 1.0,
             clock: Arc::new(Clock::new(48_000)),
             filter: ClockFilter::new(48_000),
-            meters: Arc::new(Default::default()),
+            meters: new_meters(),
             scratch: Vec::new(),
             health: Arc::new(Health::default()),
         };
@@ -1770,7 +1936,7 @@ mod tests {
             matrix_ramp_len: 1,
             eq,
             eq_bands,
-            eq_state: Default::default(),
+            eq_state: [[BiquadState::default(); MAX_EQ_BANDS]; MAX_SRC_CHANNELS],
             fx: FxChain::new(&params.audio_fx, src, 48000.0),
             ramp: None,
             stop_after_ramp: false,
@@ -1858,7 +2024,7 @@ mod tests {
             matrix_ramp_len: 1,
             eq: [Coeffs::IDENTITY; MAX_EQ_BANDS],
             eq_bands: 0,
-            eq_state: Default::default(),
+            eq_state: [[BiquadState::default(); MAX_EQ_BANDS]; MAX_SRC_CHANNELS],
             fx: None,
             ramp: None,
             stop_after_ramp: false,
@@ -1895,6 +2061,39 @@ mod tests {
         let moved = MixParams { objects: ObjectAudio { enabled: true, objects: vec![AudioObject { x: -1.0, ..Default::default() }] }, ..mix };
         a.update_live(cue, &moved);
         assert_eq!(a.voices[&cue].mix.objects.objects[0].x, -1.0);
+    }
+
+    /// A Fade cue glides output faders and effect settings, holds them when paused, and they stick
+    /// through edits of other settings.
+    #[test]
+    fn output_fader_and_effect_fades() {
+        use crate::effects::{AudioEffect, AudioFxKind};
+        let mut a = AudioOutput::open_virtual(48000, 2, None).unwrap();
+        let cue = crate::model::CueId::new_v4();
+        let delay = AudioEffect::new(AudioFxKind::Delay);
+        let mix = MixParams { out_levels: vec![0.0, 0.0], audio_fx: vec![delay], ..Default::default() };
+        let _feed = a.add_external(cue, &mix, 1, "test", 0.1);
+        // Started half a second ago: holding (which reads the clock) freezes it about half way.
+        let t0 = Instant::now() - Duration::from_millis(500);
+        let mut longer = delay;
+        longer.params[0] = delay.params[0] + 100.0;
+        a.fade_mix(cue, Some(&[-20.0, 0.0]), Some(std::slice::from_ref(&longer)), 1.0, FadeCurve::Linear, t0);
+        a.advance_fades(t0 + Duration::from_millis(500));
+        let h = &a.voices[&cue];
+        assert!((h.mix.out_levels[0] + 10.0).abs() < 0.1, "{:?}", h.mix.out_levels);
+        assert!((h.mix.audio_fx[0].params[0] - delay.params[0] - 50.0).abs() < 0.5);
+        a.hold(cue);
+        let held = a.voices[&cue].mix.out_levels[0];
+        assert!((held + 10.0).abs() < 1.0, "{held}");
+        a.advance_fades(t0 + Duration::from_millis(900));
+        assert_eq!(a.voices[&cue].mix.out_levels[0], held, "held");
+        a.fade_mix(cue, Some(&[-20.0, 0.0]), None, 0.0, FadeCurve::Linear, t0);
+        a.advance_fades(t0 + Duration::from_millis(1000));
+        assert_eq!(a.voices[&cue].mix.out_levels, vec![-20.0, 0.0]);
+        a.update_live(cue, &MixParams { volume_db: -3.0, ..mix.clone() });
+        assert_eq!(a.voices[&cue].mix.out_levels, vec![-20.0, 0.0], "stays where the fade put it");
+        a.update_live(cue, &MixParams { out_levels: vec![-6.0, 0.0], ..mix });
+        assert_eq!(a.voices[&cue].mix.out_levels, vec![-6.0, 0.0], "an edit of the faders wins");
     }
 
     #[test]

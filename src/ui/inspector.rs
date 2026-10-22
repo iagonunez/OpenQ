@@ -147,6 +147,20 @@ struct Ctx<'a> {
     midi_port: Option<String>,
     /// Learn mode is waiting for this cue's MIDI trigger.
     learning_midi: bool,
+    /// Loudness cues are levelled to, LUFS.
+    loudness_target: f64,
+    /// Names of the show's audio patches (patch n is `patches[n - 1]`).
+    patches: Vec<String>,
+    /// Output count of each audio patch, the main output first (2 when not open).
+    patch_outs: Vec<usize>,
+}
+
+/// A sound cue's routing settings, for the Routing card.
+struct Routing<'a> {
+    routing: &'a mut Option<Vec<Vec<f32>>>,
+    gangs: &'a mut Vec<Vec<u8>>,
+    objects: &'a mut crate::spatial::ObjectAudio,
+    patch: &'a mut u8,
 }
 
 impl Ctx<'_> {
@@ -168,6 +182,28 @@ impl Ctx<'_> {
     }
 
     /// Video effects of a picture cue.
+    /// Output fader levels of a sound cue, one per device output.
+    fn out_levels(&self, target: CueId) -> Option<Vec<f32>> {
+        let (l, patch) = match &self.list.find(target)?.kind {
+            CueKind::Audio(a) => (&a.out_levels, a.patch),
+            CueKind::Video(v) => (&v.out_levels, v.patch),
+            CueKind::Mic(m) => (&m.out_levels, m.patch),
+            _ => return None,
+        };
+        let outs = self.patch_outs.get(patch as usize).copied().unwrap_or(2).min(crate::model::MAX_OUT_CHANNELS);
+        Some((0..outs).map(|o| l.get(o).copied().unwrap_or(0.0)).collect())
+    }
+
+    /// Audio effects of a sound cue.
+    fn audio_fx(&self, target: CueId) -> Option<Vec<crate::effects::AudioEffect>> {
+        match &self.list.find(target)?.kind {
+            CueKind::Audio(a) => Some(a.audio_fx.clone()),
+            CueKind::Video(v) => Some(v.audio_fx.clone()),
+            CueKind::Mic(m) => Some(m.audio_fx.clone()),
+            _ => None,
+        }
+    }
+
     fn video_fx(&self, target: CueId) -> Option<Vec<crate::effects::VideoEffect>> {
         match &self.list.find(target)?.kind {
             CueKind::Video(v) => Some(v.video_fx.clone()),
@@ -219,15 +255,25 @@ impl App {
         let elapsed = show.engine.instances.get(&id).and_then(|_| show.media.elapsed(id));
         // Edit a copy, so the tabs can look at the other cues (targets) while editing this one.
         let Some(mut cue) = show.ws.cue_list.find(id).cloned() else { return };
+        let patch = match &cue.kind {
+            CueKind::Audio(a) => a.patch,
+            CueKind::Video(v) => v.patch,
+            CueKind::Mic(m) => m.patch,
+            _ => 0,
+        };
         let ctx = Ctx {
             list: &show.ws.cue_list,
             lighting: &show.ws.lighting,
             midi_port: self.midi_port.clone(),
             learning_midi: self.learn_into == Some(super::surfaces::LearnInto::Cue(id)) && self.surfaces.learning(),
+            loudness_target: show.ws.settings.loudness_target,
             id,
             stages: &stages,
-            out_channels: show.media.audio.as_ref().map_or(2, |a| a.channels),
-            device: show.media.audio.as_ref().map(|a| a.device_name.clone()),
+            // The outputs of the audio patch the cue plays through.
+            out_channels: show.media.patch_channels(patch).unwrap_or(2),
+            device: show.media.patch_status(patch).0,
+            patches: show.ws.settings.patches.iter().map(|p| p.name.clone()).collect(),
+            patch_outs: (0..=show.ws.settings.patches.len() as u8).map(|p| show.media.patch_channels(p).unwrap_or(2)).collect(),
             prober: &self.prober,
             waveforms: &self.waveforms,
             elapsed,
@@ -317,8 +363,14 @@ impl App {
                 _ => {}
             },
             Tab::Io => match &mut cue.kind {
-                CueKind::Audio(a) => io_tab(ui, &a.path, &mut a.routing, &mut a.objects, None, &ctx, &mut pick_media),
-                CueKind::Video(v) => io_tab(ui, &v.path, &mut v.routing, &mut v.objects, Some(v.stage), &ctx, &mut pick_media),
+                CueKind::Audio(a) => {
+                    let r = Routing { routing: &mut a.routing, gangs: &mut a.gangs, objects: &mut a.objects, patch: &mut a.patch };
+                    io_tab(ui, &a.path, r, None, &ctx, &mut pick_media)
+                }
+                CueKind::Video(v) => {
+                    let r = Routing { routing: &mut v.routing, gangs: &mut v.gangs, objects: &mut v.objects, patch: &mut v.patch };
+                    io_tab(ui, &v.path, r, Some(v.stage), &ctx, &mut pick_media)
+                }
                 CueKind::Mic(m) => mic_io(ui, m, &ctx, &mut refresh_devices),
                 _ => {}
             },
@@ -329,7 +381,7 @@ impl App {
                 _ => {}
             },
             Tab::Levels => match &mut cue.kind {
-                CueKind::Audio(a) => audio_levels(ui, a, ctx.out_channels.min(crate::model::MAX_OUT_CHANNELS)),
+                CueKind::Audio(a) => audio_levels(ui, a, ctx.out_channels.min(crate::model::MAX_OUT_CHANNELS), &ctx),
                 CueKind::Video(v) => video_levels(ui, v, ctx.out_channels.min(crate::model::MAX_OUT_CHANNELS)),
                 CueKind::Mic(m) => mic_levels(ui, m, ctx.out_channels.min(crate::model::MAX_OUT_CHANNELS)),
                 _ => {}
@@ -758,8 +810,7 @@ fn missing_file(ui: &mut Ui, path: &Path, pick: &mut bool) {
 fn io_tab(
     ui: &mut Ui,
     path: &Path,
-    routing: &mut Option<Vec<Vec<f32>>>,
-    objects: &mut crate::spatial::ObjectAudio,
+    r: Routing,
     stage: Option<Option<StageId>>,
     ctx: &Ctx,
     pick: &mut bool,
@@ -770,8 +821,9 @@ fn io_tab(
     let specs = [
         Card::new(ic::UPLOAD_FILE, t("Input"), 400.0),
         Card::new(ic::SPEAKER, t("Output"), 360.0),
-        Card::new(ic::GRID_VIEW, t("Routing"), routing_width(objects)),
+        Card::new(ic::GRID_VIEW, t("Routing"), routing_width(r.objects)),
     ];
+    let mut r = r;
     super::theme::cards(ui, "io", &specs, |ui, i| match i {
         0 => {
             egui::Grid::new("io-in").num_columns(2).spacing([10.0, 6.0]).show(ui, |ui| {
@@ -839,7 +891,7 @@ fn io_tab(
             }
             ch => {
                 let src = ch.unwrap_or(2).clamp(1, crate::model::MAX_SRC_CHANNELS);
-                routing_card(ui, routing, objects, src, ctx);
+                routing_card(ui, &mut r, src, ctx);
             }
         },
     });
@@ -852,7 +904,22 @@ fn routing_width(objects: &crate::spatial::ObjectAudio) -> f32 {
 }
 
 /// The Routing card: crosspoints, or object audio placing each channel in the room.
-fn routing_card(ui: &mut Ui, routing: &mut Option<Vec<Vec<f32>>>, objects: &mut crate::spatial::ObjectAudio, src: usize, ctx: &Ctx) {
+fn routing_card(ui: &mut Ui, r: &mut Routing, src: usize, ctx: &Ctx) {
+    if !ctx.patches.is_empty() {
+        ui.horizontal(|ui| {
+            ui.label(t("Audio patch"));
+            let name = |p: u8| if p == 0 { t("Main output").to_string() } else { ctx.patches.get(p as usize - 1).cloned().unwrap_or_else(|| p.to_string()) };
+            ComboBox::from_id_salt("patch").selected_text(name(*r.patch)).show_ui(ui, |ui| {
+                for p in 0..=ctx.patches.len() as u8 {
+                    ui.selectable_value(r.patch, p, name(p));
+                }
+            })
+            .response
+            .on_hover_text(t("The output device the cue plays through (Settings → Audio)"));
+        });
+        ui.add_space(4.0);
+    }
+    let objects = &mut *r.objects;
     ui.horizontal(|ui| {
         ui.selectable_value(&mut objects.enabled, false, super::theme::with_icon(super::icons::GRID_VIEW, t("Crosspoints")));
         ui.selectable_value(&mut objects.enabled, true, super::theme::with_icon(super::icons::SURROUND_SOUND, t("Object audio")))
@@ -862,7 +929,7 @@ fn routing_card(ui: &mut Ui, routing: &mut Option<Vec<Vec<f32>>>, objects: &mut 
     if objects.enabled {
         super::room::object_editor(ui, objects, src, &ctx.room);
     } else {
-        routing_editor(ui, routing, src, ctx.out_channels.min(crate::model::MAX_OUT_CHANNELS));
+        routing_editor(ui, r.routing, r.gangs, src, ctx.out_channels.min(crate::model::MAX_OUT_CHANNELS));
     }
 }
 
@@ -926,15 +993,57 @@ fn fader_bank(ui: &mut Ui, main: &mut f32, out_levels: &mut Vec<f32>, outs: usiz
     }
 }
 
-fn audio_levels(ui: &mut Ui, a: &mut AudioCue, outs: usize) {
+fn audio_levels(ui: &mut Ui, a: &mut AudioCue, outs: usize, ctx: &Ctx) {
     use super::icons as ic;
     use super::theme::Card;
-    // Pan in a narrow card on the left, the fader bank takes the rest of the row.
-    let specs = [Card::new(ic::CONTROL_CAMERA, t("Pan"), PAN_W), Card::new(ic::TUNE, t("Levels"), fader_bank_width(outs))];
+    // Pan and loudness in narrow cards on the left, the fader bank takes the rest of the row.
+    let specs = [
+        Card::new(ic::CONTROL_CAMERA, t("Pan"), PAN_W),
+        Card::new(ic::GRAPHIC_EQ, t("Loudness"), 220.0),
+        Card::new(ic::TUNE, t("Levels"), fader_bank_width(outs)),
+    ];
     super::theme::cards(ui, "alevels", &specs, |ui, i| match i {
         0 => pan_card(ui, &mut a.pan),
+        1 => loudness_card(ui, a, ctx),
         _ => fader_bank(ui, &mut a.volume_db, &mut a.out_levels, outs),
     });
+}
+
+/// The file's measured loudness and a button that sets the level to reach the show's target.
+fn loudness_card(ui: &mut Ui, a: &mut AudioCue, ctx: &Ctx) {
+    let measured = match ctx.waveforms.get(&a.path) {
+        Some(Ok(w)) => Ok(w.loudness),
+        Some(Err(e)) => Err(e),
+        None => {
+            ui.horizontal(|ui| {
+                ui.spinner();
+                ui.label(RichText::new(t("Measuring…")).weak());
+            });
+            return;
+        }
+    };
+    match measured {
+        Ok(Some(lufs)) => {
+            ui.label(RichText::new(format!("{lufs:.1} LUFS")).font(super::theme::mono(15.0)));
+            let target = ctx.loudness_target;
+            let want = crate::loudness::gain_to(lufs, target);
+            ui.label(RichText::new(tr!("{gain} dB reaches {target} LUFS", gain = format!("{want:+.1}"), target = format!("{target:.0}"))).weak().small());
+            let done = (a.volume_db - want).abs() < 0.05;
+            if ui
+                .add_enabled(!done, egui::Button::new(t("Level to target")))
+                .on_hover_text(t("Set the cue's level so the file plays at the show's loudness target (Settings → General)"))
+                .clicked()
+            {
+                a.volume_db = want;
+            }
+        }
+        Ok(None) => {
+            ui.label(RichText::new(t("Silent or too short to measure")).weak());
+        }
+        Err(e) => {
+            ui.label(RichText::new(e).color(RED).small());
+        }
+    }
 }
 
 fn video_levels(ui: &mut Ui, v: &mut VideoCue, outs: usize) {
@@ -952,7 +1061,9 @@ fn pan_label(v: f32) -> String {
     }
 }
 
-fn routing_editor(ui: &mut Ui, routing: &mut Option<Vec<Vec<f32>>>, src: usize, outs: usize) {
+fn routing_editor(ui: &mut Ui, routing: &mut Option<Vec<Vec<f32>>>, gangs: &mut Vec<Vec<u8>>, src: usize, outs: usize) {
+    let gang_mode_id = ui.id().with("gang-mode");
+    let mut gang_mode = ui.data(|d| d.get_temp::<bool>(gang_mode_id)).unwrap_or(false);
     ui.horizontal(|ui| {
         let mut custom = routing.is_some();
         if ui.checkbox(&mut custom, t("Custom crosspoints")).changed() {
@@ -964,7 +1075,12 @@ fn routing_editor(ui: &mut Ui, routing: &mut Option<Vec<Vec<f32>>>, src: usize, 
             });
         }
         ui.label(RichText::new(tr!("{src} in, {outs} out", src, outs)).weak());
+        if routing.is_some() {
+            ui.toggle_value(&mut gang_mode, super::theme::with_icon(super::icons::SELECT_ALL, t("Gangs")))
+                .on_hover_text(t("Give crosspoints a gang letter: crosspoints with one letter move together"));
+        }
     });
+    ui.data_mut(|d| d.insert_temp(gang_mode_id, gang_mode));
     let Some(m) = routing else {
         ui.label(RichText::new(t("Automatic: mono feeds outputs 1+2, multichannel maps 1:1.")).weak());
         return;
@@ -974,6 +1090,15 @@ fn routing_editor(ui: &mut Ui, routing: &mut Option<Vec<Vec<f32>>>, src: usize, 
     for row in m.iter_mut() {
         row.resize(outs, MIN_DB);
     }
+    let any_gang = gangs.iter().flatten().any(|g| *g > 0);
+    if gang_mode || any_gang {
+        gangs.resize_with(src, || vec![0; outs]);
+        for row in gangs.iter_mut() {
+            row.resize(outs, 0);
+        }
+    }
+    let gang_of = |gangs: &[Vec<u8>], s: usize, o: usize| gangs.get(s).and_then(|r| r.get(o)).copied().unwrap_or(0);
+    let mut moved = None;
     egui::ScrollArea::horizontal().id_salt("routing").show(ui, |ui| {
         egui::Grid::new("matrix").spacing([4.0, 4.0]).show(ui, |ui| {
             ui.label("");
@@ -981,21 +1106,52 @@ fn routing_editor(ui: &mut Ui, routing: &mut Option<Vec<Vec<f32>>>, src: usize, 
                 ui.label(RichText::new(tr!("Out {n}", n = o + 1)).weak());
             }
             ui.end_row();
-            for (s, row) in m.iter_mut().enumerate() {
+            for s in 0..src {
                 ui.label(RichText::new(tr!("In {n}", n = s + 1)).weak());
-                for g in row.iter_mut() {
-                    ui.add(
-                        DragValue::new(g)
-                            .range(MIN_DB..=crate::limits::MAX_DB)
-                            .speed(0.25)
-                            .custom_formatter(|v, _| if v <= MIN_DB as f64 { "-∞".into() } else { format!("{v:.1}") }),
-                    )
-                    .on_hover_text(t("Crosspoint level in dB (drag to -60 for off)"));
+                for o in 0..outs {
+                    let g = gang_of(gangs, s, o);
+                    if gang_mode {
+                        // Click: next letter; right-click: no gang.
+                        let text = if g == 0 { "–".to_string() } else { crate::model::gang_letter(g).to_string() };
+                        let r = ui.add(egui::Button::new(RichText::new(text).strong()).min_size(egui::vec2(46.0, 0.0)).selected(g > 0));
+                        if r.clicked() {
+                            gangs[s][o] = (g % 8) + 1;
+                        }
+                        if r.secondary_clicked() {
+                            gangs[s][o] = 0;
+                        }
+                        continue;
+                    }
+                    let v = &mut m[s][o];
+                    let before = *v;
+                    ui.horizontal(|ui| {
+                        ui.spacing_mut().item_spacing.x = 1.0;
+                        let r = ui
+                            .add(
+                                DragValue::new(v)
+                                    .range(MIN_DB..=crate::limits::MAX_DB)
+                                    .speed(0.25)
+                                    .custom_formatter(|v, _| if v <= MIN_DB as f64 { "-∞".into() } else { format!("{v:.1}") }),
+                            )
+                            .on_hover_text(t("Crosspoint level in dB (drag to -60 for off)"));
+                        if g > 0 {
+                            ui.label(RichText::new(crate::model::gang_letter(g).to_string()).small().color(super::theme::ACCENT));
+                        }
+                        if r.changed() && g > 0 {
+                            moved = Some((g, s, o, *v - before));
+                        }
+                    });
                 }
                 ui.end_row();
             }
         });
     });
+    if let Some((g, s, o, delta)) = moved {
+        crate::model::move_gang(m, gangs, g, (s, o), delta);
+    }
+    if !gangs.iter().flatten().any(|g| *g > 0) {
+        gangs.clear();
+    }
     ui.horizontal(|ui| {
         if ui.small_button(t("All off")).clicked() {
             m.iter_mut().flatten().for_each(|g| *g = MIN_DB);
@@ -1005,6 +1161,9 @@ fn routing_editor(ui: &mut Ui, routing: &mut Option<Vec<Vec<f32>>>, src: usize, 
                 .into_iter()
                 .map(|row| row.into_iter().map(|g| if g > 0.0 { gain_to_db(g) } else { MIN_DB }).collect())
                 .collect();
+        }
+        if !gangs.is_empty() && ui.small_button(t("Clear gangs")).clicked() {
+            gangs.clear();
         }
     });
 }
@@ -1267,6 +1426,14 @@ fn settings_tab(ui: &mut Ui, cue: &mut Cue, ctx: &Ctx, refresh: &mut bool) {
                 specs.push(Card::new(ic::AUTO_FIX_HIGH, t("Target video effects"), f32::INFINITY));
                 extra.push(2);
             }
+            if f.out_levels.is_some() && caps.level {
+                specs.push(Card::new(ic::TUNE, t("Target output faders"), fader_bank_width(f.out_levels.as_ref().map_or(0, Vec::len))));
+                extra.push(3);
+            }
+            if f.audio_fx.is_some() && caps.level {
+                specs.push(Card::new(ic::INSTANT_MIX, t("Target audio effects"), f32::INFINITY));
+                extra.push(4);
+            }
             // Fading toward silence / transparency draws the curve falling.
             let falling = match (f.volume_db.filter(|_| caps.level), f.opacity.filter(|_| caps.picture)) {
                 (Some(db), _) => db < 0.0,
@@ -1339,6 +1506,21 @@ fn settings_tab(ui: &mut Ui, cue: &mut Cue, ctx: &Ctx, refresh: &mut bool) {
                             }
                             ui.end_row();
                         }
+                        if caps.level {
+                            ui.label(t("Output faders"));
+                            let mut on = f.out_levels.is_some();
+                            if ui.checkbox(&mut on, t("Fade the output faders")).changed() {
+                                let outs = ctx.out_channels.min(crate::model::MAX_OUT_CHANNELS);
+                                f.out_levels = on.then(|| f.target.and_then(|t| ctx.out_levels(t)).unwrap_or_else(|| vec![0.0; outs]));
+                            }
+                            ui.end_row();
+                            ui.label(t("Audio effects"));
+                            let mut on = f.audio_fx.is_some();
+                            if ui.checkbox(&mut on, t("Fade effect settings")).changed() {
+                                f.audio_fx = on.then(|| f.target.and_then(|t| ctx.audio_fx(t)).unwrap_or_default());
+                            }
+                            ui.end_row();
+                        }
                     });
                 }
                 1 => {
@@ -1380,7 +1562,13 @@ fn settings_tab(ui: &mut Ui, cue: &mut Cue, ctx: &Ctx, refresh: &mut bool) {
                             *objs = o.objects;
                         }
                     }
-                    _ => fade_video_fx(ui, f, ctx),
+                    Some(2) => fade_video_fx(ui, f, ctx),
+                    Some(3) => {
+                        if let Some(levels) = &mut f.out_levels {
+                            fade_out_levels(ui, levels);
+                        }
+                    }
+                    _ => fade_audio_fx(ui, f, ctx),
                 },
             });
         }
@@ -1396,6 +1584,59 @@ fn settings_tab(ui: &mut Ui, cue: &mut Cue, ctx: &Ctx, refresh: &mut bool) {
             t("— none —"),
             Some(t("Lets the target's looping slice finish its current pass, then play on to the next slice.")),
         ),
+        CueKind::Arm { target } => target_card(ui, t("Arm"), "arm_target", target, t("— none —"), Some(t("Arms the target: GO and triggers fire it again."))),
+        CueKind::Disarm { target } => target_card(
+            ui,
+            t("Disarm"),
+            "disarm_target",
+            target,
+            t("— none —"),
+            Some(t("Disarms the target: GO and triggers skip it until it is armed again.")),
+        ),
+        CueKind::Reset { target } => target_card(
+            ui,
+            t("Reset"),
+            "reset_target",
+            target,
+            t("— none —"),
+            Some(t("Stops the target at once and undoes what Arm, Disarm, Target and Load cues did to it.")),
+        ),
+        CueKind::Load { target, time } => {
+            let specs = [Card::new(ic::TIMER_PLAY, t("Load"), 420.0)];
+            cards(ui, "load", &specs, |ui, _| {
+                egui::Grid::new("load").num_columns(2).spacing([10.0, 6.0]).show(ui, |ui| {
+                    ui.label(t("Target"));
+                    target_combo(ui, "load_target", target, ctx, t("— none —"));
+                    ui.end_row();
+                    ui.label(t("Load to time"));
+                    time_edit(ui, time);
+                    ui.end_row();
+                });
+                ui.add_space(4.0);
+                ui.label(
+                    RichText::new(t("The target's next start begins this far in (pre-wait included). A running target jumps there."))
+                        .weak()
+                        .small(),
+                );
+            });
+        }
+        CueKind::Target { target, new_target } => {
+            let specs = [Card::new(ic::MY_LOCATION, t("Target"), 420.0)];
+            cards(ui, "retarget", &specs, |ui, _| {
+                egui::Grid::new("retarget").num_columns(2).spacing([10.0, 6.0]).show(ui, |ui| {
+                    ui.label(t("Change the target of"));
+                    target_combo(ui, "retarget_cue", target, ctx, t("— none —"));
+                    ui.end_row();
+                    ui.label(t("New target"));
+                    target_combo(ui, "retarget_new", new_target, ctx, t("— none —"));
+                    ui.end_row();
+                });
+                ui.add_space(4.0);
+                ui.label(RichText::new(t("Points a Fade, Start, Stop, Load... cue at another cue.")).weak().small());
+            });
+        }
+        CueKind::Midi(m) => midi_settings(ui, m, ctx, refresh),
+        CueKind::Timecode(tc) => timecode_settings(ui, tc, ctx, refresh),
         CueKind::Text(t) => text_settings(ui, t),
         CueKind::Camera(c) => camera_settings(ui, c, ctx, refresh),
         CueKind::Light(l) => light_settings(ui, l, ctx.lighting),
@@ -1427,6 +1668,182 @@ fn settings_tab(ui: &mut Ui, cue: &mut Cue, ctx: &Ctx, refresh: &mut bool) {
         }
         _ => {}
     }
+}
+
+/// A Timecode cue: what it sends, from when, and where.
+fn timecode_settings(ui: &mut Ui, tc: &mut crate::model::TimecodeCue, ctx: &Ctx, refresh: &mut bool) {
+    use super::icons as ic;
+    use super::theme::{Card, cards};
+    use crate::model::{TimecodeOutput, TimecodeRate};
+    let specs = [Card::new(ic::AV_TIMER, t("Timecode"), 460.0)];
+    cards(ui, "tcout", &specs, |ui, _| {
+        egui::Grid::new("tcout").num_columns(2).spacing([10.0, 6.0]).show(ui, |ui| {
+            ui.label(t("Send"));
+            ComboBox::from_id_salt("tc_output").selected_text(tc.output.label()).show_ui(ui, |ui| {
+                for o in TimecodeOutput::ALL {
+                    ui.selectable_value(&mut tc.output, o, o.label());
+                }
+            });
+            ui.end_row();
+            ui.label(t("Frame rate"));
+            ComboBox::from_id_salt("tc_rate").selected_text(tc.rate.label()).show_ui(ui, |ui| {
+                for r in TimecodeRate::ALL {
+                    ui.selectable_value(&mut tc.rate, r, r.label());
+                }
+            });
+            ui.end_row();
+            ui.label(t("Start at"));
+            timecode_edit(ui, &mut tc.start, tc.rate);
+            ui.end_row();
+            ui.label(t("Duration"));
+            ui.horizontal(|ui| {
+                time_edit(ui, &mut tc.duration);
+                if tc.duration <= 0.0 {
+                    ui.label(RichText::new(t("until stopped")).weak());
+                }
+            });
+            ui.end_row();
+            match tc.output {
+                TimecodeOutput::Ltc => {
+                    ui.label(t("Output channel"));
+                    let mut ch = tc.channel + 1;
+                    let max = ctx.out_channels.max(1) as u16;
+                    if ui.add(DragValue::new(&mut ch).range(1..=max)).changed() {
+                        tc.channel = ch - 1;
+                    }
+                    ui.end_row();
+                    ui.label(t("Level"));
+                    ui.add(DragValue::new(&mut tc.volume_db).range(crate::limits::MIN_DB..=0.0).speed(0.2).suffix(" dB"));
+                    ui.end_row();
+                }
+                TimecodeOutput::Mtc => {
+                    ui.label(t("Output"));
+                    ui.horizontal(|ui| {
+                        let first = t("First MIDI output");
+                        ComboBox::from_id_salt("tc_port").width(260.0).selected_text(tc.midi_port.clone().unwrap_or_else(|| first.into())).show_ui(ui, |ui| {
+                            ui.selectable_value(&mut tc.midi_port, None, first);
+                            for p in &ctx.devices.midi_out {
+                                ui.selectable_value(&mut tc.midi_port, Some(p.clone()), p);
+                            }
+                        });
+                        refresh_button(ui, ctx, refresh);
+                    });
+                    ui.end_row();
+                }
+            }
+        });
+        ui.add_space(4.0);
+        ui.label(RichText::new(t("Runs from the start time while the cue plays; pausing the cue holds the code.")).weak().small());
+    });
+}
+
+/// A MIDI cue: output port and message.
+fn midi_settings(ui: &mut Ui, m: &mut crate::model::MidiCue, ctx: &Ctx, refresh: &mut bool) {
+    use super::icons as ic;
+    use super::theme::{Card, cards};
+    use crate::model::MidiMessageKind as K;
+    let specs = [Card::new(ic::PIANO, t("MIDI message"), 480.0)];
+    cards(ui, "midi", &specs, |ui, _| {
+        egui::Grid::new("midi").num_columns(2).spacing([10.0, 6.0]).show(ui, |ui| {
+            ui.label(t("Output"));
+            ui.horizontal(|ui| {
+                let first = t("First MIDI output");
+                ComboBox::from_id_salt("midi_port").width(260.0).selected_text(m.port.clone().unwrap_or_else(|| first.into())).show_ui(ui, |ui| {
+                    ui.selectable_value(&mut m.port, None, first);
+                    for p in &ctx.devices.midi_out {
+                        ui.selectable_value(&mut m.port, Some(p.clone()), p);
+                    }
+                    if let Some(p) = m.port.clone().filter(|p| !ctx.devices.midi_out.contains(p)) {
+                        ui.selectable_value(&mut m.port, Some(p.clone()), tr!("{port} (not connected)", port = p));
+                    }
+                });
+                refresh_button(ui, ctx, refresh);
+            });
+            ui.end_row();
+            ui.label(t("Message"));
+            ComboBox::from_id_salt("midi_kind").selected_text(m.message.label()).show_ui(ui, |ui| {
+                for k in K::ALL {
+                    ui.selectable_value(&mut m.message, k, k.label());
+                }
+            });
+            ui.end_row();
+            match m.message {
+                K::NoteOn | K::NoteOff | K::Control | K::Program | K::PitchBend => {
+                    ui.label(t("Channel"));
+                    let mut ch = m.channel + 1;
+                    if ui.add(DragValue::new(&mut ch).range(1..=16)).changed() {
+                        m.channel = ch - 1;
+                    }
+                    ui.end_row();
+                    let (number, value) = match m.message {
+                        K::NoteOn | K::NoteOff => (Some(t("Note")), Some(t("Velocity"))),
+                        K::Control => (Some(t("Controller")), Some(t("Value"))),
+                        K::Program => (Some(t("Program")), None),
+                        _ => (None, Some(t("Value"))),
+                    };
+                    if let Some(l) = number {
+                        ui.label(l);
+                        ui.add(DragValue::new(&mut m.number).range(0..=127));
+                        ui.end_row();
+                    }
+                    if let Some(l) = value {
+                        ui.label(l);
+                        let max = if m.message == K::PitchBend { 16383 } else { 127 };
+                        m.value = m.value.min(max);
+                        ui.add(DragValue::new(&mut m.value).range(0..=max));
+                        ui.end_row();
+                    }
+                }
+                K::Msc => {
+                    ui.label(t("Device ID"));
+                    ui.horizontal(|ui| {
+                        ui.add(DragValue::new(&mut m.msc_device).range(0..=127));
+                        if m.msc_device == crate::msc::ALL_CALL {
+                            ui.label(RichText::new(t("all devices")).weak());
+                        }
+                    });
+                    ui.end_row();
+                    ui.label(t("Command format"));
+                    ComboBox::from_id_salt("msc_fmt").selected_text(crate::msc::format_label(m.msc_format)).show_ui(ui, |ui| {
+                        for (f, _) in crate::msc::FORMATS {
+                            ui.selectable_value(&mut m.msc_format, f, crate::msc::format_label(f));
+                        }
+                    });
+                    ui.end_row();
+                    ui.label(t("Command"));
+                    let name = crate::msc::SEND_COMMANDS.iter().find(|c| c.0 == m.msc_command).map_or("?", |c| c.1);
+                    ComboBox::from_id_salt("msc_cmd").selected_text(name).show_ui(ui, |ui| {
+                        for (c, n) in crate::msc::SEND_COMMANDS {
+                            ui.selectable_value(&mut m.msc_command, c, n);
+                        }
+                    });
+                    ui.end_row();
+                    ui.label(t("Cue number"));
+                    ui.add(TextEdit::singleline(&mut m.msc_cue).desired_width(100.0).hint_text(t("none")));
+                    ui.end_row();
+                    ui.label(t("Cue list"));
+                    ui.add(TextEdit::singleline(&mut m.msc_list).desired_width(100.0).hint_text(t("none")));
+                    ui.end_row();
+                }
+                K::SysEx => {
+                    ui.label(t("Bytes (hex)"));
+                    ui.add(TextEdit::multiline(&mut m.sysex).desired_rows(2).desired_width(300.0).font(egui::TextStyle::Monospace));
+                    ui.end_row();
+                }
+            }
+        });
+        ui.add_space(4.0);
+        match m.bytes() {
+            Ok(b) => {
+                let hex: Vec<String> = b.iter().take(32).map(|x| format!("{x:02X}")).collect();
+                let more = if b.len() > 32 { " …" } else { "" };
+                ui.label(RichText::new(format!("{}{more}", hex.join(" "))).font(super::theme::mono(12.0)).weak());
+            }
+            Err(e) => {
+                ui.label(RichText::new(e).color(RED).small());
+            }
+        }
+    });
 }
 
 /// A Light cue: what it does and which designed lighting cue / sequence it acts on.
@@ -1500,6 +1917,55 @@ fn light_settings(ui: &mut Ui, l: &mut crate::model::LightingCue, design: &crate
 
 /// A Fade cue's target video effect settings: the target's stack (taken when the option was
 /// switched on), with values to fade to.
+/// A Fade cue's target output fader levels.
+fn fade_out_levels(ui: &mut Ui, levels: &mut [f32]) {
+    use super::widgets::{FADER_W, fader_scale, vfader};
+    let w = ((ui.available_width() - 60.0) / levels.len().max(1) as f32 - 6.0).min(FADER_W);
+    ui.horizontal_top(|ui| {
+        ui.spacing_mut().item_spacing = egui::vec2(6.0, 4.0);
+        fader_scale(ui, FADER_TRACK);
+        for (o, l) in levels.iter_mut().enumerate() {
+            vfader(ui, l, &(o + 1).to_string(), FADER_TRACK, false, w).on_hover_text(tr!("Output {n} level, after the routing matrix", n = o + 1));
+        }
+    });
+}
+
+/// A Fade cue's target audio effect settings.
+fn fade_audio_fx(ui: &mut Ui, f: &mut crate::model::FadeCue, ctx: &Ctx) {
+    let current = f.target.and_then(|t| ctx.audio_fx(t));
+    let Some(fx) = &mut f.audio_fx else { return };
+    let kinds = |v: &[crate::effects::AudioEffect]| v.iter().map(|e| e.kind).collect::<Vec<_>>();
+    ui.horizontal(|ui| {
+        if let Some(cur) = &current
+            && kinds(cur) != kinds(fx)
+        {
+            ui.label(RichText::new(t("The target's effects changed since these were taken.")).color(super::widgets::AMBER));
+        }
+        if ui.small_button(t("Take the target's effects")).on_hover_text(t("Start again from the target's current effects")).clicked() {
+            *fx = current.clone().unwrap_or_default();
+        }
+    });
+    if fx.is_empty() {
+        ui.label(RichText::new(t("The target has no audio effects: add them on its Audio FX tab.")).weak());
+        return;
+    }
+    ui.horizontal_wrapped(|ui| {
+        for (i, e) in fx.iter_mut().enumerate() {
+            super::theme::card_frame().show(ui, |ui| {
+                ui.vertical(|ui| {
+                    ui.set_width(280.0);
+                    ui.horizontal(|ui| {
+                        ui.label(RichText::new(format!("{}. {}", i + 1, e.kind.label())).strong());
+                        ui.checkbox(&mut e.enabled, t("On"));
+                    });
+                    super::effects::audio_effect_settings(ui, 100 + i, e);
+                });
+            });
+        }
+    });
+    ui.label(RichText::new(t("Settings glide to these over the fade; an effect switched on or off changes at the start.")).weak().small());
+}
+
 fn fade_video_fx(ui: &mut Ui, f: &mut crate::model::FadeCue, ctx: &Ctx) {
     let current = f.target.and_then(|t| ctx.video_fx(t));
     let Some(fx) = &mut f.video_fx else { return };
@@ -1867,7 +2333,11 @@ fn mic_io(ui: &mut Ui, m: &mut crate::model::MicCue, ctx: &Ctx, refresh: &mut bo
                 ui.end_row();
             });
         }
-        _ => routing_card(ui, &mut m.routing, &mut m.objects, (m.channels as usize).clamp(1, crate::model::MAX_SRC_CHANNELS), ctx),
+        _ => {
+            let src = (m.channels as usize).clamp(1, crate::model::MAX_SRC_CHANNELS);
+            let mut r = Routing { routing: &mut m.routing, gangs: &mut m.gangs, objects: &mut m.objects, patch: &mut m.patch };
+            routing_card(ui, &mut r, src, ctx)
+        }
     });
 }
 
@@ -1971,7 +2441,12 @@ fn triggers(ui: &mut Ui, cue: &mut Cue, ctx: &Ctx) -> Option<TriggerAsk> {
     use super::theme::Card;
     use crate::model::TimecodeSource;
     let mut ask = None;
-    let specs = [Card::new(ic::KEYBOARD, t("Hotkey"), 340.0), Card::new(ic::PIANO, t("MIDI"), 400.0), Card::new(ic::TIMER_PLAY, t("Timecode"), 460.0)];
+    let specs = [
+        Card::new(ic::KEYBOARD, t("Hotkey"), 340.0),
+        Card::new(ic::PIANO, t("MIDI"), 400.0),
+        Card::new(ic::TIMER_PLAY, t("Timecode"), 460.0),
+        Card::new(ic::SCHEDULE, t("Wall clock"), 400.0),
+    ];
     super::theme::cards(ui, "triggers", &specs, |ui, i| match i {
         0 => {
             egui::Grid::new("trig-key").num_columns(2).spacing([10.0, 6.0]).show(ui, |ui| {
@@ -2008,6 +2483,7 @@ fn triggers(ui: &mut Ui, cue: &mut Cue, ctx: &Ctx) -> Option<TriggerAsk> {
                 }
             });
         }
+        3 => wallclock_trigger(ui, cue),
         _ => {
             let sync = &ctx.list_tc;
             egui::Grid::new("trig-tc").num_columns(2).spacing([10.0, 6.0]).show(ui, |ui| {
@@ -2063,6 +2539,60 @@ fn triggers(ui: &mut Ui, cue: &mut Cue, ctx: &Ctx) -> Option<TriggerAsk> {
         }
     });
     ask
+}
+
+/// The wall-clock trigger rows of the Triggers tab.
+fn wallclock_trigger(ui: &mut Ui, cue: &mut Cue) {
+    use crate::model::WallClockTrigger;
+    egui::Grid::new("trig-wall").num_columns(2).spacing([10.0, 6.0]).show(ui, |ui| {
+        ui.label(t("Fire at"));
+        ui.horizontal(|ui| {
+            let mut on = cue.wallclock_trigger.is_some();
+            if ui.checkbox(&mut on, "").on_hover_text(t("Fire at this time of day on this computer's clock")).changed() {
+                cue.wallclock_trigger = on.then(|| WallClockTrigger { time: crate::wallclock::now().secs / 60 * 60 + 60, days: 0 });
+            }
+            match &mut cue.wallclock_trigger {
+                Some(w) => {
+                    let (mut h, mut m, mut s) = (w.time / 3600, w.time / 60 % 60, w.time % 60);
+                    let mut changed = false;
+                    for (i, (v, max)) in [(&mut h, 23), (&mut m, 59), (&mut s, 59)].into_iter().enumerate() {
+                        if i > 0 {
+                            ui.label(":");
+                        }
+                        changed |= ui.add(egui::DragValue::new(v).range(0..=max).custom_formatter(|n, _| format!("{n:02}"))).changed();
+                    }
+                    if changed {
+                        w.time = (h * 3600 + m * 60 + s).min(86_399);
+                    }
+                }
+                None => {
+                    ui.label(RichText::new(t("off")).weak());
+                }
+            }
+        });
+        ui.end_row();
+        if let Some(w) = &mut cue.wallclock_trigger {
+            ui.label(t("Days"));
+            ui.horizontal(|ui| {
+                ui.spacing_mut().item_spacing.x = 3.0;
+                for d in 0..7u8 {
+                    let on = w.on_day(d);
+                    if ui.add(egui::Button::new(crate::wallclock::day_name(d)).selected(on && w.days != 0)).clicked() {
+                        // From "every day" (0), a click picks only that day.
+                        w.days = if w.days == 0 { 1 << d } else { w.days ^ (1 << d) };
+                    }
+                }
+                if w.days == 0 {
+                    ui.label(RichText::new(t("every day")).weak());
+                } else if ui.small_button(t("Every day")).clicked() {
+                    w.days = 0;
+                }
+            });
+            ui.end_row();
+        }
+    });
+    ui.add_space(4.0);
+    ui.label(RichText::new(t("Fires the cue as this computer's clock passes the time. Clock changes and sleep don't fire it.")).weak().small());
 }
 
 /// The MIDI trigger rows of the Triggers tab. Returns true when Learn is clicked.

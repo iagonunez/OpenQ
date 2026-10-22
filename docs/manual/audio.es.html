@@ -24,8 +24,11 @@
       <li class="s2"><a href="#audio">Cues de audio</a></li>
       <li class="s3"><a href="#time-loops">Tiempo y bucles</a></li>
       <li class="s3"><a href="#i-o">I/O</a></li>
+      <li class="s3"><a href="#audio-patches">Patches de audio</a></li>
+      <li class="s3"><a href="#gangs">Grupos</a></li>
       <li class="s3"><a href="#object-audio">Audio por objetos</a></li>
       <li class="s3"><a href="#levels">Niveles</a></li>
+      <li class="s3"><a href="#loudness">Sonoridad</a></li>
       <li class="s3"><a href="#eq">EQ</a></li>
       <li class="s3"><a href="#audio-fx">FX de audio</a></li>
       <li class="s3"><a href="#mic-cues">Cues Micro</a></li>
@@ -79,6 +82,18 @@
     del dispositivo. Cada punto de cruce tiene su propio nivel en dB, así que un archivo estéreo puede alimentar ocho altavoces.
     O cambia a <strong>Audio por objetos</strong> y coloca los canales en la sala (más abajo).</li>
   </ul>
+  <h3 id="audio-patches">Patches de audio</h3>
+  <p>Además del dispositivo de salida principal, un espectáculo puede sonar por más dispositivos: añádelos como
+  <strong>patches de audio</strong> en <span class="menu">Ajustes → Audio</span>, ponle nombre a cada uno y elige su
+  dispositivo. Cada cue elige su patch arriba de la tarjeta Enrutado de su pestaña I/O (<em>Salida principal</em> es el
+  dispositivo elegido encima de los patches); su enrutado y sus faders de salida apuntan entonces a las salidas de ese
+  dispositivo. Un dispositivo de patch que se desconecta para sus sonidos y vuelve solo. Qué dispositivo usa cada patch
+  es cosa del ordenador, como el principal. Las cues pueden enrutar hasta 64 canales a hasta 64 salidas.</p>
+  <h3 id="gangs">Grupos</h3>
+  <p>Con puntos de cruce personalizados, el botón <strong>Grupos</strong> da a los puntos de cruce una letra de grupo: haz
+  clic en un punto para pasar por A, B, C…, clic derecho para quitarla. Los puntos con la misma letra se mueven juntos:
+  arrastra uno y los demás cambian los mismos dB. Vuelve a pulsar <em>Grupos</em> para volver a los niveles; las letras
+  quedan a su lado.</p>
   <h3 id="object-audio">Audio por objetos</h3>
   <figure>
     <img src="img/es/object-audio.webp" width="1400" height="382" alt="Pestaña I/O en modo audio por objetos: una sala con cuatro altavoces y dos objetos numerados, y sus posiciones.">
@@ -101,6 +116,13 @@
   <p>El fader <strong>Principal</strong> fija el nivel de la cue. A su lado hay un fader por cada salida del dispositivo de audio, que
   ajusta esa salida después de la matriz de enrutado. Arrastra un fader o escribe un valor en la casilla de encima; haz doble clic
   en un fader para devolverlo a 0 dB. <strong>Panorama</strong> mueve el sonido entre las salidas 1 y 2 mientras el enrutado es automático.</p>
+  <h3 id="loudness">Sonoridad</h3>
+  <p>Cuando se abre un archivo de sonido por primera vez, OpenQ mide su <strong>sonoridad</strong> (integrada, en LUFS,
+  como en radiodifusión) mientras dibuja la forma de onda. La pestaña Niveles la muestra junto con el cambio que lleva el
+  archivo a la <strong>sonoridad objetivo</strong> del espectáculo (<span class="menu">Ajustes → General</span>, −23 LUFS si no
+  la cambias); <em>Nivelar al objetivo</em> pone ese nivel en la cue. Para nivelar muchas cues a la vez, selecciónalas (o
+  los grupos que las contienen) y elige <span class="menu">Edición → Nivelar las cues seleccionadas a la sonoridad
+  objetivo</span>. Así cues de archivos distintos suenan con la misma sonoridad.</p>
   <h3 id="eq">EQ</h3>
   <figure>
     <img src="img/es/eq.webp" width="1400" height="421" alt="Ecualizador con una curva de respuesta y una lista de bandas.">

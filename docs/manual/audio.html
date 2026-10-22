@@ -24,8 +24,11 @@
       <li class="s2"><a href="#audio">Audio cues</a></li>
       <li class="s3"><a href="#time-loops">Time &amp; Loops</a></li>
       <li class="s3"><a href="#i-o">I/O</a></li>
+      <li class="s3"><a href="#audio-patches">Audio patches</a></li>
+      <li class="s3"><a href="#gangs">Gangs</a></li>
       <li class="s3"><a href="#object-audio">Object audio</a></li>
       <li class="s3"><a href="#levels">Levels</a></li>
+      <li class="s3"><a href="#loudness">Loudness</a></li>
       <li class="s3"><a href="#eq">EQ</a></li>
       <li class="s3"><a href="#audio-fx">Audio FX</a></li>
       <li class="s3"><a href="#mic-cues">Mic cues</a></li>
@@ -79,6 +82,16 @@
     device outputs. Each crosspoint has its own level in dB, so a stereo file can feed eight speakers. Or switch to
     <strong>Object audio</strong> and place the channels in the room (below).</li>
   </ul>
+  <h3 id="audio-patches">Audio patches</h3>
+  <p>Besides the main output device, a show can play through more devices: add them as <strong>audio patches</strong> in
+  <span class="menu">Settings → Audio</span>, give each a name and pick its device. A cue chooses its patch at the top
+  of the Routing card on its I/O tab (<em>Main output</em> is the device chosen above the patches); its routing and output
+  faders then address that device's outputs. A patch device that is unplugged stops its sounds and comes back by itself.
+  Which device each patch uses belongs to the computer, like the main device. Cues can route up to 64 channels to up to 64 outputs.</p>
+  <h3 id="gangs">Gangs</h3>
+  <p>With custom crosspoints, the <strong>Gangs</strong> button gives crosspoints a gang letter: click a crosspoint to step
+  through A, B, C…, right-click to clear it. Crosspoints with the same letter move together: drag one and the others
+  change by the same number of dB. Click <em>Gangs</em> again to go back to the levels; the letters stay beside them.</p>
   <h3 id="object-audio">Object audio</h3>
   <figure>
     <img src="img/object-audio.webp" width="1400" height="382" alt="I/O tab in object audio mode: a room with four speakers and two numbered objects, and their positions.">
@@ -102,6 +115,13 @@
   device, which trims that output after the routing matrix. Drag a fader, or type a value in the box above it;
   double-click a fader to return it to 0 dB. <strong>Pan</strong> moves the sound between outputs 1 and 2 while the
   routing is automatic.</p>
+  <h3 id="loudness">Loudness</h3>
+  <p>When a sound file is first opened, OpenQ measures its <strong>loudness</strong> (integrated, in LUFS, as broadcasters
+  do) while it draws the waveform. The Levels tab shows it with the change that brings the file to the show's
+  <strong>loudness target</strong> (<span class="menu">Settings → General</span>, −23 LUFS unless you change it);
+  <em>Level to target</em> sets the cue's level to that. To level many cues at once, select them (or the groups holding
+  them) and choose <span class="menu">Edit → Level selected cues to loudness target</span>. Cues of different files then
+  play at the same loudness.</p>
   <h3 id="eq">EQ</h3>
   <figure>
     <img src="img/eq.webp" width="1400" height="421" alt="Equaliser with a response curve and a list of bands.">

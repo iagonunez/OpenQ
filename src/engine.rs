@@ -12,6 +12,11 @@
 //! thousands of running cues stay well under a millisecond. Cues that running cues will continue
 //! into are preloaded along with the next GO's. A cue that keeps restarting itself with no time
 //! in between (a Start cue aimed at itself) is held off and reported instead of spinning.
+//!
+//! Arm, Disarm and Target cues change other cues. The engine only reads the workspace, so it
+//! queues those changes as [`CueEdit`]s (the show applies them after the tick, [`Engine::take_edits`])
+//! and acts on them at once in the meantime. It remembers what each cue was before, so a Reset cue
+//! can put it back.
 
 use crate::model::{Cue, CueId, CueKind, FadeCurve, GroupMode, KindTag, LightingCue, MIN_DB, NetworkCue, Workspace};
 use std::collections::{HashMap, HashSet};
@@ -26,6 +31,22 @@ const MAX_PRELOAD: usize = 16;
 const MAX_FIRES_PER_TICK: u32 = 32;
 const MAX_LOG: usize = 200;
 
+/// A change a cue made to another cue, for the show to write into the workspace.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub enum CueEdit {
+    /// Arm (true) or disarm (false) a cue.
+    Armed(CueId, bool),
+    /// Point a cue at another target.
+    Target(CueId, Option<CueId>),
+}
+
+/// What a cue was before Arm, Disarm or Target cues changed it (for Reset cues).
+#[derive(Clone, Copy, Debug, Default)]
+struct Original {
+    armed: Option<bool>,
+    target: Option<Option<CueId>>,
+}
+
 /// What a Fade cue asks the backend to do to one running media cue.
 #[derive(Clone, Debug, PartialEq)]
 pub struct FadeRequest {
@@ -39,6 +60,10 @@ pub struct FadeRequest {
     pub objects: Option<Vec<crate::spatial::AudioObject>>,
     /// Target video effect settings for video/text/camera layers.
     pub video_fx: Option<Vec<crate::effects::VideoEffect>>,
+    /// Target output fader levels (dB per output) for sound.
+    pub out_levels: Option<Vec<f32>>,
+    /// Target audio effect settings for sound.
+    pub audio_fx: Option<Vec<crate::effects::AudioEffect>>,
     /// Fade length in seconds.
     pub duration: f64,
     /// Shape of the fade.
@@ -51,6 +76,10 @@ pub trait Backend {
     fn set_preloaded(&mut self, cues: &[&Cue]);
     /// Start a media cue so that it is heard/seen at `at` (which may be slightly in the future).
     fn start(&mut self, cue: &Cue, at: Instant) -> Result<(), String>;
+    /// Start a media cue `offset` seconds into its playback (a Load cue loaded it there).
+    fn start_from(&mut self, cue: &Cue, at: Instant, offset: f64) -> Result<(), String> {
+        if offset > 0.0 { Err("this cue can't start part way through".into()) } else { self.start(cue, at) }
+    }
     /// Stop a media cue at once.
     fn stop(&mut self, id: CueId);
     /// Freeze a media cue where it is.
@@ -89,6 +118,10 @@ pub trait Backend {
     /// Send a Network cue's message.
     fn send_network(&mut self, _net: &NetworkCue) -> Result<(), String> {
         Err("network output unavailable".into())
+    }
+    /// Send a MIDI cue's message.
+    fn send_midi(&mut self, _midi: &crate::model::MidiCue) -> Result<(), String> {
+        Err("MIDI output unavailable".into())
     }
     /// Run a Light cue (GO a lighting cue, release a sequence) at `at`. Returns how long its
     /// fades take, in seconds.
@@ -221,6 +254,17 @@ pub struct Engine {
     fired_in_tick: HashMap<CueId, u32>,
     /// Cues already reported as looping (so the log isn't flooded).
     loops_reported: HashSet<CueId>,
+    /// Changes Arm/Disarm/Target cues made, not yet written into the workspace.
+    edits: Vec<CueEdit>,
+    /// Arm states and targets set by cues, in force until the workspace has them.
+    armed_now: HashMap<CueId, bool>,
+    targets_now: HashMap<CueId, Option<CueId>>,
+    /// What cues were before cues changed them.
+    originals: HashMap<CueId, Original>,
+    /// Where Load cues put cues: seconds into the cue (pre-wait included) its next start begins.
+    loaded: HashMap<CueId, f64>,
+    /// Seconds into the action a loaded cue starts at, between its fire and its action.
+    offsets: HashMap<CueId, f64>,
 }
 
 impl Engine {
@@ -306,6 +350,34 @@ impl Engine {
         }
     }
 
+    /// Changes cues made to other cues since the last call (Arm, Disarm, Target cues). The caller
+    /// writes them into the workspace; the engine acts on them until then.
+    pub fn take_edits(&mut self) -> Vec<CueEdit> {
+        self.armed_now.clear();
+        self.targets_now.clear();
+        std::mem::take(&mut self.edits)
+    }
+
+    /// Forget what cues changed and loaded (another show was opened).
+    pub fn forget_cue_changes(&mut self) {
+        self.edits.clear();
+        self.armed_now.clear();
+        self.targets_now.clear();
+        self.originals.clear();
+        self.loaded.clear();
+        self.offsets.clear();
+    }
+
+    /// Seconds into the cue a Load cue put it at (its next start begins there).
+    pub fn loaded_at(&self, id: CueId) -> Option<f64> {
+        self.loaded.get(&id).copied()
+    }
+
+    /// Whether the cue is armed, counting Arm/Disarm cues that just ran.
+    pub fn is_armed(&self, cue: &Cue) -> bool {
+        self.armed_now.get(&cue.id).copied().unwrap_or(cue.armed)
+    }
+
     /// Call after the workspace was edited so preloaded media gets refreshed.
     pub fn workspace_changed(&mut self) {
         self.preload_dirty = true;
@@ -381,7 +453,16 @@ impl Engine {
             // Re-firing a running cue restarts it.
             self.stop_cue(ws, be, id);
         }
-        let pre = cue.pre_wait.max(0.0);
+        let mut pre = cue.pre_wait.max(0.0);
+        self.offsets.remove(&id);
+        if let Some(off) = self.loaded.remove(&id) {
+            // A Load cue put it part way through: skip that much of the pre-wait, then the action.
+            let skip = off.min(pre);
+            pre -= skip;
+            if off - skip > 0.0 {
+                self.offsets.insert(id, off - skip);
+            }
+        }
         // What this cue continues into may need preloading now.
         self.preload_dirty = true;
         if let Some(p) = parent {
@@ -507,6 +588,8 @@ impl Engine {
             geometry: None,
             objects: None,
             video_fx: None,
+            out_levels: None,
+            audio_fx: None,
             duration: fade,
             curve: FadeCurve::Linear,
         };
@@ -716,7 +799,7 @@ impl Engine {
 
             if !inst.action_done {
                 let done = match inst.kind {
-                    _ if !cue.armed => true,
+                    _ if !self.is_armed(cue) => true,
                     k if k.is_media() => be.is_finished(id),
                     KindTag::Group => {
                         inst.action_at <= now && !self.busy_parents.contains(&id)
@@ -784,22 +867,40 @@ impl Engine {
         at: Instant,
         now: Instant,
     ) -> Option<f64> {
-        if !cue.armed {
+        let offset = self.offsets.remove(&cue.id).unwrap_or(0.0);
+        if !self.is_armed(cue) {
             return Some(0.0);
         }
+        // A Target cue that just ran may have pointed this cue elsewhere.
+        let retargeted;
+        let cue = match self.targets_now.get(&cue.id) {
+            Some(t) => {
+                let mut c = cue.shallow_clone();
+                if let Some(x) = c.kind.target_mut() {
+                    *x = *t;
+                }
+                retargeted = c;
+                &retargeted
+            }
+            None => cue,
+        };
         match &cue.kind {
             CueKind::Audio(_)
             | CueKind::Video(_)
             | CueKind::Text(_)
             | CueKind::Mic(_)
-            | CueKind::Camera(_) => match be.start(cue, at) {
-                Ok(()) => be.duration(cue),
-                Err(e) => {
-                    self.log(format!("Cue {} '{}': {e}", cue.number, cue.display_name()));
-                    Some(0.0)
+            | CueKind::Camera(_)
+            | CueKind::Timecode(_) => {
+                let started = if offset > 0.0 { be.start_from(cue, at, offset) } else { be.start(cue, at) };
+                match started {
+                    Ok(()) => be.duration(cue).map(|d| (d - offset).max(0.0)),
+                    Err(e) => {
+                        self.log(format!("Cue {} '{}': {e}", cue.number, cue.display_name()));
+                        Some(0.0)
+                    }
                 }
-            },
-            CueKind::Wait { duration } => Some(duration.max(0.0)),
+            }
+            CueKind::Wait { duration } => Some((duration - offset).max(0.0)),
             CueKind::Memo => Some(0.0),
             CueKind::Fade(f) => {
                 let Some(target) = f.target else {
@@ -812,7 +913,9 @@ impl Engine {
                     geometry: f.geometry,
                     objects: f.objects.clone(),
                     video_fx: f.video_fx.clone(),
-                    duration: f.duration.max(0.0),
+                    out_levels: f.out_levels.clone(),
+                    audio_fx: f.audio_fx.clone(),
+                    duration: (f.duration - offset).max(0.0),
                     curve: f.curve,
                 };
                 let targets: Vec<CueId> = self
@@ -901,6 +1004,77 @@ impl Engine {
                 }
                 Some(0.0)
             }
+            CueKind::Arm { target } | CueKind::Disarm { target } => {
+                let arm = matches!(cue.kind, CueKind::Arm { .. });
+                match target.and_then(|t| ws.cue_list.find(t)) {
+                    Some(tc) => {
+                        let was = self.is_armed(tc);
+                        self.originals.entry(tc.id).or_default().armed.get_or_insert(was);
+                        self.armed_now.insert(tc.id, arm);
+                        self.edits.push(CueEdit::Armed(tc.id, arm));
+                        self.preload_dirty = true;
+                    }
+                    None => self.log(format!("{} cue {} has no target", cue.kind.tag().label(), cue.number)),
+                }
+                Some(0.0)
+            }
+            CueKind::Target { target, new_target } => {
+                match target.and_then(|t| ws.cue_list.find(t)) {
+                    Some(tc) if tc.kind.takes_target() => {
+                        let was = self.targets_now.get(&tc.id).copied().unwrap_or(tc.kind.target());
+                        self.originals.entry(tc.id).or_default().target.get_or_insert(was);
+                        self.targets_now.insert(tc.id, *new_target);
+                        self.edits.push(CueEdit::Target(tc.id, *new_target));
+                    }
+                    Some(_) => self.log(format!("Target cue {}: its target doesn't take a target", cue.number)),
+                    None => self.log(format!("Target cue {} has no target", cue.number)),
+                }
+                Some(0.0)
+            }
+            CueKind::Load { target, time } => {
+                match target.filter(|t| ws.cue_list.find(*t).is_some()) {
+                    Some(t) => {
+                        self.loaded.insert(t, time.max(0.0));
+                        // A running cue jumps there.
+                        if self.instances.contains_key(&t) {
+                            self.fire(ws, be, t, at, None);
+                        }
+                    }
+                    None => self.log(format!("Load cue {} has no target", cue.number)),
+                }
+                Some(0.0)
+            }
+            CueKind::Reset { target } => {
+                let Some(t) = target.filter(|t| ws.cue_list.find(*t).is_some()) else {
+                    self.log(format!("Reset cue {} has no target", cue.number));
+                    return Some(0.0);
+                };
+                self.release_light_cues(ws, be, t, at);
+                self.stop_cue(ws, be, t);
+                let mut ids = ws.cue_list.descendants(t);
+                ids.push(t);
+                for id in ids {
+                    self.loaded.remove(&id);
+                    self.offsets.remove(&id);
+                    let Some(o) = self.originals.remove(&id) else { continue };
+                    if let Some(a) = o.armed {
+                        self.armed_now.insert(id, a);
+                        self.edits.push(CueEdit::Armed(id, a));
+                    }
+                    if let Some(tg) = o.target {
+                        self.targets_now.insert(id, tg);
+                        self.edits.push(CueEdit::Target(id, tg));
+                    }
+                }
+                self.preload_dirty = true;
+                Some(0.0)
+            }
+            CueKind::Midi(midi) => {
+                if let Err(e) = be.send_midi(midi) {
+                    self.log(format!("MIDI cue {}: {e}", cue.number));
+                }
+                Some(0.0)
+            }
             CueKind::Light(l) => match be.light(l, &ws.lighting, at) {
                 Ok(d) => Some(d),
                 Err(e) => {
@@ -959,10 +1133,10 @@ impl Engine {
     }
 
     fn on_action_complete(&mut self, ws: &Workspace, be: &mut dyn Backend, cue: &Cue) {
-        if cue.armed
+        if self.is_armed(cue)
             && let CueKind::Fade(f) = &cue.kind
             && f.stop_target_when_done
-            && let Some(t) = f.target
+            && let Some(t) = self.targets_now.get(&cue.id).copied().unwrap_or(f.target)
         {
             self.stop_cue(ws, be, t);
         }
@@ -1108,6 +1282,11 @@ mod tests {
         }
         fn preload_retry(&mut self, _now: Instant) -> bool {
             if self.retries.is_empty() { false } else { self.retries.remove(0) }
+        }
+        fn start_from(&mut self, cue: &Cue, at: Instant, offset: f64) -> Result<(), String> {
+            self.events.push(format!("start {} from {offset}", cue.number));
+            self.started.insert(cue.id, at);
+            Ok(())
         }
         fn start(&mut self, cue: &Cue, at: Instant) -> Result<(), String> {
             self.events.push(format!("start {}", cue.number));
@@ -1505,6 +1684,84 @@ mod tests {
         e.set_playhead(Some(first));
         e.go(&w, &mut m, t0 + ms(30));
         assert!(m.events.contains(&"light Release None false".to_string()));
+    }
+
+    /// Disarm and Target cues act at once (a cue they continue into sees the change), queue the
+    /// change for the workspace, and a Reset cue puts back what they changed.
+    #[test]
+    fn arm_disarm_target_and_reset() {
+        let a = cue("A", KindTag::Audio);
+        let b = cue("B", KindTag::Audio);
+        let (ai, bi) = (a.id, b.id);
+        let mut dis = cue("1", KindTag::Disarm);
+        dis.kind = CueKind::Disarm { target: Some(ai) };
+        dis.continue_mode = ContinueMode::AutoContinue;
+        let mut start_a = cue("2", KindTag::Start);
+        start_a.kind = CueKind::Start { target: Some(ai) };
+        let si = start_a.id;
+        let mut retarget = cue("3", KindTag::Target);
+        retarget.kind = CueKind::Target { target: Some(si), new_target: Some(bi) };
+        retarget.continue_mode = ContinueMode::AutoContinue;
+        let mut start_again = cue("4", KindTag::Start);
+        start_again.kind = CueKind::Start { target: Some(si) };
+        let mut reset = cue("5", KindTag::Reset);
+        reset.kind = CueKind::Reset { target: Some(ai) };
+        let mut reset_s = cue("6", KindTag::Reset);
+        reset_s.kind = CueKind::Reset { target: Some(si) };
+        let (di, ri, rsi) = (dis.id, reset.id, reset_s.id);
+        let mut w = ws(vec![dis, start_a, retarget, start_again, reset, reset_s, a, b]);
+        let mut e = Engine::new();
+        let mut m = Mock::default();
+        let t0 = Instant::now();
+        e.set_playhead(Some(di));
+        e.go(&w, &mut m, t0);
+        assert!(!m.events.iter().any(|x| x == "start A"), "A was disarmed before the Start cue ran: {:?}", m.events);
+        let edits = e.take_edits();
+        assert_eq!(edits, vec![CueEdit::Armed(ai, false)]);
+        w.cue_list.find_mut(ai).unwrap().armed = false;
+        // Target cue → the Start cue it continues into starts B.
+        e.go(&w, &mut m, t0 + ms(10));
+        assert!(m.events.iter().any(|x| x == "start B"), "{:?}", m.events);
+        assert_eq!(e.take_edits(), vec![CueEdit::Target(si, Some(bi))]);
+        w.cue_list.find_mut(si).unwrap().kind = CueKind::Start { target: Some(bi) };
+        // Reset A: armed again. Reset the Start cue: aimed at A again.
+        e.set_playhead(Some(ri));
+        e.go(&w, &mut m, t0 + ms(20));
+        assert_eq!(e.take_edits(), vec![CueEdit::Armed(ai, true)]);
+        e.set_playhead(Some(rsi));
+        e.go(&w, &mut m, t0 + ms(30));
+        assert_eq!(e.take_edits(), vec![CueEdit::Target(si, Some(ai))]);
+        // Nothing left to undo.
+        e.set_playhead(Some(ri));
+        e.go(&w, &mut m, t0 + ms(40));
+        assert!(e.take_edits().is_empty());
+    }
+
+    /// A Load cue makes the target's next start skip its pre-wait and start the action part way in.
+    #[test]
+    fn load_starts_the_target_part_way_through() {
+        let mut a = cue("A", KindTag::Audio);
+        a.pre_wait = 0.5;
+        let ai = a.id;
+        let mut load = cue("1", KindTag::Load);
+        load.kind = CueKind::Load { target: Some(ai), time: 2.0 };
+        let li = load.id;
+        let w = ws(vec![load, a]);
+        let mut e = Engine::new();
+        let mut m = Mock::default();
+        m.durations.insert(ai, 10.0);
+        let t0 = Instant::now();
+        e.set_playhead(Some(li));
+        e.go(&w, &mut m, t0);
+        assert_eq!(e.loaded_at(ai), Some(2.0));
+        e.go(&w, &mut m, t0 + ms(10));
+        assert!(m.events.iter().any(|x| x == "start A from 1.5"), "pre-wait skipped: {:?}", m.events);
+        assert_eq!(e.instances[&ai].action_duration, Some(8.5));
+        assert_eq!(e.loaded_at(ai), None, "used once");
+        // Loading a running cue makes it jump there.
+        e.set_playhead(Some(li));
+        e.go(&w, &mut m, t0 + ms(20));
+        assert_eq!(m.events.iter().filter(|x| *x == "start A from 1.5").count(), 2, "{:?}", m.events);
     }
 
     #[test]

@@ -855,6 +855,34 @@ impl App {
                     None => t("release all sequences").into(),
                 },
             },
+            CueKind::Midi(m) => m.label(),
+            CueKind::Timecode(tc) => {
+                let from = crate::timecode::format_secs(tc.start, tc.rate);
+                match tc.output {
+                    crate::model::TimecodeOutput::Ltc => format!("LTC {from} · {} {}", crate::i18n::t("out"), tc.channel + 1),
+                    crate::model::TimecodeOutput::Mtc => format!("MTC {from}"),
+                }
+            }
+            CueKind::Target { target, new_target } => {
+                // The changed cue by number (the column is narrow), its new target in full.
+                let find = |id: &Option<CueId>| id.map(|t| show.ws.cue_list.find(t));
+                let changed = match find(target) {
+                    Some(Some(tc)) if !tc.number.is_empty() => tc.number.clone(),
+                    Some(Some(tc)) => tc.display_name(),
+                    Some(None) => crate::i18n::t("missing target").into(),
+                    None => crate::i18n::t("no target").into(),
+                };
+                let to = match find(new_target) {
+                    Some(Some(tc)) => format!("{} {}", tc.number, tc.display_name()),
+                    Some(None) => crate::i18n::t("missing target").into(),
+                    None => crate::i18n::t("no target").into(),
+                };
+                format!("{changed} → {to}")
+            }
+            CueKind::Load { target: Some(tg), time } => match show.ws.cue_list.find(*tg) {
+                Some(tc) => format!("{} {} @ {}", tc.number, tc.display_name(), crate::ui::widgets::fmt_time(*time)),
+                None => crate::i18n::t("missing target").into(),
+            },
             k => match k.target() {
                 Some(t) => match show.ws.cue_list.find(t) {
                     Some(tc) => format!("{} {}", tc.number, tc.display_name()),
@@ -1120,7 +1148,18 @@ trait TargetExt {
 impl TargetExt for CueKind {
     /// Whether this kind of cue takes a target at all.
     fn needs_target(&self) -> bool {
-        matches!(self, CueKind::Fade(_) | CueKind::Start { .. } | CueKind::Goto { .. } | CueKind::Devamp { .. })
+        matches!(
+            self,
+            CueKind::Fade(_)
+                | CueKind::Start { .. }
+                | CueKind::Goto { .. }
+                | CueKind::Devamp { .. }
+                | CueKind::Arm { .. }
+                | CueKind::Disarm { .. }
+                | CueKind::Reset { .. }
+                | CueKind::Load { .. }
+                | CueKind::Target { .. }
+        )
     }
 
     /// A cue that needs a target but has none (or it was deleted).

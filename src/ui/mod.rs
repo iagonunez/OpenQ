@@ -62,6 +62,8 @@ enum Deferred {
     Open,
     Save,
     SaveAs,
+    /// Copy the show and its media into a folder.
+    Bundle,
     PickMedia(CueId),
     AddMediaCues,
     /// Open a show autosaved before a crash (may ask to discard the current one first).
@@ -253,6 +255,8 @@ pub struct App {
     discard_ok: bool,
     /// The "Cues are playing" window is open, for this action.
     running_prompt: Option<Risky>,
+    /// A bundle being written (File → Bundle show…).
+    bundle: Option<crate::bundle::Job>,
     /// The user went ahead although cues play: the next [`App::may_discard`] doesn't ask about them.
     running_ok: bool,
     frame_count: u64,
@@ -344,6 +348,7 @@ impl App {
             discard_prompt: None,
             discard_ok: false,
             running_prompt: None,
+            bundle: None,
             running_ok: false,
             frame_count: 0,
             mode: Mode::Edit,
@@ -595,6 +600,53 @@ impl App {
         show.ws.cue_list.insert(ploc.parent, at, group);
         show.edited();
         self.select(show, Some(gid));
+    }
+
+    /// Level the selected Audio cues (and those in selected groups) to the loudness target.
+    fn level_loudness(&mut self, show: &mut Show) {
+        let target = show.ws.settings.loudness_target;
+        let mut ids: Vec<CueId> = Vec::new();
+        for id in &self.selection {
+            if let Some(c) = show.ws.cue_list.find(*id) {
+                c.visit(&mut |c| ids.push(c.id));
+            }
+        }
+        let (mut changed, mut waiting, mut unmeasured) = (Vec::new(), 0, 0);
+        for id in ids {
+            let Some(c) = show.ws.cue_list.find_mut(id) else { continue };
+            let CueKind::Audio(a) = &mut c.kind else { continue };
+            match self.waveforms.get(&a.path) {
+                Some(Ok(w)) => match w.loudness {
+                    Some(l) => {
+                        let gain = crate::loudness::gain_to(l, target);
+                        if a.volume_db != gain {
+                            a.volume_db = gain;
+                            changed.push(id);
+                        }
+                    }
+                    None => unmeasured += 1,
+                },
+                Some(Err(_)) => unmeasured += 1,
+                None => waiting += 1,
+            }
+        }
+        let n = changed.len();
+        for id in &changed {
+            if let Some(c) = show.ws.cue_list.find(*id) {
+                show.media.update_live(&c.clone());
+            }
+        }
+        if n > 0 {
+            show.edited_cues(changed);
+        }
+        let mut msg = tr!("{n} cues levelled to {target} LUFS", n = n.to_string(), target = format!("{target:.0}"));
+        if waiting > 0 {
+            msg += &tr!("; {n} files still being measured: try again in a moment", n = waiting.to_string());
+        }
+        if unmeasured > 0 {
+            msg += &tr!("; {n} files couldn't be measured", n = unmeasured.to_string());
+        }
+        self.notify(msg);
     }
 
     fn renumber_all(&mut self, show: &mut Show) {
@@ -929,6 +981,13 @@ impl App {
                 if ui.button(wi(I::SAVE, t("Save As…"))).clicked() {
                     self.deferred.push(Deferred::SaveAs);
                 }
+                if ui
+                    .add_enabled(self.bundle.is_none() && !show.replica, egui::Button::new(wi(I::CREATE_NEW_FOLDER, t("Bundle show…"))))
+                    .on_hover_text(t("Copy the show and every media file it plays into one folder"))
+                    .clicked()
+                {
+                    self.deferred.push(Deferred::Bundle);
+                }
                 ui.separator();
                 if ui.button(wi(I::ADD, t("Import media files…"))).clicked() {
                     self.deferred.push(Deferred::AddMediaCues);
@@ -988,6 +1047,13 @@ impl App {
                 ui.separator();
                 if ui.button(wi(I::REFRESH, t("Renumber all cues"))).clicked() {
                     self.renumber_all(show);
+                }
+                if ui
+                    .add_enabled(!self.selection.is_empty(), egui::Button::new(wi(I::GRAPHIC_EQ, t("Level selected cues to loudness target"))))
+                    .on_hover_text(t("Set each selected Audio cue's level so its file plays at the loudness target (Settings → General)"))
+                    .clicked()
+                {
+                    self.level_loudness(show);
                 }
                 if ui.button(wi(I::SETTINGS, t("Settings…"))).clicked() {
                     self.show_settings = true;
@@ -1894,6 +1960,15 @@ impl App {
             ui.label(t("Master volume"));
             widgets::db_edit(ui, &mut show.ws.settings.master_volume_db);
             ui.end_row();
+            ui.label(t("Loudness target"));
+            ui.add(
+                egui::DragValue::new(&mut show.ws.settings.loudness_target)
+                    .range(crate::limits::LOUDNESS_TARGET.0..=crate::limits::LOUDNESS_TARGET.1)
+                    .speed(0.1)
+                    .suffix(" LUFS"),
+            )
+            .on_hover_text(t("Audio cues levelled to target play at this loudness (−23 LUFS: EBU R 128)"));
+            ui.end_row();
             ui.label(t("OSC remote control"));
             ui.horizontal(|ui| {
                 ui.checkbox(&mut show.ws.settings.osc_enabled, t("Listen on UDP port"));
@@ -1912,9 +1987,7 @@ impl App {
             ui.end_row();
         });
         if show.ws.settings != before {
-            if let Some(a) = &mut show.media.audio {
-                a.set_master(show.ws.settings.master_volume_db);
-            }
+            show.media.set_master(show.ws.settings.master_volume_db);
             show.edited_outside_cues();
         }
     }
@@ -1970,6 +2043,8 @@ impl App {
             });
         ui.label(RichText::new(t("Changing the device stops all playback. Cue routing matrices address the device's outputs.")).weak());
         ui.separator();
+        self.audio_patches(ui, show, &devices);
+        ui.separator();
         let channels = show.media.audio.as_ref().map_or(2, |a| a.channels);
         let before = show.ws.settings.speakers.clone();
         room::speaker_editor(ui, &mut show.ws.settings.speakers, channels);
@@ -1982,6 +2057,86 @@ impl App {
             } else {
                 self.set_audio_device(show, chosen);
             }
+        }
+    }
+
+    /// Settings → Audio: extra outputs (audio patches) cues can play through.
+    fn audio_patches(&mut self, ui: &mut egui::Ui, show: &mut Show, devices: &[media::audio::DeviceEntry]) {
+        let before = show.ws.settings.patches.clone();
+        let patches = &mut show.ws.settings.patches;
+        ui.label(RichText::new(t("Audio patches")).font(theme::semibold(14.0)));
+        ui.label(RichText::new(t("More output devices: a cue picks its patch on its I/O tab (Main output is the device above).")).weak());
+        let mut remove = None;
+        egui::Grid::new("patches").num_columns(4).spacing([8.0, 6.0]).show(ui, |ui| {
+            for (i, p) in patches.iter_mut().enumerate() {
+                ui.label(format!("{}", i + 1));
+                ui.add_sized([140.0, 20.0], egui::TextEdit::singleline(&mut p.name).hint_text(t("name")));
+                let shown = match &p.device {
+                    None => t("— none —").to_string(),
+                    Some(id) => devices.iter().find(|d| &d.id == id).map_or_else(|| tr!("{id} (missing)", id = id.clone()), |d| d.name.clone()),
+                };
+                egui::ComboBox::from_id_salt(("patch-dev", i)).width(260.0).selected_text(shown).show_ui(ui, |ui| {
+                    ui.selectable_value(&mut p.device, None, t("— none —"));
+                    for d in devices {
+                        ui.selectable_value(&mut p.device, Some(d.id.clone()), &d.name).on_hover_text(&d.id);
+                    }
+                });
+                ui.horizontal(|ui| {
+                    match show.media.patch_status(i as u8 + 1) {
+                        (Some(_), _) => {
+                            let n = show.media.patch_channels(i as u8 + 1).unwrap_or(0);
+                            ui.label(RichText::new(tr!("{n} outputs", n = n.to_string())).color(GREEN));
+                        }
+                        (None, Some(e)) => {
+                            ui.label(RichText::new(e).color(RED).small());
+                        }
+                        (None, None) => {}
+                    }
+                    if theme::icon_button(ui, icons::DELETE, t("Remove patch")).clicked() {
+                        remove = Some(i);
+                    }
+                });
+                ui.end_row();
+            }
+        });
+        if let Some(i) = remove {
+            patches.remove(i);
+            // Cues on later patches keep their device; cues on the removed one go to the main output.
+            for list in show.ws.cue_list.all_roots_mut() {
+                fn walk(cues: &mut [Cue], gone: u8) {
+                    for c in cues {
+                        let patch = match &mut c.kind {
+                            CueKind::Audio(a) => Some(&mut a.patch),
+                            CueKind::Video(v) => Some(&mut v.patch),
+                            CueKind::Mic(m) => Some(&mut m.patch),
+                            _ => None,
+                        };
+                        if let Some(p) = patch {
+                            if *p == gone {
+                                *p = 0;
+                            } else if *p > gone {
+                                *p -= 1;
+                            }
+                        }
+                        if let Some(ch) = c.children_mut() {
+                            walk(ch, gone);
+                        }
+                    }
+                }
+                walk(list, i as u8 + 1);
+            }
+            show.edited();
+            return;
+        }
+        if ui
+            .add_enabled(patches.len() < crate::model::MAX_PATCHES, egui::Button::new(theme::with_icon(icons::ADD, t("Add patch"))))
+            .clicked()
+        {
+            let n = patches.len() + 1;
+            patches.push(crate::model::AudioPatch { name: tr!("Patch {n}", n = n.to_string()), device: None });
+        }
+        if show.ws.settings.patches != before {
+            show.edited_outside_cues();
         }
     }
 
@@ -2164,6 +2319,66 @@ impl App {
         if let Some(answer) = answer {
             self.answer_discard(answer);
         }
+    }
+
+    /// Ask for a folder and start copying the show and its media there ([`crate::bundle`]).
+    fn start_bundle(&mut self) {
+        if self.bundle.is_some() {
+            return;
+        }
+        let (ws, name) = {
+            let s = self.show.lock();
+            let name = s.path.as_ref().and_then(|p| p.file_stem()).map_or_else(|| "show".to_string(), |n| n.to_string_lossy().into_owned());
+            (s.ws.clone(), name)
+        };
+        let Some(folder) = rfd::FileDialog::new().set_title(t("Bundle show into…")).pick_folder() else { return };
+        // Outside the show lock: this looks at every media file.
+        let plan = crate::bundle::plan(&ws, &name, &folder, &|p| crate::media::check_local(p).is_ok() && p.is_file());
+        if plan.show.exists() {
+            self.notify_error(tr!("{path} already exists; pick another folder", path = plan.dir.display().to_string()));
+            return;
+        }
+        self.bundle = Some(crate::bundle::Job::start(plan));
+    }
+
+    /// Progress of a bundle being written; the result once it is done.
+    fn bundle_window(&mut self, ctx: &egui::Context) {
+        let Some(job) = &self.bundle else { return };
+        let p = job.progress.lock().clone();
+        if let Some(done) = p.done {
+            let missing = job.missing.len();
+            self.bundle = None;
+            match done {
+                Ok(path) if missing > 0 => self.notify_error(tr!(
+                    "Show bundled in {path}; {n} media files were missing and are left out",
+                    path = path.display().to_string(),
+                    n = missing.to_string()
+                )),
+                Ok(path) => self.notify(tr!("Show bundled in {path}", path = path.display().to_string())),
+                Err(e) => self.notify_error(tr!("Bundling the show failed: {error}", error = e)),
+            }
+            return;
+        }
+        let mut cancel = false;
+        egui::Window::new(theme::with_icon(icons::CREATE_NEW_FOLDER, t("Bundling the show"))).collapsible(false).resizable(false).show(ctx, |ui| {
+            ui.set_width(340.0);
+            let frac = if p.total_bytes > 0 { p.bytes as f32 / p.total_bytes as f32 } else { 0.0 };
+            ui.add(egui::ProgressBar::new(frac).show_percentage());
+            ui.label(tr!(
+                "{files} of {total} files · {mb} of {total_mb} MB",
+                files = p.files.to_string(),
+                total = p.total_files.to_string(),
+                mb = (p.bytes / 1_000_000).to_string(),
+                total_mb = (p.total_bytes / 1_000_000).to_string()
+            ));
+            if ui.button(t("Cancel")).clicked() {
+                cancel = true;
+            }
+        });
+        if cancel {
+            job.cancel();
+        }
+        ctx.request_repaint_after(Duration::from_millis(100));
     }
 
     /// The "Cues are playing" window (Stop and go on / Cancel), before something that stops them all.
@@ -2351,6 +2566,7 @@ impl App {
                         self.save_to(Some(p));
                     }
                 }
+                Deferred::Bundle => self.start_bundle(),
                 Deferred::PickMedia(id) => {
                     let video = matches!(
                         self.show.lock().ws.cue_list.find(id).map(|c| c.kind.tag()),
@@ -3014,6 +3230,7 @@ impl App {
             }
             self.discard_window(&ctx);
             self.running_window(&ctx, show);
+            self.bundle_window(&ctx);
             self.track_undo(&ctx, show);
             self.sync_osc(&ctx, show);
             self.sync_surfaces(&ctx, show);

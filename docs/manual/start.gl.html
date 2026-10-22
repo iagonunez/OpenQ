@@ -22,6 +22,7 @@
       <li class="s2"><a href="#start">Instalación e primeiro espectáculo</a></li>
       <li class="s3"><a href="#installing">Instalación</a></li>
       <li class="s3"><a href="#your-first-show">O teu primeiro espectáculo</a></li>
+      <li class="s3"><a href="#bundling-a-show">Empaquetar un espectáculo</a></li>
       <li class="s2"><a href="#window">A xanela principal</a></li>
       <li class="s3"><a href="#working-with-the-cue-list">Traballar coa lista de cues</a></li>
       <li class="s3"><a href="#cue-lists">Listas de cues</a></li>
@@ -133,6 +134,11 @@ cargo run --release -- show.openq    # abrir un espectáculo gardado</code></pre
   </ol>
   <div class="note tip"><span class="label">Consello</span><p>Garda o ficheiro do espectáculo no mesmo cartafol ca os seus medios.
   Así o cartafol pódese copiar a outro ordenador e abrirse alí sen cambios.</p></div>
+  <h3 id="bundling-a-show">Empaquetar un espectáculo</h3>
+  <p><span class="menu">Ficheiro → Empaquetar función…</span> copia o espectáculo e todos os sons e películas que usa nun
+  cartafol: escolle onde e OpenQ crea un cartafol co nome do espectáculo, co seu ficheiro dentro e os medios en
+  <code>audio/</code> e <code>video/</code>. Copia ese cartafol a outro ordenador ou gárdao como arquivo. Os ficheiros que
+  faltan no disco lístanse e déixanse fóra. O espectáculo que tes aberto non cambia.</p>
 </section>
 
 <section id="window">
@@ -221,6 +227,8 @@ cargo run --release -- show.openq    # abrir un espectáculo gardado</code></pre
       <tr><td>Superficies de control</td><td>A entrada MIDI deste ordenador e as <a href="lighting.gl.html#surfaces">asignacións de superficies de control</a> do espectáculo, con aprendizaxe.</td></tr>
     </tbody>
   </table></div>
+  <p>Axustes → Xeral tamén ten a <strong>sonoridade obxectivo</strong> para nivelar cues
+  (<a href="audio.gl.html#loudness">Sonoridade</a>); Axustes → Audio, os <a href="audio.gl.html#audio-patches">patches de audio</a>.</p>
   <figure class="narrow">
     <img src="img/gl/room.webp" width="731" height="465" alt="O editor de sala: unha sala cadrada con catro altofalantes FL, FR, RL, RR e unha táboa coas súas saídas e posicións.">
     <figcaption>A sala para audio por obxectos. Arrastra os altofalantes ou escribe as súas posicións.</figcaption>

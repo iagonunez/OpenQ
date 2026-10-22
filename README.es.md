@@ -86,13 +86,14 @@ cargo build --release && ./target/release/openq
 
 | | Función | Qué hace |
 |---|---|---|
-| 🎬 | **15 tipos de cue** | Audio, Vídeo, Texto, Cámara, Micro, Grupo, Espera, Memo, Fundido, Iniciar, Parar, Pausa, Ir a, Devamp y Red (OSC). |
+| 🎬 | **23 tipos de cue** | Audio, Vídeo, Texto, Cámara, Micro, Grupo, Espera, Memo, Fundido, Iniciar, Parar, Pausa, Ir a, Devamp, Red (OSC), MIDI, Timecode, Luz, y Armar, Desarmar, Restablecer, Cargar y Destino para cambiar otras cues durante la función. |
 | 🗂️ | **Listas de cues** | Varias listas por espectáculo en pestañas (la secuencia principal, una lista de efectos para disparar a mano…); las cues siguen sonando al cambiar. |
 | ⏱️ | **Tiempos** | Pre-espera, post-espera, autocontinuar y autoseguir. Las cues encadenadas arrancan en la muestra exacta, por larga que sea la cadena. |
 | 📁 | **Grupos** | Entrar en el grupo, lista de reproducción, lanzarlo todo a la vez o un hijo al azar. |
 | 🔒 | **Modo edición y modo función** | Monta el espectáculo en modo edición; el modo función bloquea la lista y muestra filas grandes y legibles para la cabina. |
 | 🔊 | **Reproducción de audio** | Recortes, bucles, entrada y salida en fundido, varispeed y fragmentos que se repiten hasta que una cue Devamp los libera. |
-| 🎚️ | **Mezclador y enrutado** | Nivel, panorama, faders de salida y una matriz de puntos de cruce por cue, con dB en cada punto. |
+| 🎚️ | **Mezclador y enrutado** | Nivel, panorama, faders de salida y una matriz de puntos de cruce por cue (hasta 64 salidas), con dB en cada punto y puntos agrupados. Más dispositivos de salida como patches de audio. |
+| 📏 | **Sonoridad** | Mide en LUFS la sonoridad de cada archivo de sonido; nivela una cue o toda una selección al objetivo del espectáculo. |
 | 📈 | **Ecualizador** | Hasta 8 bandas por cue (filtros paso alto y bajo, shelves, picos), con una curva de respuesta que se arrastra. |
 | 🎛️ | **Efectos de audio** | Cadenas de delay, reverb, compresor, limitador, puerta, distorsión, chorus y bitcrusher que se editan en directo. |
 | 🔈 | **Audio por objetos** | Coloca cada canal en una sala de altavoces (de estéreo a 7.1 o tu propia disposición); las cues de fundido mueven los sonidos por la sala. |
@@ -105,9 +106,11 @@ cargo build --release && ./target/release/openq
 | 📽️ | **Escenarios y mapping** | Tantas salidas como quieras, a pantalla completa en cualquier pantalla, con corrección de trapecio por esquinas y un patrón de ajuste. |
 | 🌅 | **Edge blending** | Reparte una imagen entre varios proyectores con solapes suaves y corrección de gamma. |
 | 📷 | **Cues de cámara** | Muestra una cámara o una capturadora en directo como capa en el escenario. |
-| 🌗 | **Fundidos** | Funde nivel, opacidad, geometría, efectos de vídeo y posiciones de objetos, con curvas predefinidas o propias. |
-| 🕰️ | **Código de tiempo** | Cada lista puede seguir LTC o MTC y disparar cues en su momento. |
-| ⌨️ | **Atajos** | Dispara cualquier cue directamente con su propia tecla. |
+| 🌗 | **Fundidos** | Funde nivel, faders de salida, efectos de audio y vídeo, opacidad, geometría y posiciones de objetos, con curvas predefinidas o propias. |
+| 🕰️ | **Código de tiempo** | Cada lista puede seguir LTC o MTC y disparar cues en su momento; las cues Timecode envían LTC o MTC. |
+| ⌨️ | **Disparadores** | Dispara cualquier cue con su propia tecla, un mensaje MIDI o una hora del día. |
+| 🎹 | **Salida MIDI** | Las cues MIDI envían notas, cambios de control y de programa, MIDI Show Control y SysEx. |
+| 📦 | **Empaquetar** | Copia un espectáculo y todos sus medios en una carpeta para moverlo o archivarlo. |
 | 📡 | **OSC** | Controla OpenQ desde otros equipos por OSC y envía OSC a mesas de luces con las cues de red. |
 | 📱 | **Dispositivos remotos** | Empareja un portátil o una tableta para seguir el espectáculo, llevarlo o editarlo, con conexión cifrada. |
 | 🛟 | **Seguridad ante fallos** | Autoguardado y recuperación, guardado atómico, dispositivos de audio que se reconectan solos y un registro de errores. |

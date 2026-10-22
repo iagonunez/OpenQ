@@ -100,6 +100,12 @@ pub(super) fn audio_fx_tab(ui: &mut Ui, fx: &mut Vec<AudioEffect>) {
     }
 }
 
+/// The settings of one audio effect (also used by Fade cues for their target values).
+pub(super) fn audio_effect_settings(ui: &mut Ui, i: usize, e: &mut AudioEffect) {
+    let specs = e.kind.params();
+    param_grid(ui, ("fade-afx", i), specs, &mut e.params[..specs.len()]);
+}
+
 /// The Video FX tab: the layer's effect stack.
 pub(super) fn video_fx_tab(ui: &mut Ui, fx: &mut Vec<VideoEffect>) {
     let titles: Vec<String> = fx.iter().enumerate().map(|(i, e)| format!("{}. {}", i + 1, e.kind.label())).collect();

@@ -288,6 +288,13 @@ pub fn kind_icon(tag: crate::model::KindTag) -> &'static str {
         Mic => I::MIC,
         Camera => I::PHOTO_CAMERA,
         Light => I::LIGHTBULB,
+        Arm => I::CHECK_CIRCLE,
+        Disarm => I::BLOCK,
+        Reset => I::REPLAY,
+        Load => I::TIMER_PLAY,
+        Target => I::MY_LOCATION,
+        Midi => I::PIANO,
+        Timecode => I::AV_TIMER,
     }
 }
 

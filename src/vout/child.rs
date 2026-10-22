@@ -146,6 +146,8 @@ impl Core {
                     geometry: fade.geometry,
                     objects: None,
                     video_fx: fade.video_fx,
+                    out_levels: None,
+                    audio_fx: None,
                     duration: fade.duration,
                     curve: fade.curve,
                 };

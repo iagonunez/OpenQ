@@ -31,9 +31,12 @@
 //!   otherwise; the pickers list one entry per real output/input.
 //! * [`timecode`] — SMPTE labels, the LTC encoder/decoder and MIDI Time Code. Cue lists can
 //!   follow LTC or MTC and fire cues at their timecode trigger.
+//! * [`bundle`] — copy a show and every media file it plays into one folder.
+//! * [`wallclock`] — wall-clock triggers: cues that fire at a time of day (and chosen weekdays).
 //! * [`geometry`] — layer placement, crop, corner-pin homography, edge-blend curve.
 //! * [`animation`] — keyframe animation of video, image and text layers, evaluated live as the
 //!   stage windows draw (relative to the cue's own geometry, opacity and colours).
+//! * [`loudness`] — integrated loudness (LUFS) of audio files, for levelling cues.
 //! * [`dsp`] — EQ filter design and processing. [`audio_fx`] — real-time audio effect chains.
 //! * [`effects`] — audio and video effect settings (effect stacks on cues); video
 //!   effects run in the stage windows' layer shader.
@@ -101,9 +104,11 @@
 #[macro_use]
 pub mod i18n;
 pub mod limits;
+pub mod loudness;
 pub mod animation;
 pub mod audio_fx;
 pub mod bench;
+pub mod bundle;
 pub mod changes;
 pub mod control;
 pub mod displays;
@@ -126,3 +131,4 @@ pub mod timecode;
 pub mod ui;
 #[cfg(feature = "video")]
 pub mod vout;
+pub mod wallclock;

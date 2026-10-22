@@ -39,6 +39,8 @@ pub struct Show {
     pub timecode: crate::media::tcio::Follower,
     /// Last timecode position seen by each following list (by name).
     tc_last: std::collections::HashMap<String, f64>,
+    /// Watches the clock for wall-clock triggers.
+    wallclock: crate::wallclock::Watch,
     /// Engine thread timing and recoveries.
     pub stats: TickStats,
     /// Set when the engine recovered from an internal error (the UI tells the user, the
@@ -103,6 +105,7 @@ impl Show {
             replica: false,
             timecode: Default::default(),
             tc_last: Default::default(),
+            wallclock: Default::default(),
             stats: TickStats::default(),
             recovered: None,
             light_loaded: None,
@@ -119,8 +122,45 @@ impl Show {
         }
         crate::recovery::fault_point(crate::recovery::Fault::EngineTick);
         self.follow_timecode(now);
+        self.follow_wallclock(now);
         let Show { ws, engine, media, .. } = self;
         engine.tick(ws, media, now);
+        self.apply_cue_edits();
+    }
+
+    /// Write what Arm, Disarm and Target cues changed into the workspace.
+    fn apply_cue_edits(&mut self) {
+        use crate::engine::CueEdit;
+        let edits = self.engine.take_edits();
+        if edits.is_empty() {
+            return;
+        }
+        let mut changed = Vec::new();
+        for e in edits {
+            match e {
+                CueEdit::Armed(id, armed) => {
+                    if let Some(c) = self.ws.cue_list.find_mut(id)
+                        && c.armed != armed
+                    {
+                        c.armed = armed;
+                        changed.push(id);
+                    }
+                }
+                CueEdit::Target(id, target) => {
+                    if let Some(t) = self.ws.cue_list.find_mut(id).and_then(|c| c.kind.target_mut())
+                        && *t != target
+                    {
+                        *t = target;
+                        changed.push(id);
+                    }
+                }
+            }
+        }
+        if !changed.is_empty() {
+            changed.sort_unstable();
+            changed.dedup();
+            self.edited_cues(changed);
+        }
     }
 
     /// Fire cues whose timecode trigger the incoming timecode has just passed. Only a steady
@@ -161,6 +201,17 @@ impl Show {
         let Show { ws, engine, media, .. } = self;
         for id in due {
             engine.start_cue(ws, media, id, now);
+        }
+    }
+
+    /// Fire armed cues whose wall-clock trigger time has just come.
+    fn follow_wallclock(&mut self, now: Instant) {
+        let due = self.wallclock.poll(&self.ws.cue_list, self.edit_gen, now);
+        let Show { ws, engine, media, .. } = self;
+        for id in due {
+            if ws.cue_list.find(id).is_some_and(|c| engine.is_armed(c)) {
+                engine.start_cue(ws, media, id, now);
+            }
         }
     }
 
@@ -232,6 +283,10 @@ impl Show {
         self.changes.push(self.edit_gen, cues);
         self.engine.workspace_changed();
         self.media.set_room(&self.ws.settings.speakers);
+        if !self.replica {
+            // (A replica plays nothing: its patches' devices are the main device's.)
+            self.media.set_patches(&self.ws.settings.patches);
+        }
         self.sync_lighting();
     }
 
@@ -283,6 +338,10 @@ impl Show {
         crate::limits::workspace(&mut ws);
         let mine = &self.ws.settings;
         ws.settings.audio_device = mine.audio_device.clone();
+        // Which device each audio patch is on stays this computer's choice.
+        for (i, p) in ws.settings.patches.iter_mut().enumerate() {
+            p.device = mine.patches.get(i).and_then(|m| m.device.clone());
+        }
         ws.settings.osc_enabled = mine.osc_enabled;
         ws.settings.osc_port = mine.osc_port;
         // A replica's display choices wait for the operator (`remote::netguard`, which already
@@ -290,10 +349,8 @@ impl Show {
         for st in &mut ws.stages {
             st.output = self.ws.stages.iter().find(|s| s.id == st.id).and_then(|s| s.output.clone());
         }
-        if ws.settings.master_volume_db != mine.master_volume_db
-            && let Some(a) = &mut self.media.audio
-        {
-            a.set_master(ws.settings.master_volume_db);
+        if ws.settings.master_volume_db != mine.master_volume_db {
+            self.media.set_master(ws.settings.master_volume_db);
         }
         self.ws = ws;
         if self.engine.playhead.is_some_and(|p| self.ws.cue_list.find(p).is_none()) {
@@ -357,15 +414,15 @@ impl Show {
         self.network_requests.clear();
         self.dirty = false;
         self.engine.set_playhead(self.ws.cue_list.first());
+        self.engine.forget_cue_changes();
         self.engine.workspace_changed();
         let master = self.ws.settings.master_volume_db;
         self.media.set_room(&self.ws.settings.speakers);
         self.media.light.release_all(0.0, now);
         self.sync_lighting();
         self.media.reopen_audio(self.ws.settings.audio_device.as_deref(), master);
-        if let Some(a) = &mut self.media.audio {
-            a.set_master(master);
-        }
+        self.media.set_master(master);
+        self.media.set_patches(&self.ws.settings.patches);
     }
 }
 
