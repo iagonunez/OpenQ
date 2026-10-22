@@ -1,7 +1,8 @@
 //! Geometry preview: a small picture of a video or text cue's stage showing where the layer
 //! lands (position, scale, rotation, crop), so geometry can be set up without the projector.
 //! While the Animation tab is open, it shows the layer as it looks at the animation playhead,
-//! with the cue's own placement as a dashed outline.
+//! with the cue's own placement as a dashed outline. A playing movie or camera shows its live
+//! picture ([`crate::vout::link::VideoLink::watch`]).
 
 use super::stage::{LayerTextures, layer_mesh, paint_layer};
 use super::{App, Mode, icons, theme};
@@ -117,6 +118,15 @@ fn target_of(show: &Show, id: CueId) -> Option<Target> {
 
 impl App {
     pub(super) fn geometry_preview(&mut self, ctx: &egui::Context, show: &mut Show) {
+        // A playing movie or camera shows its live picture (small copies from the video output).
+        let watch = self.show_preview.then(|| self.primary().and_then(|id| target_of(show, id))).flatten().and_then(|t| match t.source {
+            Source::Poster(..) | Source::Camera(_) => Some(t.layer),
+            Source::Text(_) => None,
+        });
+        #[cfg(feature = "video")]
+        if let Some(link) = show.media.video.as_mut() {
+            link.watch(watch);
+        }
         if !self.show_preview {
             return;
         }
@@ -134,9 +144,32 @@ impl App {
         self.show_preview = open;
     }
 
-    /// Texture and source size for the layer: a poster frame (the live picture is in the video
-    /// output process), or a stand-in for a camera.
-    fn preview_texture(&mut self, ctx: &egui::Context, t: &Target) -> Result<Option<(egui::TextureId, [f32; 2])>, String> {
+    /// Texture and source size for the layer: its live picture while it plays (small copies from
+    /// the video output process), else a poster frame, or a stand-in for a camera.
+    fn preview_texture(&mut self, ctx: &egui::Context, show: &Show, t: &Target) -> Result<Option<(egui::TextureId, [f32; 2])>, String> {
+        #[cfg(feature = "video")]
+        if let Some((n, thumb)) = show.media.video.as_ref().and_then(|v| v.thumbnail(t.layer)) {
+            // Live: the same texture, new pixels (a few times a second while it plays).
+            ctx.request_repaint_after(std::time::Duration::from_millis(200));
+            let key = format!("live {} {n}", t.layer);
+            let size = thumb.stage_size;
+            match &mut self.preview_tex {
+                Some((k, _, _)) if *k == key => {}
+                slot => {
+                    let img = egui::ColorImage::from_rgba_unmultiplied([thumb.size[0] as usize, thumb.size[1] as usize], &thumb.rgba);
+                    match slot {
+                        Some((k, tex, s)) if k.starts_with("live ") => {
+                            tex.set(img, super::stage::texture_options(1.0));
+                            (*k, *s) = (key, size);
+                        }
+                        _ => *slot = Some((key, ctx.load_texture("geometry-preview", img, super::stage::texture_options(1.0)), size)),
+                    }
+                }
+            }
+            return Ok(self.preview_tex.as_ref().map(|(_, tex, s)| (tex.id(), *s)));
+        }
+        #[cfg(not(feature = "video"))]
+        let _ = show;
         let key = match &t.source {
             Source::Poster(p, at) => format!("{}@{at:.2}", p.display()),
             Source::Text(_) => return Ok(None),
@@ -205,7 +238,7 @@ impl App {
                 let f = frame.lock();
                 Ok((f.width > 0).then(|| (egui::TextureId::default(), f.stage_size())))
             }
-            None => self.preview_texture(ui.ctx(), &t),
+            None => self.preview_texture(ui.ctx(), show, &t),
         };
         let stage = show
             .ws

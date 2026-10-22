@@ -4,7 +4,10 @@
 //!
 //! The query goes to 255.255.255.255 (which most systems send out of one interface only), to
 //! each interface's own broadcast address (a computer on a show network and on the venue's) and
-//! to loopback. Other subnets and VLANs aren't reached: type the address there.
+//! to loopback. Main devices also announce themselves over mDNS (DNS-SD service `_openq._tcp`,
+//! [`Announcer`]) and a search browses for them: broadcasts never cross a router, but networks
+//! split into VLANs or subnets often pass mDNS on through a reflector (an "mDNS gateway" in the
+//! switches or routers). Without one, type the address.
 
 use super::{DISCOVERY_PORT, PROTOCOL};
 use serde::{Deserialize, Serialize};
@@ -15,6 +18,8 @@ use std::time::{Duration, Instant};
 use uuid::Uuid;
 
 const QUERY: &[u8] = b"OPENQ-DISCOVER/1";
+/// mDNS (DNS-SD) service type main devices announce.
+pub const SERVICE: &str = "_openq._tcp.local.";
 /// Answers sent per second at most: the answer is bigger than the query, so without a cap
 /// queries with a forged sender address would turn this into a traffic amplifier.
 const ANSWERS_PER_SECOND: u32 = 20;
@@ -104,8 +109,66 @@ pub fn respond(
     })
 }
 
-/// Ask the network who is there, collecting answers for `wait`.
+/// A main device announced over mDNS while this lives ([`SERVICE`]; instance name = its id, TXT
+/// `id`, `name`, `openq` = protocol). Dropping it says goodbye and stops the mDNS thread.
+pub struct Announcer {
+    daemon: mdns_sd::ServiceDaemon,
+    fullname: String,
+}
+
+impl Announcer {
+    /// Announce instance `id` called `name`, taking connections on `port`, on every interface
+    /// (addresses follow the interfaces as they come and go).
+    pub fn start(id: Uuid, name: &str, port: u16) -> Result<Self, mdns_sd::Error> {
+        let daemon = mdns_sd::ServiceDaemon::new()?;
+        let instance = id.simple().to_string();
+        // A TXT entry holds 255 bytes, key included.
+        let name = clean_name(name);
+        let props = [("id", instance.as_str()), ("name", name.as_str()), ("openq", &PROTOCOL.to_string())];
+        let host = format!("openq-{}.local.", &instance[..12]);
+        let info = mdns_sd::ServiceInfo::new(SERVICE, &instance, &host, "", port, &props[..])?.enable_addr_auto();
+        let fullname = info.get_fullname().to_string();
+        if let Err(e) = daemon.register(info) {
+            let _ = daemon.shutdown();
+            return Err(e);
+        }
+        Ok(Self { daemon, fullname })
+    }
+}
+
+impl Drop for Announcer {
+    fn drop(&mut self) {
+        if let Ok(done) = self.daemon.unregister(&self.fullname) {
+            // The goodbye goes out at once; don't hold up turning sharing off for long.
+            let _ = done.recv_timeout(Duration::from_millis(200));
+        }
+        let _ = self.daemon.shutdown();
+    }
+}
+
+/// An instance name as shown in lists: no control characters, at most 64 characters.
+fn clean_name(name: &str) -> String {
+    name.chars().filter(|c| !c.is_control()).take(64).collect()
+}
+
+/// Ask the network who is there, collecting answers for `wait`: broadcast answers and mDNS
+/// announcements.
 pub fn search(wait: Duration) -> std::io::Result<Vec<Found>> {
+    // mDNS browses on its own thread meanwhile (unavailable: broadcast only).
+    let mdns = match mdns_sd::ServiceDaemon::new() {
+        Ok(d) => match d.browse(SERVICE) {
+            Ok(rx) => Some((d, rx)),
+            Err(e) => {
+                log::debug!("mDNS browse: {e}");
+                let _ = d.shutdown();
+                None
+            }
+        },
+        Err(e) => {
+            log::debug!("mDNS unavailable: {e}");
+            None
+        }
+    };
     let sock = UdpSocket::bind((Ipv4Addr::UNSPECIFIED, 0))?;
     sock.set_broadcast(true)?;
     for dest in destinations() {
@@ -116,18 +179,54 @@ pub fn search(wait: Duration) -> std::io::Result<Vec<Found>> {
     let mut buf = [0u8; 1024];
     while let Some(left) = deadline.checked_duration_since(Instant::now()).filter(|d| !d.is_zero()) {
         sock.set_read_timeout(Some(left))?;
-        let Ok((n, from)) = sock.recv_from(&mut buf) else { break };
+        let (n, from) = match sock.recv_from(&mut buf) {
+            Ok(r) => r,
+            Err(e) if matches!(e.kind(), std::io::ErrorKind::WouldBlock | std::io::ErrorKind::TimedOut) => break,
+            // E.g. an ICMP "port unreachable" from one destination: wait on for the others.
+            Err(_) => continue,
+        };
         let Ok(a) = serde_json::from_slice::<Announce>(&buf[..n]) else { continue };
-        let address = SocketAddr::new(from.ip(), a.port);
-        match found.iter_mut().find(|f| f.id == a.id) {
-            // Prefer a LAN address over loopback for an instance seen both ways.
-            Some(f) if f.address.ip().is_loopback() && !from.ip().is_loopback() => f.address = address,
-            Some(_) => {}
-            None => found.push(Found { id: a.id, name: a.name, address, protocol: a.openq }),
+        add(&mut found, Found { id: a.id, name: clean_name(&a.name), address: SocketAddr::new(from.ip(), a.port), protocol: a.openq });
+    }
+    if let Some((daemon, rx)) = mdns {
+        while let Ok(event) = rx.try_recv() {
+            if let mdns_sd::ServiceEvent::ServiceResolved(s) = event
+                && let Some(f) = from_mdns(&s)
+            {
+                add(&mut found, f);
+            }
         }
+        let _ = daemon.shutdown();
     }
     found.sort_by(|a, b| a.name.cmp(&b.name));
     Ok(found)
+}
+
+/// Add an answer, once per instance; a LAN address wins over loopback for one seen both ways.
+fn add(found: &mut Vec<Found>, f: Found) {
+    match found.iter_mut().find(|x| x.id == f.id) {
+        Some(x) if x.address.ip().is_loopback() && !f.address.ip().is_loopback() => x.address = f.address,
+        Some(_) => {}
+        None => found.push(f),
+    }
+}
+
+/// An instance from its mDNS announcement: IPv4 preferred, IPv6 only if global (a link-local
+/// address needs its interface, which a typed `host:port` can't carry).
+fn from_mdns(s: &mdns_sd::ResolvedService) -> Option<Found> {
+    let txt = &s.txt_properties;
+    let id = Uuid::parse_str(txt.get_property_val_str("id")?).ok()?;
+    let protocol = txt.get_property_val_str("openq")?.parse().ok()?;
+    let name = clean_name(txt.get_property_val_str("name").unwrap_or_default());
+    let ips: Vec<std::net::IpAddr> = s.get_addresses().iter().map(|a| a.to_ip_addr()).collect();
+    let rank = |ip: &std::net::IpAddr| match ip {
+        std::net::IpAddr::V4(v) if !v.is_loopback() && !v.is_link_local() => 0,
+        std::net::IpAddr::V4(_) => 1,
+        std::net::IpAddr::V6(v) if !v.is_loopback() && !v.is_unicast_link_local() => 2,
+        std::net::IpAddr::V6(_) => 3,
+    };
+    let ip = ips.into_iter().filter(|ip| rank(ip) != 3).min_by_key(rank)?;
+    Some(Found { id, name, address: SocketAddr::new(ip, s.port), protocol })
 }
 
 /// Where discovery queries go: the limited broadcast, each IPv4 interface's broadcast address
@@ -173,6 +272,30 @@ pub fn local_addresses() -> Vec<std::net::IpAddr> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// A main device's mDNS announcement is found by a search (on this computer: multicast
+    /// loops back).
+    #[test]
+    fn mdns_announcement_is_found() {
+        let id = Uuid::new_v4();
+        let announcer = match Announcer::start(id, "Main\u{7}device", 53299) {
+            Ok(a) => a,
+            Err(e) => {
+                eprintln!("no mDNS here: {e}");
+                return;
+            }
+        };
+        let mut seen = None;
+        for _ in 0..3 {
+            seen = search(Duration::from_millis(1500)).unwrap().into_iter().find(|f| f.id == id);
+            if seen.is_some() {
+                break;
+            }
+        }
+        let f = seen.expect("announced instance found");
+        assert_eq!((f.name.as_str(), f.address.port(), f.protocol), ("Maindevice", 53299, PROTOCOL));
+        drop(announcer);
+    }
 
     #[test]
     fn broadcast_addresses() {

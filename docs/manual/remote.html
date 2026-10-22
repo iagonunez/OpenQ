@@ -69,14 +69,18 @@
   </table></div>
   <p>Set the role new devices get, and change any device's role, in the main device's Remote window. Changes
   take effect at once. <strong>Remove</strong> disconnects a device straight away, and it has to pair again to reconnect.
-  When a device disconnects, it gets its own show back. Media files stay on the main device, so add them there.</p>
+  When a device disconnects, it gets its own show back. Media files stay on the main device, so add them there.
+  Several devices can edit at once: cues one adds, moves or deletes are merged into the show as it is on the main device,
+  so they don't undo what the others did meanwhile.</p>
   <div class="note"><span class="label">Security</span><p>Connections are encrypted and authenticated. A pairing
   code works for 5 minutes and 5 tries, and someone who records the network traffic still can't work it out from the
   recording. After pairing, each device logs in with its own secret key. An address that keeps failing is blocked
   for 5 minutes. The Activity list shows connections and rejected attempts.</p></div>
   <div class="note tip"><span class="label">Network</span><p>Remote access uses TCP port <code>53200</code>, and
-  the search uses UDP port <code>53201</code>. A firewall on the main device has to allow both. On guest Wi-Fi the
-  search may find nothing; typing the address still works.</p></div>
+  the search uses UDP port <code>53201</code> and mDNS (UDP <code>5353</code>). A firewall on the main device has to allow
+  them. The search also finds a main device on another subnet or VLAN when the network passes mDNS between them (an
+  "mDNS gateway" or reflector in the switches or router). On guest Wi-Fi the search may find nothing; typing the address
+  still works.</p></div>
 </section>
 
 <section id="osc">

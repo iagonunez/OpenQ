@@ -53,6 +53,7 @@ ureq = { version = "3.4.2", default-features = false, features = ["rustls", "gzi
 jiff = "0.2.38"
 # Network interfaces (remote discovery broadcasts on each one).
 if-addrs = "0.15.0"
+mdns-sd = "0.21.6"
 
 # macOS: native menu bar and the window-button position.
 [target.'cfg(target_os = "macos")'.dependencies]

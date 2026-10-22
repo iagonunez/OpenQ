@@ -2182,6 +2182,16 @@ impl App {
     }
 
     fn settings_stages(&mut self, ui: &mut egui::Ui, show: &mut Show) {
+        let mut hw = show.ws.settings.hardware_video_decoding;
+        if ui
+            .checkbox(&mut hw, t("Decode movies on the graphics card"))
+            .on_hover_text(t("Uses the graphics card's video decoder where it takes the file (H.264, HEVC and the like), leaving the processor free; turn it off if movies show wrong colours or don't play. Applies to movies started from now on."))
+            .changed()
+        {
+            show.ws.settings.hardware_video_decoding = hw;
+            show.edited_outside_cues();
+        }
+        ui.add_space(4.0);
         let before = show.ws.stages.clone();
         let mut remove = None;
         let n = show.ws.stages.len();
@@ -2266,6 +2276,8 @@ impl App {
                         .show_ui(ui, |ui| {
                             self.output_choices(ui, st);
                         });
+                    ui.checkbox(&mut st.close_when_idle, t("Close when nothing plays"))
+                        .on_hover_text(t("The output closes a moment after its last cue ends and opens again with the next one (otherwise it stays open, black)"));
                 });
                 let spanned = spanned_by.contains(&st.id);
                 if let Some(req) = stage_span_blend(ui, st, &surfaces, spanned) {

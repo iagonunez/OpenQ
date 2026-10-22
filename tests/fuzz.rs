@@ -822,6 +822,9 @@ fn media_seeds(dir: &Path) -> Vec<(String, Vec<u8>)> {
         ("mkv", &["-f", "lavfi", "-i", "testsrc2=size=64x36:rate=10:duration=0.4", "-f", "lavfi", "-i", "sine=duration=0.4", "-c:v", "ffv1", "-c:a", "flac", "-shortest"]),
         ("webm", &["-f", "lavfi", "-i", "testsrc2=size=64x36:rate=10:duration=0.4", "-c:v", "libvpx", "-b:v", "50k"]),
         ("avi", &["-f", "lavfi", "-i", "testsrc2=size=64x36:rate=10:duration=0.4", "-c:v", "mjpeg", "-pix_fmt", "yuvj422p"]),
+        // Codecs graphics cards decode (the movie player hands them to the hardware decoder).
+        ("mp4", &["-f", "lavfi", "-i", "testsrc2=size=160x90:rate=10:duration=0.4", "-c:v", "libx264", "-pix_fmt", "yuv420p"]),
+        ("mkv", &["-f", "lavfi", "-i", "testsrc2=size=160x90:rate=10:duration=0.4", "-c:v", "libx265", "-pix_fmt", "yuv420p", "-x265-params", "log-level=none"]),
         ("ts", &["-f", "lavfi", "-i", "testsrc2=size=64x36:rate=25:duration=0.4", "-c:v", "mpeg2video"]),
         ("flac", &["-f", "lavfi", "-i", "sine=duration=0.3"]),
         ("mp3", &["-f", "lavfi", "-i", "sine=duration=0.3"]),
@@ -911,6 +914,20 @@ fn read_media(p: &Path, prober: &Prober, audio: &Mutex<AudioOutput>) {
     if let Ok(song) = openq::media::midifile::load(p) {
         let i = song.index_at(song.duration / 2.0);
         let _ = song.chase(i);
+    }
+    // Played as a movie (decoded on the graphics card where it takes the codec).
+    #[cfg(feature = "video")]
+    if let Ok(mut v) = openq::media::video::VideoOutput::new() {
+        let id = CueId::new_v4();
+        if v.start(id, &openq::model::VideoCue { path: p.to_path_buf(), ..Default::default() }, Instant::now(), None).is_ok() {
+            let t0 = Instant::now();
+            while t0.elapsed() < Duration::from_millis(60) && !v.is_finished(id) {
+                std::thread::sleep(Duration::from_millis(10));
+                v.update(Instant::now());
+            }
+            let _ = v.drain_errors();
+            v.stop(id);
+        }
     }
     let id = CueId::new_v4();
     let mut a = audio.lock();
@@ -1265,6 +1282,15 @@ fn apply_as_replica(show: &mut Show, synced: &mut Option<Workspace>, waveforms: 
                 show.engine.workspace_changed();
             }
         }
+        ServerMsg::Ops(mut ops) => {
+            ops.cues_mut().for_each(openq::limits::cue);
+            if synced.as_mut().is_some_and(|s| ops.apply(s)) {
+                if !ops.apply(&mut show.ws) {
+                    show.ws = synced.clone().unwrap();
+                }
+                show.engine.workspace_changed();
+            }
+        }
         ServerMsg::Lighting(patch) => {
             if synced.as_mut().is_some_and(|s| openq::light::patch::apply(&mut s.lighting, &patch)) {
                 if !openq::light::patch::apply(&mut show.ws.lighting, &patch) {
@@ -1330,7 +1356,7 @@ fn fuzz_remote_messages() {
     let addr = format!("127.0.0.1:{port}");
     let code = server.open_pairing();
     let client = Arc::new(Mutex::new(RemoteConfig { instance_name: "Fuzzer".into(), ..Default::default() }));
-    let link = Link::connect(&addr, Auth::Pair(code), client, || {});
+    let link = Link::connect(&addr, Auth::Pair(code), client.clone(), || {});
     wait_for("pairing", 30.0, || matches!(link.state(), LinkState::Connected { .. }));
     cfg.lock().devices[0].role = Role::Edit;
     wait_for("edit role", 10.0, || link.drain().iter().any(|m| matches!(m, ServerMsg::Role(Role::Edit))));
@@ -1372,9 +1398,18 @@ fn fuzz_remote_messages() {
     };
     let ids: Vec<CueId> = ws.cue_list.iter_all().iter().map(|c| c.id).collect();
     let lp = openq::light::patch::diff(&Lighting::default(), &ws.lighting).map(Box::new);
+    // Cues moved, removed and added, for operations.
+    let reshaped = {
+        let mut o = ws.clone();
+        o.cue_list.cues.rotate_left(1);
+        o.cue_list.cues.pop();
+        o.cue_list.cues.push(Cue::new(CueKind::Memo));
+        o
+    };
     let seeds: Vec<Value> = [
         ClientMsg::Edit(Box::new(ws.clone())),
         ClientMsg::Reshape { ws: Box::new(others.clone()), lighting: lp.clone() },
+        ClientMsg::Ops { ops: Box::new(openq::changes::Reshape::diff(&ws, &reshaped).unwrap()), lighting: lp.clone() },
         ClientMsg::Patch { cues: ws.cue_list.cues.iter().take(6).map(|c| c.shallow_clone()).collect(), lighting: lp.clone() },
         ClientMsg::Command(Command::Go),
         ClientMsg::Command(Command::Cue(ids[0], CueAction::Start)),
@@ -1414,11 +1449,15 @@ fn fuzz_remote_messages() {
         }
         f.check_panics(&serde_json::to_vec(&v).unwrap());
     }
-    // Still connected and obeying.
-    let target = show.lock().ws.cue_list.first();
+    // Still obeying. Edits are paced per connection (whole workspaces 4/s), so the fuzzed ones are
+    // still being worked through for minutes: a new connection has none of that backlog.
+    assert!(matches!(link.state(), LinkState::Connected { .. }), "the main device dropped the link: {:?}", link.state());
+    drop(link);
+    let link = Link::connect(&addr, Auth::Token, client, || {});
+    wait_for("token login after the fuzz", 30.0, || matches!(link.state(), LinkState::Connected { .. }));
     link.send(ClientMsg::Command(Command::Panic));
-    link.send(ClientMsg::Command(Command::SetPlayhead(target)));
-    wait_for("main device obeys after the fuzz", 10.0, || show.lock().engine.playhead == target);
+    link.send(ClientMsg::Command(Command::Light(LightControl::GrandMaster(0.375))));
+    wait_for("main device obeys after the fuzz", 10.0, || show.lock().media.light.masters().grand_master == 0.375);
     assert!(show.lock().recovered.is_none(), "the main device's engine recovered from a panic");
     {
         // Whatever the replica sent, the show holds only plausible values.
@@ -1455,6 +1494,12 @@ fn fuzz_remote_messages() {
     let seeds: Vec<Value> = [
         ServerMsg::Workspace { ws: Box::new(ws.clone()), title: "Show".into(), keep_lighting: false },
         ServerMsg::Cues(ws.cue_list.cues.iter().take(5).map(|c| c.shallow_clone()).collect()),
+        ServerMsg::Ops(Box::new({
+            let mut o = ws.clone();
+            o.cue_list.cues.reverse();
+            o.cue_list.cues.truncate(8);
+            openq::changes::Reshape::diff(&ws, &o).unwrap()
+        })),
         ServerMsg::Dmx(vec![(1, vec![255; 512]), (2, vec![0; 512])]),
         ServerMsg::State(Box::new(state)),
         ServerMsg::MediaInfo(vec![(media.clone(), info)]),

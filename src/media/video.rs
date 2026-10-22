@@ -130,6 +130,181 @@ impl Picture {
     }
 }
 
+// ---------------------------------------------------------------- hardware decoding
+
+/// Decode movies on the GPU's video engine when one takes the codec (see [`hw`]).
+static HARDWARE_DECODING: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(true);
+
+/// Use the GPU's video decoder for movies started from now on (VAAPI on Linux, VideoToolbox on
+/// macOS, Direct3D 11 on Windows), falling back to the CPU for codecs or files it can't take.
+pub fn set_hardware_decoding(on: bool) {
+    HARDWARE_DECODING.store(on, Ordering::Relaxed);
+}
+
+/// Hardware decoding: one device per process shared by every movie; a decoder given it decodes
+/// into GPU memory when the hardware takes the stream (FFmpeg picks the software path otherwise,
+/// also when setting the hardware up fails), and pictures are copied back to memory
+/// ([`hw::Decoder::download`], NV12 or P010 as a rule), which the rest of the path handles as
+/// any decoded picture. No zero-copy upload: the copy costs far less than decoding on the CPU.
+mod hw {
+    use super::ff;
+    use ff::ffi::{AVBufferRef, AVCodecContext, AVHWDeviceType, AVPixelFormat};
+    use std::sync::atomic::Ordering;
+
+    #[cfg(target_os = "linux")]
+    const TYPES: &[AVHWDeviceType] = &[AVHWDeviceType::AV_HWDEVICE_TYPE_VAAPI];
+    #[cfg(target_os = "macos")]
+    const TYPES: &[AVHWDeviceType] = &[AVHWDeviceType::AV_HWDEVICE_TYPE_VIDEOTOOLBOX];
+    #[cfg(windows)]
+    const TYPES: &[AVHWDeviceType] = &[AVHWDeviceType::AV_HWDEVICE_TYPE_D3D11VA];
+    #[cfg(not(any(target_os = "linux", target_os = "macos", windows)))]
+    const TYPES: &[AVHWDeviceType] = &[];
+
+    /// The process's device: its type and FFmpeg's reference (None: none could be opened).
+    struct Device(AVHWDeviceType, *mut AVBufferRef);
+    // SAFETY: an AVBufferRef to a hardware device context may be used from any thread; it is
+    // only read (referenced) after it is made, and never freed.
+    unsafe impl Send for Device {}
+
+    fn device() -> Option<(AVHWDeviceType, *mut AVBufferRef)> {
+        static DEVICE: std::sync::OnceLock<parking_lot::Mutex<Option<Device>>> = std::sync::OnceLock::new();
+        let cell = DEVICE.get_or_init(|| {
+            for &ty in TYPES {
+                let mut dev = std::ptr::null_mut();
+                // SAFETY: FFmpeg fills `dev` on success; default device, no options.
+                let r = unsafe { ff::ffi::av_hwdevice_ctx_create(&mut dev, ty, std::ptr::null(), std::ptr::null_mut(), 0) };
+                if r >= 0 && !dev.is_null() {
+                    log::info!("hardware video decoding: {ty:?}");
+                    return parking_lot::Mutex::new(Some(Device(ty, dev)));
+                }
+                log::info!("hardware video decoding unavailable ({ty:?}: error {r}); decoding on the CPU");
+            }
+            parking_lot::Mutex::new(None)
+        });
+        cell.lock().as_ref().map(|d| (d.0, d.1))
+    }
+
+    /// The hardware format `codec` decodes into on a device of type `ty`, if any.
+    fn format_for(codec: *const ff::ffi::AVCodec, ty: AVHWDeviceType) -> Option<AVPixelFormat> {
+        for i in 0.. {
+            // SAFETY: indices past the last configuration return NULL.
+            let c = unsafe { ff::ffi::avcodec_get_hw_config(codec, i) };
+            if c.is_null() {
+                return None;
+            }
+            // SAFETY: a non-NULL configuration is a static FFmpeg table entry.
+            let c = unsafe { &*c };
+            if c.methods & ff::ffi::AV_CODEC_HW_CONFIG_METHOD_HW_DEVICE_CTX as i32 != 0 && c.device_type == ty {
+                return Some(c.pix_fmt);
+            }
+        }
+        None
+    }
+
+    /// FFmpeg's pixel format choice: the hardware one (kept in `opaque`) when offered, else what
+    /// FFmpeg would pick by itself (software).
+    unsafe extern "C" fn pick(ctx: *mut AVCodecContext, fmts: *const AVPixelFormat) -> AVPixelFormat {
+        // SAFETY: FFmpeg passes its context and a list ending in AV_PIX_FMT_NONE.
+        unsafe {
+            let want = (*ctx).opaque as usize as i32;
+            let mut p = fmts;
+            while *p != AVPixelFormat::AV_PIX_FMT_NONE {
+                if *p as i32 == want {
+                    return *p;
+                }
+                p = p.add(1);
+            }
+            ff::ffi::avcodec_default_get_format(ctx, fmts)
+        }
+    }
+
+    /// A decoder set up for hardware decoding.
+    pub(super) struct Decoder {
+        format: AVPixelFormat,
+        /// Pictures copied back from GPU memory.
+        frame: ff::util::frame::video::Video,
+    }
+
+    impl Decoder {
+        /// Give a decoder context (not opened yet) the hardware device, if hardware decoding is
+        /// on and the device takes this codec.
+        pub(super) fn attach(ctx: &mut ff::codec::context::Context, id: ff::codec::Id) -> Option<Self> {
+            if !super::HARDWARE_DECODING.load(Ordering::Relaxed) {
+                return None;
+            }
+            let codec = ff::codec::decoder::find(id)?;
+            let (ty, dev) = device()?;
+            // SAFETY: the codec is a static FFmpeg table entry.
+            let format = format_for(unsafe { codec.as_ptr() }, ty)?;
+            // SAFETY: the context isn't opened yet; it takes its own reference to the device.
+            unsafe {
+                let raw = ctx.as_mut_ptr();
+                (*raw).hw_device_ctx = ff::ffi::av_buffer_ref(dev);
+                (*raw).opaque = format as i32 as usize as *mut std::ffi::c_void;
+                (*raw).get_format = Some(pick);
+            }
+            Some(Self { format, frame: ff::util::frame::video::Video::empty() })
+        }
+
+        /// `f` itself if it was decoded on the CPU, else its copy in memory.
+        pub(super) fn download<'a>(&'a mut self, f: &'a ff::util::frame::video::Video) -> anyhow::Result<&'a ff::util::frame::video::Video> {
+            // SAFETY: reading the format of a valid frame.
+            if unsafe { (*f.as_ptr()).format } != self.format as i32 {
+                return Ok(f);
+            }
+            // SAFETY: both frames are valid; the copy gets the picture's timestamps and colours.
+            unsafe {
+                ff::ffi::av_frame_unref(self.frame.as_mut_ptr());
+                let r = ff::ffi::av_hwframe_transfer_data(self.frame.as_mut_ptr(), f.as_ptr(), 0);
+                anyhow::ensure!(r >= 0, "copying a picture from the GPU failed (error {r})");
+                ff::ffi::av_frame_copy_props(self.frame.as_mut_ptr(), f.as_ptr());
+            }
+            Ok(&self.frame)
+        }
+    }
+}
+
+/// A small RGBA copy of a picture (the geometry preview's live picture).
+#[derive(Clone, Debug, PartialEq)]
+pub struct Thumbnail {
+    /// Width and height in pixels.
+    pub size: [u32; 2],
+    /// The picture's size on stage ([`Frame::stage_size`]): where the layer lands.
+    pub stage_size: [f32; 2],
+    /// Opaque RGBA, row after row.
+    pub rgba: Vec<u8>,
+}
+
+/// A copy of `f` at most `max_side` pixels across (nearest pixels, converted on the CPU), for
+/// movie and camera pictures and stills; None for text and empty frames.
+pub fn thumbnail(f: &Frame, max_side: u32) -> Option<Thumbnail> {
+    if f.width == 0 || f.height == 0 || f.planes.is_some() {
+        return None;
+    }
+    let k = (max_side.max(1) as f32 / f.width.max(f.height) as f32).min(1.0);
+    let (w, h) = (((f.width as f32 * k).round() as u32).max(1), ((f.height as f32 * k).round() as u32).max(1));
+    let mut rgba = Vec::with_capacity((w * h * 4) as usize);
+    for y in 0..h {
+        let sy = ((y as f32 + 0.5) / k) as u32;
+        for x in 0..w {
+            let x = if f.mirror { w - 1 - x } else { x };
+            let sx = (((x as f32 + 0.5) / k) as u32).min(f.width - 1);
+            let sy = sy.min(f.height - 1);
+            let px = match &f.pixels {
+                Pixels::None => return None,
+                Pixels::Rgba { data, .. } => {
+                    let i = (sy as usize * f.width as usize + sx as usize) * 4;
+                    let p = data.get(i..i + 3)?;
+                    [p[0], p[1], p[2]]
+                }
+                Pixels::Picture(p) => p.rgb_at(sx, sy),
+            };
+            rgba.extend_from_slice(&[px[0], px[1], px[2], 255]);
+        }
+    }
+    Some(Thumbnail { size: [w, h], stage_size: f.stage_size(), rgba })
+}
+
 /// Plane layouts the output's shader reads directly.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum PlaneLayout {
@@ -298,6 +473,20 @@ struct DecodeJob {
     tap: Option<AudioTap>,
     feed: AudioFeed,
     audio_state: Arc<Mutex<Option<Arc<VoiceShared>>>>,
+    /// Seconds of playback already done (passes of a loop included): it starts that far in.
+    skip: f64,
+}
+
+/// Where playback `skip` seconds in stands: passes already done and seconds into the next one.
+/// `pass` is a pass's length (None: unknown, so no loops are counted).
+fn skip_into(skip: f64, pass: Option<f64>) -> (u32, f64) {
+    match pass.filter(|p| *p > 0.04) {
+        Some(p) if skip > 0.0 => {
+            let done = (skip / p).floor();
+            (done.min(u32::MAX as f64) as u32, skip - done * p)
+        }
+        _ => (0, skip.max(0.0)),
+    }
 }
 
 enum Flow {
@@ -394,10 +583,20 @@ impl DecodeJob {
             Some(s) => (Some(s.index()), f64::from(s.time_base())),
             None => (None, 0.0),
         };
+        // How long a picture stays up (the last one of a pass too): from the frame rate.
+        let frame_dur = vstream
+            .as_ref()
+            .map(|s| f64::from(s.avg_frame_rate()))
+            .filter(|r| r.is_finite() && *r >= 1.0 && *r <= 1000.0)
+            .map_or(1.0 / 25.0, |r| 1.0 / r);
+        let mut hw = None;
         let mut vdec = match &vstream {
             Some(s) => {
                 let mut ctx = ff::codec::context::Context::from_parameters(s.parameters())?;
-                ctx.set_threading(ff::codec::threading::Config { kind: ff::codec::threading::Type::Frame, count: 0 });
+                hw = hw::Decoder::attach(&mut ctx, s.parameters().id());
+                if hw.is_none() {
+                    ctx.set_threading(ff::codec::threading::Config { kind: ff::codec::threading::Type::Frame, count: 0 });
+                }
                 Some(ctx.decoder().video().context("unsupported video codec")?)
             }
             None => None,
@@ -427,13 +626,20 @@ impl DecodeJob {
         let mut conv = Converter::default();
         let mut resampler: Option<ff::software::resampling::Context> = None;
         let mut pending: VecDeque<f32> = VecDeque::new();
-        let mut plays = 0u32;
-        let mut pass_offset = 0.0f64; // media-clock seconds before the current pass
+        // Brought back part way (after a restart of the video output): whole passes already
+        // played count as plays, the first pass starts `into` seconds in.
+        let (mut plays, mut into) = skip_into(self.skip, end.or(file_dur).map(|e| e - start));
+        if !p.infinite_loop && plays >= p.play_count.max(1) {
+            return Ok(());
+        }
+        // Media-clock seconds before the current pass (the first starts `into` early).
+        let mut pass_offset = -into;
 
         loop {
-            // Position at the start point.
-            if start > 0.0 || plays > 0 {
-                let ts = (start * f64::from(ff::ffi::AV_TIME_BASE)) as i64;
+            // Position at the start point (the first pass: `into` seconds after it).
+            let from = start + into;
+            if from > 0.0 || plays > 0 {
+                let ts = (from * f64::from(ff::ffi::AV_TIME_BASE)) as i64;
                 ictx.seek(ts, ..ts + 1).context("seek failed")?;
                 if let Some(d) = vdec.as_mut() {
                     d.flush();
@@ -456,7 +662,11 @@ impl DecodeJob {
                     }
                     while dec.receive_frame(&mut decoded).is_ok() {
                         let pts = decoded.timestamp().or(decoded.pts()).unwrap_or(0) as f64 * vtb;
-                        match self.show_frame(&decoded, pts, start, end, pass_offset, &mut pass_len, &mut conv, &mut pending)? {
+                        let picture = match hw.as_mut() {
+                            Some(h) => h.download(&decoded)?,
+                            None => &decoded,
+                        };
+                        match self.show_frame(picture, pts, (start, from, frame_dur), end, pass_offset, &mut pass_len, &mut conv, &mut pending)? {
                             FrameResult::Quit => return Ok(()),
                             FrameResult::End => {
                                 reached_end = true;
@@ -476,14 +686,14 @@ impl DecodeJob {
                     while dec.receive_frame(&mut adecoded).is_ok() {
                         let pts = adecoded.timestamp().or(adecoded.pts()).unwrap_or(0) as f64 * atb;
                         let frame_secs = adecoded.samples() as f64 / adecoded.rate().max(1) as f64;
-                        if pts + frame_secs <= start {
+                        if pts + frame_secs <= from {
                             continue;
                         }
                         if end.is_some_and(|e| pts >= e) {
                             continue;
                         }
                         pass_len = pass_len.max(pts - start + frame_secs);
-                        self.resample(&mut adecoded, &mut resampler, &mut pending, (start - pts).max(0.0))?;
+                        self.resample(&mut adecoded, &mut resampler, &mut pending, (from - pts).max(0.0))?;
                         if vdec.is_none() {
                             // Audio-only file: pace on the media clock.
                             if !self.ctl.state.lock().prerolled {
@@ -506,7 +716,11 @@ impl DecodeJob {
                 let _ = dec.send_eof();
                 while dec.receive_frame(&mut decoded).is_ok() {
                     let pts = decoded.timestamp().or(decoded.pts()).unwrap_or(0) as f64 * vtb;
-                    match self.show_frame(&decoded, pts, start, end, pass_offset, &mut pass_len, &mut conv, &mut pending)? {
+                    let picture = match hw.as_mut() {
+                        Some(h) => h.download(&decoded)?,
+                        None => &decoded,
+                    };
+                    match self.show_frame(picture, pts, (start, from, frame_dur), end, pass_offset, &mut pass_len, &mut conv, &mut pending)? {
                         FrameResult::Quit => return Ok(()),
                         FrameResult::End => break,
                         FrameResult::Shown => {}
@@ -517,13 +731,14 @@ impl DecodeJob {
                 let _ = dec.send_eof();
                 while dec.receive_frame(&mut adecoded).is_ok() {
                     let pts = adecoded.timestamp().or(adecoded.pts()).unwrap_or(0) as f64 * atb;
-                    if end.is_none_or(|e| pts < e) && pts >= start {
+                    if end.is_none_or(|e| pts < e) && pts >= from {
                         self.resample(&mut adecoded, &mut resampler, &mut pending, 0.0)?;
                     }
                 }
             }
             plays += 1;
             pass_offset += pass_len.max(0.04);
+            into = 0.0;
             let more = p.infinite_loop || plays < p.play_count.max(1);
             if !more {
                 break;
@@ -543,27 +758,29 @@ impl DecodeJob {
         Ok(())
     }
 
-    /// Wait for a frame's presentation time and show it.
+    /// Wait for a frame's presentation time and show it. `(start, from, frame_dur)`: the pass
+    /// starts at `start` in the file, frames before `from` aren't shown (a pass started part
+    /// way), a picture stays up `frame_dur` seconds.
     #[allow(clippy::too_many_arguments)]
     fn show_frame(
         &self,
         decoded: &ff::util::frame::video::Video,
         pts: f64,
-        start: f64,
+        (start, from, frame_dur): (f64, f64, f64),
         end: Option<f64>,
         pass_offset: f64,
         pass_len: &mut f64,
         conv: &mut Converter,
         pending: &mut VecDeque<f32>,
     ) -> anyhow::Result<FrameResult> {
-        if pts + 1e-6 < start {
+        if pts + 1e-6 < from {
             return Ok(FrameResult::Shown);
         }
         if end.is_some_and(|e| pts >= e) {
             return Ok(FrameResult::End);
         }
         let t = pass_offset + (pts - start);
-        *pass_len = pass_len.max(pts - start + 1.0 / 25.0);
+        *pass_len = pass_len.max(pts - start + frame_dur);
         if !self.ctl.state.lock().prerolled {
             self.ctl.state.lock().prerolled = true;
             self.ctl.wake.notify_all();
@@ -1229,7 +1446,8 @@ impl Player {
         }
     }
 
-    fn new(params: &VideoCue, order: u64, tap: Option<AudioTap>, video: bool) -> anyhow::Result<Self> {
+    /// A movie or still; a movie starts `skip` seconds of playback in (loops included).
+    fn new(params: &VideoCue, order: u64, tap: Option<AudioTap>, video: bool, skip: f64) -> anyhow::Result<Self> {
         let frame: FrameSlot = Arc::new(Mutex::new(Frame::default()));
         let audio_feed: AudioFeed = Arc::new(Mutex::new(None));
         let audio_state = Arc::new(Mutex::new(None));
@@ -1247,6 +1465,7 @@ impl Player {
                 tap,
                 feed: audio_feed.clone(),
                 audio_state: audio_state.clone(),
+                skip,
             };
             let name = crate::recovery::thread_name("openq-video-", &params.path.file_name().map(|f| f.to_string_lossy()).unwrap_or_default());
             let thread = std::thread::Builder::new().name(name).spawn(move || job.run())?;
@@ -1379,22 +1598,27 @@ impl Player {
                 _ => self.stall_watch = Some((generation, now)),
             }
         }
+        self.advance_ramps(now);
+    }
+
+    /// Set opacity, geometry and effects to where their fades are at `at` (finished fades end).
+    fn advance_ramps(&mut self, at: Instant) {
         if let Some(r) = self.op_ramp {
-            let t = r.progress(now);
+            let t = r.progress(at);
             self.opacity = (r.from + (r.to - r.from) * shape(r.curve, t)).clamp(0.0, 1.0);
             if t >= 1.0 {
                 self.op_ramp = None;
             }
         }
         if let Some(r) = self.geo_ramp {
-            let t = r.progress(now);
+            let t = r.progress(at);
             self.geometry = r.from.lerp(&r.to, shape(r.curve, t));
             if t >= 1.0 {
                 self.geo_ramp = None;
             }
         }
         if let Some(r) = &self.fx_ramp {
-            let t = r.progress(now);
+            let t = r.progress(at);
             self.effects = crate::effects::lerp_video_fx(&r.from, &r.to, if t >= 1.0 { 1.0 } else { shape(r.curve, t) });
             if t >= 1.0 {
                 self.fx_ramp = None;
@@ -1477,7 +1701,7 @@ impl VideoOutput {
         for (id, v, tap) in cues {
             if !self.preloaded.contains_key(id) {
                 self.order += 1;
-                match Player::new(v, self.order, *tap, self.video) {
+                match Player::new(v, self.order, *tap, self.video, 0.0) {
                     Ok(p) => {
                         self.preloaded.insert(*id, p);
                     }
@@ -1489,6 +1713,12 @@ impl VideoOutput {
 
     /// Start a movie or image so it appears at `at`; `tap` routes its soundtrack into the mixer.
     pub fn start(&mut self, cue: CueId, params: &VideoCue, at: Instant, tap: Option<AudioTap>) -> Result<(), String> {
+        self.start_skipped(cue, params, at, tap, 0.0)
+    }
+
+    /// [`VideoOutput::start`] a movie `skip` seconds of playback in, passes of its loop included
+    /// (a layer brought back after a restart of the video output).
+    pub fn start_skipped(&mut self, cue: CueId, params: &VideoCue, at: Instant, tap: Option<AudioTap>, skip: f64) -> Result<(), String> {
         if params.path.as_os_str().is_empty() {
             return Err("no video file".into());
         }
@@ -1496,8 +1726,8 @@ impl VideoOutput {
         self.players.remove(&cue);
         self.order += 1;
         let mut p = match self.preloaded.remove(&cue) {
-            Some(p) if p.params == *params && p.tap == tap && !p.finished => p,
-            _ => Player::new(params, self.order, tap, self.video).map_err(|e| format!("{e:#}"))?,
+            Some(p) if p.params == *params && p.tap == tap && !p.finished && skip <= 0.0 => p,
+            _ => Player::new(params, self.order, tap, self.video, skip).map_err(|e| format!("{e:#}"))?,
         };
         p.order = self.order;
         p.play_at = Some(at);
@@ -1594,8 +1824,14 @@ impl VideoOutput {
 
     /// Freeze fades in progress on this cue at their current values.
     pub fn hold(&mut self, cue: CueId) {
+        self.hold_at(cue, Instant::now());
+    }
+
+    /// Freeze fades in progress on this cue at their values as of `at` (a hold being replayed).
+    pub fn hold_at(&mut self, cue: CueId, at: Instant) {
         if let Some(p) = self.players.get_mut(&cue) {
             p.update(Instant::now());
+            p.advance_ramps(at.min(Instant::now()));
             p.op_ramp = None;
             p.geo_ramp = None;
             p.fx_ramp = None;
@@ -1621,9 +1857,13 @@ impl VideoOutput {
         }
     }
 
-    /// Opacity and geometry fades (the soundtrack level is faded in the mixer).
+    /// Opacity and geometry fades (the soundtrack level is faded in the mixer). A fade replacing
+    /// one in progress starts from where that one is at `at`, so fades replayed in order (a layer
+    /// brought back after a restart) end where they had.
     pub fn fade(&mut self, cue: CueId, f: &FadeRequest, at: Instant) {
         let Some(p) = self.players.get_mut(&cue) else { return };
+        let now = Instant::now();
+        p.advance_ramps(at.min(now));
         let (secs, curve) = (f.duration, f.curve);
         if let Some(o) = f.opacity {
             p.op_ramp = Some(Ramp { from: p.opacity, to: o.clamp(0.0, 1.0), start: at, secs, curve });
@@ -1633,6 +1873,10 @@ impl VideoOutput {
         }
         if let Some(fx) = &f.video_fx {
             p.fx_ramp = Some(FxRamp { from: p.effects.clone(), to: fx.clone(), start: at, secs, curve });
+        }
+        // (A paused layer's fades move on when it resumes.)
+        if p.paused_at.is_none() {
+            p.advance_ramps(now);
         }
     }
 
@@ -1664,6 +1908,11 @@ impl VideoOutput {
     /// How many pictures each layer has received so far (0 until it shows).
     pub fn frame_counts(&self) -> Vec<(CueId, u64)> {
         self.players.iter().map(|(id, p)| (*id, if p.playing || p.finished { p.frame.lock().generation } else { 0 })).collect()
+    }
+
+    /// The picture a layer shows (None if it has no layer).
+    pub fn frame_of(&self, cue: CueId) -> Option<FrameSlot> {
+        self.players.get(&cue).map(|p| p.frame.clone())
     }
 
     /// The cues that have a layer.
@@ -1831,6 +2080,14 @@ pub fn poster(path: &Path, at: f64, max_side: u32) -> anyhow::Result<(u32, u32, 
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn skipping_into_loops() {
+        assert_eq!(skip_into(2.5, Some(1.0)), (2, 0.5));
+        assert_eq!(skip_into(0.0, Some(1.0)), (0, 0.0));
+        assert_eq!(skip_into(0.7, None), (0, 0.7), "unknown length: no loops counted");
+        assert_eq!(skip_into(3.0, Some(0.01)), (0, 3.0), "no length to count by");
+    }
 
     #[test]
     fn animated_text_layer() {
@@ -2148,6 +2405,55 @@ mod tests {
         out.stop(cue);
         assert!(t0.elapsed() < std::time::Duration::from_millis(500), "stop blocked for {:?}", t0.elapsed());
         let _ = std::fs::OpenOptions::new().write(true).open(&fifo);
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+}
+
+#[cfg(test)]
+mod hw_tests {
+    use super::*;
+
+    /// A movie plays to its end and loops the same with hardware decoding as without (on a
+    /// computer with a hardware decoder; elsewhere both are CPU decoding).
+    #[test]
+    fn hardware_decoded_movies_end_and_loop() {
+        let dir = std::env::temp_dir().join(format!("openq-hwdec-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let movie = dir.join("blue.mp4");
+        let made = std::process::Command::new("ffmpeg")
+            .args(["-y", "-loglevel", "error", "-f", "lavfi", "-i", "color=c=0x0000ff:size=320x180:rate=25:duration=1"])
+            .args(["-pix_fmt", "yuv420p", "-c:v", "libx264"])
+            .arg(&movie)
+            .status()
+            .is_ok_and(|s| s.success());
+        if !made {
+            return;
+        }
+        for hw in [false, true] {
+            set_hardware_decoding(hw);
+            let mut out = VideoOutput::new().unwrap();
+            let cue = CueId::new_v4();
+            let t0 = Instant::now();
+            out.start(cue, &VideoCue { path: movie.clone(), play_count: 2, ..Default::default() }, t0, None).unwrap();
+            let mut blue = false;
+            while !out.is_finished(cue) {
+                assert!(t0.elapsed().as_secs_f64() < 6.0, "hw {hw}: movie never ended (at {:?}) {:?}", out.elapsed(cue), out.drain_errors());
+                std::thread::sleep(std::time::Duration::from_millis(20));
+                out.update(Instant::now());
+                if let Some(f) = out.frame_of(cue) {
+                    let f = f.lock();
+                    if let Pixels::Picture(p) = &f.pixels {
+                        let c = p.rgb_at(10, 10);
+                        blue |= c[2] > 200 && c[0] < 40;
+                    }
+                }
+            }
+            let took = t0.elapsed().as_secs_f64();
+            assert!(blue, "hw {hw}: never blue");
+            assert!((1.8..3.0).contains(&took), "hw {hw}: two passes took {took:.2} s");
+            assert!(out.drain_errors().is_empty());
+        }
+        set_hardware_decoding(true);
         let _ = std::fs::remove_dir_all(&dir);
     }
 }

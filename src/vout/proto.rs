@@ -79,6 +79,10 @@ pub enum ToVideo {
         at: Ns,
         /// Seconds of its animation already played (a layer brought back after a restart).
         anim_offset: f64,
+        /// Movies: seconds of playback already done, loop passes included (a layer brought back
+        /// after a restart).
+        #[serde(default)]
+        skip: f64,
     },
     /// Edits to a showing layer.
     Update {
@@ -107,6 +111,13 @@ pub enum ToVideo {
     },
     /// Freeze fades in progress at their current values.
     Hold(CueId),
+    /// Freeze fades in progress at their values as of `at` (a hold replayed after a restart).
+    HoldAt {
+        /// The cue.
+        cue: CueId,
+        /// When it was held.
+        at: Ns,
+    },
     /// A Fade cue on a layer.
     Fade {
         /// The cue.
@@ -116,6 +127,12 @@ pub enum ToVideo {
         /// When the fade starts.
         at: Ns,
     },
+    /// Decode movies started from now on with the graphics card's video engine where it takes
+    /// them ([`crate::media::video::set_hardware_decoding`]).
+    HardwareDecoding(bool),
+    /// Send small copies of this layer's picture a few times a second ([`FromVideo::Thumb`]), or
+    /// none (the geometry preview's live picture).
+    Watch(Option<CueId>),
     /// Save a picture of a stage window's next frame as a PNG (screenshots, tests).
     Snapshot {
         /// The stage.
@@ -152,11 +169,28 @@ pub enum FromVideo {
     Opened(StageId),
     /// The user closed a stage window.
     Closed(StageId),
+    /// A stage window that closes when nothing plays closed (it opens again with the next layer;
+    /// fullscreen and mapping choices stay).
+    IdleClosed(StageId),
     /// The user turned a stage window's fullscreen on or off.
     Fullscreen(StageId, bool),
     /// A snapshot was saved (or failed).
     Snapshot(Result<PathBuf, String>),
+    /// A small copy of the watched layer's picture ([`ToVideo::Watch`]).
+    Thumb {
+        /// The layer.
+        cue: CueId,
+        /// Width and height in pixels.
+        size: [u32; 2],
+        /// The picture's size on stage.
+        stage_size: [f32; 2],
+        /// Opaque RGBA, base64.
+        rgba: String,
+    },
 }
+
+/// Largest side of a [`FromVideo::Thumb`].
+pub const THUMB_SIDE: u32 = 320;
 
 /// The longest line either side accepts (a show with many stages or a long text stays far below).
 pub const MAX_LINE: usize = 8 << 20;
@@ -202,7 +236,7 @@ mod tests {
         let cue = CueId::new_v4();
         let msgs = vec![
             ToVideo::Ping(3),
-            ToVideo::Start { cue, layer: Layer::Text(TextCue { text: "Hi\nthere".into(), ..Default::default() }), at: -5, anim_offset: 0.5 },
+            ToVideo::Start { cue, layer: Layer::Text(TextCue { text: "Hi\nthere".into(), ..Default::default() }), at: -5, anim_offset: 0.5, skip: 0.0 },
             ToVideo::Fade {
                 cue,
                 fade: VideoFade { opacity: Some(0.5), geometry: None, video_fx: None, duration: 2.0, curve: FadeCurve::default() },

@@ -704,6 +704,8 @@ impl Gen {
         right.black_lift = 0.02;
         let mut gauze = Stage::new("Gauze (surtitles)");
         gauze.height = 540;
+        // Surtitles: the output closes between texts.
+        gauze.close_when_idle = true;
         self.main_stage = main.id;
         self.cyc_stage = cyc.id;
         self.gauze_stage = gauze.id;

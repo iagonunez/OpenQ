@@ -33,6 +33,8 @@ use winit::window::{Fullscreen, Window, WindowId};
 const TICK: Duration = Duration::from_millis(10);
 /// How often showing layers report their progress.
 const POSITION_EVERY: Duration = Duration::from_millis(100);
+/// How often the watched layer's picture is sent ([`ToVideo::Watch`]).
+const THUMB_EVERY: Duration = Duration::from_millis(200);
 /// How often OpenQ hears that the process is alive.
 const HEARTBEAT: Duration = Duration::from_millis(250);
 /// The drawing loop counts as stuck after this long without a turn (no heartbeats then).
@@ -43,6 +45,9 @@ const DISPLAY_RECHECK: Duration = Duration::from_secs(5);
 const IDLE_POLL: Duration = Duration::from_millis(15);
 /// Corner drags are sent to OpenQ at most this often.
 const CORNER_SEND: Duration = Duration::from_millis(40);
+/// A stage that closes when nothing plays ([`Stage::close_when_idle`]) waits this long after its
+/// last layer, so a cue following straight on doesn't make the window close and open again.
+const IDLE_CLOSE: Duration = Duration::from_secs(1);
 
 /// Everything the threads share.
 struct Core {
@@ -57,6 +62,8 @@ struct Core {
     /// Cues showing a movie (their progress includes the media position).
     movies: HashSet<CueId>,
     snapshots: Vec<(StageId, PathBuf)>,
+    /// The layer whose picture OpenQ's geometry preview shows.
+    watch: Option<CueId>,
     quit: bool,
     /// Stages or windows changed: the event loop syncs its windows.
     changed: bool,
@@ -91,14 +98,14 @@ impl Core {
                 let t: Vec<_> = texts.iter().map(|(id, t)| (*id, t)).collect();
                 self.video.set_preloaded_text(&t);
             }
-            ToVideo::Start { cue, layer, at, anim_offset } => {
+            ToVideo::Start { cue, layer, at, anim_offset, skip } => {
                 let at = self.instant(at);
                 let now = Instant::now();
                 log::debug!("start {cue} {:+.1} ms from now", if at >= now { (at - now).as_secs_f64() } else { -(now - at).as_secs_f64() } * 1000.0);
                 self.movies.remove(&cue);
                 match &layer {
                     Layer::Movie(v) => {
-                        if let Err(e) = self.video.start(cue, v, at, None) {
+                        if let Err(e) = self.video.start_skipped(cue, v, at, None, skip) {
                             let _ = out.send(FromVideo::Error(format!("{}: {e}", v.path.display())));
                             let _ = out.send(FromVideo::Finished(cue));
                             return;
@@ -139,6 +146,10 @@ impl Core {
                 self.video.resume(cue, at);
             }
             ToVideo::Hold(cue) => self.video.hold(cue),
+            ToVideo::HoldAt { cue, at } => {
+                let at = self.instant(at);
+                self.video.hold_at(cue, at);
+            }
             ToVideo::Fade { cue, fade, at } => {
                 let f = FadeRequest {
                     volume_db: None,
@@ -154,6 +165,8 @@ impl Core {
                 let at = self.instant(at);
                 self.video.fade(cue, &f, at);
             }
+            ToVideo::Watch(cue) => self.watch = cue,
+            ToVideo::HardwareDecoding(on) => crate::media::video::set_hardware_decoding(on),
             ToVideo::Snapshot { stage, path } => {
                 self.snapshots.push((stage, path));
                 self.changed = true;
@@ -220,6 +233,7 @@ fn run(out: mpsc::Sender<FromVideo>) -> i32 {
         active: HashSet::new(),
         movies: HashSet::new(),
         snapshots: Vec::new(),
+        watch: None,
         quit: false,
         changed: true,
     }));
@@ -237,6 +251,7 @@ fn run(out: mpsc::Sender<FromVideo>) -> i32 {
         wins: HashMap::new(),
         by_window: HashMap::new(),
         auto_opened: HashSet::new(),
+        idle_since: HashMap::new(),
         monitors: Vec::new(),
         monitors_at: None,
         exit_code: 0,
@@ -304,6 +319,7 @@ fn spawn_tick(core: Arc<Mutex<Core>>, out: mpsc::Sender<FromVideo>, alive: Arc<A
     guarded("openq-video-tick", move || {
         let epoch = core.lock().epoch;
         let (mut last_pos, mut last_beat) = (Instant::now(), Instant::now() - HEARTBEAT);
+        let mut last_thumb = (Instant::now(), None::<(CueId, u64)>);
         loop {
             std::thread::sleep(TICK);
             let now = Instant::now();
@@ -330,7 +346,23 @@ fn spawn_tick(core: Arc<Mutex<Core>>, out: mpsc::Sender<FromVideo>, alive: Arc<A
                     let _ = out.send(FromVideo::Progress(*id, pos, n));
                 }
             }
+            let watched = c.watch.and_then(|id| Some((id, c.video.frame_of(id)?)));
             drop(c);
+            // The preview's live picture: a small copy when it changed (made outside the core lock).
+            if let Some((id, frame)) = watched
+                && now - last_thumb.0 >= THUMB_EVERY
+            {
+                let f = frame.lock();
+                if last_thumb.1 != Some((id, f.generation)) {
+                    last_thumb = (now, Some((id, f.generation)));
+                    if let Some(t) = crate::media::video::thumbnail(&f, proto::THUMB_SIDE) {
+                        drop(f);
+                        use base64::Engine;
+                        let rgba = base64::engine::general_purpose::STANDARD.encode(&t.rgba);
+                        let _ = out.send(FromVideo::Thumb { cue: id, size: t.size, stage_size: t.stage_size, rgba });
+                    }
+                }
+            }
             // Heartbeats only while the window loop turns and the GPU finishes work: a stuck
             // loop or a hung driver stops them, and OpenQ replaces the process.
             let turned = alive.load(Ordering::Relaxed);
@@ -456,6 +488,8 @@ struct App {
     by_window: HashMap<WindowId, StageId>,
     /// Stages whose window opened by itself (reported to OpenQ once).
     auto_opened: HashSet<StageId>,
+    /// Stages closing when idle that have had nothing to show since then.
+    idle_since: HashMap<StageId, Instant>,
     monitors: Vec<MonitorHandle>,
     monitors_at: Option<Instant>,
     exit_code: i32,
@@ -603,17 +637,37 @@ impl App {
         // Stages showing layers open by themselves: the layer's own stage, or the outputs that
         // span it (a surface that only exists to be spanned doesn't open on its own).
         let mut want: HashSet<StageId> = windows.open.iter().copied().filter(|id| stages.iter().any(|s| s.id == *id)).collect();
+        let mut showing = HashSet::new();
         for l in &layers {
             if let Some(s) = resolve(l.stage) {
                 let spans: Vec<StageId> = stages.iter().filter(|o| o.span_of == Some(s) && o.id != s).map(|o| o.id).collect();
                 let opened = if spans.is_empty() { vec![s] } else { spans };
                 for id in opened {
+                    showing.insert(id);
                     if want.insert(id) && self.auto_opened.insert(id) {
                         let _ = self.out.send(FromVideo::Opened(id));
                     }
                 }
             }
         }
+        // Outputs that close when nothing plays: closed a moment after their last layer, and
+        // OpenQ told (the next layer opens them again).
+        let now = Instant::now();
+        let closing: Vec<StageId> = stages.iter().filter(|s| s.close_when_idle && want.contains(&s.id)).map(|s| s.id).collect();
+        for id in closing {
+            if showing.contains(&id) || windows.mapping.contains(&id) {
+                self.idle_since.remove(&id);
+                continue;
+            }
+            let since = *self.idle_since.entry(id).or_insert(now);
+            if now - since >= IDLE_CLOSE {
+                self.idle_since.remove(&id);
+                want.remove(&id);
+                self.core.lock().windows.open.retain(|s| *s != id);
+                let _ = self.out.send(FromVideo::IdleClosed(id));
+            }
+        }
+        self.idle_since.retain(|id, _| want.contains(id) && stages.iter().any(|s| s.id == *id && s.close_when_idle));
         self.auto_opened.retain(|id| want.contains(id));
         // Displays: listed at the start and every few seconds while a stage is on one.
         let on_display = stages.iter().any(|s| s.output.is_some() && want.contains(&s.id));

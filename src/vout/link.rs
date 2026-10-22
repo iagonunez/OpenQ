@@ -27,6 +27,8 @@ pub enum StageEvent {
     Opened(StageId),
     /// The user closed a window.
     Closed(StageId),
+    /// A window that closes when nothing plays closed.
+    IdleClosed(StageId),
     /// The user turned fullscreen on or off.
     Fullscreen(StageId, bool),
     /// A requested snapshot was saved (or failed).
@@ -90,6 +92,17 @@ impl Proc {
     }
 }
 
+/// A fade or hold sent to a layer, kept to replay after a restart.
+#[derive(Clone)]
+enum FadeStep {
+    Fade(VideoFade),
+    Hold,
+}
+
+/// Fades and holds kept per layer; older ones are forgotten (their end values are lost on a
+/// restart).
+const KEEP_FADES: usize = 32;
+
 /// A layer as OpenQ last asked for it (to bring it back after a restart).
 struct Live {
     layer: Layer,
@@ -105,6 +118,8 @@ struct Live {
     frames: u64,
     /// Told the engine log that video is unavailable for this cue.
     unavailable_reported: bool,
+    /// Fades and holds sent to it, in order, with their times.
+    fades: Vec<(FadeStep, Instant)>,
 }
 
 impl Live {
@@ -133,6 +148,12 @@ pub struct VideoLink {
     stage_events: Vec<StageEvent>,
     /// Snapshots asked for before the process was ready.
     snapshots: Vec<ToVideo>,
+    /// The layer whose picture is wanted ([`VideoLink::watch`]).
+    watch: Option<CueId>,
+    /// Its latest picture, numbered.
+    thumb: Option<(u64, CueId, Arc<crate::media::video::Thumbnail>)>,
+    /// Movies decode on the graphics card where it can.
+    hardware_decoding: bool,
 }
 
 impl VideoLink {
@@ -164,6 +185,9 @@ impl VideoLink {
             errors: Vec::new(),
             stage_events: Vec::new(),
             snapshots: Vec::new(),
+            watch: None,
+            thumb: None,
+            hardware_decoding: true,
         })
     }
 
@@ -213,6 +237,32 @@ impl VideoLink {
         }
     }
 
+    /// Decode movies on the graphics card's video engine where it takes them (sent when it
+    /// changes; movies started from then on).
+    pub fn set_hardware_decoding(&mut self, on: bool) {
+        if self.hardware_decoding != on {
+            self.hardware_decoding = on;
+            self.proc.send(ToVideo::HardwareDecoding(on));
+        }
+    }
+
+    /// Get small copies of this layer's picture a few times a second (None: stop). The geometry
+    /// preview shows them while the cue plays.
+    pub fn watch(&mut self, cue: Option<CueId>) {
+        if self.watch != cue {
+            self.watch = cue;
+            if self.thumb.as_ref().is_some_and(|t| Some(t.1) != cue) {
+                self.thumb = None;
+            }
+            self.proc.send(ToVideo::Watch(cue));
+        }
+    }
+
+    /// The latest picture of the watched layer, numbered (the number changes with the picture).
+    pub fn thumbnail(&self, cue: CueId) -> Option<(u64, Arc<crate::media::video::Thumbnail>)> {
+        self.thumb.as_ref().filter(|t| t.1 == cue && self.live.contains_key(&cue)).map(|t| (t.0, t.2.clone()))
+    }
+
     /// Stage window events since the last call.
     pub fn take_stage_events(&mut self) -> Vec<StageEvent> {
         std::mem::take(&mut self.stage_events)
@@ -247,8 +297,11 @@ impl VideoLink {
 
     fn start_layer(&mut self, cue: CueId, layer: Layer, at: Instant) {
         self.want();
-        self.proc.send(ToVideo::Start { cue, layer: layer.clone(), at: self.proc.ns(at), anim_offset: 0.0 });
-        self.live.insert(cue, Live { layer, at, paused_at: None, paused: Duration::ZERO, done: false, position: None, frames: 0, unavailable_reported: false });
+        self.proc.send(ToVideo::Start { cue, layer: layer.clone(), at: self.proc.ns(at), anim_offset: 0.0, skip: 0.0 });
+        self.live.insert(
+            cue,
+            Live { layer, at, paused_at: None, paused: Duration::ZERO, done: false, position: None, frames: 0, unavailable_reported: false, fades: Vec::new() },
+        );
     }
 
     /// Start a movie or image at `at`; `tap` routes its soundtrack into the mixer.
@@ -293,6 +346,22 @@ impl VideoLink {
     fn edit(&mut self, cue: CueId, layer: Layer) {
         let Some(l) = self.live.get_mut(&cue) else { return };
         if l.layer != layer {
+            // An edit replaces what fades did to that value (as in the video process).
+            let (old, new) = (look(&l.layer), look(&layer));
+            for (step, _) in &mut l.fades {
+                if let FadeStep::Fade(f) = step {
+                    if old.0 != new.0 {
+                        f.opacity = None;
+                    }
+                    if old.1 != new.1 {
+                        f.geometry = None;
+                    }
+                    if old.2 != new.2 {
+                        f.video_fx = None;
+                    }
+                }
+            }
+            l.fades.retain(|(s, _)| !matches!(s, FadeStep::Fade(f) if f.opacity.is_none() && f.geometry.is_none() && f.video_fx.is_none()));
             l.layer = layer.clone();
             self.proc.send(ToVideo::Update { cue, layer });
         }
@@ -322,6 +391,9 @@ impl VideoLink {
     pub fn hold(&mut self, cue: CueId) {
         self.tracks.hold(cue);
         self.proc.send(ToVideo::Hold(cue));
+        if let Some(l) = self.live.get_mut(&cue) {
+            remember(l, FadeStep::Hold, Instant::now());
+        }
     }
 
     /// Freeze a layer and its soundtrack.
@@ -353,6 +425,9 @@ impl VideoLink {
             return;
         }
         let fade = VideoFade { opacity: f.opacity, geometry: f.geometry, video_fx: f.video_fx.clone(), duration: f.duration, curve: f.curve };
+        if let Some(l) = self.live.get_mut(&cue) {
+            remember(l, FadeStep::Fade(fade.clone()), at);
+        }
         self.proc.send(ToVideo::Fade { cue, fade, at: self.proc.ns(at) });
     }
 
@@ -421,8 +496,22 @@ impl VideoLink {
                 }
                 FromVideo::Opened(s) => self.stage_events.push(StageEvent::Opened(s)),
                 FromVideo::Closed(s) => self.stage_events.push(StageEvent::Closed(s)),
+                FromVideo::IdleClosed(s) => self.stage_events.push(StageEvent::IdleClosed(s)),
                 FromVideo::Fullscreen(s, on) => self.stage_events.push(StageEvent::Fullscreen(s, on)),
                 FromVideo::Snapshot(r) => self.stage_events.push(StageEvent::Snapshot(r)),
+                FromVideo::Thumb { cue, size, stage_size, rgba } => {
+                    use base64::Engine;
+                    let ok_size = size[0] > 0 && size[1] > 0 && size[0].max(size[1]) <= proto::THUMB_SIDE;
+                    if Some(cue) == self.watch
+                        && ok_size
+                        && stage_size.iter().all(|v| v.is_finite() && *v > 0.0)
+                        && let Ok(rgba) = base64::engine::general_purpose::STANDARD.decode(rgba)
+                        && rgba.len() == (size[0] * size[1] * 4) as usize
+                    {
+                        let n = self.thumb.as_ref().map_or(1, |t| t.0 + 1);
+                        self.thumb = Some((n, cue, Arc::new(crate::media::video::Thumbnail { size, stage_size, rgba })));
+                    }
+                }
                 FromVideo::Pong(..) | FromVideo::Heartbeat | FromVideo::Fatal(_) => {}
             }
         }
@@ -441,6 +530,8 @@ impl VideoLink {
         p.send(ToVideo::Stages(self.stages.clone()));
         p.send(ToVideo::Windows(self.windows.clone()));
         p.send(ToVideo::Preload { videos: self.preload.0.clone(), texts: self.preload.1.clone() });
+        p.send(ToVideo::Watch(self.watch));
+        p.send(ToVideo::HardwareDecoding(self.hardware_decoding));
         // Layers resume a moment from now, where they will be by then.
         let at = now + Duration::from_millis(100);
         for (cue, l) in &mut self.live {
@@ -449,20 +540,28 @@ impl VideoLink {
             l.frames = 0;
             if l.at >= now && l.paused_at.is_none() {
                 // Not shown yet: start as planned.
-                p.send(ToVideo::Start { cue: *cue, layer: l.layer.clone(), at: p.ns(l.at), anim_offset: 0.0 });
+                p.send(ToVideo::Start { cue: *cue, layer: l.layer.clone(), at: p.ns(l.at), anim_offset: 0.0, skip: 0.0 });
+                replay_fades(p, *cue, &l.fades);
                 continue;
             }
             let lead = if l.paused_at.is_some() { 0.0 } else { 0.1 };
             let played = l.played(now) + lead;
             let mut layer = l.layer.clone();
-            if let Layer::Movie(v) = &mut layer {
-                let looping = v.infinite_loop || v.play_count > 1;
-                if !crate::media::is_image_path(&v.path) && !looping {
+            let mut skip = 0.0;
+            if let Layer::Movie(v) = &mut layer
+                && !crate::media::is_image_path(&v.path)
+            {
+                if v.infinite_loop || v.play_count > 1 {
+                    // The video process works out the pass and the point in it.
+                    skip = played;
+                } else {
                     let pos = self.tracks.elapsed(*cue).map(|p| p + lead).unwrap_or(v.start_time.max(0.0) + played);
                     v.start_time = pos;
                 }
             }
-            p.send(ToVideo::Start { cue: *cue, layer, at: p.ns(at), anim_offset: played });
+            p.send(ToVideo::Start { cue: *cue, layer, at: p.ns(at), anim_offset: played, skip });
+            // Fades and holds again, at their own times: values end where they were.
+            replay_fades(p, *cue, &l.fades);
             if l.paused_at.is_some() {
                 p.send(ToVideo::Pause { cue: *cue, at: p.ns(at) });
             }
@@ -502,6 +601,35 @@ impl Drop for VideoLink {
     fn drop(&mut self) {
         self.shutdown();
     }
+}
+
+/// Keep a fade or hold to replay after a restart (the oldest are forgotten).
+fn remember(l: &mut Live, step: FadeStep, at: Instant) {
+    if l.fades.len() >= KEEP_FADES {
+        l.fades.remove(0);
+    }
+    l.fades.push((step, at));
+}
+
+/// Send a layer's fades and holds again, in order, at their own times.
+fn replay_fades(p: &Proc, cue: CueId, fades: &[(FadeStep, Instant)]) {
+    for (step, at) in fades {
+        let at = p.ns(*at);
+        p.send(match step {
+            FadeStep::Fade(fade) => ToVideo::Fade { cue, fade: fade.clone(), at },
+            FadeStep::Hold => ToVideo::HoldAt { cue, at },
+        });
+    }
+}
+
+/// A layer's opacity, placement and effects as its cue sets them.
+fn look(layer: &Layer) -> (f32, crate::model::Geometry, Vec<crate::effects::VideoEffect>) {
+    let v = match layer {
+        Layer::Movie(v) => std::borrow::Cow::Borrowed(v),
+        Layer::Text(t) => std::borrow::Cow::Owned(crate::media::video::text_layer_params(t)),
+        Layer::Camera(c) => std::borrow::Cow::Owned(crate::media::video::camera_layer_params(c)),
+    };
+    (v.opacity, v.geometry, v.video_fx.clone())
 }
 
 /// The program to run as the video output: this executable, or `openq` next to it (tests and

@@ -327,6 +327,7 @@ impl App {
         }
 
         let mut new_ws = false;
+        let mut reshaped = false;
         for msg in link.drain() {
             match msg {
                 ServerMsg::Welcome { .. } => {}
@@ -363,6 +364,23 @@ impl App {
                         crate::remote::apply_cue_patch(&mut show.ws, &patch);
                         r.checked_gen = changed_in_step(show, r.checked_gen);
                         show.engine.workspace_changed();
+                    } else {
+                        link.send(ClientMsg::Resync);
+                    }
+                }
+                ServerMsg::Ops(mut ops) => {
+                    ops.cues_mut().for_each(crate::limits::cue);
+                    let applied = r.synced.as_mut().is_some_and(|synced| ops.apply(synced));
+                    if applied {
+                        // Merged into local edits not yet echoed; if that doesn't fit, they're dropped.
+                        if !ops.apply(&mut show.ws)
+                            && let Some(synced) = &r.synced
+                        {
+                            show.ws = synced.clone();
+                        }
+                        r.checked_gen = changed_in_step(show, r.checked_gen);
+                        show.engine.workspace_changed();
+                        reshaped = true;
                     } else {
                         link.send(ClientMsg::Resync);
                     }
@@ -465,6 +483,10 @@ impl App {
                 if r.last_edit.elapsed() >= EDIT_INTERVAL {
                     match crate::remote::workspace_patch(synced, &show.ws) {
                         Some((cues, lighting)) => link.send(ClientMsg::Patch { cues, lighting: lighting.map(Box::new) }),
+                        None if let Some(ops) = crate::changes::Reshape::diff(synced, &show.ws) => {
+                            let lighting = crate::light::patch::diff(&synced.lighting, &show.ws.lighting).map(Box::new);
+                            link.send(ClientMsg::Ops { ops: Box::new(ops), lighting });
+                        }
                         None => {
                             let mut ws = show.ws.clone();
                             ws.lighting = Default::default();
@@ -485,9 +507,11 @@ impl App {
             r.checked_gen = Some(show.edit_gen);
         }
         let can_edit = r.role.can_edit();
-        if new_ws {
+        if new_ws || reshaped {
             let ws = &show.ws;
             self.selection.retain(|id| ws.cue_list.find(*id).is_some());
+        }
+        if new_ws {
             self.reset_undo();
         }
         if !can_edit && self.mode == Mode::Edit {

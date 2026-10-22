@@ -52,13 +52,16 @@
 //! * [`multiedit`] — an inspector edit carried to every selected cue; pasting chosen properties.
 //! * [`warnings`] — problems found in a show before playing it (missing files and targets, messages
 //!   that can't be sent, shared hotkeys).
-//! * [`osc`] — OSC input. [`remote`] — paired remote devices (encrypted, authenticated).
+//! * [`osc`] — OSC input. [`remote`] — paired remote devices (encrypted, authenticated), found by
+//!   broadcast and mDNS; cues added, moved or deleted travel as operations
+//!   ([`changes::Reshape`]) merged into the show as it is on the other side.
 //! * [`displays`] — system monitors for stage outputs. [`ui`] — the egui application.
 //! * `vout` (feature `video`) — video output in its own process (`openq --video-output`): stage
 //!   windows with their own wgpu renderer (YUV converted in the shader, corner pins, spanned
 //!   surfaces, edge blending, layer [`model::BlendMode`]s), driven by cue commands on a shared
-//!   clock; a crash or hang there never stops the show (the process is restarted and its layers
-//!   brought back).
+//!   clock; movies decode on the graphics card where it can, stills, text and canvases have mip
+//!   chains; a crash or hang there never stops the show (the process is restarted and its layers
+//!   brought back with their fades and loop points).
 //! * [`i18n`] — UI translations (English, Spanish, Galician): texts are looked up by their
 //!   English wording in `assets/i18n/*.json`; the language is chosen on the first run.
 //! * [`recovery`] — crash safety: panics in workers become errors, the engine thread recovers

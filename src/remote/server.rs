@@ -165,14 +165,16 @@ pub struct Server {
     /// Accept and discovery threads, joined on drop so the ports are free when it returns
     /// (turning sharing off and straight on again failed to bind otherwise).
     threads: Vec<std::thread::JoinHandle<()>>,
+    /// The mDNS announcement (None if mDNS isn't available here).
+    announcer: Option<super::discovery::Announcer>,
 }
 
 impl Server {
     /// Listen on the configured port and answer discovery queries.
     pub fn start(show: SharedShow, config: Arc<Mutex<RemoteConfig>>, repaint: impl Fn() + Send + Sync + 'static) -> anyhow::Result<Self> {
-        let (port, id) = {
+        let (port, id, name) = {
             let c = config.lock();
-            (c.port, c.instance_id)
+            (c.port, c.instance_id, c.instance_name.clone())
         };
         let listener = TcpListener::bind((Ipv4Addr::UNSPECIFIED, port))
             .map_err(|e| anyhow::anyhow!("cannot listen on port {port}: {e}"))?;
@@ -210,8 +212,9 @@ impl Server {
                 return Err(e.into());
             }
         }
+        let announcer = super::discovery::Announcer::start(id, &name, port).map_err(|e| log::warn!("mDNS announcement unavailable: {e}")).ok();
         shared.event(format!("Remote access on, port {port}"));
-        Ok(Self { shared, threads })
+        Ok(Self { shared, threads, announcer })
     }
 
     /// Port being listened on.
@@ -275,6 +278,7 @@ impl Server {
 impl Drop for Server {
     fn drop(&mut self) {
         self.shared.stop.store(true, Ordering::Relaxed);
+        self.announcer.take();
         // Both threads look at `stop` at least every 50 ms.
         for t in self.threads.drain(..) {
             let _ = t.join();
@@ -566,9 +570,9 @@ fn receive_loop(
         let msg: ClientMsg = rx.recv()?;
         // Look the role up for every message, so changes and removals apply at once.
         let Some(role) = role_of(shared, device) else { return Ok(()) };
-        if matches!(msg, ClientMsg::Patch { .. } | ClientMsg::Reshape { .. } | ClientMsg::Edit(_)) {
+        if matches!(msg, ClientMsg::Patch { .. } | ClientMsg::Ops { .. } | ClientMsg::Reshape { .. } | ClientMsg::Edit(_)) {
             edits.take_or_wait();
-            if !matches!(msg, ClientMsg::Patch { .. }) {
+            if !matches!(msg, ClientMsg::Patch { .. } | ClientMsg::Ops { .. }) {
                 whole_edits.take_or_wait();
             }
         }
@@ -620,6 +624,37 @@ fn receive_loop(
                 } else {
                     drop(show);
                     // The replica's copy has drifted: its edit is lost, it gets the whole show.
+                    flags.resync.store(true, Ordering::Release);
+                    let _ = notices.send(ServerMsg::Refused("An edit didn't fit the show on the main device; resyncing".into()));
+                }
+            }
+            ClientMsg::Ops { mut ops, mut lighting } => {
+                if !role.can_edit() {
+                    refuse_edit(shared, flags, notices, edit_refusal(shared));
+                    continue;
+                }
+                let mut show = shared.show.lock();
+                let lookups = show.lookups();
+                let vetted = super::vet::cues(&lookups.media, &ops.added)
+                    .and_then(|_| super::vet::cues(&lookups.media, &ops.changed))
+                    .and_then(|_| super::vet::numbers(&lighting));
+                if let Err(why) = vetted {
+                    drop(show);
+                    refuse_edit(shared, flags, notices, why);
+                    continue;
+                }
+                let mut held = NetworkChange::default();
+                netguard::hold_cues(&show.ws, &mut ops.added, &mut held);
+                netguard::hold_cues(&show.ws, &mut ops.changed, &mut held);
+                if let Some(p) = lighting.as_deref_mut() {
+                    netguard::hold_lighting(&show.ws, p, &mut held);
+                }
+                if show.apply_remote_ops(*ops, lighting.as_deref()) {
+                    hold_for_operator(shared, &mut show, flags, notices, device_name, held);
+                    drop(show);
+                    (shared.repaint)();
+                } else {
+                    drop(show);
                     flags.resync.store(true, Ordering::Release);
                     let _ = notices.send(ServerMsg::Refused("An edit didn't fit the show on the main device; resyncing".into()));
                 }
@@ -853,6 +888,14 @@ fn send_loop(
                 Delta::Patch(cues, lighting) => {
                     if !cues.is_empty() || lighting.is_none() {
                         tx.send(&ServerMsg::Cues(cues))?;
+                    }
+                    if let Some(l) = lighting {
+                        tx.send(&ServerMsg::Lighting(Box::new(l)))?;
+                    }
+                }
+                Delta::Reshape(ops, lighting) => {
+                    if !ops.is_empty() {
+                        tx.send(&ServerMsg::Ops(Box::new(ops)))?;
                     }
                     if let Some(l) = lighting {
                         tx.send(&ServerMsg::Lighting(Box::new(l)))?;

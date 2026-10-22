@@ -70,14 +70,18 @@
   <p>Ajusta el rol que reciben los dispositivos nuevos, y cambia el de cualquier dispositivo, en la ventana Remoto del dispositivo
   principal. Los cambios se aplican al momento. <strong>Quitar</strong> desconecta un dispositivo enseguida, y tiene que volver a
   emparejarse para reconectar. Cuando un dispositivo se desconecta, recupera su propio espectáculo. Los archivos de medios se quedan en
-  el dispositivo principal, así que añádelos allí.</p>
+  el dispositivo principal, así que añádelos allí. Varios dispositivos pueden editar a la vez: las cues que uno añade, mueve o
+  borra se juntan con el espectáculo tal como está en el dispositivo principal, así que no deshacen lo que los demás hicieron
+  mientras tanto.</p>
   <div class="note"><span class="label">Seguridad</span><p>Las conexiones van cifradas y autenticadas. Un código de emparejamiento
   vale 5 minutos y 5 intentos, y quien grabe el tráfico de red no puede deducirlo a partir de la grabación. Después del
   emparejamiento, cada dispositivo entra con su propia clave secreta. Una dirección que falla una y otra vez se bloquea
   5 minutos. La lista Actividad muestra las conexiones y los intentos rechazados.</p></div>
   <div class="note tip"><span class="label">Red</span><p>El acceso remoto usa el puerto TCP <code>53200</code>, y la búsqueda
-  usa el puerto UDP <code>53201</code>. Un cortafuegos en el dispositivo principal tiene que permitir los dos. En una wifi de invitados
-  la búsqueda puede no encontrar nada; escribir la dirección sigue funcionando.</p></div>
+  usa el puerto UDP <code>53201</code> y mDNS (UDP <code>5353</code>). Un cortafuegos en el dispositivo principal tiene que
+  permitirlos. La búsqueda también encuentra un dispositivo principal en otra subred o VLAN si la red deja pasar mDNS entre ellas
+  (una «pasarela mDNS» o reflector en los conmutadores o el router). En una wifi de invitados la búsqueda puede no encontrar nada;
+  escribir la dirección sigue funcionando.</p></div>
 </section>
 
 <section id="osc">

@@ -74,7 +74,8 @@
   <p><strong>Geometry preview</strong> (<span class="menu">View → Geometry preview</span>, or <em>Preview</em> on the Geometry tab)
   draws the selected cue's stage with the picture in place, without opening a projector output. In edit
   mode, drag in the preview to move the picture, scroll to scale it, and double-click to centre it. For a Fade cue that
-  changes geometry, the preview shows where the fade ends, with the starting position as a dashed outline.</p>
+  changes geometry, the preview shows where the fade ends, with the starting position as a dashed outline. While a movie or
+  camera cue plays, the preview shows its live picture.</p>
   <h3 id="camera-cues">Camera cues</h3>
   <p>A Camera cue shows a live camera (a webcam, a USB or HDMI capture card) as a layer on a stage, with the same
   <strong>Geometry</strong> tab as video: position, scale, rotation, crop, opacity and layer, and Fade cues can move
@@ -206,6 +207,12 @@
   choose <em>Window</em> or one of the connected displays. A stage set to a display opens fullscreen on that display, and it
   opens there again when the show is loaded. If a display isn't listed, use <em>Refresh displays</em>. In a stage window,
   double-click or press <kbd>F11</kbd> to toggle fullscreen.</p>
+  <p>An open output shows black when nothing plays on it. Tick <em>Close when nothing plays</em> to close it a moment after
+  its last cue ends instead; the next cue on it opens it again, on the same display.</p>
+  <p><em>Decode movies on the graphics card</em> (at the top of Settings → Stages, on by default) lets the graphics card's
+  video decoder play H.264, HEVC and the other formats it takes, which leaves the processor free for big movies. Files it
+  can't take are decoded by the processor as before. Turn it off if a movie shows wrong colours or doesn't play; it applies
+  to movies started from then on.</p>
   <h3 id="mapping">Mapping</h3>
   <figure>
     <img src="img/mapping.webp" width="1100" height="551" alt="Mapping test pattern on a keystoned stage: white canvas with a grid, pixel rulers along every edge, circles and numbered corner pins.">

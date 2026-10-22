@@ -192,6 +192,45 @@ fn pair_sync_control_and_revoke() {
     });
     assert!(kept.1 && kept.0.lighting.is_empty() && kept.0.cue_list.cues.len() == 3);
     assert_eq!(show.lock().ws.lighting.groups[0].name, "From the tablet", "the design survived the reshape");
+
+    // Cues added, removed or moved go as operations both ways, and a replica's merge with what the
+    // main device did meanwhile.
+    let base = show.lock().ws.clone();
+    let on_main = {
+        let mut s = show.lock();
+        let c = Cue::new(CueKind::Wait { duration: 2.0 });
+        let id = c.id;
+        s.ws.cue_list.cues.insert(0, c);
+        s.edited_shape([id]);
+        id
+    };
+    let ops = wait_for("operations", || {
+        link.drain().into_iter().find_map(|m| match m {
+            ServerMsg::Ops(o) => Some(o),
+            ServerMsg::Workspace { .. } => panic!("the whole workspace was sent for an added cue"),
+            _ => None,
+        })
+    });
+    assert_eq!((ops.added.len(), ops.placed.len(), ops.removed.len()), (1, 1, 0));
+    let mut mine = base.clone();
+    let last = mine.cue_list.cues.pop().unwrap().id;
+    let mut added = Cue::new(CueKind::Memo);
+    added.name = "Added on the tablet".into();
+    mine.cue_list.cues.push(added);
+    let ops = openq::changes::Reshape::diff(&base, &mine).unwrap();
+    link.send(ClientMsg::Ops { ops: Box::new(ops), lighting: None });
+    wait_for("operations merged", || {
+        let s = show.lock();
+        let c = &s.ws.cue_list.cues;
+        (c.last().unwrap().name == "Added on the tablet").then_some(())
+    });
+    {
+        let s = show.lock();
+        let c = &s.ws.cue_list.cues;
+        assert_eq!(c.len(), 4);
+        assert_eq!(c[0].id, on_main, "the main device's own edit kept");
+        assert!(s.ws.cue_list.find(last).is_none());
+    }
     link.send(ClientMsg::Command(Command::Light(openq::control::LightControl::GrandMaster(0.25))));
     wait_for("mirrored grand master", || {
         link.drain().into_iter().find_map(|m| match m {

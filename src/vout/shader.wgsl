@@ -75,6 +75,17 @@ fn vs_layer(@location(0) pos: vec2<f32>, @location(1) uv: vec2<f32>) -> LOut {
     return o;
 }
 
+// Mip level to read the layer's first plane at (stills and text have mip chains; other pictures
+// have one level, which any level reads). Worked out at the top of the fragment entry points,
+// where control flow is uniform (derivatives need that), from how many texels a pixel covers.
+var<private> lod: f32;
+
+fn lod_of(uv: vec2<f32>, dims: vec2<f32>) -> f32 {
+    let t = uv * dims;
+    let d = max(length(dpdx(t)), length(dpdy(t)));
+    return max(log2(max(d, 0.000001)), 0.0);
+}
+
 // The layer's picture at `uv`, premultiplied.
 fn px(uv0: vec2<f32>) -> vec4<f32> {
     var uv = uv0;
@@ -83,14 +94,14 @@ fn px(uv0: vec2<f32>) -> vec4<f32> {
     }
     let k = i32(layer.kind.x + 0.5);
     if (k == 0) {
-        return textureSampleLevel(t0, samp, uv, 0.0);
+        return textureSampleLevel(t0, samp, uv, lod);
     }
     if (k == 1) {
-        let c = textureSampleLevel(t0, samp, uv, 0.0);
+        let c = textureSampleLevel(t0, samp, uv, lod);
         return vec4<f32>(c.rgb * c.a, c.a);
     }
     if (k == 4) {
-        return vec4<f32>(textureSampleLevel(t0, samp, uv, 0.0).r);
+        return vec4<f32>(textureSampleLevel(t0, samp, uv, lod).r);
     }
     let y = textureSampleLevel(t0, samp, uv, 0.0).r;
     var c = vec2<f32>(0.0);
@@ -234,11 +245,13 @@ fn over_black(uv: vec2<f32>) -> vec4<f32> {
 
 @fragment
 fn fs_black(i: LOut) -> @location(0) vec4<f32> {
+    lod = lod_of(i.uv, vec2<f32>(textureDimensions(t0)));
     return over_black(i.uv);
 }
 
 @fragment
 fn fs_white(i: LOut) -> @location(0) vec4<f32> {
+    lod = lod_of(i.uv, vec2<f32>(textureDimensions(t0)));
     let c = over_black(i.uv);
     return vec4<f32>(c.rgb + vec3<f32>(1.0 - c.a), c.a);
 }
@@ -299,10 +312,13 @@ fn edge(d: f32, w: f32) -> f32 {
 fn warped(uv: vec2<f32>) -> vec3<f32> {
     let p = vec3<f32>(uv, 1.0);
     let q = vec3<f32>(dot(warp.r0.xyz, p), dot(warp.r1.xyz, p), dot(warp.r2.xyz, p));
+    let c = q.xy / max(q.z, 0.000001);
+    // The canvas has a mip chain: a canvas drawn smaller than its size reads a smaller level, so
+    // fine detail doesn't shimmer (derivatives before any branch).
+    let level = lod_of(c, vec2<f32>(textureDimensions(canvas)));
     if (q.z <= 0.000001) {
         return vec3<f32>(0.0);
     }
-    let c = q.xy / q.z;
     if (c.x < 0.0 || c.y < 0.0 || c.x > 1.0 || c.y > 1.0) {
         return vec3<f32>(0.0);
     }
@@ -312,7 +328,7 @@ fn warped(uv: vec2<f32>) -> vec3<f32> {
     let b = warp.blend;
     let inside = c.x < b.x || c.y < b.y || 1.0 - c.x < b.z || 1.0 - c.y < b.w;
     let lift = select(warp.misc.z, 0.0, inside);
-    let rgb = textureSampleLevel(canvas, csamp, c, 0.0).rgb * g;
+    let rgb = textureSampleLevel(canvas, csamp, c, level).rgb * g;
     return (rgb + vec3<f32>(lift) * (1.0 - rgb)) * m;
 }
 
@@ -337,6 +353,12 @@ fn fs_warp_linear(i: FOut) -> @location(0) vec4<f32> {
 
 @fragment
 fn fs_overlay(i: FOut) -> @location(0) vec4<f32> {
+    return textureSampleLevel(ov, osamp, i.uv, 0.0);
+}
+
+// One mip level from the one above it (linear filtering averages each 2×2 block).
+@fragment
+fn fs_mip(i: FOut) -> @location(0) vec4<f32> {
     return textureSampleLevel(ov, osamp, i.uv, 0.0);
 }
 

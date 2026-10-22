@@ -75,7 +75,8 @@
   <p>La <strong>vista previa de geometría</strong> (<span class="menu">Ver → Vista previa de geometría</span>, o <em>Vista previa</em> en la pestaña Geometría)
   dibuja el escenario de la cue seleccionada con la imagen en su sitio, sin abrir una salida de proyector. En modo edición,
   arrastra en la vista previa para mover la imagen, usa la rueda para escalarla y haz doble clic para centrarla. Para una cue Fade que
-  cambia la geometría, la vista previa muestra dónde termina el fundido, con la posición inicial como contorno discontinuo.</p>
+  cambia la geometría, la vista previa muestra dónde termina el fundido, con la posición inicial como contorno discontinuo. Mientras
+  una cue de película o de cámara suena, la vista previa muestra su imagen en directo.</p>
   <h3 id="camera-cues">Cues Cámara</h3>
   <p>Una cue Cámara muestra una cámara en directo (una webcam, una capturadora USB o HDMI) como capa en un escenario, con la misma
   pestaña <strong>Geometría</strong> que el vídeo: posición, escala, rotación, recorte, opacidad y capa, y las cues Fade pueden moverla
@@ -208,6 +209,12 @@
   elige <em>Ventana</em> o una de las pantallas conectadas. Un escenario asignado a una pantalla se abre a pantalla completa en ella, y
   vuelve a abrirse allí al cargar el espectáculo. Si una pantalla no aparece, usa <em>Actualizar pantallas</em>. En una ventana de
   escenario, haz doble clic o pulsa <kbd>F11</kbd> para alternar la pantalla completa.</p>
+  <p>Una salida abierta muestra negro cuando no suena nada en ella. Marca <em>Cerrar cuando no suena nada</em> para que se cierre
+  un momento después de que acabe su última cue; la siguiente cue en ella la vuelve a abrir, en la misma pantalla.</p>
+  <p><em>Decodificar las películas en la tarjeta gráfica</em> (arriba en Ajustes → Escenarios de vídeo, activado de serie) deja que el
+  decodificador de vídeo de la tarjeta gráfica reproduzca H.264, HEVC y los demás formatos que admite, y así el procesador queda
+  libre para películas grandes. Los archivos que no admite los decodifica el procesador como antes. Desactívalo si una película sale
+  con colores erróneos o no se reproduce; se aplica a las películas que empiecen a partir de entonces.</p>
   <h3 id="mapping">Mapeado</h3>
   <figure>
     <img src="img/es/mapping.webp" width="1100" height="551" alt="Patrón de ajuste de mapping en un escenario con corrección de trapecio: lienzo blanco con cuadrícula, reglas de píxeles en cada borde, círculos y esquinas numeradas.">

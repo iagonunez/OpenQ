@@ -46,7 +46,7 @@ pub const DEFAULT_PORT: u16 = 53200;
 /// UDP port for discovery queries.
 pub const DISCOVERY_PORT: u16 = 53201;
 /// Wire protocol version; both ends must match.
-pub const PROTOCOL: u32 = 5;
+pub const PROTOCOL: u32 = 6;
 
 /// What a paired device may do.
 #[derive(Serialize, Deserialize, Clone, Copy, PartialEq, Eq, Debug, Default)]
@@ -352,6 +352,10 @@ pub enum ServerMsg {
     /// children come as separate entries). Sent instead of [`ServerMsg::Workspace`] when the
     /// tree's shape and everything else stayed the same, e.g. while a slider is dragged.
     Cues(Vec<Cue>),
+    /// Cues added, removed or moved since the last workspace sent, as operations (sent instead of
+    /// [`ServerMsg::Workspace`] when nothing outside the cue lists changed but the lighting design,
+    /// whose changes follow as [`ServerMsg::Lighting`]).
+    Ops(Box<crate::changes::Reshape>),
     /// Only these lighting design changes since the last workspace sent (sent with or instead of
     /// [`ServerMsg::Cues`]).
     Lighting(Box<crate::light::patch::LightingPatch>),
@@ -386,6 +390,15 @@ pub enum ClientMsg {
     Reshape {
         /// The workspace (its lighting is ignored).
         ws: Box<Workspace>,
+        /// Lighting design changes.
+        lighting: Option<Box<crate::light::patch::LightingPatch>>,
+    },
+    /// A local edit that added, removed or moved cues, as operations on the last workspace
+    /// received (Edit role only). The main device merges them into its show as it now is, so
+    /// edits made there meanwhile aren't lost ([`crate::changes::Reshape::apply`]).
+    Ops {
+        /// The operations.
+        ops: Box<crate::changes::Reshape>,
         /// Lighting design changes.
         lighting: Option<Box<crate::light::patch::LightingPatch>>,
     },

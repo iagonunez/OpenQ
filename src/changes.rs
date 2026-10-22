@@ -14,6 +14,7 @@
 //! has; the whole workspace otherwise.
 
 use crate::model::{Cue, CueId, CueList, OtherList, Workspace};
+use serde::{Deserialize, Serialize};
 use std::collections::{HashSet, VecDeque};
 
 /// Edits remembered; a mirror further behind takes the whole workspace.
@@ -115,7 +116,272 @@ pub fn shape_of(list: &CueList, wanted: &[CueId]) -> (Shape, Vec<Cue>) {
     (shape, found)
 }
 
-/// Build cue trees in `shape` out of `pool` (shallow cues by id, each used once); None if a cue
+/// Where a cue goes in a [`Reshape`]: a list (0 = the current one, k = `others[k - 1]`), a
+/// group in it (None = its top level) and the cue it follows there (None = first).
+#[derive(Serialize, Deserialize, Clone, Copy, Debug, PartialEq)]
+pub struct Place {
+    /// The cue.
+    pub id: CueId,
+    /// The list.
+    pub list: u32,
+    /// The group it goes into.
+    pub parent: Option<CueId>,
+    /// The cue it follows.
+    pub after: Option<CueId>,
+}
+
+/// Cues added, removed or moved, as operations rather than the whole show: what a replica sends
+/// the main device after reshaping its lists, and the main device its replicas. Applied to a copy
+/// that changed meanwhile ([`Reshape::apply`]) it merges: cues moved or deleted elsewhere since
+/// stay as they are there, cues it places go next to the same neighbours where they still exist.
+#[derive(Serialize, Deserialize, Clone, Debug, PartialEq, Default)]
+pub struct Reshape {
+    /// Cues removed (with whatever is left inside them).
+    pub removed: Vec<CueId>,
+    /// Cues added or moved, in tree order (a group before its children, a cue after the one it
+    /// follows).
+    pub placed: Vec<Place>,
+    /// New cues (shallow: their children come as cues of their own).
+    pub added: Vec<Cue>,
+    /// Cues already there whose own fields changed (shallow).
+    pub changed: Vec<Cue>,
+}
+
+/// A cue's place in a [`Shape`]: list, group, the cue before it.
+type Loc = (u32, Option<CueId>, Option<CueId>);
+
+/// A list and a group in it (None = its top level): one set of siblings.
+type Siblings = (u32, Option<CueId>);
+
+/// Ids of a longest run of `seq` whose second values increase (patience sorting).
+fn longest_increasing(seq: &[(CueId, u32)]) -> Vec<CueId> {
+    // tails[k]: index into seq of the smallest tail of a run of length k + 1.
+    let mut tails: Vec<usize> = Vec::new();
+    let mut prev = vec![usize::MAX; seq.len()];
+    for (i, &(_, v)) in seq.iter().enumerate() {
+        let k = tails.partition_point(|&t| seq[t].1 < v);
+        if k > 0 {
+            prev[i] = tails[k - 1];
+        }
+        if k == tails.len() {
+            tails.push(i);
+        } else {
+            tails[k] = i;
+        }
+    }
+    let mut out = Vec::with_capacity(tails.len());
+    let mut i = tails.last().copied().unwrap_or(usize::MAX);
+    while i != usize::MAX {
+        out.push(seq[i].0);
+        i = prev[i];
+    }
+    out
+}
+
+/// Where every cue of `shape` is.
+fn locations(shape: &Shape) -> std::collections::HashMap<CueId, Loc> {
+    let mut out = std::collections::HashMap::with_capacity(shape.iter().map(Vec::len).sum());
+    for (l, list) in shape.iter().enumerate() {
+        // Open groups: id, children still to come, the last child so far.
+        let mut open: Vec<(CueId, u32, Option<CueId>)> = Vec::new();
+        let mut last_top = None;
+        for &(id, kids) in list {
+            while open.last().is_some_and(|g| g.1 == 0) {
+                open.pop();
+            }
+            let (parent, after) = match open.last_mut() {
+                Some(g) => {
+                    g.1 -= 1;
+                    (Some(g.0), g.2.replace(id))
+                }
+                None => (None, last_top.replace(id)),
+            };
+            out.insert(id, (l as u32, parent, after));
+            if kids > 0 {
+                open.push((id, kids, None));
+            }
+        }
+    }
+    out
+}
+
+impl Reshape {
+    /// The operations taking the lists from `old` to `new` (both [`shape_of`]): removals and
+    /// placements; `added`/`changed` are left for the caller. Only cues that are new, changed
+    /// group or list, or left the longest run kept in order among their siblings are placed: a
+    /// cue whose neighbour was deleted or moved stays where it is, so applied to a show changed
+    /// meanwhile it doesn't jump over cues added there.
+    pub fn between(old: &Shape, new: &Shape) -> Reshape {
+        let before = locations(old);
+        let after = locations(new);
+        let removed = old.iter().flatten().map(|&(id, _)| id).filter(|id| !after.contains_key(id)).collect();
+        // Index of each cue among its old siblings.
+        let mut old_index = std::collections::HashMap::with_capacity(before.len());
+        let mut count: std::collections::HashMap<Siblings, u32> = std::collections::HashMap::new();
+        for &(id, _) in old.iter().flatten() {
+            let (l, p, _) = before[&id];
+            let n = count.entry((l, p)).or_default();
+            old_index.insert(id, *n);
+            *n += 1;
+        }
+        // New siblings that were siblings before, in new order, with their old index.
+        let mut runs: std::collections::HashMap<Siblings, Vec<(CueId, u32)>> = std::collections::HashMap::new();
+        for &(id, _) in new.iter().flatten() {
+            let (l, p, _) = after[&id];
+            if let Some((ol, op, _)) = before.get(&id)
+                && (*ol, *op) == (l, p)
+            {
+                runs.entry((l, p)).or_default().push((id, old_index[&id]));
+            }
+        }
+        let mut stay = HashSet::new();
+        for run in runs.values() {
+            stay.extend(longest_increasing(run));
+        }
+        let placed = new
+            .iter()
+            .flatten()
+            .filter(|(id, _)| !stay.contains(id))
+            .map(|&(id, _)| {
+                let at = after[&id];
+                Place { id, list: at.0, parent: at.1, after: at.2 }
+            })
+            .collect();
+        Reshape { removed, placed, added: Vec::new(), changed: Vec::new() }
+    }
+
+    /// The operations taking `old` to `new`, if they differ only in their cues (same lists,
+    /// settings and stages; the lighting design isn't looked at). Empty if nothing changed.
+    pub fn diff(old: &Workspace, new: &Workspace) -> Option<Reshape> {
+        if !same_rest(old, new) {
+            return None;
+        }
+        let (old_shape, _) = shape_of(&old.cue_list, &[]);
+        let (new_shape, _) = shape_of(&new.cue_list, &[]);
+        let mut r = Reshape::between(&old_shape, &new_shape);
+        let mut olds = std::collections::HashMap::with_capacity(old_shape.iter().map(Vec::len).sum());
+        for c in old.cue_list.iter_all() {
+            olds.insert(c.id, c);
+        }
+        for c in new.cue_list.iter_all() {
+            match olds.get(&c.id) {
+                None => r.added.push(c.shallow_clone()),
+                Some(o) if o.is_group() != c.is_group() => return None,
+                Some(o) if !o.shallow_eq(c) => r.changed.push(c.shallow_clone()),
+                Some(_) => {}
+            }
+        }
+        Some(r)
+    }
+
+    /// Nothing to do.
+    pub fn is_empty(&self) -> bool {
+        self.removed.is_empty() && self.placed.is_empty() && self.added.is_empty() && self.changed.is_empty()
+    }
+
+    /// Every cue it carries (added and changed).
+    pub fn cues_mut(&mut self) -> impl Iterator<Item = &mut Cue> {
+        self.added.iter_mut().chain(&mut self.changed)
+    }
+
+    /// Ids of the cues it adds or changes, for [`crate::show::Show::edited_shape`].
+    pub fn touched(&self) -> Vec<CueId> {
+        self.added.iter().chain(&self.changed).map(|c| c.id).collect()
+    }
+
+    /// Apply to `ws`, which may have changed since the edit was made. Cues it moves that are
+    /// gone are left out, a group that is gone or no longer a group puts its new children at the
+    /// list's top level, a missing neighbour puts the cue at the end; a cue is never put inside
+    /// itself, and no id ends up twice. False (nothing changed) if it names a list `ws` doesn't
+    /// have, or a cue that stopped or started being a group.
+    pub fn apply(&self, ws: &mut Workspace) -> bool {
+        let list = &mut ws.cue_list;
+        let lists = list.list_count() as u32;
+        if self.placed.iter().any(|p| p.list >= lists) {
+            return false;
+        }
+        // Walks without the id index: it goes stale with every move, and rebuilding it costs
+        // more than a walk.
+        fn find(cues: &mut [Cue], id: CueId) -> Option<&mut Cue> {
+            for c in cues {
+                if c.id == id {
+                    return Some(c);
+                }
+                if let Some(f) = c.children_mut().and_then(|ch| find(ch, id)) {
+                    return Some(f);
+                }
+            }
+            None
+        }
+        fn find_any(list: &mut CueList, id: CueId) -> Option<&mut Cue> {
+            list.all_roots_mut().find_map(|r| find(r, id))
+        }
+        /// One walk: cues that move go to `pool` (with what's inside that doesn't move itself),
+        /// removed ones are dropped (after taking out what inside them moves).
+        fn extract(cues: &mut Vec<Cue>, moving: &HashSet<CueId>, removed: &HashSet<CueId>, pool: &mut std::collections::HashMap<CueId, Cue>) {
+            for c in cues.iter_mut() {
+                if let Some(ch) = c.children_mut() {
+                    extract(ch, moving, removed, pool);
+                }
+            }
+            if cues.iter().any(|c| moving.contains(&c.id) || removed.contains(&c.id)) {
+                for c in std::mem::take(cues) {
+                    if moving.contains(&c.id) {
+                        pool.insert(c.id, c);
+                    } else if !removed.contains(&c.id) {
+                        cues.push(c);
+                    }
+                }
+            }
+        }
+        for c in &self.changed {
+            if find_any(list, c.id).is_some_and(|x| x.is_group() != c.is_group()) {
+                return false;
+            }
+        }
+        let moving: HashSet<CueId> = self.placed.iter().map(|p| p.id).collect();
+        let removed: HashSet<CueId> = self.removed.iter().copied().filter(|id| !moving.contains(id)).collect();
+        let mut pool = std::collections::HashMap::new();
+        for r in list.all_roots_mut() {
+            extract(r, &moving, &removed, &mut pool);
+        }
+        for c in &self.added {
+            if pool.contains_key(&c.id) || find_any(list, c.id).is_some() {
+                // Already there (sent twice): just its fields.
+                continue;
+            }
+            let mut c = c.clone();
+            if let Some(ch) = c.children_mut() {
+                ch.clear();
+            }
+            pool.insert(c.id, c);
+        }
+        for p in &self.placed {
+            let Some(cue) = pool.remove(&p.id) else { continue };
+            let group = p.parent.filter(|g| find_any(list, *g).is_some_and(|c| c.is_group()));
+            let siblings = match group {
+                Some(g) => find_any(list, g).and_then(|c| c.children_mut()).expect("a group"),
+                None if p.list == 0 => &mut list.cues,
+                None => &mut list.others[p.list as usize - 1].cues,
+            };
+            let at = match p.after {
+                None => 0,
+                Some(a) => siblings.iter().position(|c| c.id == a).map_or(siblings.len(), |i| i + 1),
+            };
+            siblings.insert(at, cue);
+        }
+        for c in self.added.iter().chain(&self.changed) {
+            if let Some(x) = find_any(list, c.id)
+                && x.is_group() == c.is_group()
+            {
+                x.assign_shallow(c.clone());
+            }
+        }
+        true
+    }
+}
+
+/// Build cue trees in `shape` out of `pool`(shallow cues by id, each used once); None if a cue
 /// is missing or a non-group has children.
 fn build(shape: &[(CueId, u32)], pool: &mut std::collections::HashMap<CueId, Cue>) -> Option<Vec<Cue>> {
     fn take(it: &mut std::slice::Iter<(CueId, u32)>, n: usize, pool: &mut std::collections::HashMap<CueId, Cue>) -> Option<Vec<Cue>> {
@@ -187,6 +453,9 @@ pub enum Delta {
     Same,
     /// Only in these cues' own fields (shallow copies) and the lighting design.
     Patch(Vec<Cue>, Option<crate::light::patch::LightingPatch>),
+    /// Cues were added, removed or moved (and nothing changed outside the cue lists but the
+    /// lighting design, whose changes come along).
+    Reshape(Reshape, Option<crate::light::patch::LightingPatch>),
     /// The copy was out of step and is gone: take again (the whole workspace).
     Lost,
     /// In its shape or settings: the whole copy is needed.
@@ -262,16 +531,24 @@ impl Mirror {
             Taken::Shape { shape, cues, rest, generation } => {
                 let Some(mut copy) = self.ws.take() else { return self.lost() };
                 let lighting = crate::light::patch::diff(&copy.lighting, &rest.lighting);
+                // Only the cue lists changed: the copy's holders get the change as operations.
+                let ops = same_rest(&copy, &rest).then(|| Reshape::between(&shape_of(&copy.cue_list, &[]).0, &shape));
                 let mut pool = std::collections::HashMap::new();
                 let list = &mut copy.cue_list;
                 pool_of(std::mem::take(&mut list.cues), &mut pool);
                 for o in &mut list.others {
                     pool_of(std::mem::take(&mut o.cues), &mut pool);
                 }
+                let (mut added, mut changed) = (Vec::new(), Vec::new());
                 for mut c in cues {
                     // Shallow: the children come from the shape.
                     if let Some(ch) = c.children_mut() {
                         ch.clear();
+                    }
+                    match pool.get(&c.id) {
+                        None => added.push(c.clone()),
+                        Some(old) if !old.shallow_eq(&c) => changed.push(c.clone()),
+                        Some(_) => {}
                     }
                     pool.insert(c.id, c);
                 }
@@ -293,7 +570,10 @@ impl Mirror {
                 }
                 self.ws = Some(ws);
                 self.generation = generation;
-                Delta::Whole { had_copy: true, lighting }
+                match ops {
+                    Some(r) => Delta::Reshape(Reshape { added, changed, ..r }, lighting),
+                    None => Delta::Whole { had_copy: true, lighting },
+                }
             }
             Taken::Cues { cues, rest, generation } => {
                 let Some(copy) = self.ws.as_mut() else { return self.lost() };
@@ -513,13 +793,26 @@ mod tests {
         let mut show = show();
         let mut m = Mirror::default();
         sync(&mut m, &show);
+        // A replica's copy, kept by the operations the mirror hands out.
+        let mut replica = show.ws.clone();
+        let mut sync = |m: &mut Mirror, show: &Show| {
+            let d = sync(m, show);
+            match &d {
+                Some(Delta::Reshape(ops, _)) => {
+                    assert!(ops.apply(&mut replica));
+                    assert!(replica == show.ws, "the operations rebuild the show");
+                }
+                _ => replica = show.ws.clone(),
+            }
+            d
+        };
         // Add one.
         let added = Cue::new(CueKind::Memo);
         let id = added.id;
         show.ws.cue_list.cues.insert(3, added);
         show.edited_shape([id]);
         assert!(matches!(m.take(&show), Some(Taken::Shape { ref cues, .. }) if cues.len() == 1));
-        assert!(matches!(sync(&mut m, &show), Some(Delta::Whole { had_copy: true, .. })));
+        assert!(matches!(sync(&mut m, &show), Some(Delta::Reshape(ref r, None)) if r.added.len() == 1 && r.placed.len() == 1));
         // Move one into a group, and change it on the way.
         let mut c = show.ws.cue_list.cues.remove(0);
         c.name = "moved".into();
@@ -556,6 +849,8 @@ mod tests {
         show.ws.cue_list.cues.retain(|c| c.id != gid2);
         show.ws.cue_list.cues.remove(1);
         show.edited_shape([]);
+        sync(&mut m, &show);
+        // A new list: not just the cues (the whole show).
         show.ws.cue_list.add_list("Two", None);
         show.ws.cue_list.cues.push(Cue::new(CueKind::Memo));
         let in_two = show.ws.cue_list.cues[0].id;
@@ -569,6 +864,145 @@ mod tests {
         show.edited_shape([]);
         assert!(matches!(sync(&mut m, &show), Some(Delta::Lost)));
         assert!(matches!(sync(&mut m, &show), Some(Delta::Whole { had_copy: false, .. })));
+    }
+
+    /// A tree of `n` cues with groups up to three deep.
+    fn random_tree(rng: &mut fastrand::Rng, n: usize, depth: u32) -> Vec<Cue> {
+        (0..n)
+            .map(|i| {
+                let mut c = if depth < 3 && rng.u8(..4) == 0 {
+                    let k = rng.usize(..5);
+                    Cue::new(CueKind::Group { mode: GroupMode::StartAll, children: random_tree(rng, k, depth + 1) })
+                } else {
+                    Cue::new(CueKind::Memo)
+                };
+                c.number = format!("{depth}.{i}");
+                c
+            })
+            .collect()
+    }
+
+    /// Every cue id, tree order.
+    fn ids(ws: &Workspace) -> Vec<CueId> {
+        ws.cue_list.iter_all().iter().map(|c| c.id).collect()
+    }
+
+    /// Random reshaping edits on a copy: the operations between the two rebuild the copy exactly.
+    #[test]
+    fn reshape_rebuilds_random_edits() {
+        let mut rng = fastrand::Rng::with_seed(11);
+        for round in 0..300 {
+            let mut ws = Workspace::default();
+            ws.cue_list.cues = random_tree(&mut rng, 12, 0);
+            ws.cue_list.add_list("B", None);
+            ws.cue_list.cues = random_tree(&mut rng, 6, 0);
+            let old = ws.clone();
+            for _ in 0..rng.usize(1..6) {
+                let all = ids(&ws);
+                if all.is_empty() {
+                    break;
+                }
+                let id = all[rng.usize(..all.len())];
+                match rng.u8(..4) {
+                    0 => {
+                        ws.cue_list.remove(id);
+                    }
+                    1 => {
+                        // Move somewhere (maybe into a group, never into itself).
+                        let to = all[rng.usize(..all.len())];
+                        let parent = ws.cue_list.find(to).filter(|c| c.is_group()).map(|c| c.id);
+                        let index = rng.usize(..4);
+                        ws.cue_list.move_cue(id, parent, index);
+                    }
+                    2 => {
+                        let c = Cue::new(CueKind::Memo);
+                        ws.cue_list.insert_after(Some(id), c);
+                    }
+                    _ => ws.cue_list.find_mut(id).unwrap().name = format!("r{round}"),
+                }
+            }
+            let ops = Reshape::diff(&old, &ws).expect("same lists");
+            let mut copy = old.clone();
+            assert!(ops.apply(&mut copy));
+            assert!(copy == ws, "round {round}: {ops:?}");
+            // Sent through serde, as over the network.
+            let back: Reshape = serde_json::from_str(&serde_json::to_string(&ops).unwrap()).unwrap();
+            assert_eq!(back, ops);
+        }
+    }
+
+    /// Operations made on one copy merge into a copy edited meanwhile: both edits survive, cues
+    /// gone on one side stay gone, nothing is duplicated or put inside itself.
+    #[test]
+    fn reshape_merges_into_a_changed_show() {
+        let memo = |n: &str| {
+            let mut c = Cue::new(CueKind::Memo);
+            c.number = n.into();
+            c
+        };
+        let numbers = |ws: &Workspace| ws.cue_list.iter_all().iter().filter(|c| !c.is_group()).map(|c| c.number.clone()).collect::<Vec<_>>().join(" ");
+        let mut base = Workspace::default();
+        let group = Cue::new(CueKind::Group { mode: GroupMode::StartAll, children: vec![memo("g1"), memo("g2")] });
+        let gid = group.id;
+        base.cue_list.cues = vec![memo("1"), memo("2"), memo("3"), group];
+        let [one, two, three] = [0, 1, 2].map(|i| base.cue_list.cues[i].id);
+
+        // Replica: adds "2.5" after 2 and moves 1 into the group. Main meanwhile: deletes 3, adds "0" at the top.
+        let mut replica = base.clone();
+        replica.cue_list.insert_after(Some(two), memo("2.5"));
+        assert!(replica.cue_list.move_cue(one, Some(gid), 2));
+        let ops = Reshape::diff(&base, &replica).unwrap();
+        let mut main = base.clone();
+        main.cue_list.remove(three);
+        main.cue_list.insert(None, 0, memo("0"));
+        assert!(ops.apply(&mut main));
+        assert_eq!(numbers(&main), "0 2 2.5 g1 g2 1");
+
+        // Replica moves 3 to the top; main deleted 3: it stays deleted.
+        let mut replica = base.clone();
+        assert!(replica.cue_list.move_cue(three, None, 0));
+        let ops = Reshape::diff(&base, &replica).unwrap();
+        let mut main = base.clone();
+        main.cue_list.remove(three);
+        assert!(ops.apply(&mut main));
+        assert_eq!(numbers(&main), "1 2 g1 g2");
+
+        // Replica adds a cue into the group; main deleted the group: the cue lands at the top level.
+        let mut replica = base.clone();
+        let g1 = replica.cue_list.find(gid).unwrap().children()[0].id;
+        replica.cue_list.insert_after(Some(g1), memo("new"));
+        let ops = Reshape::diff(&base, &replica).unwrap();
+        let mut main = base.clone();
+        main.cue_list.remove(gid);
+        assert!(ops.apply(&mut main));
+        assert_eq!(numbers(&main), "1 2 3 new");
+
+        // A group placed inside a group it holds (main nested them the other way meanwhile).
+        let mut replica = base.clone();
+        let inner = Cue::new(CueKind::Group { mode: GroupMode::StartAll, children: vec![] });
+        let inner_id = inner.id;
+        replica.cue_list.insert(Some(gid), 0, inner);
+        let ops_inner = Reshape::diff(&base, &replica).unwrap();
+        let mut main = base.clone();
+        assert!(ops_inner.apply(&mut main));
+        let cycle = Reshape { placed: vec![Place { id: gid, list: 0, parent: Some(inner_id), after: None }], ..Default::default() };
+        let before = ids(&main).len();
+        assert!(cycle.apply(&mut main));
+        assert_eq!(ids(&main).len(), before, "nothing lost or doubled");
+        assert!(main.cue_list.find(gid).is_some() && main.cue_list.find(inner_id).is_some());
+        assert_eq!(main.cue_list.parent_of(gid), None, "never inside itself: back at the top level");
+
+        // An added cue sent twice isn't doubled; a list that isn't there is refused.
+        let mut replica = base.clone();
+        replica.cue_list.cues.push(memo("x"));
+        let ops = Reshape::diff(&base, &replica).unwrap();
+        let mut main = base.clone();
+        assert!(ops.apply(&mut main) && ops.apply(&mut main));
+        assert_eq!(numbers(&main), "1 2 3 g1 g2 x");
+        let bad = Reshape { placed: vec![Place { id: one, list: 5, parent: None, after: None }], ..Default::default() };
+        let before = main.clone();
+        assert!(!bad.apply(&mut main));
+        assert!(main == before);
     }
 
     #[test]

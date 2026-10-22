@@ -1666,5 +1666,9 @@
  "Split": "Dividir",
  "outputs, overlap": "salidas, solape",
  "Side by side": "Lado a lado",
- "One above another": "Una sobre otra"
+ "One above another": "Una sobre otra",
+ "Close when nothing plays": "Cerrar cuando no suena nada",
+ "The output closes a moment after its last cue ends and opens again with the next one (otherwise it stays open, black)": "La salida se cierra un momento después de que acabe su último cue y se abre de nuevo con el siguiente (si no, queda abierta, en negro)",
+ "Decode movies on the graphics card": "Decodificar las películas en la tarjeta gráfica",
+ "Uses the graphics card's video decoder where it takes the file (H.264, HEVC and the like), leaving the processor free; turn it off if movies show wrong colours or don't play. Applies to movies started from now on.": "Usa el decodificador de vídeo de la tarjeta gráfica cuando admite el archivo (H.264, HEVC y similares) y deja libre el procesador; desactívalo si las películas salen con colores erróneos o no se reproducen. Se aplica a las películas que empiecen a partir de ahora."
 }

@@ -355,6 +355,7 @@ impl Show {
             p.device = mine.patches.get(i).and_then(|m| m.device.clone());
         }
         ws.settings.osc_enabled = mine.osc_enabled;
+        ws.settings.hardware_video_decoding = mine.hardware_video_decoding;
         ws.settings.osc_port = mine.osc_port;
         // A replica's display choices wait for the operator (`remote::netguard`, which already
         // put these back); kept here too, so nothing else can move the operator's screens.
@@ -391,6 +392,36 @@ impl Show {
             crate::limits::lighting(&mut self.ws.lighting);
         }
         self.edited_cues(cues.iter().map(|c| c.id));
+        true
+    }
+
+    /// Take cues added, removed or moved on a remote device, merged into this workspace as it is
+    /// now ([`crate::changes::Reshape::apply`]), with the lighting design's changes. False
+    /// (nothing changed) if they don't fit or would make too many cues.
+    pub fn apply_remote_ops(&mut self, mut ops: crate::changes::Reshape, lighting: Option<&crate::light::patch::LightingPatch>) -> bool {
+        ops.cues_mut().for_each(crate::limits::cue);
+        if crate::limits::cue_count(&self.ws) + ops.added.len() > crate::limits::MAX_CUES {
+            return false;
+        }
+        let mut design = None;
+        if let Some(p) = lighting {
+            let mut l = self.ws.lighting.clone();
+            if !crate::light::patch::apply(&mut l, p) || crate::limits::light_cue_count(&l) > crate::limits::MAX_LIGHT_CUES {
+                return false;
+            }
+            crate::limits::lighting(&mut l);
+            design = Some(l);
+        }
+        if !ops.apply(&mut self.ws) {
+            return false;
+        }
+        if let Some(l) = design {
+            self.ws.lighting = l;
+        }
+        if self.engine.playhead.is_some_and(|p| self.ws.cue_list.find(p).is_none()) {
+            self.engine.set_playhead(None);
+        }
+        self.edited_shape(ops.touched());
         true
     }
 

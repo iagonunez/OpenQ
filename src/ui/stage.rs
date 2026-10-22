@@ -39,6 +39,9 @@ impl App {
                 StageEvent::Opened(id) => {
                     self.stage_open.insert(id);
                 }
+                StageEvent::IdleClosed(id) => {
+                    self.stage_open.remove(&id);
+                }
                 StageEvent::Closed(id) => {
                     self.stage_open.remove(&id);
                     self.stage_fullscreen.remove(&id);
@@ -69,6 +72,7 @@ impl App {
             fullscreen: sorted(&self.stage_fullscreen),
         });
         link.set_stages(&stages);
+        link.set_hardware_decoding(show.ws.settings.hardware_video_decoding);
         if !corners.is_empty() {
             for (id, c) in corners {
                 if let Some(s) = show.ws.stages.iter_mut().find(|s| s.id == id) {

@@ -621,6 +621,9 @@ pub struct Stage {
     pub black_lift: f32,
     /// System display (by name) the stage goes fullscreen on; `None` = an ordinary window.
     pub output: Option<String>,
+    /// Close the output window when nothing has shown on it for a moment (it opens again with the
+    /// next cue), instead of staying black. Not while its mapping is edited.
+    pub close_when_idle: bool,
     /// Hides parts of this output (set pieces the projector must not light), over its whole
     /// picture.
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -661,6 +664,7 @@ impl Stage {
             blend_gamma: 2.2,
             black_lift: 0.0,
             output: None,
+            close_when_idle: false,
             mask: None,
         }
     }
@@ -2969,6 +2973,9 @@ pub struct Settings {
     /// Extra audio outputs cues can play through (the main one is `audio_device`).
     #[serde(skip_serializing_if = "Vec::is_empty")]
     pub patches: Vec<AudioPatch>,
+    /// Decode movies on the graphics card's video engine where it takes them (this computer's
+    /// choice: a replica's edit doesn't change it). Off: always on the CPU.
+    pub hardware_video_decoding: bool,
 }
 
 impl Default for Settings {
@@ -2980,6 +2987,7 @@ impl Default for Settings {
             surfaces: Default::default(),
             loudness_target: crate::loudness::DEFAULT_TARGET,
             patches: Vec::new(),
+            hardware_video_decoding: true,
         }
     }
 }

@@ -70,14 +70,18 @@
   <p>Axusta o rol que reciben os dispositivos novos, e cambia o de calquera dispositivo, na xanela Remoto do dispositivo
   principal. Os cambios aplícanse ao momento. <strong>Quitar</strong> desconecta un dispositivo axiña, e ten que volver
   emparellarse para reconectar. Cando un dispositivo se desconecta, recupera o seu propio espectáculo. Os ficheiros de medios quedan
-  no dispositivo principal, así que engádeos alí.</p>
+  no dispositivo principal, así que engádeos alí. Varios dispositivos poden editar á vez: as cues que un engade, move ou
+  borra xúntanse co espectáculo tal como está no dispositivo principal, así que non desfán o que os demais fixeron
+  mentres tanto.</p>
   <div class="note"><span class="label">Seguridade</span><p>As conexións van cifradas e autenticadas. Un código de emparellamento
   vale 5 minutos e 5 intentos, e quen grave o tráfico de rede non pode deducilo a partir da gravación. Despois do
   emparellamento, cada dispositivo entra coa súa propia clave secreta. Un enderezo que falla unha e outra vez bloquéase
   5 minutos. A lista Actividade amosa as conexións e os intentos rexeitados.</p></div>
   <div class="note tip"><span class="label">Rede</span><p>O acceso remoto usa o porto TCP <code>53200</code>, e a busca
-  usa o porto UDP <code>53201</code>. Un devasa no dispositivo principal ten que permitir os dous. Nunha wifi de convidados
-  a busca pode non atopar nada; escribir o enderezo segue a funcionar.</p></div>
+  usa o porto UDP <code>53201</code> e mDNS (UDP <code>5353</code>). Un devasa no dispositivo principal ten que
+  permitilos. A busca tamén atopa un dispositivo principal noutra subrede ou VLAN se a rede deixa pasar mDNS entre elas
+  (unha «pasarela mDNS» ou reflector nos conmutadores ou no router). Nunha wifi de convidados a busca pode non atopar nada;
+  escribir o enderezo segue a funcionar.</p></div>
 </section>
 
 <section id="osc">

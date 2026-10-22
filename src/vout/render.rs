@@ -61,8 +61,9 @@ type PlaneSpec = ([u32; 2], wgpu::TextureFormat);
 /// One textured mesh: a movie/still/camera picture, or one plane of a Text cue.
 struct Draw {
     generation: u64,
-    /// Plane textures with their size and format.
-    planes: Vec<(wgpu::Texture, [u32; 2], wgpu::TextureFormat)>,
+    /// Plane textures with their size, format and mip chain (stills and text: drawn much smaller
+    /// than their size, they'd alias without one).
+    planes: Vec<(wgpu::Texture, [u32; 2], wgpu::TextureFormat, Option<Mips>)>,
     /// The mask texture bound (a key of [`Gpu::masks`]).
     mask: Option<usize>,
     bind: Option<wgpu::BindGroup>,
@@ -70,6 +71,21 @@ struct Draw {
     vertices: wgpu::Buffer,
     last_used: Instant,
 }
+
+/// A texture's mip chain: a view of each level (to draw into) and a bind group reading each level
+/// (to make the next one from).
+struct Mips {
+    views: Vec<wgpu::TextureView>,
+    reads: Vec<wgpu::BindGroup>,
+}
+
+/// Mip levels for a picture of `size` (down to 1×1).
+fn mip_levels(size: [u32; 2]) -> u32 {
+    32 - size[0].max(size[1]).max(1).leading_zeros()
+}
+
+/// Formats that get mip chains (stills, text planes and the canvas).
+const MIP_FORMATS: [wgpu::TextureFormat; 2] = [wgpu::TextureFormat::Rgba8Unorm, wgpu::TextureFormat::R8Unorm];
 
 /// What one output window shows this frame.
 pub struct Scene<'a> {
@@ -110,7 +126,9 @@ pub struct Overlay {
 
 /// GPU state of one output window.
 pub struct Target {
-    canvas: Option<(wgpu::Texture, wgpu::TextureView, [u32; 2])>,
+    /// The canvas, a view of all its levels (read by the warp) and its mip chain (level 0 is
+    /// drawn into).
+    canvas: Option<(wgpu::Texture, wgpu::TextureView, [u32; 2], Mips)>,
     view_uniform: wgpu::Buffer,
     view_bind: wgpu::BindGroup,
     warp_uniform: wgpu::Buffer,
@@ -143,6 +161,8 @@ pub struct Gpu {
     layer_pipes: HashMap<BlendMode, wgpu::RenderPipeline>,
     warp_pipes: HashMap<wgpu::TextureFormat, wgpu::RenderPipeline>,
     overlay_pipes: HashMap<wgpu::TextureFormat, wgpu::RenderPipeline>,
+    /// Make a mip level from the one above, per format ([`MIP_FORMATS`]).
+    mip_pipes: HashMap<wgpu::TextureFormat, wgpu::RenderPipeline>,
     sampler: wgpu::Sampler,
     index: wgpu::Buffer,
     /// 1×1 white, bound in place of unused planes.
@@ -270,10 +290,33 @@ impl Gpu {
             label: Some("openq-linear"),
             mag_filter: wgpu::FilterMode::Linear,
             min_filter: wgpu::FilterMode::Linear,
+            mipmap_filter: wgpu::MipmapFilterMode::Linear,
             address_mode_u: wgpu::AddressMode::ClampToEdge,
             address_mode_v: wgpu::AddressMode::ClampToEdge,
             ..Default::default()
         });
+        let mip_pipes = MIP_FORMATS
+            .into_iter()
+            .map(|format| {
+                let pipe = device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
+                    label: Some("openq-mip"),
+                    layout: Some(&overlay_layout),
+                    vertex: wgpu::VertexState { module: &module, entry_point: Some("vs_full"), buffers: &[], compilation_options: Default::default() },
+                    primitive: wgpu::PrimitiveState::default(),
+                    depth_stencil: None,
+                    multisample: wgpu::MultisampleState::default(),
+                    fragment: Some(wgpu::FragmentState {
+                        module: &module,
+                        entry_point: Some("fs_mip"),
+                        targets: &[Some(wgpu::ColorTargetState { format, blend: None, write_mask: wgpu::ColorWrites::ALL })],
+                        compilation_options: Default::default(),
+                    }),
+                    multiview_mask: None,
+                    cache: None,
+                });
+                (format, pipe)
+            })
+            .collect();
         let index = wgpu::util::DeviceExt::create_buffer_init(
             &device,
             &wgpu::util::BufferInitDescriptor {
@@ -310,6 +353,7 @@ impl Gpu {
             layer_pipes: HashMap::new(),
             warp_pipes: HashMap::new(),
             overlay_pipes: HashMap::new(),
+            mip_pipes,
             sampler,
             index,
             dummy,
@@ -421,6 +465,62 @@ impl Gpu {
         Draw { generation: u64::MAX, planes: Vec::new(), mask: None, bind: None, uniform, vertices, last_used: Instant::now() }
     }
 
+    /// The mip chain of `tex` (made with [`mip_levels`] levels and `RENDER_ATTACHMENT` use).
+    fn mips(&self, tex: &wgpu::Texture) -> Mips {
+        let levels = tex.mip_level_count();
+        let views: Vec<wgpu::TextureView> = (0..levels)
+            .map(|l| tex.create_view(&wgpu::TextureViewDescriptor { base_mip_level: l, mip_level_count: Some(1), ..Default::default() }))
+            .collect();
+        let reads = views[..views.len().saturating_sub(1)]
+            .iter()
+            .map(|v| {
+                self.device.create_bind_group(&wgpu::BindGroupDescriptor {
+                    label: Some("openq-mip"),
+                    layout: &self.overlay_bgl,
+                    entries: &[
+                        wgpu::BindGroupEntry { binding: 0, resource: wgpu::BindingResource::TextureView(v) },
+                        wgpu::BindGroupEntry { binding: 1, resource: wgpu::BindingResource::Sampler(&self.sampler) },
+                    ],
+                })
+            })
+            .collect();
+        Mips { views, reads }
+    }
+
+    /// Make every level of a mip chain below the first from the one above.
+    fn record_mips(&self, enc: &mut wgpu::CommandEncoder, mips: &Mips, format: wgpu::TextureFormat) {
+        let Some(pipe) = self.mip_pipes.get(&format) else { return };
+        for (read, target) in mips.reads.iter().zip(&mips.views[1..]) {
+            let mut pass = enc.begin_render_pass(&wgpu::RenderPassDescriptor {
+                label: Some("openq-mip"),
+                color_attachments: &[Some(wgpu::RenderPassColorAttachment {
+                    view: target,
+                    depth_slice: None,
+                    resolve_target: None,
+                    ops: wgpu::Operations { load: wgpu::LoadOp::Clear(wgpu::Color::TRANSPARENT), store: wgpu::StoreOp::Store },
+                })],
+                ..Default::default()
+            });
+            pass.set_pipeline(pipe);
+            pass.set_bind_group(0, read, &[]);
+            pass.draw(0..3, 0..1);
+        }
+    }
+
+    /// Fill the mip chains of a draw's planes from their first level (after an upload).
+    fn make_mips(&self, d: &Draw) {
+        if d.planes.iter().all(|p| p.3.as_ref().is_none_or(|m| m.reads.is_empty())) {
+            return;
+        }
+        let mut enc = self.device.create_command_encoder(&wgpu::CommandEncoderDescriptor { label: Some("openq-mips") });
+        for (_, _, format, mips) in &d.planes {
+            if let Some(m) = mips {
+                self.record_mips(&mut enc, m, *format);
+            }
+        }
+        self.queue.submit([enc.finish()]);
+    }
+
     /// The shader's mask mode for `mask` (see `shader.wgsl`) and its texture (uploaded on first use).
     fn mask(&mut self, mask: &Option<(MaskState, bool)>) -> (f32, Option<usize>) {
         let Some((state, invert)) = mask else { return (0.0, None) };
@@ -460,10 +560,10 @@ impl Gpu {
         key.and_then(|k| self.masks.get(&k)).map_or(&self.dummy, |m| &m.view)
     }
 
-    /// Make `d`'s plane textures match `want` (size, format) and bind `mask`, making its bind group
-    /// again if either changes.
-    fn ensure_planes(&self, d: &mut Draw, want: &[PlaneSpec], mask: Option<usize>) {
-        let same = d.planes.len() == want.len() && d.planes.iter().zip(want).all(|(p, w)| p.1 == w.0 && p.2 == w.1);
+    /// Make `d`'s plane textures match `want` (size, format; with mip chains if `mipped`) and bind
+    /// `mask`, making its bind group again if either changes.
+    fn ensure_planes(&self, d: &mut Draw, want: &[PlaneSpec], mipped: bool, mask: Option<usize>) {
+        let same = d.planes.len() == want.len() && d.planes.iter().zip(want).all(|(p, w)| p.1 == w.0 && p.2 == w.1 && p.3.is_some() == mipped);
         if same && d.mask == mask && d.bind.is_some() {
             return;
         }
@@ -473,17 +573,24 @@ impl Gpu {
             d.planes = want
             .iter()
             .map(|&(size, format)| {
+                let mipped = mipped && MIP_FORMATS.contains(&format);
+                let mut usage = wgpu::TextureUsages::TEXTURE_BINDING | wgpu::TextureUsages::COPY_DST;
+                if mipped {
+                    usage |= wgpu::TextureUsages::RENDER_ATTACHMENT;
+                }
+                let size = [size[0].max(1), size[1].max(1)];
                 let t = self.device.create_texture(&wgpu::TextureDescriptor {
                     label: Some("openq-plane"),
-                    size: wgpu::Extent3d { width: size[0].max(1), height: size[1].max(1), depth_or_array_layers: 1 },
-                    mip_level_count: 1,
+                    size: wgpu::Extent3d { width: size[0], height: size[1], depth_or_array_layers: 1 },
+                    mip_level_count: if mipped { mip_levels(size) } else { 1 },
                     sample_count: 1,
                     dimension: wgpu::TextureDimension::D2,
                     format,
-                    usage: wgpu::TextureUsages::TEXTURE_BINDING | wgpu::TextureUsages::COPY_DST,
+                    usage,
                     view_formats: &[],
                 });
-                (t, size, format)
+                let mips = mipped.then(|| self.mips(&t));
+                (t, size, format, mips)
             })
             .collect();
         }
@@ -551,19 +658,22 @@ impl Gpu {
                 };
                 let key = (l.id, 0);
                 let mut d = self.draws.remove(&key).unwrap_or_else(|| self.new_draw());
-                self.ensure_planes(&mut d, &want, mask);
+                // Stills get mip chains (made once per picture); movie frames change too often.
+                let still = matches!(f.pixels, Pixels::Rgba { .. });
+                self.ensure_planes(&mut d, &want, still, mask);
                 if d.generation != f.generation {
                     d.generation = f.generation;
                     match &f.pixels {
                         Pixels::Rgba { data, .. } => write_plane(&self.queue, &d.planes[0].0, data, f.width as usize * 4, [f.width, f.height], 4),
                         Pixels::Picture(p) => {
-                            for (i, (tex, size, format)) in d.planes.iter().enumerate() {
+                            for (i, (tex, size, format, _)) in d.planes.iter().enumerate() {
                                 let bpp = format.block_copy_size(None).unwrap_or(1) as usize;
                                 write_plane(&self.queue, tex, p.frame.data(i), p.frame.stride(i), *size, bpp);
                             }
                         }
                         Pixels::None => {}
                     }
+                    self.make_mips(&d);
                 }
                 let mut u = Vec::with_capacity(LAYER_FLOATS);
                 u.extend(color([1.0; 4]));
@@ -593,10 +703,12 @@ impl Gpu {
                     }
                     let key = (l.id, k);
                     let mut d = self.draws.remove(&key).unwrap_or_else(|| self.new_draw());
-                    self.ensure_planes(&mut d, &[(size, format)], mask);
+                    // Text is rendered at twice its size: a mip chain keeps it smooth smaller.
+                    self.ensure_planes(&mut d, &[(size, format)], true, mask);
                     if d.generation != f.generation {
                         d.generation = f.generation;
                         write_plane(&self.queue, &d.planes[0].0, data, size[0] as usize * bpp, size, bpp);
+                        self.make_mips(&d);
                     }
                     let mut u = Vec::with_capacity(LAYER_FLOATS);
                     u.extend(color(c));
@@ -635,7 +747,7 @@ impl Gpu {
             }
         };
         let mut d = self.new_draw();
-        self.ensure_planes(&mut d, &[(size, wgpu::TextureFormat::Rgba8Unorm)], None);
+        self.ensure_planes(&mut d, &[(size, wgpu::TextureFormat::Rgba8Unorm)], false, None);
         write_plane(&self.queue, &d.planes[0].0, &rgba, size[0] as usize * 4, size, 4);
         let mut u = vec![1.0, 1.0, 1.0, 1.0, 0.0, 0.0, 0.0, 0.0];
         u.extend([0.0; 12]);
@@ -655,7 +767,7 @@ impl Gpu {
             let tex = self.device.create_texture(&wgpu::TextureDescriptor {
                 label: Some("openq-canvas"),
                 size: wgpu::Extent3d { width: size[0], height: size[1], depth_or_array_layers: 1 },
-                mip_level_count: 1,
+                mip_level_count: mip_levels(size),
                 sample_count: 1,
                 dimension: wgpu::TextureDimension::D2,
                 format: CANVAS_FORMAT,
@@ -663,7 +775,8 @@ impl Gpu {
                 view_formats: &[],
             });
             let view = tex.create_view(&Default::default());
-            t.canvas = Some((tex, view, size));
+            let mips = self.mips(&tex);
+            t.canvas = Some((tex, view, size, mips));
         }
         let (mask_mode, mask) = self.mask(&scene.mask);
         if t.warp_made != Some((mask, size)) {
@@ -734,8 +847,9 @@ impl Gpu {
         }
 
         let mut enc = self.device.create_command_encoder(&wgpu::CommandEncoderDescriptor { label: Some("openq-frame") });
+        let (.., canvas_mips) = t.canvas.as_ref().expect("canvas");
         {
-            let canvas = &t.canvas.as_ref().expect("canvas").1;
+            let canvas = &canvas_mips.views[0];
             let mut pass = enc.begin_render_pass(&wgpu::RenderPassDescriptor {
                 label: Some("openq-canvas"),
                 color_attachments: &[Some(wgpu::RenderPassColorAttachment {
@@ -767,6 +881,10 @@ impl Gpu {
                 pass.draw_indexed(0..n, 0, 0..1);
             }
         }
+        // The canvas's smaller levels, read where the window shows it smaller than its size (a
+        // keystoned corner can be smaller even in a window as big as the canvas; a third more
+        // pixels drawn).
+        self.record_mips(&mut enc, canvas_mips, CANVAS_FORMAT);
         {
             let mut pass = enc.begin_render_pass(&wgpu::RenderPassDescriptor {
                 label: Some("openq-warp"),
