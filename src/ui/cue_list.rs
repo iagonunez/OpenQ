@@ -180,7 +180,8 @@ impl App {
                     continue;
                 }
                 let mut sel = current;
-                let r = theme::tab(ui, &mut sel, i, icons::RECEIPT_LONG, name);
+                let cart = if i == current { show.ws.cue_list.info.cart.is_some() } else { show.ws.cue_list.others[if i < current { i } else { i - 1 }].info.cart.is_some() };
+                let r = theme::tab(ui, &mut sel, i, if cart { icons::GRID_VIEW } else { icons::RECEIPT_LONG }, name);
                 if sel != current {
                     switch = Some(i);
                 }
@@ -200,6 +201,25 @@ impl App {
                         }
                         if ui.button(theme::with_icon(icons::TIMER_PLAY, t("Timecode…"))).clicked() {
                             self.show_list_timecode = true;
+                        }
+                        let info = &mut show.ws.cue_list.info;
+                        let mut cart = info.cart.is_some();
+                        if ui.checkbox(&mut cart, t("Cart: a grid of buttons")).on_hover_text(t("Each button fires its own cue; the list has no playhead")).changed() {
+                            info.cart = cart.then(crate::model::Cart::default);
+                            edited = true;
+                            if cart {
+                                self.control(show, Command::SetPlayhead(None));
+                            }
+                        }
+                        if let Some(c) = &mut show.ws.cue_list.info.cart {
+                            ui.horizontal(|ui| {
+                                ui.add_space(24.0);
+                                let side = 1..=crate::model::MAX_CART_SIDE;
+                                edited |= ui.add(egui::DragValue::new(&mut c.columns).range(side.clone())).changed();
+                                ui.label("×");
+                                edited |= ui.add(egui::DragValue::new(&mut c.rows).range(side)).changed();
+                                ui.label(t("buttons"));
+                            });
                         }
                         ui.add_enabled_ui(i > 0, |ui| {
                             if ui.button(t("Move left")).clicked() {
@@ -233,7 +253,7 @@ impl App {
             }
         });
         if edited {
-            show.edited();
+            show.edited_shape([]);
         }
         if let Some(tab) = switch {
             self.selection.clear();
@@ -367,13 +387,16 @@ impl App {
         }
         if let Some((_, ph)) = show.ws.cue_list.remove_current_list() {
             self.selection.clear();
-            show.edited();
+            show.edited_shape([]);
             let ph = ph.or(show.ws.cue_list.first());
             self.control(show, Command::SetPlayhead(ph));
         }
     }
 
     pub(super) fn cue_list(&mut self, ui: &mut Ui, show: &mut Show) {
+        if show.ws.cue_list.info.cart.is_some() {
+            return self.cart(ui, show);
+        }
         let now = Instant::now();
         let collapsed = self.collapsed.clone();
         let rows = show.ws.cue_list.visible_rows(&|id| collapsed.contains(&id));
@@ -641,7 +664,7 @@ impl App {
                 self.drag = None;
                 if let Some(t) = target {
                     apply_drop(&mut show.ws.cue_list, &dragging, t);
-                    show.edited();
+                    show.edited_shape([]);
                 }
             }
         }
@@ -674,7 +697,7 @@ impl App {
         }
     }
 
-    fn run_row_action(&mut self, show: &mut Show, id: CueId, action: RowAction) {
+    pub(super) fn run_row_action(&mut self, show: &mut Show, id: CueId, action: RowAction) {
         match action {
             RowAction::SetPlayhead => self.select(show, Some(id)),
             RowAction::Start => {
@@ -759,7 +782,7 @@ impl App {
         let media_path = cue.kind.media_path().filter(|p| !p.as_os_str().is_empty());
         let probe = media_path.and_then(|path| self.prober.get(path));
         let broken = match (&cue.kind, media_path) {
-            (CueKind::Audio(_) | CueKind::Video(_), None) => true,
+            (CueKind::Audio(_) | CueKind::Video(_) | CueKind::MidiFile(_), None) => true,
             (_, Some(path)) => !self.prober.exists(path) || matches!(probe, Some(Err(_))),
             _ => crate::warnings::target_missing(&cue.kind, &show.ws),
         };
@@ -824,13 +847,16 @@ impl App {
 
         // Target column.
         let target_text = match &cue.kind {
-            CueKind::Audio(_) | CueKind::Video(_) => match &probe {
+            CueKind::Audio(_) | CueKind::Video(_) | CueKind::MidiFile(_) => match &probe {
                 Some(Ok(info)) => info.detail.to_string(),
                 Some(Err(_)) => t("unreadable").into(),
                 None if media_path.is_none() => t("no file").into(),
                 None => "…".into(),
             },
-            CueKind::Network(n) => format!("{}:{} {}", n.host, n.port, n.address),
+            CueKind::Network(n) => match n.format {
+                crate::model::NetFormat::Osc => format!("{}:{} {}", n.host, n.port, n.address),
+                crate::model::NetFormat::Text => format!("{}:{} {} \u{201c}{}\u{201d}", n.host, n.port, n.transport.label(), n.text),
+            },
             CueKind::Text(t) => format!("“{}”", t.text.lines().next().unwrap_or("")),
             CueKind::Mic(m) => {
                 let ch = match m.channels {
@@ -903,14 +929,7 @@ impl App {
         );
 
         // Time columns.
-        let action_dur = match &cue.kind {
-            CueKind::Wait { duration } => Some(*duration),
-            CueKind::Fade(f) => Some(f.duration),
-            CueKind::Audio(_) | CueKind::Video(_) => {
-                effective_duration(cue, probe.as_ref().and_then(|r| r.as_ref().ok()).and_then(|i| i.duration))
-            }
-            _ => None,
-        };
+        let action_dur = known_duration(cue, probe.as_ref());
         let cell = |x: f32| Rect::from_min_max(pos2(x + 4.0, cy - 9.0), pos2(x + W_TIME - 4.0, cy + 9.0));
         let dim = theme::TEXT_FAINT;
         let time_text = |x: f32, t: f64, color: Color32| {
@@ -935,10 +954,7 @@ impl App {
 
         match inst {
             Some(i) if !i.in_pre_wait(now) && !i.action_done => {
-                let e = match cue.kind {
-                    CueKind::Audio(_) | CueKind::Video(_) => show.media.elapsed(id).unwrap_or(i.action_elapsed(now)),
-                    _ => i.action_elapsed(now),
-                };
+                let e = action_elapsed(show, cue, i, now);
                 let color = if i.is_paused() { AMBER } else { theme::GREEN };
                 match i.action_duration.or(action_dur) {
                     Some(d) if d > 0.0 => bar(cols.action, (e / d) as f32, format!("-{}", fmt_time((d - e).max(0.0))), color),
@@ -950,6 +966,7 @@ impl App {
                     time_text(cols.action, d, text_color);
                 } else if matches!(cue.kind, CueKind::Audio(ref a) if a.infinite_loop)
                     || matches!(cue.kind, CueKind::Video(ref v) if v.infinite_loop)
+                    || matches!(cue.kind, CueKind::MidiFile(ref m) if m.infinite_loop)
                 {
                     p.text(pos2(cols.action + W_TIME - 8.0, cy), Align2::RIGHT_CENTER, icons::ALL_INCLUSIVE, theme::icon_font(16.0), text_color);
                 }
@@ -988,6 +1005,24 @@ impl App {
     }
 }
 
+/// How long a cue's action lasts when that is known before it runs (media once probed).
+pub(super) fn known_duration(cue: &Cue, probe: Option<&Result<crate::media::MediaInfo, String>>) -> Option<f64> {
+    match &cue.kind {
+        CueKind::Wait { duration } => Some(*duration),
+        CueKind::Fade(f) => Some(f.duration),
+        CueKind::Audio(_) | CueKind::Video(_) | CueKind::MidiFile(_) => effective_duration(cue, probe.and_then(|r| r.as_ref().ok()).and_then(|i| i.duration)),
+        _ => None,
+    }
+}
+
+/// Seconds a running cue's action has played (media report their own position).
+pub(super) fn action_elapsed(show: &Show, cue: &Cue, i: &crate::engine::Instance, now: Instant) -> f64 {
+    match cue.kind {
+        CueKind::Audio(_) | CueKind::Video(_) => show.media.elapsed(cue.id).unwrap_or(i.action_elapsed(now)),
+        _ => i.action_elapsed(now),
+    }
+}
+
 /// Toolbox tile: icon over a small label.
 fn tile(ui: &mut Ui, glyph: &str, label: &str) -> egui::Response {
     let (rect, resp) = ui.allocate_exact_size(vec2(54.0, 46.0), Sense::click());
@@ -999,7 +1034,7 @@ fn tile(ui: &mut Ui, glyph: &str, label: &str) -> egui::Response {
 }
 
 #[derive(Clone, Copy)]
-enum RowAction {
+pub(super) enum RowAction {
     SetPlayhead,
     Start,
     Stop,
@@ -1009,7 +1044,7 @@ enum RowAction {
     ToggleArmed,
 }
 
-fn row_context_menu(ui: &mut Ui, cue: &Cue, editing: bool) -> Option<RowAction> {
+pub(super) fn row_context_menu(ui: &mut Ui, cue: &Cue, editing: bool) -> Option<RowAction> {
     let mut a = None;
     ui.label(RichText::new(format!("{} {}", cue.number, cue.display_name())).strong());
     ui.separator();

@@ -25,6 +25,7 @@
       <li class="s3"><a href="#wall-clock-triggers">Disparadores de reloj</a></li>
       <li class="s3"><a href="#cues-that-change-cues">Cues que cambian otras cues</a></li>
       <li class="s3"><a href="#midi-cues">Cues MIDI</a></li>
+      <li class="s3"><a href="#midi-file-cues">Cues de archivo MIDI</a></li>
       <li class="s2"><a href="#timing">Tiempos y continuaciones</a></li>
       <li class="s3"><a href="#groups">Grupos</a></li>
       <li class="s2"><a href="#fades">Fundidos</a></li>
@@ -64,7 +65,7 @@
     <div class="type"><b><span class="ms" aria-hidden="true">&#xe1a2;</span>Pausa</b><span class="d">Pausa otra cue.</span></div>
     <div class="type"><b><span class="ms" aria-hidden="true">&#xe5da;</span>Ir a</b><span class="d">Mueve el cabezal a otra cue.</span></div>
     <div class="type"><b><span class="ms" aria-hidden="true">&#xe044;</span>Devamp</b><span class="d">Deja que un fragmento de audio en bucle termine su pasada y siga adelante.</span></div>
-    <div class="type"><b><span class="ms" aria-hidden="true">&#xeb2f;</span>Red</b><span class="d">Envía un mensaje OSC a otros equipos, como una mesa de luces.</span></div>
+    <div class="type"><b><span class="ms" aria-hidden="true">&#xeb2f;</span>Red</b><span class="d">Envía un mensaje OSC o una línea de texto (UDP o TCP) a otros equipos, como una mesa de luces o un proyector.</span></div>
     <div class="type"><b><span class="ms" aria-hidden="true">&#xe31d;</span>Micro</b><span class="d">Reproduce una entrada de audio en directo, como un micrófono, por el mezclador.</span></div>
     <div class="type"><b><span class="ms" aria-hidden="true">&#xe412;</span>Cámara</b><span class="d">Muestra una cámara o una capturadora en directo en un escenario.</span></div>
     <div class="type"><b><span class="ms" aria-hidden="true">&#xe90f;</span>Luz</b><span class="d">Reproduce una cue del diseño de iluminación, o libera sus secuencias (ver <a href="lighting.es.html#lighting">Iluminación</a>).</span></div>
@@ -75,6 +76,7 @@
     <div class="type"><b><span class="ms" aria-hidden="true">&#xe55c;</span>Destino</b><span class="d">Apunta una cue Fade, Iniciar, Parar, Cargar… a otra cue.</span></div>
     <div class="type"><b><span class="ms" aria-hidden="true">&#xe521;</span>MIDI</b><span class="d">Envía un mensaje MIDI: nota, control o cambio de programa, pitch bend, MIDI Show Control o SysEx.</span></div>
     <div class="type"><b><span class="ms" aria-hidden="true">&#xe01b;</span>Timecode</b><span class="d">Envía timecode (LTC por una salida de audio, o MTC) desde un tiempo de inicio mientras está en marcha.</span></div>
+    <div class="type"><b><span class="ms" aria-hidden="true">&#xe405;</span>Archivo MIDI</b><span class="d">Reproduce un archivo MIDI (<code>.mid</code>) por una salida MIDI.</span></div>
   </div>
   <p>Cada cue tiene un <strong>número</strong> (texto libre, como <code>4.2</code>), un <strong>nombre</strong>, <strong>notas</strong>,
   un <strong>color</strong> y un interruptor <strong>Armada</strong>, todo en la pestaña Básico. GO se salta una cue desarmada.
@@ -119,6 +121,13 @@
   (GO, STOP, RESUME, LOAD…) con número de cue y lista a un ID de dispositivo (127 = todos) en un formato de orden, para que
   OpenQ maneje una mesa de iluminación u otro ordenador de espectáculo. <strong>SysEx</strong> envía cualquier mensaje System
   Exclusive escrito en hexadecimal (<code>F0 … F7</code>). Debajo de los ajustes se ven los bytes que se enviarán.</p>
+  <h3 id="midi-file-cues">Cues de archivo MIDI</h3>
+  <p>Una cue de archivo MIDI reproduce un Standard MIDI File hacia un sintetizador, un rig de teclados o una mesa de luces.
+  Elige el archivo en la pestaña <strong>Básico</strong> (o suelta un <code>.mid</code> en la lista de cues); en la pestaña
+  <strong>Ajustes</strong> elige la <strong>salida</strong>, la <strong>velocidad</strong> (100&nbsp;% = el tempo del propio
+  archivo) y <em>Bucle</em> para reproducirlo hasta que se pare. La duración de la cue es la del archivo a esa velocidad.
+  Al pausar o parar la cue se sueltan las notas que siguen sonando. Si empieza a medias (con una cue Load), envía antes el
+  último programa, controladores y pitch bend de cada canal, para que los instrumentos suenen como en ese punto.</p>
 </section>
 
 <section id="timing">

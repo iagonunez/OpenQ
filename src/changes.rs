@@ -5,10 +5,13 @@
 //!
 //! [`Show::edited_cues`](crate::show::Show::edited_cues) tells the log which cues an edit
 //! changed (their own fields only, nothing added, removed or moved);
-//! [`Show::edited`](crate::show::Show::edited) says "anything may have changed". A [`Mirror`]
-//! takes the changed cues plus the small parts of the workspace (settings, stages, list names,
-//! the lighting design, whose big parts are shared) when every edit since its copy said which
-//! cues it changed, and the whole workspace otherwise.
+//! [`Show::edited_shape`](crate::show::Show::edited_shape) that cues were added, removed or moved
+//! and which cues are new or changed; [`Show::edited`](crate::show::Show::edited) says "anything
+//! may have changed". A [`Mirror`] takes the changed cues plus the small parts of the workspace
+//! (settings, stages, list names, the lighting design, whose big parts are shared) when every
+//! edit since its copy said which cues it changed, and with a reshaping edit among them also the
+//! tree's shape (ids and child counts), from which it rebuilds its copy out of the cues it already
+//! has; the whole workspace otherwise.
 
 use crate::model::{Cue, CueId, CueList, OtherList, Workspace};
 use std::collections::{HashSet, VecDeque};
@@ -19,22 +22,33 @@ const KEEP: usize = 256;
 /// Which cues each recent edit generation changed ([`crate::show::Show::edit_gen`]).
 #[derive(Default)]
 pub struct ChangeLog {
-    /// One entry per generation, oldest first: the cues changed, or None for "anything".
-    entries: VecDeque<(u64, Option<Vec<CueId>>)>,
+    /// One entry per generation, oldest first: the cues changed (None for "anything") and
+    /// whether cues were added, removed or moved.
+    entries: VecDeque<(u64, Option<Vec<CueId>>, bool)>,
 }
 
 impl ChangeLog {
     /// Record generation `generation` (one more than the last one recorded).
-    pub(crate) fn push(&mut self, generation: u64, cues: Option<Vec<CueId>>) {
+    pub(crate) fn push(&mut self, generation: u64, cues: Option<Vec<CueId>>, shape: bool) {
         if self.entries.len() >= KEEP {
             self.entries.pop_front();
         }
-        self.entries.push_back((generation, cues));
+        self.entries.push_back((generation, cues, shape));
     }
 
     /// The cues changed after generation `since` up to `now`, when every edit in between said
-    /// which; None when one didn't, or the log doesn't reach back that far.
+    /// which and none added, removed or moved cues; None otherwise, or when the log doesn't
+    /// reach back that far.
     pub fn since(&self, since: u64, now: u64) -> Option<Vec<CueId>> {
+        match self.since_shape(since, now)? {
+            (ids, false) => Some(ids),
+            (_, true) => None,
+        }
+    }
+
+    /// The cues changed or added after generation `since` up to `now`, and whether the tree's
+    /// shape changed too, when every edit in between said which cues; None otherwise.
+    pub fn since_shape(&self, since: u64, now: u64) -> Option<(Vec<CueId>, bool)> {
         if now < since {
             return None;
         }
@@ -44,14 +58,97 @@ impl ChangeLog {
         }
         let mut seen = HashSet::new();
         let mut out = Vec::new();
-        for (_, cues) in self.entries.iter().filter(|(g, _)| *g > since && *g <= now) {
+        let mut reshaped = false;
+        for (_, cues, shape) in self.entries.iter().filter(|(g, ..)| *g > since && *g <= now) {
+            reshaped |= shape;
             for id in cues.as_ref()? {
                 if seen.insert(*id) {
                     out.push(*id);
                 }
             }
         }
+        Some((out, reshaped))
+    }
+}
+
+/// The shape of every cue list (the current one first, then the others in order): each cue's id
+/// and how many children it has, in tree order (a group's children right after it).
+pub type Shape = Vec<Vec<(CueId, u32)>>;
+
+/// The shape of `list` (see [`Shape`]) and shallow copies of the cues in `wanted`, in one walk
+/// (no id lookups: after a reshaping edit the list's id index is stale, and rebuilding it costs
+/// more than the walk).
+pub fn shape_of(list: &CueList, wanted: &[CueId]) -> (Shape, Vec<Cue>) {
+    // A few ids (most edits) are compared directly: hashing every cue's id cost more than the walk.
+    enum Wanted<'a> {
+        Few(&'a [CueId]),
+        Many(HashSet<CueId>),
+    }
+    impl Wanted<'_> {
+        fn has(&self, id: &CueId) -> bool {
+            match self {
+                Wanted::Few(v) => v.contains(id),
+                Wanted::Many(h) => h.contains(id),
+            }
+        }
+    }
+    fn walk(cues: &[Cue], out: &mut Vec<(CueId, u32)>, wanted: &Wanted, found: &mut Vec<Cue>) {
+        for c in cues {
+            let children = c.children();
+            out.push((c.id, children.len() as u32));
+            if wanted.has(&c.id) {
+                found.push(c.shallow_clone());
+            }
+            walk(children, out, wanted, found);
+        }
+    }
+    let mut found = Vec::with_capacity(wanted.len());
+    let wanted = if wanted.len() <= 32 { Wanted::Few(wanted) } else { Wanted::Many(wanted.iter().copied().collect()) };
+    let shape = std::iter::once(&list.cues)
+        .chain(list.others.iter().map(|o| &o.cues))
+        .map(|cues| {
+            let mut v = Vec::new();
+            walk(cues, &mut v, &wanted, &mut found);
+            v
+        })
+        .collect();
+    (shape, found)
+}
+
+/// Build cue trees in `shape` out of `pool` (shallow cues by id, each used once); None if a cue
+/// is missing or a non-group has children.
+fn build(shape: &[(CueId, u32)], pool: &mut std::collections::HashMap<CueId, Cue>) -> Option<Vec<Cue>> {
+    fn take(it: &mut std::slice::Iter<(CueId, u32)>, n: usize, pool: &mut std::collections::HashMap<CueId, Cue>) -> Option<Vec<Cue>> {
+        let mut out = Vec::with_capacity(n);
+        for _ in 0..n {
+            let &(id, kids) = it.next()?;
+            let mut c = pool.remove(&id)?;
+            let children = take(it, kids as usize, pool)?;
+            match c.children_mut() {
+                Some(ch) => *ch = children,
+                None if children.is_empty() => {}
+                None => return None,
+            }
+            out.push(c);
+        }
         Some(out)
+    }
+    // The top level: cues until the shape runs out.
+    let mut it = shape.iter();
+    let mut out = Vec::new();
+    while it.len() > 0 {
+        out.extend(take(&mut it, 1, pool)?);
+    }
+    Some(out)
+}
+
+/// Every cue of `cues` as a shallow cue (children moved out) by id.
+fn pool_of(cues: Vec<Cue>, pool: &mut std::collections::HashMap<CueId, Cue>) {
+    for mut c in cues {
+        if let Some(children) = c.children_mut().map(std::mem::take) {
+            pool_of(children, pool);
+        }
+        pool.insert(c.id, c);
     }
 }
 
@@ -69,6 +166,18 @@ pub enum Taken {
     },
     /// A copy of the whole workspace.
     Whole(Box<Workspace>, u64),
+    /// Cues were added, removed or moved: the new shape, the changed or added cues (shallow) and
+    /// the workspace without any cues.
+    Shape {
+        /// The lists' shape.
+        shape: Shape,
+        /// Changed or added cues.
+        cues: Vec<Cue>,
+        /// Everything else.
+        rest: Box<Workspace>,
+        /// Generation taken.
+        generation: u64,
+    },
 }
 
 /// How the copy changed ([`Mirror::catch_up`]).
@@ -118,7 +227,13 @@ impl Mirror {
             return None;
         }
         let whole = || Some(Taken::Whole(Box::new(show.ws.clone()), now));
-        let Some(ids) = show.changes.since(self.generation, now) else { return whole() };
+        let Some((ids, reshaped)) = show.changes.since_shape(self.generation, now) else { return whole() };
+        let rest = Box::new(without_cues(&show.ws));
+        if reshaped {
+            // Cues added and removed again since the copy just aren't found.
+            let (shape, cues) = shape_of(&show.ws.cue_list, &ids);
+            return Some(Taken::Shape { shape, cues, rest, generation: now });
+        }
         let mut cues = Vec::with_capacity(ids.len());
         for id in ids {
             match show.ws.cue_list.find(id) {
@@ -126,7 +241,7 @@ impl Mirror {
                 None => return whole(),
             }
         }
-        Some(Taken::Cues { cues, rest: Box::new(without_cues(&show.ws)), generation: now })
+        Some(Taken::Cues { cues, rest, generation: now })
     }
 
     /// Outside the lock: bring the copy up to date with what [`Mirror::take`] took.
@@ -143,6 +258,42 @@ impl Mirror {
                     }
                     None => Delta::Whole { had_copy: true, lighting: crate::light::patch::diff(&old.lighting, &new.lighting) },
                 }
+            }
+            Taken::Shape { shape, cues, rest, generation } => {
+                let Some(mut copy) = self.ws.take() else { return self.lost() };
+                let lighting = crate::light::patch::diff(&copy.lighting, &rest.lighting);
+                let mut pool = std::collections::HashMap::new();
+                let list = &mut copy.cue_list;
+                pool_of(std::mem::take(&mut list.cues), &mut pool);
+                for o in &mut list.others {
+                    pool_of(std::mem::take(&mut o.cues), &mut pool);
+                }
+                for mut c in cues {
+                    // Shallow: the children come from the shape.
+                    if let Some(ch) = c.children_mut() {
+                        ch.clear();
+                    }
+                    pool.insert(c.id, c);
+                }
+                let mut ws = *rest;
+                if shape.len() != ws.cue_list.others.len() + 1 {
+                    return self.lost();
+                }
+                let mut lists = Vec::with_capacity(shape.len());
+                for s in &shape {
+                    match build(s, &mut pool) {
+                        Some(cues) => lists.push(cues),
+                        None => return self.lost(),
+                    }
+                }
+                let mut lists = lists.into_iter();
+                ws.cue_list.cues = lists.next().unwrap_or_default();
+                for (o, cues) in ws.cue_list.others.iter_mut().zip(lists) {
+                    o.cues = cues;
+                }
+                self.ws = Some(ws);
+                self.generation = generation;
+                Delta::Whole { had_copy: true, lighting }
             }
             Taken::Cues { cues, rest, generation } => {
                 let Some(copy) = self.ws.as_mut() else { return self.lost() };
@@ -322,17 +473,17 @@ mod tests {
     fn change_log_spans() {
         let mut log = ChangeLog::default();
         let [a, b] = [CueId::new_v4(), CueId::new_v4()];
-        log.push(1, Some(vec![a]));
-        log.push(2, Some(vec![b, a]));
-        log.push(3, None);
-        log.push(4, Some(vec![]));
+        log.push(1, Some(vec![a]), false);
+        log.push(2, Some(vec![b, a]), false);
+        log.push(3, None, false);
+        log.push(4, Some(vec![]), false);
         assert_eq!(log.since(0, 2), Some(vec![a, b]));
         assert_eq!(log.since(1, 2), Some(vec![b, a]));
         assert_eq!(log.since(2, 3), None, "an edit that didn't say");
         assert_eq!(log.since(3, 4), Some(vec![]));
         assert_eq!(log.since(4, 4), Some(vec![]));
         let mut short = ChangeLog::default();
-        short.push(10, Some(vec![a]));
+        short.push(10, Some(vec![a]), false);
         assert_eq!(short.since(8, 10), None, "the log doesn't reach back");
     }
 
@@ -352,6 +503,72 @@ mod tests {
         assert_eq!(c.pre_wait, crate::limits::MAX_TIME, "brought into range");
         assert_eq!(show.ws.cue_list.cues[4].children().len(), 2, "a group keeps its children");
         assert_eq!(show.changes.since(show.edit_gen - 1, show.edit_gen).map(|v| v.len()), Some(2));
+    }
+
+    /// Adding, moving, grouping, duplicating, deleting cues and switching lists: the copy takes
+    /// the shape and the new cues and ends up equal to the show; a hint that leaves out a new cue
+    /// makes it take the whole show.
+    #[test]
+    fn mirror_follows_reshaping_edits() {
+        let mut show = show();
+        let mut m = Mirror::default();
+        sync(&mut m, &show);
+        // Add one.
+        let added = Cue::new(CueKind::Memo);
+        let id = added.id;
+        show.ws.cue_list.cues.insert(3, added);
+        show.edited_shape([id]);
+        assert!(matches!(m.take(&show), Some(Taken::Shape { ref cues, .. }) if cues.len() == 1));
+        assert!(matches!(sync(&mut m, &show), Some(Delta::Whole { had_copy: true, .. })));
+        // Move one into a group, and change it on the way.
+        let mut c = show.ws.cue_list.cues.remove(0);
+        c.name = "moved".into();
+        let moved = c.id;
+        show.ws.cue_list.cues[4].children_mut().unwrap().push(c);
+        show.edited_shape([moved]);
+        sync(&mut m, &show);
+        // Group three (a new group holding existing cues).
+        let three: Vec<Cue> = show.ws.cue_list.cues.drain(5..8).collect();
+        let group = Cue::new(CueKind::Group { mode: GroupMode::StartAll, children: three });
+        let gid = group.id;
+        show.ws.cue_list.cues.push(group);
+        show.edited_shape([gid]);
+        sync(&mut m, &show);
+        // Duplicate the group: every new cue is told.
+        let mut dup = show.ws.cue_list.find(gid).unwrap().clone();
+        let mut ids = Vec::new();
+        fn fresh(c: &mut Cue, ids: &mut Vec<CueId>) {
+            c.id = CueId::new_v4();
+            ids.push(c.id);
+            for ch in c.children_mut().into_iter().flatten() {
+                fresh(ch, ids);
+            }
+        }
+        fresh(&mut dup, &mut ids);
+        show.ws.cue_list.cues.push(dup);
+        show.edited_shape(ids);
+        sync(&mut m, &show);
+        // Add a cue, delete it before the copy catches up, delete another; a new list.
+        let gone = Cue::new(CueKind::Memo);
+        let gid2 = gone.id;
+        show.ws.cue_list.cues.push(gone);
+        show.edited_shape([gid2]);
+        show.ws.cue_list.cues.retain(|c| c.id != gid2);
+        show.ws.cue_list.cues.remove(1);
+        show.edited_shape([]);
+        show.ws.cue_list.add_list("Two", None);
+        show.ws.cue_list.cues.push(Cue::new(CueKind::Memo));
+        let in_two = show.ws.cue_list.cues[0].id;
+        show.edited_shape([in_two]);
+        sync(&mut m, &show);
+        show.ws.cue_list.switch_to(0, None);
+        show.edited_shape([]);
+        sync(&mut m, &show);
+        // A hint that forgets the new cue: the copy notices and takes the whole show.
+        show.ws.cue_list.cues.push(Cue::new(CueKind::Memo));
+        show.edited_shape([]);
+        assert!(matches!(sync(&mut m, &show), Some(Delta::Lost)));
+        assert!(matches!(sync(&mut m, &show), Some(Delta::Whole { had_copy: false, .. })));
     }
 
     #[test]

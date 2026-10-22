@@ -515,6 +515,7 @@ fn seed_workspace(media: &Path) -> Workspace {
             // Never out of this computer's real MIDI ports.
             CueKind::Midi(m) => m.port = Some("openq-fuzz-no-port".into()),
             CueKind::Timecode(t) => t.midi_port = Some("openq-fuzz-no-port".into()),
+            CueKind::MidiFile(m) => m.port = Some("openq-fuzz-no-port".into()),
             CueKind::Target { target: t, new_target } => {
                 *t = target;
                 *new_target = Some(ids[(i * 3) % ids.len()]);
@@ -803,6 +804,17 @@ fn media_seeds(dir: &Path) -> Vec<(String, Vec<u8>)> {
             seeds.push((ext.into(), std::fs::read(&p).unwrap()));
         }
     }
+    // A two-track MIDI file: tempo map, running status, SysEx, program change.
+    let track = |events: &[u8]| {
+        let mut t = b"MTrk".to_vec();
+        t.extend((events.len() as u32).to_be_bytes());
+        t.extend(events);
+        t
+    };
+    let mut mid = b"MThd\0\0\0\x06\0\x01\0\x02\x01\xe0".to_vec();
+    mid.extend(track(&[0, 0xff, 0x51, 3, 7, 0xa1, 0x20, 0x83, 0x60, 0xff, 0x51, 3, 0x0f, 0x42, 0x40, 0, 0xff, 0x2f, 0]));
+    mid.extend(track(&[0, 0xc0, 5, 0, 0x90, 60, 100, 0x83, 0x60, 60, 0, 0, 0xf0, 3, 0x7e, 0x10, 0xf7, 0x60, 0xb0, 7, 90, 0, 0xff, 0x2f, 0]));
+    seeds.push(("mid".into(), mid));
     seeds.push(("svg".into(), br##"<svg xmlns="http://www.w3.org/2000/svg" width="64" height="32" viewBox="0 0 64 32"><defs><linearGradient id="g"><stop offset="0" stop-color="#f00"/><stop offset="1" stop-color="#00f"/></linearGradient></defs><rect width="64" height="32" fill="url(#g)"/><circle cx="16" cy="16" r="10" stroke="#fff" stroke-width="2"/><text x="30" y="20" font-size="10">Hi</text></svg>"##.to_vec()));
     let ffmpeg: &[(&str, &[&str])] = &[
         ("mp4", &["-f", "lavfi", "-i", "testsrc2=size=64x36:rate=10:duration=0.4", "-f", "lavfi", "-i", "sine=duration=0.4", "-c:v", "mpeg4", "-c:a", "aac", "-shortest"]),
@@ -895,6 +907,11 @@ fn read_media(p: &Path, prober: &Prober, audio: &Mutex<AudioOutput>) {
     let _ = openq::media::still::load(p, 1.0);
     let _ = openq::media::still::load(p, 64.0);
     let _ = openq::media::still::thumbnail(p, 96);
+    let _ = openq::media::mask::load(p);
+    if let Ok(song) = openq::media::midifile::load(p) {
+        let i = song.index_at(song.duration / 2.0);
+        let _ = song.chase(i);
+    }
     let id = CueId::new_v4();
     let mut a = audio.lock();
     if a.start(id, &AudioCue { path: p.to_path_buf(), ..Default::default() }, 2, Instant::now()).is_ok() {

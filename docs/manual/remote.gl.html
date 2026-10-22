@@ -99,6 +99,12 @@
   <p>Unha <strong>cue Rede</strong> envía unha mensaxe OSC a outros equipos. Axusta o host, o porto, o enderezo
   (por exemplo <code>/eos/cue/12/fire</code>) e os argumentos. Os argumentos sepáranse con espazos: os números envíanse como
   números e o texto entre comiñas como texto.</p>
+  <p>Pon <em>Enviar</em> en <strong>Texto</strong> para equipos que aceptan ordes en texto (proxectores, mesturadores de
+  vídeo, servidores de medios): escribe o texto con escapes para os caracteres de control (<code>\r</code> retorno,
+  <code>\n</code> salto de liña, <code>\t</code>, <code>\0</code>, <code>\xHH</code> calquera byte, <code>\\</code> unha
+  barra invertida). <strong>UDP</strong> envía un datagrama; <strong>TCP</strong> mantén unha conexión aberta co destino e
+  volve abrila se o outro extremo a pecha. OSC tamén pode ir por TCP (con tramas, como di OSC 1.1). Unha mensaxe que non se
+  pode enviar amósase en vermello na cue e en Función → Avisos.</p>
 </section>
 <!--/content-->
 

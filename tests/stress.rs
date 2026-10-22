@@ -192,7 +192,15 @@ fn random_cue(rng: &mut fastrand::Rng, depth: usize, n: &mut usize) -> Cue {
         67..70 => CueKind::Pause { target: None },
         70..73 => CueKind::Goto { target: None },
         73..76 => CueKind::Devamp { target: None },
-        76..78 => CueKind::Network(NetworkCue { host: "127.0.0.1".into(), port: 9, address: "/x".into(), args: String::new() }),
+        76 => CueKind::Network(NetworkCue { host: "127.0.0.1".into(), port: 9, address: "/x".into(), ..Default::default() }),
+        77 => CueKind::Network(NetworkCue {
+            host: "127.0.0.1".into(),
+            port: 9,
+            format: openq::model::NetFormat::Text,
+            transport: openq::model::NetTransport::Tcp,
+            text: r"GO\r\n".into(),
+            ..Default::default()
+        }),
         78 => CueKind::Arm { target: None },
         79 => CueKind::Disarm { target: None },
         80 => CueKind::Reset { target: None },

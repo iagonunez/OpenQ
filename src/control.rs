@@ -76,6 +76,8 @@ pub enum Command {
 pub fn apply(show: &mut Show, cmd: Command, now: Instant) -> Result<(), String> {
     let Show { ws, engine, media, .. } = show;
     match cmd {
+        // A cart list's buttons fire their own cues; it has nothing to GO.
+        Command::Go if ws.cue_list.info.cart.is_some() => return Err(crate::i18n::t("This list is a cart: press its buttons").into()),
         Command::Go => engine.go(ws, media, now),
         // Stop all and Panic (Esc) stop sound and pictures only: the lighting stays as it is.
         Command::Stop => engine.stop_all(media, now, ws.settings.panic_fade),
@@ -106,8 +108,9 @@ pub fn apply(show: &mut Show, cmd: Command, now: Instant) -> Result<(), String> 
                 return Err("no such cue list".into());
             }
             let ph = ws.cue_list.switch_to(tab, engine.playhead);
-            engine.set_playhead(ph.or(ws.cue_list.first()));
-            show.edited();
+            let cart = ws.cue_list.info.cart.is_some();
+            engine.set_playhead(if cart { None } else { ph.or(ws.cue_list.first()) });
+            show.edited_shape([]);
         }
         Command::Light(c) => {
             let l = &mut media.light;
@@ -186,5 +189,26 @@ mod tests {
             std::thread::sleep(Duration::from_millis(100));
             assert!(on(&show), "{cmd:?} left the sequence running");
         }
+    }
+
+    /// A cart list has no playhead: switching to it leaves none and GO does nothing there.
+    #[test]
+    fn a_cart_list_has_nothing_to_go() {
+        use crate::model::{Cart, Cue, CueKind};
+        let mut show = Show::new(crate::media::Prober::new());
+        show.ws.cue_list.cues.push(Cue::new(CueKind::Wait { duration: 5.0 }));
+        show.ws.cue_list.add_list("Cart", None);
+        let button = Cue::new(CueKind::Wait { duration: 5.0 });
+        let id = button.id;
+        show.ws.cue_list.cues.push(button);
+        show.ws.cue_list.info.cart = Some(Cart::default());
+        apply(&mut show, Command::SwitchList(0), Instant::now()).unwrap();
+        assert!(show.engine.playhead.is_some(), "a normal list gets its first cue");
+        apply(&mut show, Command::SwitchList(1), Instant::now()).unwrap();
+        assert_eq!(show.engine.playhead, None);
+        assert!(apply(&mut show, Command::Go, Instant::now()).is_err());
+        assert!(show.engine.instances.is_empty());
+        apply(&mut show, Command::Cue(id, CueAction::Trigger), Instant::now()).unwrap();
+        assert!(show.engine.instances.contains_key(&id), "its buttons fire their cues");
     }
 }

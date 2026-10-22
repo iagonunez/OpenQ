@@ -26,11 +26,14 @@
       <li class="s3"><a href="#geometry">Xeometría</a></li>
       <li class="s3"><a href="#camera-cues">Cues Cámara</a></li>
       <li class="s3"><a href="#text-cues">Cues Texto</a></li>
+      <li class="s3"><a href="#masks">Máscaras</a></li>
       <li class="s3"><a href="#animation">Animación</a></li>
       <li class="s3"><a href="#videofx">FX de vídeo</a></li>
       <li class="s2"><a href="#stages">Escenarios e proxección</a></li>
       <li class="s3"><a href="#sending-a-stage-to-a-display">Enviar un escenario a unha pantalla</a></li>
       <li class="s3"><a href="#mapping">Mapeado</a></li>
+      <li class="s3"><a href="#several-projectors">Varios proxectores nunha superficie</a></li>
+      <li class="s3"><a href="#stage-masks">Máscaras de escenario</a></li>
      </ol>
     </li>
     <li><a href="lighting.gl.html">Iluminación</a></li>
@@ -79,6 +82,7 @@
   e fundila. Na lapela <strong>Cámara</strong> escolle o dispositivo e, se o precisas, o tamaño de captura; <em>Espello</em>
   voltea a imaxe como nun selfi. <em>Amosar durante</em> 0 mantena ata que se pare. O dispositivo e o tamaño úsanse a
   próxima vez que arrinque a cue.</p>
+  <p>As cues de cámara tamén teñen a lapela <a href="#animation">Animación</a> e unha <a href="#masks">máscara</a>.</p>
   <h3 id="text-cues">Cues Texto</h3>
   <p>As cues de texto amosan texto escrito nun escenario: títulos, sobretítulos, subtítulos ou unha conta atrás para o equipo.
   As lapelas <strong>Xeometría</strong> e <strong>Animación</strong> funcionan como no vídeo, e as cues Fade poden mover e fundir
@@ -110,8 +114,15 @@
   <div class="note"><span class="label">De xira</span><p>O ficheiro do espectáculo garda o nome da fonte, non a fonte en si.
   Instala as mesmas fontes en cada ordenador que reproduza o espectáculo. Se falta unha fonte, a lapela Texto indica <em>non instalada
   aquí</em> e úsase unha fonte de substitución.</p></div>
+  <h3 id="masks">Máscaras</h3>
+  <p>Unha máscara é unha imaxe que oculta partes dunha capa: o branco mostra, o negro oculta e os grises mostran en parte (o
+  transparente tamén oculta). Na lapela <strong>Xeometría</strong> dunha cue de vídeo, texto ou cámara, fai clic en
+  <em>Examinar…</em> na tarxeta <strong>Máscara</strong> e escolle unha imaxe (PNG, JPEG, SVG…). A máscara estírase sobre a
+  capa e móvese, escálase, xira e recórtase con ela. <em>Inverter</em> dálle a volta: o negro mostra e o branco oculta. A
+  capa queda oculta o momento que tarda en cargar a súa máscara; un ficheiro de máscara que non se pode ler non oculta nada
+  (e o rexistro de erros di por que).</p>
   <h3 id="animation">Animación</h3>
-  <p>A lapela <strong><span class="ms" aria-hidden="true">&#xe71c;</span> Animación</strong> das cues de vídeo e texto move,
+  <p>A lapela <strong><span class="ms" aria-hidden="true">&#xe71c;</span> Animación</strong> das cues de vídeo, texto e cámara move,
   escala, xira, recorta, funde e cambia a cor da capa con fotogramas clave. A animación comeza cando arrinca a cue e segue o
   reloxo da propia cue: pausar a cue pausaa.</p>
   <figure>
@@ -206,6 +217,26 @@
   en cada bordo, círculos, diagonais e unha cruz central, todo debuxado a través do mapping, ademais de catro esquinas numeradas.
   Arrastra as esquinas para encaixar a imaxe na pantalla (corrección de trapecio), ou pasa o rato por unha esquina e móvea coas
   frechas: un píxel cada vez, ou dez con <kbd>Maiús</kbd>. <em>Restablecer mapeado</em> devolve as esquinas ao seu sitio.</p>
+  <h3 id="several-projectors">Varios proxectores nunha superficie</h3>
+  <p>Para unha imaxe máis ancha ca un proxector (un ciclorama, unha pantalla ancha), crea un escenario do tamaño de toda a
+  <strong>superficie</strong> e pon as cues nel, e logo un escenario por proxector que amose unha parte. Na sección
+  <strong>Extensión e fusión de bordos</strong> de cada proxector (Axustes → Escenarios de vídeo), pon <em>Amosa</em> en
+  <em>Parte de</em> a superficie, a <em>Parte</em> que amosa e os anchos de <em>Fusión</em> onde se solapa cos seus
+  veciños: a imaxe esvaécese ao longo do solapamento para que os dous proxectores sumen un brillo uniforme.
+  <em>Gamma</em> dá forma ao fundido (súbea se o solapamento se ve brillante de máis).</p>
+  <ul>
+    <li><strong>Dividir:</strong> no escenario superficie, fixa cantas saídas, canto se solapan, lado a lado ou unha sobre
+    outra, e fai clic en <em>Crear saídas</em>: axústanse as partes e zonas de fusión dos escenarios que a amosan, e
+    engádense escenarios se faltan.</li>
+    <li><strong>Elevar o negro:</strong> os proxectores nunca dan negro puro, así que onde dous se solapan o negro vese
+    gris. Sube <em>Elevar o negro</em> en cada proxector ata que o negro fóra do solapamento iguale ao de dentro.</li>
+    <li>A <a href="#geometry">vista previa de xeometría</a> dunha superficie amosa a parte de cada proxector, coas zonas de
+    fusión sombreadas.</li>
+  </ul>
+  <h3 id="stage-masks">Máscaras de escenario</h3>
+  <p>Un escenario tamén pode ter unha <a href="#masks">máscara</a>, na sección <strong>Máscara</strong> dos seus axustes:
+  estírase sobre toda a saída, despois do mapeado, e oculta o que haxa. Úsaa para que a luz dun proxector non caia sobre
+  escenografía, caras de actores ou o bordo dunha pantalla.</p>
 </section>
 <!--/content-->
 

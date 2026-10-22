@@ -20,18 +20,22 @@ use std::path::{Path, PathBuf};
 /// Largest magnitude accepted for any number in an edit (about 30 000 years in seconds).
 pub const MAX_NUMBER: f64 = 1e12;
 
-/// Media files the workspace refers to.
+/// Media files the workspace refers to (cue media and masks, stage masks).
 pub fn media_paths(ws: &Workspace) -> Vec<PathBuf> {
-    ws.cue_list.iter_all().into_iter().filter_map(media_path).filter(|p| !p.as_os_str().is_empty()).map(Path::to_path_buf).collect()
+    let cues = ws.cue_list.iter_all().into_iter().flat_map(files);
+    let stages = ws.stages.iter().filter_map(|s| s.mask.as_ref()).map(|m| m.path.as_path());
+    cues.chain(stages).filter(|p| !p.as_os_str().is_empty()).map(Path::to_path_buf).collect()
 }
 
-/// The media file a cue plays, if it has one.
-fn media_path(c: &Cue) -> Option<&Path> {
-    match &c.kind {
-        CueKind::Audio(a) => Some(&a.path),
-        CueKind::Video(v) => Some(&v.path),
+/// The files a cue reads: what it plays and its mask.
+fn files(c: &Cue) -> impl Iterator<Item = &Path> {
+    let media = match &c.kind {
+        CueKind::Audio(a) => Some(a.path.as_path()),
+        CueKind::Video(v) => Some(v.path.as_path()),
+        CueKind::MidiFile(m) => Some(m.path.as_path()),
         _ => None,
-    }
+    };
+    media.into_iter().chain(c.kind.mask().map(|m| m.path.as_path()))
 }
 
 /// Check every number in `value` ([`MAX_NUMBER`], finite).
@@ -55,6 +59,9 @@ pub fn workspace(known: &HashSet<PathBuf>, new: &Workspace) -> Result<(), String
     if let Some(c) = all.iter().find(|c| !ids.insert(c.id)) {
         return Err(format!("The edit has two cues with the same id ({})", c.id));
     }
+    if let Some(m) = new.stages.iter().filter_map(|s| s.mask.as_ref()).find(|m| !m.path.as_os_str().is_empty() && !known.contains(&m.path)) {
+        return Err(format!("A replica can't add media files ({}); add them on the main device", m.path.display()));
+    }
     paths(known, all)
 }
 
@@ -66,8 +73,7 @@ pub fn cues(known: &HashSet<PathBuf>, cues: &[Cue]) -> Result<(), String> {
 }
 
 fn paths<'a>(known: &HashSet<PathBuf>, cues: impl IntoIterator<Item = &'a Cue>) -> Result<(), String> {
-    for c in cues {
-        let Some(p) = media_path(c).filter(|p| !p.as_os_str().is_empty()) else { continue };
+    for p in cues.into_iter().flat_map(files).filter(|p| !p.as_os_str().is_empty()) {
         if !known.contains(p) {
             return Err(format!("A replica can't add media files ({}); add them on the main device", p.display()));
         }

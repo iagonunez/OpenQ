@@ -26,11 +26,14 @@
       <li class="s3"><a href="#geometry">Geometry</a></li>
       <li class="s3"><a href="#camera-cues">Camera cues</a></li>
       <li class="s3"><a href="#text-cues">Text cues</a></li>
+      <li class="s3"><a href="#masks">Masks</a></li>
       <li class="s3"><a href="#animation">Animation</a></li>
       <li class="s3"><a href="#videofx">Video FX</a></li>
       <li class="s2"><a href="#stages">Stages and projection</a></li>
       <li class="s3"><a href="#sending-a-stage-to-a-display">Sending a stage to a display</a></li>
       <li class="s3"><a href="#mapping">Mapping</a></li>
+      <li class="s3"><a href="#several-projectors">Several projectors on one surface</a></li>
+      <li class="s3"><a href="#stage-masks">Stage masks</a></li>
      </ol>
     </li>
     <li><a href="lighting.html">Lighting</a></li>
@@ -78,6 +81,7 @@
   and fade it. On the <strong>Camera</strong> tab pick the device and, if you need it, the capture size; <em>Mirror</em>
   flips the picture like a selfie view. <em>Show for</em> 0 keeps it on until stopped. The device and size are used
   the next time the cue starts.</p>
+  <p>Camera cues have the <a href="#animation">Animation</a> tab and a <a href="#masks">mask</a> too.</p>
   <h3 id="text-cues">Text cues</h3>
   <p>Text cues show typed text on a stage: titles, surtitles, captions, or a countdown for the crew.
   The <strong>Geometry</strong> and <strong>Animation</strong> tabs work as they do for video, and Fade cues can move and fade text. Changes on the
@@ -110,8 +114,14 @@
   <div class="note"><span class="label">Touring a show</span><p>The show file stores the font's name, not the font itself.
   Install the same fonts on every computer that plays the show. If a font is missing, the Text tab says <em>not installed
   here</em> and a fallback font is used.</p></div>
+  <h3 id="masks">Masks</h3>
+  <p>A mask is a picture that hides parts of a layer: white shows, black hides, greys show partly (transparent parts hide
+  too). On the <strong>Geometry</strong> tab of a video, text or camera cue, click <em>Browse…</em> on the
+  <strong>Mask</strong> card and pick an image (PNG, JPEG, SVG…). The mask is stretched over the layer and moves, scales,
+  rotates and crops with it. <em>Invert</em> swaps it: black shows, white hides. A layer stays hidden for the moment its mask
+  takes to load; a mask file that can't be read hides nothing (and the error log says why).</p>
   <h3 id="animation">Animation</h3>
-  <p>The <strong><span class="ms" aria-hidden="true">&#xe71c;</span> Animation</strong> tab of video and text cues moves,
+  <p>The <strong><span class="ms" aria-hidden="true">&#xe71c;</span> Animation</strong> tab of video, text and camera cues moves,
   scales, rotates, crops, fades and recolours the layer with keyframes. The animation starts when the cue starts and
   follows the cue's own clock: pausing the cue pauses it.</p>
   <figure>
@@ -205,6 +215,25 @@
   every edge, circles, diagonals and a centre cross, all drawn through the mapping, plus four numbered corner pins.
   Drag the corners to fit the picture onto the screen (keystone correction), or hover a corner and nudge it with the
   arrow keys: one pixel at a time, or ten with <kbd>Shift</kbd>. <em>Reset mapping</em> puts the corners back.</p>
+  <h3 id="several-projectors">Several projectors on one surface</h3>
+  <p>For a picture wider than one projector (a cyclorama, a wide screen), make one stage the size of the whole
+  <strong>surface</strong> and put the cues on it, then one stage per projector that shows a part of it. In each
+  projector's <strong>Span &amp; edge blend</strong> section (Settings → Stages), set <em>Shows</em> to <em>Part of</em> the
+  surface, the <em>Part</em> it shows, and the <em>Blend</em> widths where it overlaps its neighbours: the picture fades
+  out across the overlap so the two projectors add up to an even brightness. <em>Gamma</em> shapes the fade (raise it if the
+  overlap looks too bright).</p>
+  <ul>
+    <li><strong>Split:</strong> on the surface stage, set how many outputs, how much they overlap, side by side or one
+    above another, and click <em>Make outputs</em>: the parts and blend zones of the stages showing it are set, and stages
+    are added if there are fewer.</li>
+    <li><strong>Black lift:</strong> projectors never show true black, so where two overlap the black looks grey. Raise
+    <em>Black lift</em> on each projector until the black outside the overlap matches the black inside it.</li>
+    <li>The <a href="#geometry">geometry preview</a> of a surface shows each projector's part, with the blend zones shaded.</li>
+  </ul>
+  <h3 id="stage-masks">Stage masks</h3>
+  <p>A stage can have a <a href="#masks">mask</a> too, in the <strong>Mask</strong> section of its settings: it is
+  stretched over the whole output, after the mapping, and hides whatever is there. Use it to keep a projector's light off
+  set pieces, actors' faces or the edge of a screen.</p>
 </section>
 <!--/content-->
 

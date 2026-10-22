@@ -99,7 +99,7 @@ cargo build --release && ./target/release/openq
 
 | | Feature | What it does |
 |---|---|---|
-| 🎬 | **23 cue types** | Audio, Video, Text, Camera, Mic, Group, Wait, Memo, Fade, Start, Stop, Pause, Go To, Devamp, Network (OSC), MIDI, Timecode, Light, and Arm, Disarm, Reset, Load and Target to change other cues as the show runs. |
+| 🎬 | **24 cue types** | Audio, Video, Text, Camera, Mic, Group, Wait, Memo, Fade, Start, Stop, Pause, Go To, Devamp, Network (OSC or text, UDP or TCP), MIDI, MIDI File, Timecode, Light, and Arm, Disarm, Reset, Load and Target to change other cues as the show runs. |
 | 🗂️ | **Cue lists** | Several lists per show in tabs (the main sequence, a list of effects to fire by hand…); cues keep playing when you switch. |
 | ⏱️ | **Timing** | Pre-wait, post-wait, auto-continue and auto-follow. Chained cues start on the exact sample, however long the chain. |
 | 📁 | **Groups** | Enter the group, playlist, start everything at once, or a random child. |
@@ -117,11 +117,11 @@ cargo build --release && ./target/release/openq
 | 🌈 | **Video effects** | Colour controls, hue, colourise, blur, pixellate, vignette, chroma key and more, drawn live by the graphics card. |
 | 🧩 | **Blend modes** | Add, Screen, Multiply, Lighten, Darken and Subtract per layer. |
 | 📽️ | **Stages and projection mapping** | Any number of outputs, fullscreen on any display, with corner-pin keystone and a mapping test pattern. |
-| 🌅 | **Edge blending** | Split one picture across several projectors with soft, gamma-corrected overlaps. |
+| 🌅 | **Edge blending** | Split one picture across several projectors with soft, gamma-corrected overlaps and black level lift; masks hide parts of layers and outputs. |
 | 📷 | **Camera cues** | Show a live camera or capture card as a layer on stage. |
 | 🌗 | **Fades** | Fade level, output faders, audio and video effects, opacity, geometry and object positions, with preset or custom curves. |
 | 🕰️ | **Timecode** | Each cue list can follow LTC or MTC and fire cues at their timecode trigger; Timecode cues send LTC or MTC. |
-| ⌨️ | **Triggers** | Fire any cue from its own key, a MIDI message or a time of day. |
+| ⌨️ | **Triggers** | Fire any cue from its own key, a MIDI message or a time of day, or from a cart: a grid of buttons. |
 | 🎹 | **MIDI out** | MIDI cues send notes, control and program changes, MIDI Show Control and SysEx. |
 | 📦 | **Bundle show** | Copy a show and all its media into one folder to move or archive it. |
 | 📡 | **OSC** | Control OpenQ from other gear over OSC, and send OSC to lighting desks with Network cues. |

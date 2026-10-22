@@ -295,6 +295,7 @@ pub fn kind_icon(tag: crate::model::KindTag) -> &'static str {
         Target => I::MY_LOCATION,
         Midi => I::PIANO,
         Timecode => I::AV_TIMER,
+        MidiFile => I::MUSIC_NOTE,
     }
 }
 

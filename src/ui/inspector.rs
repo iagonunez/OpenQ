@@ -71,6 +71,7 @@ fn tabs_for(kind: &CueKind) -> &'static [(Tab, &'static str)] {
             (Tab::Triggers, "Triggers"),
             (Tab::Settings, "Camera"),
             (Tab::Geometry, "Geometry"),
+            (Tab::Animation, "Animation"),
             (Tab::VideoFx, "Video FX"),
         ],
         CueKind::Memo => &[(Tab::Basics, "Basics"), (Tab::Triggers, "Triggers")],
@@ -299,6 +300,7 @@ impl App {
         }
         let mut refresh_devices = false;
         let mut pick_media = false;
+        let mut pick_mask = false;
 
         let tabs = tabs_for(&cue.kind);
         if !tabs.iter().any(|t| t.0 == self.inspector_tab) {
@@ -412,8 +414,9 @@ impl App {
                         blend_mode: &mut v.blend_mode,
                         opacity: &mut v.opacity,
                         geometry: &mut v.geometry,
+                        mask: &mut v.mask,
                     };
-                    layer_geometry(ui, "vgeo", refs, &ctx, &mut self.show_preview);
+                    layer_geometry(ui, "vgeo", refs, &ctx, &mut self.show_preview, &mut pick_mask);
                 }
                 CueKind::Camera(c) => {
                     let refs = LayerRefs {
@@ -423,8 +426,9 @@ impl App {
                         blend_mode: &mut c.blend_mode,
                         opacity: &mut c.opacity,
                         geometry: &mut c.geometry,
+                        mask: &mut c.mask,
                     };
-                    layer_geometry(ui, "cgeo", refs, &ctx, &mut self.show_preview);
+                    layer_geometry(ui, "cgeo", refs, &ctx, &mut self.show_preview, &mut pick_mask);
                 }
                 CueKind::Text(t) => {
                     let refs = LayerRefs {
@@ -434,14 +438,18 @@ impl App {
                         blend_mode: &mut t.blend_mode,
                         opacity: &mut t.opacity,
                         geometry: &mut t.geometry,
+                        mask: &mut t.mask,
                     };
-                    layer_geometry(ui, "tgeo", refs, &ctx, &mut self.show_preview);
+                    layer_geometry(ui, "tgeo", refs, &ctx, &mut self.show_preview, &mut pick_mask);
                 }
                 _ => {}
             },
             Tab::Animation => match &mut cue.kind {
                 CueKind::Video(v) => {
                     super::animation::animation_tab(ui, id, &mut v.animation, None, &mut self.anim_edit, &mut self.show_preview)
+                }
+                CueKind::Camera(c) => {
+                    super::animation::animation_tab(ui, id, &mut c.animation, None, &mut self.anim_edit, &mut self.show_preview)
                 }
                 CueKind::Text(t) => {
                     let base = [t.bg_color, t.shadow_color, t.outline_color, t.color];
@@ -453,6 +461,9 @@ impl App {
 
         if pick_media {
             self.deferred.push(Deferred::PickMedia(id));
+        }
+        if pick_mask {
+            self.deferred.push(Deferred::PickMask(Some(id), None));
         }
         if refresh_devices {
             super::devices::refresh(&self.inputs, ui.ctx());
@@ -1259,11 +1270,15 @@ pub(super) fn preview_toggle(ui: &mut Ui, open: &mut bool) {
 }
 
 /// Geometry tab of a video or text cue: where the layer goes, then how it's placed.
-fn layer_geometry(ui: &mut Ui, salt: &str, layer: LayerRefs, ctx: &Ctx, preview: &mut bool) {
+fn layer_geometry(ui: &mut Ui, salt: &str, layer: LayerRefs, ctx: &Ctx, preview: &mut bool, pick_mask: &mut bool) {
     use super::icons as ic;
     use super::theme::Card;
-    let LayerRefs { stage, mut fit, layer, blend_mode, opacity, geometry } = layer;
-    let specs = [Card::new(ic::DESKTOP_WINDOWS, t("Layer"), 320.0), Card::new(ic::OPEN_WITH, t("Geometry"), 520.0)];
+    let LayerRefs { stage, mut fit, layer, blend_mode, opacity, geometry, mask } = layer;
+    let specs = [
+        Card::new(ic::DESKTOP_WINDOWS, t("Layer"), 320.0),
+        Card::new(ic::OPEN_WITH, t("Geometry"), 520.0),
+        Card::new(ic::BLUR_ON, t("Mask"), 300.0),
+    ];
     super::theme::cards(ui, salt, &specs, |ui, i| match i {
         0 => {
             egui::Grid::new((salt, "layer")).num_columns(2).spacing([10.0, 6.0]).show(ui, |ui| {
@@ -1298,7 +1313,43 @@ fn layer_geometry(ui: &mut Ui, salt: &str, layer: LayerRefs, ctx: &Ctx, preview:
             ui.add_space(4.0);
             preview_toggle(ui, preview);
         }
-        _ => geometry_editor(ui, &format!("{salt}-geom"), geometry),
+        1 => geometry_editor(ui, &format!("{salt}-geom"), geometry),
+        _ => {
+            mask_editor(ui, &format!("{salt}-mask"), mask, ctx.prober, pick_mask);
+            ui.add_space(4.0);
+            ui.label(RichText::new(t("White shows the picture, black hides it. The mask is stretched over the layer and moves with it.")).weak().small());
+        }
+    });
+}
+
+/// A mask's picture (Browse…, clear) and invert switch; `pick` asks for a file dialog.
+pub(super) fn mask_editor(ui: &mut Ui, salt: &str, mask: &mut Option<crate::model::Mask>, prober: &Prober, pick: &mut bool) {
+    egui::Grid::new(salt).num_columns(2).spacing([10.0, 6.0]).show(ui, |ui| {
+        ui.label(t("Picture"));
+        ui.horizontal(|ui| {
+            if ui.button(super::theme::with_icon(super::icons::FOLDER_OPEN, t("Browse…"))).clicked() {
+                *pick = true;
+            }
+            match mask.as_ref().map(|m| m.path.as_path()).filter(|p| !p.as_os_str().is_empty()) {
+                Some(path) => {
+                    let name = path.file_name().map(|f| f.to_string_lossy().into_owned()).unwrap_or_default();
+                    let color = if prober.exists(path) { ui.visuals().text_color() } else { RED };
+                    ui.label(RichText::new(name).color(color)).on_hover_text(path.display().to_string());
+                    if super::theme::icon_button(ui, super::icons::CLOSE, t("No mask")).clicked() {
+                        *mask = None;
+                    }
+                }
+                None => {
+                    ui.label(RichText::new(t("none")).weak());
+                }
+            }
+        });
+        ui.end_row();
+        if let Some(m) = mask {
+            ui.label(t("Invert"));
+            ui.checkbox(&mut m.invert, t("Black shows, white hides"));
+            ui.end_row();
+        }
     });
 }
 
@@ -1311,6 +1362,7 @@ struct LayerRefs<'a> {
     blend_mode: &'a mut BlendMode,
     opacity: &'a mut f32,
     geometry: &'a mut Geometry,
+    mask: &'a mut Option<crate::model::Mask>,
 }
 
 /// Position / scale / rotation editor.
@@ -1663,12 +1715,14 @@ fn settings_tab(ui: &mut Ui, cue: &mut Cue, ctx: &Ctx, refresh: &mut bool) {
             });
         }
         CueKind::Midi(m) => midi_settings(ui, m, ctx, refresh),
+        CueKind::MidiFile(m) => midi_file_settings(ui, m, ctx, refresh),
         CueKind::Timecode(tc) => timecode_settings(ui, tc, ctx, refresh),
         CueKind::Text(t) => text_settings(ui, t),
         CueKind::Camera(c) => camera_settings(ui, c, ctx, refresh),
         CueKind::Light(l) => light_settings(ui, l, ctx.lighting),
         CueKind::Network(n) => {
-            let specs = [Card::new(ic::SETTINGS_REMOTE, t("OSC message"), 480.0)];
+            use crate::model::{NetFormat, NetTransport};
+            let specs = [Card::new(ic::SETTINGS_REMOTE, t("Network message"), 480.0)];
             cards(ui, "net", &specs, |ui, _| {
                 egui::Grid::new("net").num_columns(2).spacing([10.0, 6.0]).show(ui, |ui| {
                     ui.label(t("Destination"));
@@ -1678,19 +1732,53 @@ fn settings_tab(ui: &mut Ui, cue: &mut Cue, ctx: &Ctx, refresh: &mut bool) {
                         ui.add(DragValue::new(&mut n.port).range(1..=65535));
                     });
                     ui.end_row();
-                    ui.label(t("OSC address"));
-                    ui.add(TextEdit::singleline(&mut n.address).desired_width(260.0));
+                    ui.label(t("Send"));
+                    ui.horizontal(|ui| {
+                        for f in NetFormat::ALL {
+                            ui.selectable_value(&mut n.format, f, f.label());
+                        }
+                        ui.separator();
+                        for tr in NetTransport::ALL {
+                            ui.selectable_value(&mut n.transport, tr, tr.label());
+                        }
+                    });
                     ui.end_row();
-                    ui.label(t("Arguments"));
-                    ui.add(TextEdit::singleline(&mut n.args).desired_width(260.0).hint_text(r#"1 0.5 "text""#));
-                    ui.end_row();
+                    match n.format {
+                        NetFormat::Osc => {
+                            ui.label(t("OSC address"));
+                            ui.add(TextEdit::singleline(&mut n.address).desired_width(260.0));
+                            ui.end_row();
+                            ui.label(t("Arguments"));
+                            ui.add(TextEdit::singleline(&mut n.args).desired_width(260.0).hint_text(r#"1 0.5 "text""#));
+                            ui.end_row();
+                        }
+                        NetFormat::Text => {
+                            ui.label(t("Text"));
+                            ui.add(TextEdit::multiline(&mut n.text).desired_width(260.0).desired_rows(2).font(egui::TextStyle::Monospace).hint_text(r"GO 1\r\n"));
+                            ui.end_row();
+                        }
+                    }
                 });
                 ui.add_space(4.0);
-                ui.label(
-                    RichText::new(t("Sends one OSC message over UDP. Numbers are sent as int/float, other words as strings."))
-                        .weak()
-                        .small(),
-                );
+                let help = match (n.format, n.transport) {
+                    (NetFormat::Osc, NetTransport::Udp) => {
+                        t("Sends one OSC message over UDP. Numbers are sent as int/float, other words as strings.").to_string()
+                    }
+                    (NetFormat::Osc, NetTransport::Tcp) => {
+                        t("Sends one OSC message over TCP (SLIP framing). Numbers are sent as int/float, other words as strings.").to_string()
+                    }
+                    (NetFormat::Text, NetTransport::Udp) => {
+                        crate::tr!("Sends the text as one UDP datagram. Escapes: {escapes}", escapes = crate::model::NET_ESCAPES)
+                    }
+                    (NetFormat::Text, NetTransport::Tcp) => crate::tr!(
+                        "Sends the text over a TCP connection kept open to the destination. Escapes: {escapes}",
+                        escapes = crate::model::NET_ESCAPES
+                    ),
+                };
+                ui.label(RichText::new(help).weak().small());
+                if let Err(e) = n.payload() {
+                    ui.label(RichText::new(e).color(super::theme::RED).small());
+                }
             });
         }
         _ => {}
@@ -1765,6 +1853,47 @@ fn timecode_settings(ui: &mut Ui, tc: &mut crate::model::TimecodeCue, ctx: &Ctx,
 }
 
 /// A MIDI cue: output port and message.
+/// A MIDI File cue: where it plays, how fast, looped or not (the file is on the Basics tab).
+fn midi_file_settings(ui: &mut Ui, m: &mut crate::model::MidiFileCue, ctx: &Ctx, refresh: &mut bool) {
+    use super::icons as ic;
+    use super::theme::{Card, cards};
+    let specs = [Card::new(ic::MUSIC_NOTE, t("MIDI file"), 460.0)];
+    cards(ui, "midifile", &specs, |ui, _| {
+        egui::Grid::new("midifile").num_columns(2).spacing([10.0, 6.0]).show(ui, |ui| {
+            ui.label(t("Output"));
+            ui.horizontal(|ui| {
+                let first = t("First MIDI output");
+                ComboBox::from_id_salt("midifile_port").width(260.0).selected_text(m.port.clone().unwrap_or_else(|| first.into())).show_ui(ui, |ui| {
+                    ui.selectable_value(&mut m.port, None, first);
+                    for p in &ctx.devices.midi_out {
+                        ui.selectable_value(&mut m.port, Some(p.clone()), p);
+                    }
+                    if let Some(p) = m.port.clone().filter(|p| !ctx.devices.midi_out.contains(p)) {
+                        ui.selectable_value(&mut m.port, Some(p.clone()), tr!("{port} (not connected)", port = p));
+                    }
+                });
+                refresh_button(ui, ctx, refresh);
+            });
+            ui.end_row();
+            ui.label(t("Speed"));
+            let mut pct = m.rate * 100.0;
+            if ui.add(DragValue::new(&mut pct).range(crate::limits::RATE.0 * 100.0..=crate::limits::RATE.1 * 100.0).speed(0.5).fixed_decimals(1).suffix(" %")).changed() {
+                m.rate = pct / 100.0;
+            }
+            ui.end_row();
+            ui.label(t("Loop"));
+            ui.checkbox(&mut m.infinite_loop, t("Play until stopped"));
+            ui.end_row();
+        });
+        ui.add_space(4.0);
+        ui.label(
+            RichText::new(t("Notes still sounding are released when the cue pauses or stops. Starting part way in sends each channel's latest program, controllers and pitch bend first."))
+                .weak()
+                .small(),
+        );
+    });
+}
+
 fn midi_settings(ui: &mut Ui, m: &mut crate::model::MidiCue, ctx: &Ctx, refresh: &mut bool) {
     use super::icons as ic;
     use super::theme::{Card, cards};

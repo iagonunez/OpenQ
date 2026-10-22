@@ -10,11 +10,13 @@
 
 use crate::effects::{VIDEO_FX_FLOATS, video_fx_uniform};
 use crate::geometry::{Homography, LayerQuad, layer_quad};
+use crate::media::mask::{MaskImage, MaskState};
 use crate::media::video::{Picture, Pixels, PlaneLayout, StageLayer};
 use crate::model::{BlendMode, CueId, Stage};
 use anyhow::Context;
 use eframe::wgpu;
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
+use std::sync::Arc;
 use std::time::{Duration, Instant};
 
 /// Format of the canvases: gamma-encoded values, blended like egui did (and like most video
@@ -61,6 +63,8 @@ struct Draw {
     generation: u64,
     /// Plane textures with their size and format.
     planes: Vec<(wgpu::Texture, [u32; 2], wgpu::TextureFormat)>,
+    /// The mask texture bound (a key of [`Gpu::masks`]).
+    mask: Option<usize>,
     bind: Option<wgpu::BindGroup>,
     uniform: wgpu::Buffer,
     vertices: wgpu::Buffer,
@@ -81,6 +85,17 @@ pub struct Scene<'a> {
     pub corners: [[f32; 2]; 4],
     /// Screen-space picture drawn on top (mapping pins), premultiplied RGBA at the target size.
     pub overlay: Option<&'a Overlay>,
+    /// The output's mask and whether it is inverted.
+    pub mask: Option<(MaskState, bool)>,
+}
+
+/// A mask on the GPU.
+struct MaskTexture {
+    /// Keeps the picture alive, so its address (the key) isn't reused while this exists.
+    _image: Arc<MaskImage>,
+    _texture: wgpu::Texture,
+    view: wgpu::TextureView,
+    last_used: Instant,
 }
 
 /// A premultiplied RGBA picture the size of the window, drawn over everything.
@@ -100,6 +115,8 @@ pub struct Target {
     view_bind: wgpu::BindGroup,
     warp_uniform: wgpu::Buffer,
     warp_bind: Option<wgpu::BindGroup>,
+    /// The mask in `warp_bind`, and the canvas size it was made for.
+    warp_made: Option<(Option<usize>, [u32; 2])>,
     /// The mapping test pattern: what it was drawn for, and its draw.
     pattern: Option<(String, Draw)>,
     overlay: Option<(u64, [u32; 2], wgpu::Texture, wgpu::BindGroup)>,
@@ -131,6 +148,10 @@ pub struct Gpu {
     /// 1×1 white, bound in place of unused planes.
     dummy: wgpu::TextureView,
     draws: HashMap<(CueId, usize), Draw>,
+    /// Uploaded masks, by their picture's address.
+    masks: HashMap<usize, MaskTexture>,
+    /// Masks that couldn't be read, already reported.
+    mask_errors: HashSet<Arc<str>>,
     /// Pictures too big for this GPU already reported.
     too_big_reported: bool,
 }
@@ -225,7 +246,7 @@ impl Gpu {
         let sampler_entry = |b| layout_entry(b, wgpu::BindingType::Sampler(wgpu::SamplerBindingType::Filtering), false);
         let layer_bgl = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
             label: Some("openq-layer"),
-            entries: &[texture_entry(0), texture_entry(1), texture_entry(2), texture_entry(3), sampler_entry(4), uniform_entry(5, false)],
+            entries: &[texture_entry(0), texture_entry(1), texture_entry(2), texture_entry(3), sampler_entry(4), uniform_entry(5, false), texture_entry(6)],
         });
         let view_bgl = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
             label: Some("openq-view"),
@@ -233,7 +254,7 @@ impl Gpu {
         });
         let warp_bgl = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
             label: Some("openq-warp"),
-            entries: &[texture_entry(0), sampler_entry(1), uniform_entry(2, false)],
+            entries: &[texture_entry(0), sampler_entry(1), uniform_entry(2, false), texture_entry(3)],
         });
         let overlay_bgl = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
             label: Some("openq-overlay"),
@@ -293,6 +314,8 @@ impl Gpu {
             index,
             dummy,
             draws: HashMap::new(),
+            masks: HashMap::new(),
+            mask_errors: HashSet::new(),
             too_big_reported: false,
         })
     }
@@ -313,7 +336,7 @@ impl Gpu {
             layout: &self.view_bgl,
             entries: &[wgpu::BindGroupEntry { binding: 0, resource: view_uniform.as_entire_binding() }],
         });
-        Target { canvas: None, view_uniform, view_bind, warp_uniform: buf("openq-warp", 80), warp_bind: None, pattern: None, overlay: None }
+        Target { canvas: None, view_uniform, view_bind, warp_uniform: buf("openq-warp", 80), warp_bind: None, warp_made: None, pattern: None, overlay: None }
     }
 
     fn layer_pipe(&mut self, mode: BlendMode) -> &wgpu::RenderPipeline {
@@ -395,16 +418,59 @@ impl Gpu {
             usage: wgpu::BufferUsages::VERTEX | wgpu::BufferUsages::COPY_DST,
             mapped_at_creation: false,
         });
-        Draw { generation: u64::MAX, planes: Vec::new(), bind: None, uniform, vertices, last_used: Instant::now() }
+        Draw { generation: u64::MAX, planes: Vec::new(), mask: None, bind: None, uniform, vertices, last_used: Instant::now() }
     }
 
-    /// Make `d`'s plane textures match `want` (size, format), dropping its bind group if they change.
-    fn ensure_planes(&self, d: &mut Draw, want: &[PlaneSpec]) {
+    /// The shader's mask mode for `mask` (see `shader.wgsl`) and its texture (uploaded on first use).
+    fn mask(&mut self, mask: &Option<(MaskState, bool)>) -> (f32, Option<usize>) {
+        let Some((state, invert)) = mask else { return (0.0, None) };
+        let img = match state {
+            MaskState::Loading => return (3.0, None),
+            MaskState::Failed(e) => {
+                if self.mask_errors.insert(e.clone()) {
+                    log::error!("{e}");
+                }
+                return (0.0, None);
+            }
+            MaskState::Ready(img) => img,
+        };
+        let key = Arc::as_ptr(img) as usize;
+        if let Some(m) = self.masks.get_mut(&key) {
+            m.last_used = Instant::now();
+        } else {
+            let size = [img.size[0].max(1), img.size[1].max(1)];
+            let texture = self.device.create_texture(&wgpu::TextureDescriptor {
+                label: Some("openq-mask"),
+                size: wgpu::Extent3d { width: size[0], height: size[1], depth_or_array_layers: 1 },
+                mip_level_count: 1,
+                sample_count: 1,
+                dimension: wgpu::TextureDimension::D2,
+                format: wgpu::TextureFormat::R8Unorm,
+                usage: wgpu::TextureUsages::TEXTURE_BINDING | wgpu::TextureUsages::COPY_DST,
+                view_formats: &[],
+            });
+            write_plane(&self.queue, &texture, &img.data, size[0] as usize, size, 1);
+            let view = texture.create_view(&Default::default());
+            self.masks.insert(key, MaskTexture { _image: img.clone(), _texture: texture, view, last_used: Instant::now() });
+        }
+        (if *invert { 2.0 } else { 1.0 }, Some(key))
+    }
+
+    fn mask_view(&self, key: Option<usize>) -> &wgpu::TextureView {
+        key.and_then(|k| self.masks.get(&k)).map_or(&self.dummy, |m| &m.view)
+    }
+
+    /// Make `d`'s plane textures match `want` (size, format) and bind `mask`, making its bind group
+    /// again if either changes.
+    fn ensure_planes(&self, d: &mut Draw, want: &[PlaneSpec], mask: Option<usize>) {
         let same = d.planes.len() == want.len() && d.planes.iter().zip(want).all(|(p, w)| p.1 == w.0 && p.2 == w.1);
-        if same {
+        if same && d.mask == mask && d.bind.is_some() {
             return;
         }
-        d.planes = want
+        d.mask = mask;
+        if !same {
+            d.generation = u64::MAX;
+            d.planes = want
             .iter()
             .map(|&(size, format)| {
                 let t = self.device.create_texture(&wgpu::TextureDescriptor {
@@ -420,6 +486,7 @@ impl Gpu {
                 (t, size, format)
             })
             .collect();
+        }
         let views: Vec<wgpu::TextureView> = d.planes.iter().map(|p| p.0.create_view(&Default::default())).collect();
         let view = |i: usize| views.get(i).unwrap_or(&self.dummy);
         d.bind = Some(self.device.create_bind_group(&wgpu::BindGroupDescriptor {
@@ -432,6 +499,7 @@ impl Gpu {
                 wgpu::BindGroupEntry { binding: 3, resource: wgpu::BindingResource::TextureView(view(3)) },
                 wgpu::BindGroupEntry { binding: 4, resource: wgpu::BindingResource::Sampler(&self.sampler) },
                 wgpu::BindGroupEntry { binding: 5, resource: d.uniform.as_entire_binding() },
+                wgpu::BindGroupEntry { binding: 6, resource: wgpu::BindingResource::TextureView(self.mask_view(mask)) },
             ],
         }));
     }
@@ -450,6 +518,7 @@ impl Gpu {
             }
             return Vec::new();
         }
+        let (mask_mode, mask) = self.mask(&l.mask);
         let q = layer_quad(canvas, f.stage_size(), l.fit, &l.geometry);
         let mesh = bytes(&grid(&q));
         let fx = video_fx_uniform(&l.effects).unwrap_or(NO_FX);
@@ -482,7 +551,7 @@ impl Gpu {
                 };
                 let key = (l.id, 0);
                 let mut d = self.draws.remove(&key).unwrap_or_else(|| self.new_draw());
-                self.ensure_planes(&mut d, &want);
+                self.ensure_planes(&mut d, &want, mask);
                 if d.generation != f.generation {
                     d.generation = f.generation;
                     match &f.pixels {
@@ -499,7 +568,7 @@ impl Gpu {
                 let mut u = Vec::with_capacity(LAYER_FLOATS);
                 u.extend(color([1.0; 4]));
                 let alpha = matches!(&f.pixels, Pixels::Picture(Picture { layout: PlaneLayout::Planar { alpha: true }, .. }));
-                u.extend([kind, if alpha { 1.0 } else { 0.0 }, if f.mirror { 1.0 } else { 0.0 }, 0.0]);
+                u.extend([kind, if alpha { 1.0 } else { 0.0 }, if f.mirror { 1.0 } else { 0.0 }, mask_mode]);
                 u.extend(matrix.iter().flatten());
                 u.extend(fx);
                 self.queue.write_buffer(&d.uniform, 0, &bytes(&u));
@@ -524,14 +593,14 @@ impl Gpu {
                     }
                     let key = (l.id, k);
                     let mut d = self.draws.remove(&key).unwrap_or_else(|| self.new_draw());
-                    self.ensure_planes(&mut d, &[(size, format)]);
+                    self.ensure_planes(&mut d, &[(size, format)], mask);
                     if d.generation != f.generation {
                         d.generation = f.generation;
                         write_plane(&self.queue, &d.planes[0].0, data, size[0] as usize * bpp, size, bpp);
                     }
                     let mut u = Vec::with_capacity(LAYER_FLOATS);
                     u.extend(color(c));
-                    u.extend([kind, 0.0, 0.0, 0.0]);
+                    u.extend([kind, 0.0, 0.0, mask_mode]);
                     u.extend([0.0; 12]);
                     u.extend(fx);
                     self.queue.write_buffer(&d.uniform, 0, &bytes(&u));
@@ -549,6 +618,7 @@ impl Gpu {
     pub fn collect_garbage(&mut self) {
         let now = Instant::now();
         self.draws.retain(|_, d| now.duration_since(d.last_used) < DRAW_TTL);
+        self.masks.retain(|_, m| now.duration_since(m.last_used) < DRAW_TTL);
     }
 
     /// The mapping test pattern of `stage`, rasterised at its canvas size (once per look).
@@ -565,7 +635,7 @@ impl Gpu {
             }
         };
         let mut d = self.new_draw();
-        self.ensure_planes(&mut d, &[(size, wgpu::TextureFormat::Rgba8Unorm)]);
+        self.ensure_planes(&mut d, &[(size, wgpu::TextureFormat::Rgba8Unorm)], None);
         write_plane(&self.queue, &d.planes[0].0, &rgba, size[0] as usize * 4, size, 4);
         let mut u = vec![1.0, 1.0, 1.0, 1.0, 0.0, 0.0, 0.0, 0.0];
         u.extend([0.0; 12]);
@@ -593,22 +663,28 @@ impl Gpu {
                 view_formats: &[],
             });
             let view = tex.create_view(&Default::default());
+            t.canvas = Some((tex, view, size));
+        }
+        let (mask_mode, mask) = self.mask(&scene.mask);
+        if t.warp_made != Some((mask, size)) {
+            let canvas = &t.canvas.as_ref().expect("canvas").1;
             t.warp_bind = Some(self.device.create_bind_group(&wgpu::BindGroupDescriptor {
                 label: Some("openq-warp"),
                 layout: &self.warp_bgl,
                 entries: &[
-                    wgpu::BindGroupEntry { binding: 0, resource: wgpu::BindingResource::TextureView(&view) },
+                    wgpu::BindGroupEntry { binding: 0, resource: wgpu::BindingResource::TextureView(canvas) },
                     wgpu::BindGroupEntry { binding: 1, resource: wgpu::BindingResource::Sampler(&self.sampler) },
                     wgpu::BindGroupEntry { binding: 2, resource: t.warp_uniform.as_entire_binding() },
+                    wgpu::BindGroupEntry { binding: 3, resource: wgpu::BindingResource::TextureView(self.mask_view(mask)) },
                 ],
             }));
-            t.canvas = Some((tex, view, size));
+            t.warp_made = Some((mask, size));
         }
         self.queue.write_buffer(&t.view_uniform, 0, &bytes(&crop));
         let inv = Homography::square_to_quad(scene.corners).inverse().unwrap_or([[0.0; 3]; 3]);
         let mut warp: Vec<f32> = inv.iter().flat_map(|r| [r[0], r[1], r[2], 0.0]).collect();
         warp.extend(scene.stage.blend.map(|w| w.clamp(0.0, 1.0)));
-        warp.extend([scene.stage.blend_gamma, 0.0, 0.0, 0.0]);
+        warp.extend([scene.stage.blend_gamma, mask_mode, scene.stage.black_lift.clamp(0.0, 0.25), 0.0]);
         self.queue.write_buffer(&t.warp_uniform, 0, &bytes(&warp));
 
         if scene.mapping {
@@ -827,6 +903,7 @@ mod tests {
             text_colors: [[1.0; 4]; 4],
             animated: false,
             effects: Vec::new(),
+            mask: None,
         };
         let green = FrameSlot::default();
         *green.lock() = Frame {
@@ -838,7 +915,7 @@ mod tests {
         };
         let layers = [layer(green)];
         let mut t = gpu.target();
-        let scene = Scene { stage: &stage, source: &stage, layers: &layers, mapping: false, corners: Stage::IDENTITY, overlay: None };
+        let scene = Scene { stage: &stage, source: &stage, layers: &layers, mapping: false, corners: Stage::IDENTITY, overlay: None, mask: None };
         let img = gpu.render_to_image(&mut t, &scene, [64, 32]).unwrap();
         assert_eq!(img.get_pixel(32, 16).0, [0, 255, 0, 255]);
         // Pinned into the left half: the right half is black.
@@ -865,10 +942,72 @@ mod tests {
             let slot = FrameSlot::default();
             *slot.lock() = Frame { width: 8, height: 8, pixels: Pixels::Picture(Picture::of(&f).unwrap()), generation: 1, ..Default::default() };
             let layers = [layer(slot)];
-            let scene = Scene { stage: &stage, source: &stage, layers: &layers, mapping: false, corners: Stage::IDENTITY, overlay: None };
+            let scene = Scene { stage: &stage, source: &stage, layers: &layers, mapping: false, corners: Stage::IDENTITY, overlay: None, mask: None };
             let px = gpu.render_to_image(&mut t, &scene, [64, 32]).unwrap().get_pixel(32, 16).0;
             assert!(px[0] > 245 && px[1] < 10 && px[2] < 10, "{fmt:?}: {px:?}");
         }
+    }
+
+    /// A layer's mask hides where it is black; an output's inverted mask hides where it is white;
+    /// a mask still loading hides the layer.
+    #[test]
+    fn masks_hide_parts_of_layers_and_outputs() {
+        use crate::media::video::{Frame, FrameSlot};
+        let instance = wgpu::Instance::new(wgpu::InstanceDescriptor::new_without_display_handle_from_env());
+        let Ok(mut gpu) = Gpu::new(&instance, None) else {
+            eprintln!("no GPU: skipped");
+            return;
+        };
+        let stage = Stage { width: 64, height: 32, ..Stage::new("T") };
+        let green = FrameSlot::default();
+        *green.lock() = Frame { width: 4, height: 4, pixels: Pixels::Rgba { data: [0, 255, 0, 255].repeat(16), premultiplied: true }, generation: 1, ..Default::default() };
+        // Left half white, right half black.
+        let half = MaskState::Ready(Arc::new(MaskImage { size: [2, 1], data: vec![255, 0] }));
+        let layer = |mask| StageLayer {
+            id: CueId::new_v4(),
+            stage: None,
+            frame: green.clone(),
+            opacity: 1.0,
+            geometry: Default::default(),
+            layer: 0,
+            blend_mode: BlendMode::Normal,
+            fit: crate::model::VideoFit::Stretch,
+            order: 0,
+            tint: [1.0; 4],
+            text_colors: [[1.0; 4]; 4],
+            animated: false,
+            effects: Vec::new(),
+            mask,
+        };
+        let mut t = gpu.target();
+        let mut draw = |layers: &[StageLayer], mask| {
+            let scene = Scene { stage: &stage, source: &stage, layers, mapping: false, corners: Stage::IDENTITY, overlay: None, mask };
+            let img = gpu.render_to_image(&mut t, &scene, [64, 32]).unwrap();
+            (img.get_pixel(8, 16).0, img.get_pixel(56, 16).0)
+        };
+        let (on, off) = ([0, 255, 0, 255], [0, 0, 0, 255]);
+        assert_eq!(draw(&[layer(Some((half.clone(), false)))], None), (on, off));
+        assert_eq!(draw(&[layer(Some((half.clone(), true)))], None), (off, on));
+        assert_eq!(draw(&[layer(None)], Some((half.clone(), true))), (off, on), "output mask, inverted");
+        assert_eq!(draw(&[layer(Some((MaskState::Loading, false)))], None), (off, off), "hidden while loading");
+        assert_eq!(draw(&[layer(Some((MaskState::Failed("gone".into()), false)))], None), (on, on), "a broken mask hides nothing");
+    }
+
+    /// Black is lifted outside the blend zones only.
+    #[test]
+    fn black_lift_spares_the_blend_zones() {
+        let instance = wgpu::Instance::new(wgpu::InstanceDescriptor::new_without_display_handle_from_env());
+        let Ok(mut gpu) = Gpu::new(&instance, None) else {
+            eprintln!("no GPU: skipped");
+            return;
+        };
+        let stage = Stage { width: 64, height: 32, blend: [0.25, 0.0, 0.0, 0.0], black_lift: 0.1, ..Stage::new("T") };
+        let mut t = gpu.target();
+        let scene = Scene { stage: &stage, source: &stage, layers: &[], mapping: false, corners: Stage::IDENTITY, overlay: None, mask: None };
+        let img = gpu.render_to_image(&mut t, &scene, [64, 32]).unwrap();
+        assert_eq!(img.get_pixel(4, 16).0, [0, 0, 0, 255], "in the blend zone");
+        let lifted = img.get_pixel(48, 16).0;
+        assert!((24..=28).contains(&lifted[0]) && lifted[0] == lifted[2], "{lifted:?}");
     }
 
     #[test]

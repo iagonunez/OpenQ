@@ -36,6 +36,7 @@ const FILES: &[(&str, &[u8])] = &[
     ("manual.js", include_bytes!("../../docs/manual/manual.js")),
     ("img/animation.webp", include_bytes!("../../docs/manual/img/animation.webp")),
     ("img/animation-stage.webp", include_bytes!("../../docs/manual/img/animation-stage.webp")),
+    ("img/cart.webp", include_bytes!("../../docs/manual/img/cart.webp")),
     ("img/audio-fx.webp", include_bytes!("../../docs/manual/img/audio-fx.webp")),
     ("img/object-audio.webp", include_bytes!("../../docs/manual/img/object-audio.webp")),
     ("img/room.webp", include_bytes!("../../docs/manual/img/room.webp")),
@@ -69,6 +70,7 @@ const FILES: &[(&str, &[u8])] = &[
     // Icons in the manual use the app's own Material Symbols subset.
     ("fonts/MaterialSymbolsRounded.ttf", include_bytes!("../../assets/fonts/MaterialSymbolsRounded.ttf")),
     ("img/es/animation-stage.webp", include_bytes!("../../docs/manual/img/es/animation-stage.webp")),
+    ("img/es/cart.webp", include_bytes!("../../docs/manual/img/es/cart.webp")),
     ("img/es/animation.webp", include_bytes!("../../docs/manual/img/es/animation.webp")),
     ("img/es/audio-fx.webp", include_bytes!("../../docs/manual/img/es/audio-fx.webp")),
     ("img/es/edit-mode.webp", include_bytes!("../../docs/manual/img/es/edit-mode.webp")),
@@ -101,6 +103,7 @@ const FILES: &[(&str, &[u8])] = &[
     ("img/es/video-fx.webp", include_bytes!("../../docs/manual/img/es/video-fx.webp")),
     ("img/es/waveform.webp", include_bytes!("../../docs/manual/img/es/waveform.webp")),
     ("img/gl/animation-stage.webp", include_bytes!("../../docs/manual/img/gl/animation-stage.webp")),
+    ("img/gl/cart.webp", include_bytes!("../../docs/manual/img/gl/cart.webp")),
     ("img/gl/animation.webp", include_bytes!("../../docs/manual/img/gl/animation.webp")),
     ("img/gl/audio-fx.webp", include_bytes!("../../docs/manual/img/gl/audio-fx.webp")),
     ("img/gl/edit-mode.webp", include_bytes!("../../docs/manual/img/gl/edit-mode.webp")),

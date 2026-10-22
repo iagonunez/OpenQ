@@ -940,6 +940,13 @@ fn remote(m: &mut Vec<Metric>, quick: bool) {
     push(m, "remote.lock_take_edit", us(t), "us", &format!("take one edited cue for a replica/autosave copy, {cues} cues (under the lock)"));
     let t = take(&mut show, &|s| s.edited(), 5);
     push(m, "remote.lock_take_unknown", ms(t), "ms", &format!("same after an edit that doesn't say which cues (whole copy), {cues} cues"));
+    let t = take(&mut show, &|s| {
+        let c = crate::model::Cue::new(CueKind::Memo);
+        let added = c.id;
+        s.ws.cue_list.cues.insert(n / 3, c);
+        s.edited_shape([added]);
+    }, 10);
+    push(m, "remote.lock_take_add", ms(t), "ms", &format!("same after adding a cue (the lists' shape and the new cue), {cues} cues"));
     let mut patch = show.ws.cue_list.find(id).expect("cue").shallow_clone();
     let t = per_call(20, || {
         patch.post_wait += 0.001;

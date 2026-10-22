@@ -6,6 +6,8 @@
 // and output a premultiplied colour for the pipeline's blend mode, in gamma-encoded values.
 // `fs_warp` then draws the canvas onto the window through the inverse corner-pin homography, with
 // soft-edge blend zones and black outside the canvas; `fs_overlay` adds the mapping pins.
+// Masks (one byte per pixel, luminance × alpha) multiply a layer (stretched over it) or an
+// output's canvas; mask modes: 0 none, 1 mask, 2 inverted mask, 3 hidden (mask still loading).
 
 struct Fx {
     // pixel size, blur radius, sharpen amount, sharpen radius (source pixels)
@@ -20,7 +22,7 @@ struct Layer {
     // Straight RGBA multiplier: tint × plane colour, alpha × opacity.
     color: vec4<f32>,
     // x: 0 premultiplied RGBA, 1 straight RGBA, 2 planar YUV, 3 NV12, 4 coverage mask;
-    // y: planar YUV has an alpha plane; z: mirrored.
+    // y: planar YUV has an alpha plane; z: mirrored; w: mask mode.
     kind: vec4<f32>,
     // YUV → RGB rows: rgb[i] = dot(m[i].xyz, yuv) + m[i].w
     m0: vec4<f32>,
@@ -35,6 +37,22 @@ struct Layer {
 @group(0) @binding(3) var t3: texture_2d<f32>;
 @group(0) @binding(4) var samp: sampler;
 @group(0) @binding(5) var<uniform> layer: Layer;
+@group(0) @binding(6) var tmask: texture_2d<f32>;
+
+// How much a mask lets through: its value `v` in `mode` (see the top).
+fn mask_gain(v: f32, mode: f32) -> f32 {
+    let m = i32(mode + 0.5);
+    if (m == 1) {
+        return v;
+    }
+    if (m == 2) {
+        return 1.0 - v;
+    }
+    if (m == 3) {
+        return 0.0;
+    }
+    return 1.0;
+}
 
 struct View {
     // The part of the source stage this output shows: x0, y0, x1, y1 (0..1).
@@ -210,7 +228,8 @@ fn colour_fx(cin: vec4<f32>, uv: vec2<f32>) -> vec4<f32> {
 // (Multiply, Darken), so a transparent pixel leaves the canvas unchanged either way.
 fn over_black(uv: vec2<f32>) -> vec4<f32> {
     let tint = vec4<f32>(layer.color.rgb * layer.color.a, layer.color.a);
-    return colour_fx(tint * sample_fx(uv), uv);
+    let m = mask_gain(textureSampleLevel(tmask, samp, uv, 0.0).r, layer.kind.w);
+    return colour_fx(tint * sample_fx(uv), uv) * m;
 }
 
 @fragment
@@ -233,13 +252,14 @@ struct Warp {
     r2: vec4<f32>,
     // Soft-edge blend widths: left, top, right, bottom (fractions of the canvas).
     blend: vec4<f32>,
-    // x: blend gamma.
+    // x: blend gamma, y: mask mode, z: black level lift outside the blend zones.
     misc: vec4<f32>,
 };
 
 @group(0) @binding(0) var canvas: texture_2d<f32>;
 @group(0) @binding(1) var csamp: sampler;
 @group(0) @binding(2) var<uniform> warp: Warp;
+@group(0) @binding(3) var wmask: texture_2d<f32>;
 
 struct FOut {
     @builtin(position) pos: vec4<f32>,
@@ -287,7 +307,13 @@ fn warped(uv: vec2<f32>) -> vec3<f32> {
         return vec3<f32>(0.0);
     }
     let g = edge(c.x, warp.blend.x) * edge(c.y, warp.blend.y) * edge(1.0 - c.x, warp.blend.z) * edge(1.0 - c.y, warp.blend.w);
-    return textureSampleLevel(canvas, csamp, c, 0.0).rgb * g;
+    let m = mask_gain(textureSampleLevel(wmask, csamp, c, 0.0).r, warp.misc.y);
+    // Outside every blend zone: raise black to the overlap's (two projectors' black adds up there).
+    let b = warp.blend;
+    let inside = c.x < b.x || c.y < b.y || 1.0 - c.x < b.z || 1.0 - c.y < b.w;
+    let lift = select(warp.misc.z, 0.0, inside);
+    let rgb = textureSampleLevel(canvas, csamp, c, 0.0).rgb * g;
+    return (rgb + vec3<f32>(lift) * (1.0 - rgb)) * m;
 }
 
 fn linear(c: vec3<f32>) -> vec3<f32> {

@@ -26,6 +26,7 @@
       <li class="s2"><a href="#window">La ventana principal</a></li>
       <li class="s3"><a href="#working-with-the-cue-list">Trabajar con la lista de cues</a></li>
       <li class="s3"><a href="#cue-lists">Listas de cues</a></li>
+      <li class="s3"><a href="#cart-lists">Listas cart</a></li>
       <li class="s2"><a href="#modes">Modo edición y modo función</a></li>
       <li class="s3"><a href="#stopping">Parar</a></li>
       <li class="s2"><a href="#settings">Ajustes</a></li>
@@ -193,6 +194,24 @@ cargo run --release -- show.openq    # abrir un espectáculo guardado</code></pr
     <li>Las cues siguen sonando al cambiar de lista, y las cues Iniciar, Parar, Fade y otras pueden apuntar a cues de cualquier lista.
     En el menú de destino, las cues de otras listas muestran el nombre de su lista.</li>
     <li>Los números de cue son comunes a todas las listas, así que OSC y los atajos llegan a cues de cualquier lista.</li>
+  </ul>
+  <h3 id="cart-lists">Listas cart</h3>
+  <p>Una lista de cues puede ser un <strong>cart</strong>: una cuadrícula de botones que disparan cada uno su propia cue,
+  para efectos de sonido a demanda, ráfagas o cues de reserva. Haz clic derecho en la pestaña de la lista y marca
+  <em>Cart: una cuadrícula de botones</em>; debajo se fija cuántos botones hay a lo ancho y a lo alto (aparecen más filas si
+  hay más cues). Un cart no tiene cabezal: GO no hace nada en él.</p>
+  <figure>
+    <img src="img/es/cart.webp" width="1100" height="754" alt="Una lista cart en modo función: una cuadrícula de botones de efectos de sonido con su número, nombre, duración y atajo.">
+    <figcaption>Una lista cart en modo función.</figcaption>
+  </figure>
+  <ul>
+    <li><strong>Modo función:</strong> haz clic en un botón para disparar su cue; una cue que ya está en marcha hace lo que
+    diga su ajuste de <em>segundo disparo</em> (reiniciar, por defecto). Clic derecho en un botón para parar su cue. Un botón
+    en marcha se llena con su progreso y muestra el tiempo que queda.</li>
+    <li><strong>Modo edición:</strong> clic en un botón para seleccionarlo (el inspector lo edita), doble clic para
+    dispararlo, y arrástralo a otra celda para moverlo allí (se intercambia con el botón que haya). Las cues nuevas ocupan la
+    primera celda libre.</li>
+    <li>Los atajos y los disparadores MIDI y de timecode disparan las cues de un cart como cualquier otra.</li>
   </ul>
 </section>
 

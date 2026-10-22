@@ -79,7 +79,7 @@ pub const EQ_FREQ: (f32, f32) = (20.0, 20_000.0);
 pub const EQ_Q: (f32, f32) = (0.1, 18.0);
 /// Loudness target for levelling cues, LUFS.
 pub const LOUDNESS_TARGET: (f64, f64) = (-60.0, 0.0);
-/// Playback rate (varispeed).
+/// Playback rate (varispeed; MIDI File cue speed).
 pub const RATE: (f32, f32) = (0.25, 4.0);
 /// Farthest a fixture, a focus point, a plot shape or a label sits from the plot's origin, metres.
 pub const MAX_DISTANCE: f32 = 200.0;
@@ -208,6 +208,16 @@ pub fn workspace(ws: &mut Workspace) {
             cue(c);
         }
     }
+    let infos = std::iter::once(&mut ws.cue_list.info).chain(ws.cue_list.others.iter_mut().map(|o| &mut o.info));
+    for cart in infos.filter_map(|i| i.cart.as_mut()) {
+        use crate::model::{MAX_CART_CELL, MAX_CART_SIDE};
+        cart.columns = cart.columns.clamp(1, MAX_CART_SIDE);
+        cart.rows = cart.rows.clamp(1, MAX_CART_SIDE);
+        cart.cells.retain(|_, c| *c <= MAX_CART_CELL);
+        if cart.cells.len() > MAX_CUES {
+            cart.cells.clear(); // more than there can be cues: forget the places, keep the buttons
+        }
+    }
     let s = &mut ws.settings;
     fade(&mut s.panic_fade);
     db(&mut s.master_volume_db);
@@ -242,6 +252,7 @@ pub fn stage(st: &mut Stage) {
         unit(v);
     }
     f32_in(&mut st.blend_gamma, 1.0, 3.0);
+    f32_in(&mut st.black_lift, 0.0, 0.25);
 }
 
 /// Bring a cue (and the cues of a group) into range.
@@ -366,6 +377,13 @@ pub fn cue(c: &mut Cue) {
                 m.sysex = m.sysex.chars().take(4 * crate::model::MAX_SYSEX).collect();
             }
         }
+        CueKind::Network(n) => {
+            // Escapes take up to 4 characters a byte.
+            if n.text.len() > 4 * crate::model::MAX_NET_TEXT {
+                n.text = n.text.chars().take(4 * crate::model::MAX_NET_TEXT).collect();
+            }
+        }
+        CueKind::MidiFile(m) => f32_in(&mut m.rate, RATE.0, RATE.1),
         CueKind::Timecode(tc) => {
             time(&mut tc.start);
             time(&mut tc.duration);
@@ -395,6 +413,7 @@ pub fn cue(c: &mut Cue) {
             unit(&mut c.opacity);
             c.layer = c.layer.clamp(-MAX_LAYER, MAX_LAYER);
             geometry(&mut c.geometry);
+            animation(&mut c.animation);
             time(&mut c.duration);
             video_fx(&mut c.video_fx);
         }

@@ -3,6 +3,8 @@
 pub mod audio;
 pub mod decoder;
 pub mod input;
+pub mod mask;
+pub mod midifile;
 pub mod midiout;
 pub mod netsend;
 pub mod pool;
@@ -126,6 +128,11 @@ pub fn is_audio_path(p: &Path) -> bool {
         p.extension().and_then(|e| e.to_str()).map(|e| e.to_ascii_lowercase()).as_deref(),
         Some("wav" | "wave" | "aif" | "aiff" | "flac" | "mp3" | "ogg" | "oga" | "opus" | "m4a" | "aac" | "caf" | "alac")
     )
+}
+
+/// Extension looks like a Standard MIDI File.
+pub fn is_midi_path(p: &Path) -> bool {
+    matches!(p.extension().and_then(|e| e.to_str()).map(|e| e.to_ascii_lowercase()).as_deref(), Some("mid" | "midi" | "smf" | "kar"))
 }
 
 /// Extension looks like a still image.
@@ -391,6 +398,15 @@ fn probe_now(path: &Path) -> Result<MediaInfo, String> {
     if is_audio_path(path) {
         return audio();
     }
+    if is_midi_path(path) {
+        let song = midifile::load(path)?;
+        return Ok(MediaInfo {
+            duration: Some(song.duration),
+            detail: format!("MIDI, {} track{}, {} messages", song.tracks, if song.tracks == 1 { "" } else { "s" }, song.events.len()).into(),
+            channels: 0,
+            still: false,
+        });
+    }
     if is_image_path(path) {
         let (w, h) = still::dimensions(path).map_err(|e| format!("{e:#}"))?;
         let kind = if still::is_svg(path) { "SVG" } else { "still" };
@@ -542,6 +558,8 @@ pub fn effective_duration(cue: &Cue, file_duration: Option<f64>) -> Option<f64> 
             let end = v.end_time.map_or(file, |e| e.min(file));
             Some((end - v.start_time).max(0.0) * v.play_count.max(1) as f64)
         }
+        CueKind::MidiFile(m) if m.infinite_loop => None,
+        CueKind::MidiFile(m) => Some(file_duration? / m.rate.clamp(crate::limits::RATE.0, crate::limits::RATE.1) as f64),
         CueKind::Text(t) => (t.duration > 0.0).then_some(t.duration),
         CueKind::Mic(m) => (m.duration > 0.0).then_some(m.duration),
         CueKind::Camera(c) => (c.duration > 0.0).then_some(c.duration),
@@ -568,6 +586,8 @@ pub struct Media {
     midi_out: Option<midiout::MidiOut>,
     /// Generators of running Timecode cues.
     timecode_out: HashMap<CueId, tcgen::TcGen>,
+    /// Players of running MIDI File cues.
+    midi_files: HashMap<CueId, midifile::Player>,
     /// The audio patches' outputs (Settings → Audio), in order: patch n is `patches[n - 1]`.
     patches: Vec<PatchOut>,
     /// Master level, for the patches' outputs too.
@@ -811,6 +831,7 @@ impl Media {
             net: None,
             midi_out: None,
             timecode_out: HashMap::new(),
+            midi_files: HashMap::new(),
             patches: Vec::new(),
             master_db: 0.0,
             mics: HashMap::new(),
@@ -927,6 +948,27 @@ impl Media {
         Ok(())
     }
 
+    /// Start a MIDI File cue `skip` seconds of file time in (its thread reads the file and opens
+    /// the port).
+    fn start_midi_file(&mut self, id: CueId, m: &crate::model::MidiFileCue, at: Instant, skip: f64) -> Result<(), String> {
+        self.midi_files.remove(&id);
+        if m.path.as_os_str().is_empty() {
+            return Err("no MIDI file".into());
+        }
+        if !self.prober.exists(&m.path) {
+            return Err(format!("file not found: {}", m.path.display()));
+        }
+        let params = midifile::PlayParams {
+            path: m.path.clone(),
+            port: m.port.clone(),
+            rate: m.rate as f64,
+            looped: m.infinite_loop,
+            offset: skip.max(0.0),
+        };
+        self.midi_files.insert(id, midifile::Player::start(params, at));
+        Ok(())
+    }
+
     /// Start an audio cue `skip` seconds of file time in.
     fn start_audio(&mut self, id: CueId, p: &crate::model::AudioCue, at: Instant, skip: f64) -> Result<(), String> {
         if p.path.as_os_str().is_empty() {
@@ -1031,6 +1073,7 @@ impl Media {
         }
         self.mics.clear();
         self.timecode_out.clear();
+        self.midi_files.clear();
         #[cfg(feature = "video")]
         if let Some(v) = &mut self.video {
             v.stop_all();
@@ -1296,6 +1339,8 @@ impl Backend for Media {
         match &cue.kind {
             CueKind::Audio(p) => self.start_audio(cue.id, p, at, offset * p.rate.clamp(0.05, 8.0) as f64),
             CueKind::Timecode(t) => self.start_timecode(cue.id, t, at, offset),
+            CueKind::MidiFile(m) if m.infinite_loop && offset > 0.0 => Err("a looping MIDI file can't start part way through".into()),
+            CueKind::MidiFile(m) => self.start_midi_file(cue.id, m, at, offset * m.rate.clamp(crate::limits::RATE.0, crate::limits::RATE.1) as f64),
             CueKind::Video(v) if offset > 0.0 && !is_image_path(&v.path) => {
                 if v.infinite_loop || v.play_count > 1 {
                     return Err("a looping movie can't start part way through".into());
@@ -1333,6 +1378,7 @@ impl Backend for Media {
             }
             CueKind::Mic(m) => self.start_mic(cue.id, m, at),
             CueKind::Timecode(t) => self.start_timecode(cue.id, t, at, 0.0),
+            CueKind::MidiFile(m) => self.start_midi_file(cue.id, m, at, 0.0),
             #[cfg(feature = "video")]
             CueKind::Camera(c) => match &mut self.video {
                 Some(v) => {
@@ -1358,6 +1404,7 @@ impl Backend for Media {
     fn stop(&mut self, id: CueId) {
         self.pending_audio.remove(&id);
         self.timecode_out.remove(&id);
+        self.midi_files.remove(&id);
         for a in self.outputs() {
             a.stop(id);
         }
@@ -1371,6 +1418,9 @@ impl Backend for Media {
     fn pause(&mut self, id: CueId) {
         if let Some(g) = self.timecode_out.get(&id) {
             g.pause();
+        }
+        if let Some(p) = self.midi_files.get(&id) {
+            p.pause();
         }
         if let Some(p) = self.pending_audio.get_mut(&id) {
             p.paused = true;
@@ -1387,6 +1437,9 @@ impl Backend for Media {
     fn resume(&mut self, id: CueId, at: Instant) {
         if let Some(g) = self.timecode_out.get(&id) {
             g.resume(at);
+        }
+        if let Some(p) = self.midi_files.get(&id) {
+            p.resume(at);
         }
         if let Some(p) = self.pending_audio.get_mut(&id) {
             p.paused = false;
@@ -1439,12 +1492,11 @@ impl Backend for Media {
         if !crate::overrides::allowed(crate::overrides::Override::NetworkOut) {
             return Ok(());
         }
-        let msg = rosc::OscPacket::Message(rosc::OscMessage { addr: n.address.clone(), args: parse_osc_args(&n.args) });
-        let bytes = rosc::encoder::encode(&msg).map_err(|e| e.to_string())?;
+        let bytes = n.payload()?;
         if self.net.is_none() {
             self.net = Some(netsend::NetSender::new().map_err(|e| e.to_string())?);
         }
-        self.net.as_ref().expect("just set").send(&n.host, n.port, bytes)
+        self.net.as_ref().expect("just set").send(&n.host, n.port, n.transport, bytes)
     }
 
     /// Queues the message for the [`midiout::MidiOut`] worker (opening a port can take a while).
@@ -1467,6 +1519,9 @@ impl Backend for Media {
             // An LTC voice never ends by itself; MTC ends only when its port failed.
             return g.ended();
         }
+        if let Some(p) = self.midi_files.get(&id) {
+            return p.ended();
+        }
         let audio_done = self.outputs_ref().all(|a| a.is_finished(id));
         #[cfg(feature = "video")]
         let video_done = self.video.as_ref().is_none_or(|v| v.is_finished(id));
@@ -1484,6 +1539,7 @@ impl Backend for Media {
             CueKind::Mic(m) => return (m.duration > 0.0).then_some(m.duration),
             CueKind::Camera(c) => return (c.duration > 0.0).then_some(c.duration),
             CueKind::Timecode(t) => return (t.duration > 0.0).then_some(t.duration),
+            CueKind::MidiFile(m) => self.prober.get(&m.path)?.ok()?.duration,
             CueKind::Video(v) => self.prober.get(&v.path)?.ok()?.duration,
             _ => return None,
         };
@@ -1519,6 +1575,9 @@ impl Backend for Media {
         out.extend(self.midi_out.as_ref().map(|n| n.drain_errors()).unwrap_or_default());
         for g in self.timecode_out.values() {
             out.extend(g.drain_errors());
+        }
+        for p in self.midi_files.values() {
+            out.extend(p.drain_errors());
         }
         #[cfg(feature = "video")]
         if let Some(v) = &mut self.video {

@@ -5,7 +5,7 @@ use crate::effects::{AudioEffect, VideoEffect};
 use crate::spatial::{AudioObject, ObjectAudio, Speaker};
 use serde::{Deserialize, Serialize};
 use std::path::{Path, PathBuf};
-use std::collections::HashMap;
+use std::collections::{BTreeMap, HashMap};
 use uuid::Uuid;
 
 /// Unique id of a cue (stable across saves).
@@ -616,8 +616,26 @@ pub struct Stage {
     pub blend: [f32; 4],
     /// Projector gamma used to shape the blend so overlapping light adds up evenly.
     pub blend_gamma: f32,
+    /// Black level lift outside the blend zones (0..0.25): projectors never reach true black, so
+    /// where two overlap the "black" is brighter; lifting the rest evens it out.
+    pub black_lift: f32,
     /// System display (by name) the stage goes fullscreen on; `None` = an ordinary window.
     pub output: Option<String>,
+    /// Hides parts of this output (set pieces the projector must not light), over its whole
+    /// picture.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub mask: Option<Mask>,
+}
+
+/// A picture that hides parts of a layer or an output: white shows, black or transparent hides,
+/// greys show partly (luminance × alpha).
+#[derive(Serialize, Deserialize, Clone, PartialEq, Debug, Default)]
+#[serde(default)]
+pub struct Mask {
+    /// The picture (stretched over the layer, or the output).
+    pub path: PathBuf,
+    /// Black shows and white hides.
+    pub invert: bool,
 }
 
 impl Stage {
@@ -641,7 +659,9 @@ impl Stage {
             crop: Self::FULL_CROP,
             blend: [0.0; 4],
             blend_gamma: 2.2,
+            black_lift: 0.0,
             output: None,
+            mask: None,
         }
     }
 }
@@ -650,6 +670,39 @@ impl Default for Stage {
     fn default() -> Self {
         Self::new("Main")
     }
+}
+
+/// Split stage `surface` across `n` outputs overlapping by `overlap` of an output's width (see
+/// [`crate::geometry::split`]): the stages already showing parts of it are reused in their order on
+/// it, missing ones are added (named after the surface, sized to their part) up to `max` stages in
+/// all. Returns how many outputs it has, or why nothing changed.
+pub fn split_surface(stages: &mut Vec<Stage>, surface: StageId, n: usize, overlap: f32, down: bool, max: usize) -> Result<usize, String> {
+    let Some(src) = stages.iter().find(|s| s.id == surface).cloned() else { return Err("no such stage".into()) };
+    let mut parts: Vec<usize> = stages.iter().enumerate().filter(|(_, s)| s.span_of == Some(surface)).map(|(i, _)| i).collect();
+    parts.sort_by(|a, b| {
+        let key = |s: &Stage| if down { s.crop[1] } else { s.crop[0] };
+        key(&stages[*a]).total_cmp(&key(&stages[*b]))
+    });
+    let missing = n.saturating_sub(parts.len());
+    if stages.len() + missing > max {
+        return Err(crate::tr!("A show holds at most {max} stages", max = max.to_string()));
+    }
+    for (k, (crop, blend)) in crate::geometry::split(n, overlap, down).into_iter().enumerate() {
+        let i = match parts.get(k) {
+            Some(&i) => i,
+            None => {
+                let mut st = Stage::new(&format!("{} {}", src.name, k + 1));
+                st.span_of = Some(surface);
+                st.width = ((crop[2] - crop[0]) * src.width as f32).round().max(16.0) as u32;
+                st.height = ((crop[3] - crop[1]) * src.height as f32).round().max(16.0) as u32;
+                stages.push(st);
+                stages.len() - 1
+            }
+        };
+        stages[i].crop = crop;
+        stages[i].blend = blend;
+    }
+    Ok(n)
 }
 
 /// A slice marker: the slice *ending* at `time` plays `plays` times (0 = until devamped).
@@ -864,6 +917,9 @@ pub struct VideoCue {
     /// Video effects on the picture, in order (blur, pixellate and sharpen act first).
     #[serde(skip_serializing_if = "Vec::is_empty")]
     pub video_fx: Vec<VideoEffect>,
+    /// Hides parts of the picture (moves, scales and crops with it).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub mask: Option<Mask>,
     /// Audio effects on the soundtrack.
     #[serde(skip_serializing_if = "Vec::is_empty")]
     pub audio_fx: Vec<AudioEffect>,
@@ -900,6 +956,7 @@ impl Default for VideoCue {
             out_levels: Vec::new(),
             animation: Animation::default(),
             video_fx: Vec::new(),
+            mask: None,
             audio_fx: Vec::new(),
             objects: ObjectAudio::default(),
             gangs: Vec::new(),
@@ -1024,6 +1081,9 @@ pub struct TextCue {
     /// Video effects on the text layer.
     #[serde(skip_serializing_if = "Vec::is_empty")]
     pub video_fx: Vec<VideoEffect>,
+    /// Hides parts of the picture (moves, scales and crops with it).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub mask: Option<Mask>,
 }
 
 impl TextCue {
@@ -1066,29 +1126,172 @@ impl Default for TextCue {
             bg_radius: 0.0,
             animation: Animation::default(),
             video_fx: Vec::new(),
+            mask: None,
         }
     }
 }
 
-/// Sends one OSC message over UDP.
+/// What a Network cue sends.
+#[derive(Serialize, Deserialize, Clone, Copy, PartialEq, Eq, Debug, Default)]
+pub enum NetFormat {
+    /// One OSC message (address + arguments).
+    #[default]
+    Osc,
+    /// Plain text with escapes (`\r`, `\n`, `\t`, `\0`, `\xHH`, `\\`).
+    Text,
+}
+
+impl NetFormat {
+    /// Both, for menus.
+    pub const ALL: [NetFormat; 2] = [NetFormat::Osc, NetFormat::Text];
+
+    /// Name shown in the UI.
+    pub fn label(self) -> &'static str {
+        match self {
+            NetFormat::Osc => crate::i18n::t("OSC message"),
+            NetFormat::Text => crate::i18n::t("Text"),
+        }
+    }
+}
+
+/// How a Network cue's message travels.
+#[derive(Serialize, Deserialize, Clone, Copy, PartialEq, Eq, Debug, Default)]
+pub enum NetTransport {
+    /// One UDP datagram.
+    #[default]
+    Udp,
+    /// A TCP connection kept open per destination (OSC is SLIP-framed, as OSC 1.1 says).
+    Tcp,
+}
+
+impl NetTransport {
+    /// Both, for menus.
+    pub const ALL: [NetTransport; 2] = [NetTransport::Udp, NetTransport::Tcp];
+
+    /// Name shown in the UI.
+    pub fn label(self) -> &'static str {
+        match self {
+            NetTransport::Udp => "UDP",
+            NetTransport::Tcp => "TCP",
+        }
+    }
+}
+
+/// The escapes [`parse_net_text`] reads, for messages and hints.
+pub const NET_ESCAPES: &str = r"\r \n \t \0 \xHH \\";
+
+/// Longest text a Network cue sends (bytes after escapes; a UDP datagram holds 65 507).
+pub const MAX_NET_TEXT: usize = 65_000;
+
+/// Sends one OSC message or a piece of text over UDP or TCP.
 #[derive(Serialize, Deserialize, Clone, PartialEq, Debug)]
 #[serde(default)]
 pub struct NetworkCue {
     /// Destination host name or IP.
     pub host: String,
-    /// Destination UDP port.
+    /// Destination port.
     pub port: u16,
     /// OSC address, e.g. `/cue/1/go`.
     pub address: String,
     /// Space-separated arguments; integers and decimals are sent as numbers, the rest as strings
     /// ("quoted text" keeps spaces).
     pub args: String,
+    /// OSC or plain text.
+    pub format: NetFormat,
+    /// UDP or TCP.
+    pub transport: NetTransport,
+    /// The text sent when `format` is [`NetFormat::Text`] (escapes as [`parse_net_text`] reads them).
+    pub text: String,
 }
 
 impl Default for NetworkCue {
     fn default() -> Self {
-        Self { host: "127.0.0.1".into(), port: 53000, address: "/go".into(), args: String::new() }
+        Self {
+            host: "127.0.0.1".into(),
+            port: 53000,
+            address: "/go".into(),
+            args: String::new(),
+            format: NetFormat::Osc,
+            transport: NetTransport::Udp,
+            text: String::new(),
+        }
     }
+}
+
+impl NetworkCue {
+    /// The bytes it sends (OSC over TCP is SLIP-framed here), or why it can't.
+    pub fn payload(&self) -> Result<Vec<u8>, String> {
+        match self.format {
+            NetFormat::Osc => {
+                if !self.address.starts_with('/') {
+                    return Err(crate::i18n::t("The OSC address must start with /").into());
+                }
+                let msg = rosc::OscPacket::Message(rosc::OscMessage {
+                    addr: self.address.clone(),
+                    args: crate::media::parse_osc_args(&self.args),
+                });
+                let bytes = rosc::encoder::encode(&msg).map_err(|e| e.to_string())?;
+                Ok(match self.transport {
+                    NetTransport::Udp => bytes,
+                    NetTransport::Tcp => slip(&bytes),
+                })
+            }
+            NetFormat::Text => {
+                let bytes = parse_net_text(&self.text)?;
+                if bytes.is_empty() {
+                    return Err(crate::i18n::t("No text to send").into());
+                }
+                Ok(bytes)
+            }
+        }
+    }
+}
+
+/// SLIP framing (RFC 1055, double END) used for OSC over TCP.
+pub fn slip(bytes: &[u8]) -> Vec<u8> {
+    const END: u8 = 0xc0;
+    const ESC: u8 = 0xdb;
+    let mut out = Vec::with_capacity(bytes.len() + 2);
+    out.push(END);
+    for &b in bytes {
+        match b {
+            END => out.extend([ESC, 0xdc]),
+            ESC => out.extend([ESC, 0xdd]),
+            b => out.push(b),
+        }
+    }
+    out.push(END);
+    out
+}
+
+/// Network cue text → bytes: UTF-8, with `\r`, `\n`, `\t`, `\0`, `\xHH` and `\\` escapes.
+pub fn parse_net_text(text: &str) -> Result<Vec<u8>, String> {
+    let mut out = Vec::with_capacity(text.len());
+    let mut chars = text.chars();
+    while let Some(c) = chars.next() {
+        if c != '\\' {
+            let mut buf = [0u8; 4];
+            out.extend_from_slice(c.encode_utf8(&mut buf).as_bytes());
+            continue;
+        }
+        match chars.next() {
+            Some('r') => out.push(b'\r'),
+            Some('n') => out.push(b'\n'),
+            Some('t') => out.push(b'\t'),
+            Some('0') => out.push(0),
+            Some('\\') => out.push(b'\\'),
+            Some('x') => {
+                let hex: String = chars.by_ref().take(2).collect();
+                let b = (hex.len() == 2).then(|| u8::from_str_radix(&hex, 16).ok()).flatten();
+                out.push(b.ok_or_else(|| crate::i18n::t("A hex escape needs two hex digits").to_string())?);
+            }
+            _ => return Err(crate::tr!("Unknown escape in the text (use {escapes})", escapes = NET_ESCAPES)),
+        }
+    }
+    if out.len() > MAX_NET_TEXT {
+        return Err(crate::i18n::t("Text too long for one message").into());
+    }
+    Ok(out)
 }
 
 /// The kind of message a MIDI cue sends.
@@ -1258,6 +1461,26 @@ impl TimecodeOutput {
     }
 }
 
+/// Plays a Standard MIDI File out of a MIDI port.
+#[derive(Serialize, Deserialize, Clone, PartialEq, Debug)]
+#[serde(default)]
+pub struct MidiFileCue {
+    /// The `.mid` file.
+    pub path: PathBuf,
+    /// MIDI output port name on the computer playing the show (None = the first output).
+    pub port: Option<String>,
+    /// Speed (1 = the file's own tempo).
+    pub rate: f32,
+    /// Start again at the end, until stopped.
+    pub infinite_loop: bool,
+}
+
+impl Default for MidiFileCue {
+    fn default() -> Self {
+        Self { path: PathBuf::new(), port: None, rate: 1.0, infinite_loop: false }
+    }
+}
+
 /// Generates timecode from a start time, as long as it runs.
 #[derive(Serialize, Deserialize, Clone, PartialEq, Debug)]
 #[serde(default)]
@@ -1420,6 +1643,12 @@ pub struct CameraCue {
     /// Video effects on the picture (chroma key for a green screen, colour, blur…).
     #[serde(skip_serializing_if = "Vec::is_empty")]
     pub video_fx: Vec<VideoEffect>,
+    /// Hides parts of the picture (moves, scales and crops with it).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub mask: Option<Mask>,
+    /// Keyframe animation of the picture (relative to the settings above).
+    #[serde(skip_serializing_if = "Animation::is_empty")]
+    pub animation: Animation,
 }
 
 impl Default for CameraCue {
@@ -1436,7 +1665,9 @@ impl Default for CameraCue {
             geometry: Geometry::default(),
             mirror: false,
             duration: 0.0,
+            animation: Animation::default(),
             video_fx: Vec::new(),
+            mask: None,
         }
     }
 }
@@ -1531,6 +1762,8 @@ pub enum CueKind {
     Midi(MidiCue),
     /// Generate timecode (LTC or MTC).
     Timecode(TimecodeCue),
+    /// Play a MIDI file.
+    MidiFile(MidiFileCue),
     /// Point the target cue (a Fade, Start, Stop... cue) at another cue.
     Target {
         /// Cue whose target changes.
@@ -1590,16 +1823,18 @@ pub enum KindTag {
     Midi,
     /// Timecode cue.
     Timecode,
+    /// MIDI File cue.
+    MidiFile,
 }
 
 impl KindTag {
     /// Cues whose action is media playback handled by the media backend.
     pub fn is_media(self) -> bool {
-        matches!(self, KindTag::Audio | KindTag::Video | KindTag::Text | KindTag::Mic | KindTag::Camera | KindTag::Timecode)
+        matches!(self, KindTag::Audio | KindTag::Video | KindTag::Text | KindTag::Mic | KindTag::Camera | KindTag::Timecode | KindTag::MidiFile)
     }
 
     /// Every type, in toolbox order (the first ten match Ctrl+1…0).
-    pub const ALL: [KindTag; 23] = [
+    pub const ALL: [KindTag; 24] = [
         KindTag::Audio,
         KindTag::Video,
         KindTag::Group,
@@ -1623,6 +1858,7 @@ impl KindTag {
         KindTag::Target,
         KindTag::Midi,
         KindTag::Timecode,
+        KindTag::MidiFile,
     ];
 
     /// Whether this build offers the type (Light cues need the `lighting` feature).
@@ -1656,6 +1892,7 @@ impl KindTag {
             KindTag::Target => crate::i18n::t("Target"),
             KindTag::Midi => crate::i18n::t("MIDI"),
             KindTag::Timecode => crate::i18n::t("Timecode"),
+            KindTag::MidiFile => crate::i18n::t("MIDI File"),
         }
     }
 
@@ -1685,6 +1922,7 @@ impl KindTag {
             KindTag::Target => CueKind::Target { target: None, new_target: None },
             KindTag::Midi => CueKind::Midi(MidiCue::default()),
             KindTag::Timecode => CueKind::Timecode(TimecodeCue::default()),
+            KindTag::MidiFile => CueKind::MidiFile(MidiFileCue::default()),
         }
     }
 }
@@ -1716,6 +1954,7 @@ impl CueKind {
             CueKind::Target { .. } => KindTag::Target,
             CueKind::Midi(_) => KindTag::Midi,
             CueKind::Timecode(_) => KindTag::Timecode,
+            CueKind::MidiFile(_) => KindTag::MidiFile,
         }
     }
 
@@ -1773,11 +2012,32 @@ impl CueKind {
         }
     }
 
-    /// The media file of Audio/Video cues.
+    /// The mask of a Video, Text or Camera cue.
+    pub fn mask(&self) -> Option<&Mask> {
+        match self {
+            CueKind::Video(v) => v.mask.as_ref(),
+            CueKind::Text(t) => t.mask.as_ref(),
+            CueKind::Camera(c) => c.mask.as_ref(),
+            _ => None,
+        }
+    }
+
+    /// The mask of a Video, Text or Camera cue, to change.
+    pub fn mask_mut(&mut self) -> Option<&mut Mask> {
+        match self {
+            CueKind::Video(v) => v.mask.as_mut(),
+            CueKind::Text(t) => t.mask.as_mut(),
+            CueKind::Camera(c) => c.mask.as_mut(),
+            _ => None,
+        }
+    }
+
+    /// The media file of Audio/Video/MIDI File cues.
     pub fn media_path(&self) -> Option<&Path> {
         match self {
             CueKind::Audio(a) => Some(&a.path),
             CueKind::Video(v) => Some(&v.path),
+            CueKind::MidiFile(m) => Some(&m.path),
             _ => None,
         }
     }
@@ -2112,18 +2372,91 @@ pub struct ListInfo {
     pub playhead: Option<CueId>,
     /// Timecode this list follows.
     pub timecode: TimecodeSync,
+    /// Shown as a grid of buttons, each firing its own cue (None: a normal list with a playhead).
+    pub cart: Option<Cart>,
 }
 
 // The id is per-session scaffolding, not part of the list.
 impl PartialEq for ListInfo {
     fn eq(&self, o: &Self) -> bool {
-        self.name == o.name && self.playhead == o.playhead && self.timecode == o.timecode
+        self.name == o.name && self.playhead == o.playhead && self.timecode == o.timecode && self.cart == o.cart
     }
 }
 
 impl Default for ListInfo {
     fn default() -> Self {
-        Self { name: "Main Cue List".into(), id: Uuid::new_v4(), playhead: None, timecode: TimecodeSync::default() }
+        Self { name: "Main Cue List".into(), id: Uuid::new_v4(), playhead: None, timecode: TimecodeSync::default(), cart: None }
+    }
+}
+
+/// Most columns or rows a cart grid is set to.
+pub const MAX_CART_SIDE: u16 = 16;
+/// Highest cell a cue may be pinned to (the grid grows past its rows for more cues).
+pub const MAX_CART_CELL: u32 = 50_000;
+
+/// A cart list's grid: its size and the cells cues were put in. The list's top-level cues are its
+/// buttons; one without a cell (new, or the cell was taken) goes in the first free one.
+#[derive(Serialize, Deserialize, Clone, PartialEq, Debug)]
+#[serde(default)]
+pub struct Cart {
+    /// Buttons across.
+    pub columns: u16,
+    /// Rows shown at least (more appear when there are more cues).
+    pub rows: u16,
+    /// Cell (row × columns + column) of cues put somewhere.
+    pub cells: BTreeMap<CueId, u32>,
+}
+
+impl Default for Cart {
+    fn default() -> Self {
+        Self { columns: 4, rows: 4, cells: BTreeMap::new() }
+    }
+}
+
+impl Cart {
+    /// The grid: a cue id or nothing per cell, row by row; at least `columns × rows` cells, whole
+    /// rows, as many as the cues need.
+    pub fn layout(&self, cues: &[Cue]) -> Vec<Option<CueId>> {
+        let cols = self.columns.clamp(1, MAX_CART_SIDE) as usize;
+        let min = cols * self.rows.clamp(1, MAX_CART_SIDE) as usize;
+        let mut grid: Vec<Option<CueId>> = vec![None; min];
+        let mut loose = Vec::new();
+        for c in cues {
+            match self.cells.get(&c.id).map(|&i| i as usize) {
+                Some(i) if i <= MAX_CART_CELL as usize && grid.get(i).is_none_or(|g| g.is_none()) => {
+                    if i >= grid.len() {
+                        grid.resize(i + 1, None);
+                    }
+                    grid[i] = Some(c.id);
+                }
+                _ => loose.push(c.id),
+            }
+        }
+        let mut free = 0;
+        for id in loose {
+            while grid.get(free).is_some_and(|g| g.is_some()) {
+                free += 1;
+            }
+            if free >= grid.len() {
+                grid.resize(free + 1, None);
+            }
+            grid[free] = Some(id);
+        }
+        grid.resize(grid.len().div_ceil(cols) * cols, None);
+        grid
+    }
+
+    /// Put cue `id` in `cell`; a cue already there takes `id`'s old cell. Every cue is pinned to
+    /// where it shows, so nothing else moves, and cells of cues no longer in `cues` are dropped.
+    pub fn put(&mut self, cues: &[Cue], id: CueId, cell: u32) {
+        let grid = self.layout(cues);
+        self.cells = grid.iter().enumerate().filter_map(|(i, c)| Some(((*c)?, i as u32))).collect();
+        let cell = cell.min(MAX_CART_CELL);
+        let Some(&from) = self.cells.get(&id) else { return };
+        if let Some(other) = grid.get(cell as usize).copied().flatten() {
+            self.cells.insert(other, from);
+        }
+        self.cells.insert(id, cell);
     }
 }
 
@@ -2709,13 +3042,11 @@ impl Workspace {
         }
         // Resolve media paths stored relative to the workspace file.
         if let Some(dir) = path.parent() {
-            for list in ws.cue_list.all_roots_mut() {
-                for_each_media_path(list, &mut |p| {
-                    if p.is_relative() && !p.as_os_str().is_empty() {
-                        *p = dir.join(&*p);
-                    }
-                });
-            }
+            ws.for_each_file_mut(&mut |p| {
+                if p.is_relative() && !p.as_os_str().is_empty() {
+                    *p = dir.join(&*p);
+                }
+            });
         }
         Ok(ws)
     }
@@ -2752,13 +3083,11 @@ impl Workspace {
         ws.format_version = Self::FORMAT_VERSION;
         // Store media next to (or below) the workspace as relative paths so shows are portable.
         if let Some(dir) = path.parent() {
-            for list in ws.cue_list.all_roots_mut() {
-                for_each_media_path(list, &mut |p| {
-                    if let Ok(rel) = p.strip_prefix(dir) {
-                        *p = rel.to_path_buf();
-                    }
-                });
-            }
+            ws.for_each_file_mut(&mut |p| {
+                if let Ok(rel) = p.strip_prefix(dir) {
+                    *p = rel.to_path_buf();
+                }
+            });
         }
         // Written to a temporary file, flushed to disk, then renamed over the old one: a crash
         // or power cut mid-save leaves the previous version intact.
@@ -2768,17 +3097,98 @@ impl Workspace {
 
 fn for_each_media_path(list: &mut [Cue], f: &mut impl FnMut(&mut PathBuf)) {
     for c in list {
+        if let Some(m) = c.kind.mask_mut() {
+            f(&mut m.path);
+        }
         match &mut c.kind {
             CueKind::Audio(a) => f(&mut a.path),
             CueKind::Video(v) => f(&mut v.path),
+            CueKind::MidiFile(m) => f(&mut m.path),
             CueKind::Group { children, .. } => for_each_media_path(children, f),
             _ => {}
         }
     }
 }
 
+impl Workspace {
+    /// Every file the show uses (media, MIDI files, masks of cues and stages), to rewrite paths.
+    pub fn for_each_file_mut(&mut self, f: &mut impl FnMut(&mut PathBuf)) {
+        for list in self.cue_list.all_roots_mut() {
+            for_each_media_path(list, f);
+        }
+        for m in self.stages.iter_mut().filter_map(|s| s.mask.as_mut()) {
+            f(&mut m.path);
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn split_surface_reuses_and_adds_outputs() {
+        use super::{Stage, split_surface};
+        let surface = Stage { width: 3840, ..Stage::new("Cyc") };
+        let mut right = Stage { span_of: Some(surface.id), crop: [0.5, 0.0, 1.0, 1.0], ..Stage::new("R") };
+        right.width = 1400;
+        let mut stages = vec![surface.clone(), right.clone()];
+        assert_eq!(split_surface(&mut stages, surface.id, 3, 0.1, false, 18), Ok(3));
+        assert_eq!(stages.len(), 4);
+        // The existing output takes the first part (in its order on the surface), keeping its size.
+        assert_eq!(stages[1].crop[0], 0.0);
+        assert_eq!(stages[1].width, 1400);
+        assert_eq!(stages[2].name, "Cyc 2");
+        assert_eq!(stages[3].span_of, Some(surface.id));
+        assert!((stages[3].crop[2] - 1.0).abs() < 1e-6);
+        assert!(split_surface(&mut stages, surface.id, 8, 0.1, false, 6).is_err(), "over the stage count");
+        assert_eq!(stages.len(), 4, "nothing changed");
+    }
+
+    #[test]
+    fn cart_layout_keeps_put_cues_and_fills_gaps() {
+        use super::{Cart, Cue, CueKind};
+        let cues: Vec<Cue> = (0..6).map(|_| Cue::new(CueKind::Memo)).collect();
+        let id = |i: usize| Some(cues[i].id);
+        let mut cart = Cart { columns: 3, rows: 1, ..Default::default() };
+        assert_eq!(cart.layout(&cues), [id(0), id(1), id(2), id(3), id(4), id(5)], "grows by whole rows");
+        cart.put(&cues, cues[5].id, 7);
+        assert_eq!(cart.layout(&cues), [id(0), id(1), id(2), id(3), id(4), None, None, id(5), None]);
+        // Onto a taken cell: the two swap, nothing else moves.
+        cart.put(&cues, cues[0].id, 4);
+        assert_eq!(cart.layout(&cues), [id(4), id(1), id(2), id(3), id(0), None, None, id(5), None]);
+        // A new cue takes the first free cell; a deleted one leaves its cell empty.
+        let mut more = cues.clone();
+        more.remove(1);
+        more.push(Cue::new(CueKind::Memo));
+        let grid = cart.layout(&more);
+        assert_eq!(grid[1], Some(more[5].id));
+        assert_eq!(grid[5], None);
+        // Two cues claiming one cell (an edited file): the second goes to a free one.
+        cart.cells.insert(cues[2].id, 3);
+        let grid = cart.layout(&cues);
+        assert_eq!(grid.iter().flatten().count(), 6);
+        assert_eq!(grid[3], id(2));
+        // A wild cell number doesn't make a huge grid.
+        cart.cells.insert(cues[2].id, u32::MAX);
+        assert!(cart.layout(&cues).len() < 20);
+    }
+
+    #[test]
+    fn network_text_escapes_and_osc_over_tcp() {
+        use super::{NetFormat, NetTransport, NetworkCue, parse_net_text, slip};
+        assert_eq!(parse_net_text(r"GO 1\r\n").unwrap(), b"GO 1\r\n");
+        assert_eq!(parse_net_text(r"a\x00\xff\\\t\0é").unwrap(), [b'a', 0, 0xff, b'\\', b'\t', 0, 0xc3, 0xa9]);
+        assert!(parse_net_text(r"\x4").is_err() && parse_net_text(r"\q").is_err() && parse_net_text(r"\").is_err());
+        assert_eq!(slip(&[1, 0xc0, 0xdb]), [0xc0, 1, 0xdb, 0xdc, 0xdb, 0xdd, 0xc0]);
+        let mut n = NetworkCue::default();
+        let udp = n.payload().unwrap();
+        n.transport = NetTransport::Tcp;
+        assert_eq!(n.payload().unwrap(), slip(&udp));
+        n.format = NetFormat::Text;
+        assert!(n.payload().is_err(), "nothing to send");
+        n.text = "x".repeat(super::MAX_NET_TEXT + 1);
+        assert!(n.payload().is_err());
+    }
+
     /// A file with a cue id twice (here a group holding a cue with its own id) loads with fresh
     /// ids, and moving the playhead past it ends.
     #[test]

@@ -1,7 +1,7 @@
 //! Bundle a show: copy the show file and every media file it plays into one folder, so the show
 //! can move to another computer (or be archived) in one piece.
 //!
-//! The bundle is `<folder>/<show name>/<show name>.openq` with the media in `audio/` and `video/`
+//! The bundle is `<folder>/<show name>/<show name>.openq` with the media in `audio/`, `video/` and `midi/`
 //! next to it; the copy's media paths point there (stored relative, like any show next to its
 //! media). Files with the same name from different folders get " 2", " 3"... Missing files are left
 //! out and listed. The copy runs on a thread of its own ([`Job`]); the open show is unchanged.
@@ -44,8 +44,7 @@ pub fn plan(ws: &Workspace, name: &str, folder: &Path, exists: &dyn Fn(&Path) ->
     let mut missing = Vec::new();
     let mut by_source: HashMap<PathBuf, PathBuf> = HashMap::new();
     let mut taken: std::collections::HashSet<PathBuf> = std::collections::HashSet::new();
-    for list in ws.cue_list.all_roots_mut() {
-        for_each_media(list, &mut |path, sub| {
+    let mut place = |path: &mut PathBuf, sub: &str| {
             if path.as_os_str().is_empty() {
                 return;
             }
@@ -73,7 +72,12 @@ pub fn plan(ws: &Workspace, name: &str, folder: &Path, exists: &dyn Fn(&Path) ->
             by_source.insert(path.clone(), to.clone());
             copies.push((path.clone(), to.clone()));
             *path = to;
-        });
+    };
+    for list in ws.cue_list.all_roots_mut() {
+        for_each_media(list, &mut place);
+    }
+    for m in ws.stages.iter_mut().filter_map(|s| s.mask.as_mut()) {
+        place(&mut m.path, "video");
     }
     let show = dir.join(format!("{name}.{}", Workspace::EXTENSION));
     Plan { dir, show, copies, missing, ws }
@@ -81,9 +85,13 @@ pub fn plan(ws: &Workspace, name: &str, folder: &Path, exists: &dyn Fn(&Path) ->
 
 fn for_each_media(list: &mut [crate::model::Cue], f: &mut impl FnMut(&mut PathBuf, &str)) {
     for c in list {
+        if let Some(m) = c.kind.mask_mut() {
+            f(&mut m.path, "video");
+        }
         match &mut c.kind {
             CueKind::Audio(a) => f(&mut a.path, "audio"),
             CueKind::Video(v) => f(&mut v.path, "video"),
+            CueKind::MidiFile(m) => f(&mut m.path, "midi"),
             CueKind::Group { children, .. } => for_each_media(children, f),
             _ => {}
         }

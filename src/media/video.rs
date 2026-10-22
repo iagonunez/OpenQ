@@ -189,6 +189,8 @@ pub struct StageLayer {
     pub animated: bool,
     /// Video effects (including fades in progress), drawn by the stage's layer shader.
     pub effects: Vec<VideoEffect>,
+    /// The layer's mask and whether it is inverted.
+    pub mask: Option<(super::mask::MaskState, bool)>,
 }
 
 /// Progress shaping for non-level parameters.
@@ -781,7 +783,33 @@ fn open_file(path: &Path) -> anyhow::Result<ff::format::context::Input> {
     super::check_local(path)?;
     let mut opts = ff::Dictionary::new();
     opts.set("protocol_whitelist", "file");
+    opts.set("format_whitelist", demuxer_whitelist());
     Ok(ff::format::input_with_dictionary(path, opts)?)
+}
+
+/// Demuxers FFmpeg never opens show files with: wrappers of third-party music libraries (tracker
+/// and game music formats; libmodplug also takes MIDI files) that crash on damaged input, found by
+/// fuzzing a MIDI file through the system FFmpeg. Nothing a show plays needs them.
+const BLOCKED_DEMUXERS: &[&str] = &["libmodplug", "libopenmpt", "libgme"];
+
+/// Every demuxer this FFmpeg has but [`BLOCKED_DEMUXERS`], as FFmpeg's `format_whitelist` takes it.
+fn demuxer_whitelist() -> &'static str {
+    static LIST: std::sync::OnceLock<String> = std::sync::OnceLock::new();
+    LIST.get_or_init(|| {
+        let mut names: Vec<String> = Vec::new();
+        let mut opaque = std::ptr::null_mut();
+        loop {
+            // SAFETY: FFmpeg's iterator over its static demuxer table; `opaque` is its cursor.
+            let f = unsafe { ff::ffi::av_demuxer_iterate(&mut opaque) };
+            if f.is_null() {
+                break;
+            }
+            // SAFETY: every registered demuxer has a static NUL-terminated name.
+            let name = unsafe { std::ffi::CStr::from_ptr((*f).name) }.to_string_lossy().into_owned();
+            names.extend(name.split(',').filter(|n| !BLOCKED_DEMUXERS.contains(n)).map(str::to_string));
+        }
+        names.join(",")
+    })
 }
 
 // ---------------------------------------------------------------- live cameras
@@ -1039,6 +1067,8 @@ pub fn camera_layer_params(c: &CameraCue) -> VideoCue {
         geometry: c.geometry,
         still_duration: c.duration,
         video_fx: c.video_fx.clone(),
+        animation: c.animation.clone(),
+        mask: c.mask.clone(),
         ..Default::default()
     }
 }
@@ -1152,6 +1182,7 @@ pub fn text_layer_params(t: &TextCue) -> VideoCue {
         still_duration: t.duration,
         animation: t.animation.clone(),
         video_fx: t.video_fx.clone(),
+        mask: t.mask.clone(),
         ..Default::default()
     }
 }
@@ -1701,6 +1732,7 @@ impl VideoOutput {
                     text_colors,
                     animated: !anim.is_empty() && p.paused_at.is_none(),
                     effects: p.effects.iter().filter(|e| e.enabled).copied().collect(),
+                    mask: p.params.mask.as_ref().filter(|m| !m.path.as_os_str().is_empty()).map(|m| (super::mask::cache().get(&m.path), m.invert)),
                 }
             })
             .collect();
@@ -1962,6 +1994,12 @@ mod tests {
         let wav = dir.join("a.wav");
         crate::media::decoder::tests::write_wav(&wav, 48000, 0.2);
         assert!(open_file(&wav).is_ok());
+        assert!(!demuxer_whitelist().split(',').any(|n| BLOCKED_DEMUXERS.contains(&n)));
+        assert!(demuxer_whitelist().split(',').any(|n| n == "mp4"));
+        // A MIDI file never reaches libmodplug (which takes .mid files and crashed on damaged ones).
+        let mid = dir.join("a.mid");
+        std::fs::write(&mid, b"MThd\0\0\0\x06\0\0\0\x01\0\x60MTrk\0\0\0\x04\0\xff\x2f\0").unwrap();
+        assert!(open_file(&mid).is_err());
         // FFmpeg on its own would open these (two files joined, or a URL).
         let joined = format!("concat:{}|{}", wav.display(), wav.display());
         assert!(ff::format::input(&joined).is_ok(), "FFmpeg takes {joined}");
@@ -1969,6 +2007,26 @@ mod tests {
             assert!(open_file(Path::new(url)).is_err(), "{url}");
         }
         std::fs::remove_dir_all(dir).unwrap();
+    }
+
+    /// A Camera cue's animation moves its layer on the layer's own clock.
+    #[test]
+    fn animated_camera_layer() {
+        use crate::animation::AnimProp;
+        init().unwrap();
+        if find_input_format("lavfi").is_none() {
+            return;
+        }
+        let mut c = CameraCue { format: Some("lavfi".into()), device: Some("color=red:size=32x16".into()), ..Default::default() };
+        c.animation.set_key(AnimProp::X, 0.0, [0.0; 4]);
+        c.animation.set_key(AnimProp::X, 0.2, [0.5, 0.0, 0.0, 0.0]);
+        let mut out = VideoOutput::new().unwrap();
+        out.start_camera(CueId::new_v4(), &c, Instant::now());
+        std::thread::sleep(Duration::from_millis(250));
+        out.update(Instant::now());
+        let l = out.stage_layers().pop().unwrap();
+        assert!((l.geometry.x - 0.5).abs() < 1e-4, "{}", l.geometry.x);
+        assert!(l.animated);
     }
 
     #[test]

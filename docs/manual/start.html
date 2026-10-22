@@ -26,6 +26,7 @@
       <li class="s2"><a href="#window">The main window</a></li>
       <li class="s3"><a href="#working-with-the-cue-list">Working with the cue list</a></li>
       <li class="s3"><a href="#cue-lists">Cue lists</a></li>
+      <li class="s3"><a href="#cart-lists">Cart lists</a></li>
       <li class="s2"><a href="#modes">Edit and show mode</a></li>
       <li class="s3"><a href="#stopping">Stopping</a></li>
       <li class="s2"><a href="#settings">Settings</a></li>
@@ -189,6 +190,22 @@ cargo run --release -- show.openq    # open a saved show</code></pre>
     <li>Cues keep playing when you switch lists, and Start, Stop, Fade and other cues can target cues in any list.
     In the target menu, cues from other lists show the list's name.</li>
     <li>Cue numbers are shared by all lists, so OSC and hotkeys reach cues in every list.</li>
+  </ul>
+  <h3 id="cart-lists">Cart lists</h3>
+  <p>A cue list can be a <strong>cart</strong>: a grid of buttons, each firing its own cue, for sound effects on demand,
+  stings or spare cues. Right-click the list's tab and tick <em>Cart: a grid of buttons</em>; set how many buttons across
+  and down below it (more rows appear when there are more cues). A cart has no playhead: GO does nothing there.</p>
+  <figure>
+    <img src="img/cart.webp" width="1100" height="754" alt="A cart list in show mode: a grid of sound effect buttons with their numbers, names, lengths and hotkeys.">
+    <figcaption>A cart list in show mode.</figcaption>
+  </figure>
+  <ul>
+    <li><strong>Show mode:</strong> click a button to fire its cue; a cue that is already running does what its
+    <em>second trigger</em> setting says (restart by default). Right-click a button to stop its cue. A running button fills
+    with its progress and shows the time left.</li>
+    <li><strong>Edit mode:</strong> click a button to select it (the inspector edits it), double-click to fire it, and drag
+    it onto another cell to move it there (swapping with the button there). New cues take the first free cell.</li>
+    <li>Hotkeys, MIDI and timecode triggers fire cart cues as they do any other cue.</li>
   </ul>
 </section>
 

@@ -962,7 +962,8 @@ impl Engine {
             | CueKind::Text(_)
             | CueKind::Mic(_)
             | CueKind::Camera(_)
-            | CueKind::Timecode(_) => {
+            | CueKind::Timecode(_)
+            | CueKind::MidiFile(_) => {
                 let started = if offset > 0.0 { be.start_from(cue, at, offset) } else { be.start(cue, at) };
                 match started {
                     Ok(()) => be.duration(cue).map(|d| (d - offset).max(0.0)),

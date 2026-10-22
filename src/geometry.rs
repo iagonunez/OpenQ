@@ -146,8 +146,50 @@ pub fn blend_gain(t: f32, gamma: f32) -> f32 {
     s.powf(1.0 / gamma.max(0.1))
 }
 
+/// Parts of a surface for `n` outputs side by side (or one above another when `down`) whose
+/// neighbours overlap by `overlap` of an output's width: each output's crop (x0, y0, x1, y1 of the
+/// surface) and blend widths (left, top, right, bottom, fractions of the output), in order.
+pub fn split(n: usize, overlap: f32, down: bool) -> Vec<([f32; 4], [f32; 4])> {
+    let n = n.max(1);
+    let o = overlap.clamp(0.0, 0.5);
+    // n parts of length w, each overlapping the next by o·w, cover the surface exactly.
+    let w = 1.0 / (n as f32 - (n - 1) as f32 * o);
+    (0..n)
+        .map(|i| {
+            let a = i as f32 * w * (1.0 - o);
+            let b = if i + 1 == n { 1.0 } else { a + w };
+            let (before, after) = (if i > 0 { o } else { 0.0 }, if i + 1 < n { o } else { 0.0 });
+            if down { ([0.0, a, 1.0, b], [0.0, before, 0.0, after]) } else { ([a, 0.0, b, 1.0], [before, 0.0, after, 0.0]) }
+        })
+        .collect()
+}
+
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn split_covers_the_surface_with_equal_overlaps() {
+        let parts = super::split(3, 0.2, false);
+        assert_eq!(parts.len(), 3);
+        assert_eq!(parts[0].0[0], 0.0);
+        assert!((parts[2].0[2] - 1.0).abs() < 1e-6);
+        for (i, (crop, blend)) in parts.iter().enumerate() {
+            let w = crop[2] - crop[0];
+            assert!((w - parts[0].0[2]).abs() < 1e-5, "equal widths");
+            if i > 0 {
+                // The overlap with the one before is exactly its blend width.
+                let shared = parts[i - 1].0[2] - crop[0];
+                assert!((shared / w - blend[0]).abs() < 1e-5);
+                assert!((shared / w - 0.2).abs() < 1e-5);
+            }
+        }
+        assert_eq!(parts[0].1, [0.0, 0.0, 0.2, 0.0]);
+        assert_eq!(parts[2].1, [0.2, 0.0, 0.0, 0.0]);
+        let down = super::split(2, 0.1, true);
+        assert_eq!(down[1].1, [0.0, 0.1, 0.0, 0.0]);
+        assert_eq!((down[0].0[0], down[0].0[2]), (0.0, 1.0));
+        assert_eq!(super::split(1, 0.3, false), [([0.0, 0.0, 1.0, 1.0], [0.0; 4])]);
+    }
+
     use super::*;
 
     fn close(a: [f32; 2], b: [f32; 2]) -> bool {

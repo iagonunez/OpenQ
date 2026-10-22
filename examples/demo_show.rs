@@ -24,7 +24,7 @@ use openq::light::model::{
 };
 use openq::model::{
     AudioCue, BlendMode, CameraCue, ContinueMode, Cue, CueColor, CueId, CueKind, CueList, EqBand, EqKind, FadeCue, FadeCurve, Geometry, GroupMode,
-    LightAction, LightingCue, ListInfo, MicCue, NetworkCue, OtherList, SliceMarker, Stage, StageId, TextAlign, TextCue, TimecodeRate,
+    LightAction, LightingCue, ListInfo, MicCue, NetFormat, NetTransport, NetworkCue, OtherList, SliceMarker, Stage, StageId, TextAlign, TextCue, TimecodeRate,
     TimecodeSource, TimecodeSync, VideoCue, VideoFit, Workspace, MIN_DB,
 };
 use openq::spatial::{AudioObject, ObjectAudio, Speaker};
@@ -67,6 +67,33 @@ fn main() {
     assert_eq!(media, MEDIA_CUES);
     assert_eq!(light_cues, LIGHT_CUES);
     assert!(ws.lighting.validate().is_empty(), "patch problems: {:?}", ws.lighting.validate());
+}
+
+/// A grey mask picture: `f(x, y)` (0..1 across and down) → 0 hides, 1 shows.
+fn write_mask(path: &std::path::Path, w: u32, h: u32, f: impl Fn(f32, f32) -> f32) {
+    let img = image::GrayImage::from_fn(w, h, |x, y| image::Luma([(f(x as f32 / w as f32, y as f32 / h as f32) * 255.0).round() as u8]));
+    std::fs::create_dir_all(path.parent().expect("folder")).expect("mask folder");
+    img.save(path).expect("write mask");
+}
+
+/// A short MIDI file: a held minor chord swelling with CC 11, 90 bpm.
+fn write_midi_pad(path: &std::path::Path) {
+    let mut track: Vec<u8> = vec![0x00, 0xff, 0x51, 0x03, 0x0a, 0x2c, 0x2a, 0x00, 0xc1, 89];
+    for note in [45u8, 52, 57, 60] {
+        track.extend([0x00, 0x91, note, 70]);
+    }
+    for step in 0..32u8 {
+        track.extend([0x0c, 0xb1, 11, 40 + step * 2]);
+    }
+    for (i, note) in [45u8, 52, 57, 60].into_iter().enumerate() {
+        track.extend([if i == 0 { 0x60 } else { 0x00 }, 0x81, note, 0]);
+    }
+    track.extend([0x00, 0xff, 0x2f, 0x00]);
+    let mut smf = b"MThd\0\0\0\x06\0\0\0\x01\0\x60MTrk".to_vec();
+    smf.extend((track.len() as u32).to_be_bytes());
+    smf.extend(track);
+    std::fs::create_dir_all(path.parent().expect("folder")).expect("midi folder");
+    std::fs::write(path, smf).expect("write MIDI file");
 }
 
 /// (media cues, Light cues) over every list.
@@ -643,7 +670,10 @@ impl Gen {
                 },
                 cues: storm,
             },
-            OtherList { info: ListInfo { name: "SFX pad".into(), ..Default::default() }, cues: pad },
+            OtherList {
+                info: ListInfo { name: "SFX pad".into(), cart: Some(openq::model::Cart { columns: 8, rows: 5, ..Default::default() }), ..Default::default() },
+                cues: pad,
+            },
         ];
         ws.cue_list = lists;
         ws.lighting = std::mem::take(&mut self.rig.l);
@@ -654,6 +684,10 @@ impl Gen {
         let mut main = Stage::new("Main projection");
         // The projector hangs off-axis: a little keystone.
         main.corners = [[0.03, 0.02], [0.98, 0.0], [1.0, 1.0], [0.0, 0.97]];
+        // The lighthouse flat stands down right: the projector must not light it.
+        let flat = self.media.join("masks/main-flat.png");
+        write_mask(&flat, 480, 270, |x, y| if x > 0.78 && y > 0.45 { 0.0 } else { 1.0 });
+        main.mask = Some(openq::model::Mask { path: flat, invert: false });
         let mut cyc = Stage::new("Cyc surface");
         cyc.width = 3840;
         let mut left = Stage::new("Cyc L");
@@ -665,6 +699,9 @@ impl Gen {
         right.crop = [0.47, 0.0, 1.0, 1.0];
         right.blend = [0.06, 0.0, 0.0, 0.0];
         right.blend_gamma = 2.4;
+        // Both projectors' black adds up in the overlap: lift the rest to match.
+        left.black_lift = 0.02;
+        right.black_lift = 0.02;
         let mut gauze = Stage::new("Gauze (surtitles)");
         gauze.height = 540;
         self.main_stage = main.id;
@@ -1072,14 +1109,33 @@ impl Gen {
                 }
                 let mut osc = self.numbered(
                     "Tell the band: tacet",
-                    CueKind::Network(NetworkCue { host: "127.0.0.1".into(), port: 9000, address: "/band/cue".into(), args: "tacet 11 \"flare scene\"".into() }),
+                    CueKind::Network(NetworkCue {
+                        host: "127.0.0.1".into(),
+                        port: 9000,
+                        address: "/band/cue".into(),
+                        args: "tacet 11 \"flare scene\"".into(),
+                        ..Default::default()
+                    }),
                 );
                 osc.notes = "OSC to the MD's click machine (port 9000).".into();
                 out.push(osc);
+                let mut text = self.numbered(
+                    "Projector shutter closed",
+                    CueKind::Network(NetworkCue {
+                        host: "127.0.0.1".into(),
+                        port: 4352,
+                        format: NetFormat::Text,
+                        transport: NetTransport::Tcp,
+                        text: r"%1AVMT 31\r".into(),
+                        ..Default::default()
+                    }),
+                );
+                text.notes = "PJLink-style text command over TCP.".into();
+                out.push(text);
             }
             Extra::Inquiry => {
                 let main = self.main_stage;
-                let cam = self.numbered(
+                let mut cam = self.numbered(
                     "Witness camera (test pattern)",
                     CueKind::Camera(CameraCue {
                         device: Some("testsrc2=size=1280x720:rate=25".into()),
@@ -1095,6 +1151,20 @@ impl Gen {
                         ..Default::default()
                     }),
                 );
+                if let CueKind::Camera(c) = &mut cam.kind {
+                    // Fades in and drifts slowly towards the centre.
+                    c.animation.set_key(AnimProp::Opacity, 0.0, [0.0; 4]);
+                    c.animation.set_key(AnimProp::Opacity, 2.0, [1.0, 0.0, 0.0, 0.0]);
+                    c.animation.set_key(AnimProp::X, 0.0, [0.0; 4]);
+                    c.animation.set_key(AnimProp::X, 20.0, [-0.1, 0.0, 0.0, 0.0]);
+                    // A soft round iris, like a porthole.
+                    let iris = self.media.join("masks/iris.png");
+                    write_mask(&iris, 256, 256, |x, y| {
+                        let d = ((x - 0.5).powi(2) + (y - 0.5).powi(2)).sqrt() * 2.0;
+                        (1.0 - (d - 0.8) / 0.2).clamp(0.0, 1.0)
+                    });
+                    c.mask = Some(openq::model::Mask { path: iris, invert: false });
+                }
                 let id = cam.id;
                 out.push(cam);
                 let mut real = self.numbered(
@@ -1358,6 +1428,11 @@ impl Gen {
             "Keys to patch 12",
             CueKind::Midi(openq::model::MidiCue { message: openq::model::MidiMessageKind::Program, channel: 1, number: 11, ..Default::default() }),
         ));
+        let mid = self.media.join("midi/foghorn-pad.mid");
+        write_midi_pad(&mid);
+        let mut pad = self.numbered("Foghorn pad (keys rig)", CueKind::MidiFile(openq::model::MidiFileCue { path: mid, port: None, rate: 0.9, infinite_loop: false }));
+        pad.notes = "Plays a MIDI file into the keys rig (first MIDI output), a touch slower than written.".into();
+        out.push(pad);
         // Operator tools for the phone announcement.
         out.push(self.numbered("No phone ring tonight", CueKind::Disarm { target: Some(ring_id) }));
         out.push(self.numbered("Phone ring back on", CueKind::Arm { target: Some(ring_id) }));

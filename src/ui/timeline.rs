@@ -20,7 +20,7 @@ fn length(c: &Cue, prober: &Prober) -> Option<f64> {
     match &c.kind {
         CueKind::Wait { duration } => Some(*duration),
         CueKind::Fade(f) => Some(f.duration),
-        CueKind::Audio(_) | CueKind::Video(_) => crate::media::effective_duration(c, c.kind.media_path().and_then(|p| prober.get(p)).and_then(|r| r.ok()).and_then(|i| i.duration)),
+        CueKind::Audio(_) | CueKind::Video(_) | CueKind::MidiFile(_) => crate::media::effective_duration(c, c.kind.media_path().and_then(|p| prober.get(p)).and_then(|r| r.ok()).and_then(|i| i.duration)),
         _ => None,
     }
 }

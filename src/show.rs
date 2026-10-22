@@ -258,7 +258,7 @@ impl Show {
 
     /// Call after any edit to the workspace.
     pub fn edited(&mut self) {
-        self.edited_with(None);
+        self.edited_with(None, false);
     }
 
     /// Call after an edit that changed only these cues' own fields (no cue added, removed or
@@ -266,25 +266,33 @@ impl Show {
     /// cue lists. Copies kept by replicas and the autosave then take only these cues
     /// ([`crate::changes`]).
     pub fn edited_cues(&mut self, cues: impl IntoIterator<Item = CueId>) {
-        self.edited_with(Some(cues.into_iter().collect()));
+        self.edited_with(Some(cues.into_iter().collect()), false);
+    }
+
+    /// Call after an edit that added, removed or moved cues (or lists): `cues` are every cue it
+    /// added or changed in its own fields (a duplicated or pasted group's children too). Copies
+    /// then take the lists' shape and those cues instead of the whole show ([`crate::changes`]);
+    /// a cue missing from `cues` makes them take the whole show once.
+    pub fn edited_shape(&mut self, cues: impl IntoIterator<Item = CueId>) {
+        self.edited_with(Some(cues.into_iter().collect()), true);
     }
 
     /// Call after an edit outside the cue lists (settings, stages, the lighting design).
     pub fn edited_outside_cues(&mut self) {
-        self.edited_with(Some(Vec::new()));
+        self.edited_with(Some(Vec::new()), false);
     }
 
     /// The workspace changed without being edited here (swapped, undone, or changed by the main
     /// device on a replica): bump [`Show::edit_gen`] so copies and lookups look again.
     pub fn changed(&mut self) {
         self.edit_gen += 1;
-        self.changes.push(self.edit_gen, None);
+        self.changes.push(self.edit_gen, None, false);
     }
 
-    fn edited_with(&mut self, cues: Option<Vec<CueId>>) {
+    fn edited_with(&mut self, cues: Option<Vec<CueId>>, shape: bool) {
         self.dirty = true;
         self.edit_gen += 1;
-        self.changes.push(self.edit_gen, cues);
+        self.changes.push(self.edit_gen, cues, shape);
         self.engine.workspace_changed();
         self.media.set_room(&self.ws.settings.speakers);
         if !self.replica {

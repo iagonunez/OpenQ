@@ -318,6 +318,63 @@ fn main() {
         println!("no Midi Through port: MTC loopback skipped");
     }
 
+    // --- MIDI File cue player through "Midi Through": timing, chase on a part-way start, notes
+    // released on pause.
+    let out_ports = {
+        let m = midir::MidiOutput::new("smoke").unwrap();
+        m.ports().iter().filter_map(|p| m.port_name(p).ok()).collect::<Vec<_>>()
+    };
+    if let Some(out) = through(out_ports) {
+        use openq::media::midifile::{PlayParams, Player};
+        // 96 ticks a quarter at 120 bpm: a tick = 1/192 s. Program 7, then a note at 0, 0.25 s, 0.5 s
+        // (held 0.4 s).
+        let track: Vec<u8> = [
+            &[0x00, 0xc0, 7][..],
+            &[0x00, 0x90, 60, 100],
+            &[0x18, 0x80, 60, 0],
+            &[0x18, 0x90, 62, 100],
+            &[0x18, 0x80, 62, 0],
+            &[0x18, 0x90, 64, 100],
+            &[0x4d, 0x80, 64, 0],
+            &[0x00, 0xff, 0x2f, 0],
+        ]
+        .concat();
+        let mut smf = b"MThd\0\0\0\x06\0\0\0\x01\0\x60MTrk".to_vec();
+        smf.extend((track.len() as u32).to_be_bytes());
+        smf.extend(track);
+        let mid = dir.join("smoke.mid");
+        std::fs::write(&mid, smf).unwrap();
+        let m = midir::MidiInput::new("smoke-in").unwrap();
+        let port = m.ports().into_iter().find(|p| m.port_name(p).is_ok_and(|n| n.contains("Midi Through"))).expect("Midi Through input");
+        let got = std::sync::Arc::new(parking_lot::Mutex::new(Vec::<(f64, Vec<u8>)>::new()));
+        let g = got.clone();
+        let t0 = Instant::now();
+        let _conn = m.connect(&port, "smoke-in", move |_, msg, _| g.lock().push((t0.elapsed().as_secs_f64(), msg.to_vec())), ()).unwrap();
+        let params = |offset| PlayParams { path: mid.clone(), port: Some(out.clone()), rate: 1.0, looped: false, offset };
+        let start = t0 + std::time::Duration::from_millis(300);
+        let p = Player::start(params(0.0), start);
+        std::thread::sleep(std::time::Duration::from_millis(1400));
+        assert!(p.ended(), "the file ended by itself");
+        let heard: Vec<(f64, Vec<u8>)> = std::mem::take(&mut *got.lock());
+        let ons: Vec<f64> = heard.iter().filter(|(_, m)| m[0] == 0x90).map(|(t, _)| t - 0.3).collect();
+        println!("MIDI file notes at {ons:?} (expected 0, 0.25, 0.5)");
+        assert_eq!(heard.len(), 7, "{heard:?}");
+        for (t, want) in ons.iter().zip([0.0, 0.25, 0.5]) {
+            assert!((t - want).abs() < 0.01, "MIDI file timing off: {t} vs {want}");
+        }
+        // Part way in (0.45 s), paused in the middle of the last note: program chased, the
+        // note released.
+        let p = Player::start(params(0.45), Instant::now());
+        std::thread::sleep(std::time::Duration::from_millis(150));
+        p.pause();
+        std::thread::sleep(std::time::Duration::from_millis(100));
+        let heard: Vec<Vec<u8>> = got.lock().drain(..).map(|(_, m)| m).collect();
+        assert_eq!(heard, [vec![0xc0, 7], vec![0x90, 64, 100], vec![0x80, 64, 0], vec![0xb0, 64, 0]], "{heard:?}");
+        drop(p);
+    } else {
+        println!("no Midi Through port: MIDI file playback skipped");
+    }
+
     // --- OSC remote control.
     let mut w = Cue::new(CueKind::Wait { duration: 1.0 });
     w.number = "osc".into();

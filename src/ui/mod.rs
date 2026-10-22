@@ -1,6 +1,7 @@
 //! egui front end.
 
 mod about;
+mod cart;
 mod animation;
 pub(crate) mod bench;
 mod code;
@@ -69,6 +70,8 @@ enum Deferred {
     /// Copy the show and its media into a folder.
     Bundle,
     PickMedia(CueId),
+    /// Choose the mask picture of a cue's layer, or of a stage.
+    PickMask(Option<CueId>, Option<crate::model::StageId>),
     AddMediaCues,
     /// Open a show autosaved before a crash (may ask to discard the current one first).
     Recover(crate::recovery::Orphan),
@@ -439,6 +442,8 @@ impl App {
     /// Select one cue and put the playhead on it (selection drives standby).
     fn select(&mut self, show: &mut Show, id: Option<CueId>) {
         self.selection = id.into_iter().collect();
+        // A cart list has no playhead: selecting only picks what the inspector shows.
+        let id = if show.ws.cue_list.info.cart.is_some() { None } else { id };
         show.engine.set_playhead(id);
         self.last_playhead = id;
         self.scroll_to = id;
@@ -493,7 +498,7 @@ impl App {
         }
         let id = cue.id;
         show.ws.cue_list.insert_after(sel, cue);
-        show.edited();
+        show.edited_shape([id]);
         self.select(show, Some(id));
         Some(id)
     }
@@ -509,6 +514,8 @@ impl App {
                 path: path.clone(),
                 ..Default::default()
             })
+        } else if media::is_midi_path(&path) {
+            CueKind::MidiFile(crate::model::MidiFileCue { path: path.clone(), ..Default::default() })
         } else {
             self.notify(tr!("Unsupported file: {path}", path = path.display()));
             return None;
@@ -521,7 +528,7 @@ impl App {
         let id = cue.id;
         show.ws.cue_list.insert_after(self.primary(), cue);
         self.prober.get(&path);
-        show.edited();
+        show.edited_shape([id]);
         self.select(show, Some(id));
         Some(id)
     }
@@ -542,7 +549,7 @@ impl App {
             engine.stop_cue(ws, media, id);
             show.ws.cue_list.remove(id);
         }
-        show.edited();
+        show.edited_shape([]);
         let rows = show
             .ws
             .cue_list
@@ -558,16 +565,17 @@ impl App {
         if !self.room_for_cues(show, n) {
             return;
         }
-        let mut last = None;
+        let (mut last, mut added) = (None, Vec::new());
         for id in self.selection.clone() {
             if let Some(c) = show.ws.cue_list.find(id) {
                 let mut d = c.duplicate();
                 d.number = show.ws.cue_list.next_number();
                 last = Some(d.id);
+                d.visit(&mut |c| added.push(c.id));
                 show.ws.cue_list.insert_after(Some(id), d);
             }
         }
-        show.edited();
+        show.edited_shape(added);
         if last.is_some() {
             self.select(show, last);
         }
@@ -611,7 +619,7 @@ impl App {
             *ch = children;
         }
         show.ws.cue_list.insert(ploc.parent, at, group);
-        show.edited();
+        show.edited_shape([gid]);
         self.select(show, Some(gid));
     }
 
@@ -1358,8 +1366,9 @@ impl App {
                                 }
                             }
                             None => {
+                                let cart = show.ws.cue_list.info.cart.is_some();
                                 ui.label(
-                                    RichText::new(t("End of cue list"))
+                                    RichText::new(if cart { t("Cart: press a button to fire its cue") } else { t("End of cue list") })
                                         .font(theme::semibold(22.0))
                                         .color(theme::TEXT_FAINT),
                                 );
@@ -2179,6 +2188,8 @@ impl App {
         // Surfaces another stage can span: stages that don't span anything themselves.
         let surfaces: Vec<(StageId, String)> =
             show.ws.stages.iter().filter(|s| s.span_of.is_none()).map(|s| (s.id, s.name.clone())).collect();
+        let spanned_by: Vec<StageId> = show.ws.stages.iter().filter_map(|s| s.span_of).collect();
+        let mut split = None;
         for (i, st) in show.ws.stages.iter_mut().enumerate() {
             egui::Frame::group(ui.style()).show(ui, |ui| {
                 ui.horizontal(|ui| {
@@ -2256,7 +2267,22 @@ impl App {
                             self.output_choices(ui, st);
                         });
                 });
-                stage_span_blend(ui, st, &surfaces);
+                let spanned = spanned_by.contains(&st.id);
+                if let Some(req) = stage_span_blend(ui, st, &surfaces, spanned) {
+                    split = Some((st.id, req));
+                }
+                egui::CollapsingHeader::new(t("Mask")).id_salt(("stage-mask", st.id)).default_open(st.mask.is_some()).show(ui, |ui| {
+                    let mut pick = false;
+                    inspector::mask_editor(ui, &format!("stage-mask-{}", st.id), &mut st.mask, &self.prober, &mut pick);
+                    ui.label(
+                        RichText::new(t("White shows the picture, black hides it (set pieces this output must not light). Stretched over the whole output."))
+                            .weak()
+                            .small(),
+                    );
+                    if pick {
+                        self.deferred.push(Deferred::PickMask(None, Some(st.id)));
+                    }
+                });
                 if st.corners != Stage::IDENTITY {
                     ui.label(
                         RichText::new(tr!(
@@ -2273,6 +2299,11 @@ impl App {
                     );
                 }
             });
+        }
+        if let Some((surface, (n, overlap, down))) = split
+            && let Err(e) = crate::model::split_surface(&mut show.ws.stages, surface, n, overlap, down, crate::limits::MAX_STAGES)
+        {
+            self.notify(e);
         }
         if let Some(i) = remove {
             let id = show.ws.stages.remove(i).id;
@@ -2545,7 +2576,7 @@ impl App {
             if self.remote.is_replica() {
                 let why = match d {
                     Deferred::New | Deferred::Open | Deferred::Recover(_) => Some(t("Disconnect from the main device first (Remote → Disconnect)")),
-                    Deferred::PickMedia(_) | Deferred::AddMediaCues => Some(t("Media files live on the main device: add them there")),
+                    Deferred::PickMedia(_) | Deferred::PickMask(..) | Deferred::AddMediaCues => Some(t("Media files live on the main device: add them there")),
                     _ => None,
                 };
                 if let Some(why) = why {
@@ -2600,12 +2631,11 @@ impl App {
                 }
                 Deferred::Bundle => self.start_bundle(),
                 Deferred::PickMedia(id) => {
-                    let video = matches!(
-                        self.show.lock().ws.cue_list.find(id).map(|c| c.kind.tag()),
-                        Some(KindTag::Video)
-                    );
+                    let tag = self.show.lock().ws.cue_list.find(id).map(|c| c.kind.tag());
                     let mut dlg = rfd::FileDialog::new();
-                    dlg = if video {
+                    dlg = if tag == Some(KindTag::MidiFile) {
+                        dlg.add_filter(t("MIDI files"), &["mid", "midi", "smf", "kar"])
+                    } else if tag == Some(KindTag::Video) {
                         dlg.add_filter(
                             t("Video and images"),
                             &[
@@ -2628,11 +2658,44 @@ impl App {
                             match &mut c.kind {
                                 CueKind::Audio(a) => a.path = p.clone(),
                                 CueKind::Video(v) => v.path = p.clone(),
+                                CueKind::MidiFile(m) => m.path = p.clone(),
                                 _ => {}
                             }
                         }
                         s.edited_cues([id]);
                         self.prober.get(&p);
+                    }
+                }
+                Deferred::PickMask(cue, stage) => {
+                    let images = ["png", "jpg", "jpeg", "webp", "gif", "bmp", "tif", "tiff", "svg", "svgz"];
+                    if let Some(p) = rfd::FileDialog::new().add_filter(t("Images"), &images).add_filter(t("All files"), &["*"]).pick_file() {
+                        let mut s = self.show.lock();
+                        let mask = || Some(crate::model::Mask { path: p.clone(), invert: false });
+                        if let Some(id) = cue
+                            && let Some(c) = s.ws.cue_list.find_mut(id)
+                        {
+                            let invert = c.kind.mask().is_some_and(|m| m.invert);
+                            match &mut c.kind {
+                                CueKind::Video(v) => v.mask = mask(),
+                                CueKind::Text(t) => t.mask = mask(),
+                                CueKind::Camera(c) => c.mask = mask(),
+                                _ => {}
+                            }
+                            if let Some(m) = c.kind.mask_mut() {
+                                m.invert = invert;
+                            }
+                            let cue = c.clone();
+                            s.edited_cues([id]);
+                            s.media.update_live(&cue);
+                        }
+                        if let Some(id) = stage
+                            && let Some(st) = s.ws.stages.iter_mut().find(|st| st.id == id)
+                        {
+                            let invert = st.mask.as_ref().is_some_and(|m| m.invert);
+                            st.mask = Some(crate::model::Mask { path: p.clone(), invert });
+                            s.edited_outside_cues();
+                        }
+                        self.prober.stat(&p);
                     }
                 }
                 Deferred::AddMediaCues => {
@@ -2642,7 +2705,7 @@ impl App {
                             &[
                                 "wav", "aif", "aiff", "flac", "mp3", "ogg", "opus", "m4a", "aac",
                                 "caf", "mp4", "mov", "mkv", "avi", "webm", "m4v", "png", "jpg", "jpeg",
-                                "webp", "svg", "svgz",
+                                "webp", "svg", "svgz", "mid", "midi",
                             ],
                         )
                         .pick_files()
@@ -2719,6 +2782,7 @@ impl App {
                 let sel = self.primary().and_then(|id| show.ws.cue_list.find(id)).and_then(|c| match &c.kind {
                     CueKind::Video(v) => v.animation.tracks.first().map(|t| t.prop),
                     CueKind::Text(t) => t.animation.tracks.first().map(|t| t.prop),
+                    CueKind::Camera(c) => c.animation.tracks.first().map(|t| t.prop),
                     _ => None,
                 });
                 self.anim_edit = animation::AnimEdit { cue: self.primary(), time: t, sel: sel.map(|p| (p, 1)) };
@@ -3052,10 +3116,12 @@ pub fn install_theme(ctx: &egui::Context) {
 
 /// Stage settings for splitting a surface across projectors: which stage this one shows part
 /// of, the part (crop) and the soft-edge blend zones.
-fn stage_span_blend(ui: &mut egui::Ui, st: &mut Stage, surfaces: &[(StageId, String)]) {
+/// Returns a request to split this stage across outputs (count, overlap, one above another).
+fn stage_span_blend(ui: &mut egui::Ui, st: &mut Stage, surfaces: &[(StageId, String)], spanned: bool) -> Option<(usize, f32, bool)> {
     let pct = |v: f64, _| format!("{:.1}%", v * 100.0);
     let parse = |t: &str| t.trim().trim_end_matches('%').trim().parse::<f64>().ok().map(|v| v / 100.0);
-    egui::CollapsingHeader::new(t("Span & edge blend")).id_salt(("span", st.id)).default_open(st.span_of.is_some() || st.blend != [0.0; 4]).show(ui, |ui| {
+    let mut split = None;
+    egui::CollapsingHeader::new(t("Span & edge blend")).id_salt(("span", st.id)).default_open(st.span_of.is_some() || st.blend != [0.0; 4] || spanned).show(ui, |ui| {
         egui::Grid::new(("span-grid", st.id)).num_columns(2).spacing([10.0, 6.0]).show(ui, |ui| {
             ui.label(t("Shows"));
             let shown = st.span_of.and_then(|id| surfaces.iter().find(|s| s.0 == id)).map(|s| tr!("Part of {name}", name = s.1));
@@ -3100,8 +3166,35 @@ fn stage_span_blend(ui: &mut egui::Ui, st: &mut Stage, surfaces: &[(StageId, Str
             ui.add(egui::DragValue::new(&mut st.blend_gamma).speed(0.01).range(1.0..=3.0).max_decimals(2))
                 .on_hover_text(t("Projector gamma: raise it if the overlap looks too bright, lower it if it looks dark"));
             ui.end_row();
+            ui.label(t("Black lift"));
+            ui.add(egui::DragValue::new(&mut st.black_lift).speed(0.001).range(0.0..=0.25).custom_formatter(pct).custom_parser(parse))
+                .on_hover_text(t("Raises black outside the blend zones: where projectors overlap, their black adds up and looks grey. Raise it until black matches across the overlap."));
+            ui.end_row();
+            if st.span_of.is_none() {
+                // Split helper: settings kept per stage for this session.
+                let id = ui.id().with(("split", st.id));
+                let (mut n, mut overlap, mut down) = ui.data(|d| d.get_temp::<(usize, f32, bool)>(id)).unwrap_or((2, 0.15, false));
+                ui.label(t("Split"));
+                ui.horizontal(|ui| {
+                    ui.add(egui::DragValue::new(&mut n).range(2..=8)).on_hover_text(t("Outputs"));
+                    ui.label(t("outputs, overlap"));
+                    ui.add(egui::DragValue::new(&mut overlap).speed(0.001).range(0.0..=0.5).custom_formatter(pct).custom_parser(parse));
+                    ui.selectable_value(&mut down, false, t("Side by side"));
+                    ui.selectable_value(&mut down, true, t("One above another"));
+                    if ui
+                        .button(t("Make outputs"))
+                        .on_hover_text(t("Sets the part and blend zones of the stages that show parts of this one, adding stages if there are fewer"))
+                        .clicked()
+                    {
+                        split = Some((n, overlap, down));
+                    }
+                });
+                ui.data_mut(|d| d.insert_temp(id, (n, overlap, down)));
+                ui.end_row();
+            }
         });
     });
+    split
 }
 
 impl eframe::App for App {

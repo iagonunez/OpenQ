@@ -107,6 +107,7 @@ impl App {
             let anim = match &mut cue.kind {
                 crate::model::CueKind::Text(t) => &mut t.animation,
                 crate::model::CueKind::Video(v) => &mut v.animation,
+                crate::model::CueKind::Camera(c) => &mut c.animation,
                 _ => return,
             };
             if let Some(k) = anim.tracks.first_mut().and_then(|t| t.keys.first_mut()) {

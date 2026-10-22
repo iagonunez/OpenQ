@@ -146,6 +146,11 @@ fn cue(ws: &Workspace, c: &Cue, file: &dyn Fn(&Path) -> FileState, add: &mut dyn
             }
         }
     }
+    if let Some(m) = c.kind.mask().filter(|m| !m.path.as_os_str().is_empty())
+        && matches!(file(&m.path), FileState::Missing)
+    {
+        add(Error, crate::tr!("Mask file not found: {path}", path = m.path.display()));
+    }
     if target_missing(&c.kind, ws) {
         add(Error, if c.kind.target().is_some() { t("Its target cue was deleted") } else { t("No target cue") }.into());
     }
@@ -173,8 +178,8 @@ fn cue(ws: &Workspace, c: &Cue, file: &dyn Fn(&Path) -> FileState, add: &mut dyn
             if n.host.trim().is_empty() {
                 add(Error, t("No destination host").into());
             }
-            if !n.address.starts_with('/') {
-                add(Error, t("The OSC address must start with /").into());
+            if let Err(e) = n.payload() {
+                add(Error, e);
             }
         }
         CueKind::Midi(m) => {

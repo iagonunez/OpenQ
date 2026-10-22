@@ -86,7 +86,7 @@ cargo build --release && ./target/release/openq
 
 | | Función | Qué hace |
 |---|---|---|
-| 🎬 | **23 tipos de cue** | Audio, Vídeo, Texto, Cámara, Micro, Grupo, Espera, Memo, Fundido, Iniciar, Parar, Pausa, Ir a, Devamp, Red (OSC), MIDI, Timecode, Luz, y Armar, Desarmar, Restablecer, Cargar y Destino para cambiar otras cues durante la función. |
+| 🎬 | **24 tipos de cue** | Audio, Vídeo, Texto, Cámara, Micro, Grupo, Espera, Memo, Fundido, Iniciar, Parar, Pausa, Ir a, Devamp, Red (OSC o texto, UDP o TCP), MIDI, Archivo MIDI, Timecode, Luz, y Armar, Desarmar, Restablecer, Cargar y Destino para cambiar otras cues durante la función. |
 | 🗂️ | **Listas de cues** | Varias listas por espectáculo en pestañas (la secuencia principal, una lista de efectos para disparar a mano…); las cues siguen sonando al cambiar. |
 | ⏱️ | **Tiempos** | Pre-espera, post-espera, autocontinuar y autoseguir. Las cues encadenadas arrancan en la muestra exacta, por larga que sea la cadena. |
 | 📁 | **Grupos** | Entrar en el grupo, lista de reproducción, lanzarlo todo a la vez o un hijo al azar. |
@@ -104,11 +104,11 @@ cargo build --release && ./target/release/openq
 | 🌈 | **Efectos de vídeo** | Controles de color, tono, colorear, desenfoque, pixelado, viñeta, croma y más, dibujados en directo por la tarjeta gráfica. |
 | 🧩 | **Modos de fusión** | Sumar, Trama, Multiplicar, Aclarar, Oscurecer y Restar por capa. |
 | 📽️ | **Escenarios y mapping** | Tantas salidas como quieras, a pantalla completa en cualquier pantalla, con corrección de trapecio por esquinas y un patrón de ajuste. |
-| 🌅 | **Edge blending** | Reparte una imagen entre varios proyectores con solapes suaves y corrección de gamma. |
+| 🌅 | **Edge blending** | Reparte una imagen entre varios proyectores con solapes suaves, corrección de gamma y elevación del negro; las máscaras ocultan partes de capas y salidas. |
 | 📷 | **Cues de cámara** | Muestra una cámara o una capturadora en directo como capa en el escenario. |
 | 🌗 | **Fundidos** | Funde nivel, faders de salida, efectos de audio y vídeo, opacidad, geometría y posiciones de objetos, con curvas predefinidas o propias. |
 | 🕰️ | **Código de tiempo** | Cada lista puede seguir LTC o MTC y disparar cues en su momento; las cues Timecode envían LTC o MTC. |
-| ⌨️ | **Disparadores** | Dispara cualquier cue con su propia tecla, un mensaje MIDI o una hora del día. |
+| ⌨️ | **Disparadores** | Dispara cualquier cue con su propia tecla, un mensaje MIDI o una hora del día, o desde un cart: una cuadrícula de botones. |
 | 🎹 | **Salida MIDI** | Las cues MIDI envían notas, cambios de control y de programa, MIDI Show Control y SysEx. |
 | 📦 | **Empaquetar** | Copia un espectáculo y todos sus medios en una carpeta para moverlo o archivarlo. |
 | 📡 | **OSC** | Controla OpenQ desde otros equipos por OSC y envía OSC a mesas de luces con las cues de red. |

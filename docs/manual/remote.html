@@ -98,6 +98,12 @@
   <p>A <strong>Network cue</strong> sends one OSC message to other gear. Set the host, port, address
   (for example <code>/eos/cue/12/fire</code>) and arguments. Arguments are separated by spaces: numbers are sent as
   numbers, and text in quotes is sent as text.</p>
+  <p>Set <em>Send</em> to <strong>Text</strong> for gear that takes plain commands (projectors, video switchers, media
+  servers): type the text with escapes for control characters (<code>\r</code> return, <code>\n</code> new line,
+  <code>\t</code>, <code>\0</code>, <code>\xHH</code> any byte, <code>\\</code> a backslash). <strong>UDP</strong> sends one
+  datagram; <strong>TCP</strong> keeps a connection open to the destination and opens it again if the other end closes it.
+  OSC can go over TCP too (framed as OSC 1.1 says). A message that can't be sent is shown in red on the cue and in
+  Show → Warnings.</p>
 </section>
 <!--/content-->
 

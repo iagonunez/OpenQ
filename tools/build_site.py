@@ -31,7 +31,7 @@ TEXT = {
         "shot_alt": "OpenQ running a show: the GO button, the standby cue, a cue list with audio, video, text, group, fade and network cues, and the cues that are playing",
         "what": "What it does",
         "features": [
-            ("23 cue types", "Audio, video, text, camera, live mic, groups, waits, fades, OSC, MIDI, timecode and more."),
+            ("24 cue types", "Audio, video, text, camera, live mic, groups, waits, fades, OSC, MIDI, timecode and more."),
             ("Sample-accurate timing", "Pre- and post-waits, auto-continue and auto-follow, chained to the exact sample."),
             ("Mixer, EQ and effects", "Routing matrix, 8-band EQ, reverb, delay, dynamics and more, edited live."),
             ("Object audio", "Place sounds in a room of speakers and fly them around with fades."),
@@ -63,7 +63,7 @@ TEXT = {
         "shot_alt": "OpenQ llevando un espectáculo: el botón GO, la cue en espera, una lista con cues de audio, vídeo, texto, grupo, fundido y red, y las cues que están sonando",
         "what": "Qué hace",
         "features": [
-            ("23 tipos de cue", "Audio, vídeo, texto, cámara, micro en directo, grupos, esperas, fundidos, OSC, MIDI, timecode y más."),
+            ("24 tipos de cue", "Audio, vídeo, texto, cámara, micro en directo, grupos, esperas, fundidos, OSC, MIDI, timecode y más."),
             ("Tiempos a la muestra", "Pre y post-esperas, autocontinuar y autoseguir, encadenados a la muestra exacta."),
             ("Mezclador, EQ y efectos", "Matriz de enrutado, EQ de 8 bandas, reverb, delay, dinámica y más, editados en directo."),
             ("Audio por objetos", "Coloca sonidos en una sala de altavoces y muévelos con fundidos."),
@@ -95,7 +95,7 @@ TEXT = {
         "shot_alt": "OpenQ levando un espectáculo: o botón GO, a cue en espera, unha lista con cues de audio, vídeo, texto, grupo, fundido e rede, e as cues que están a soar",
         "what": "Que fai",
         "features": [
-            ("23 tipos de cue", "Audio, vídeo, texto, cámara, micro en directo, grupos, esperas, fundidos, OSC, MIDI, timecode e máis."),
+            ("24 tipos de cue", "Audio, vídeo, texto, cámara, micro en directo, grupos, esperas, fundidos, OSC, MIDI, timecode e máis."),
             ("Tempos á mostra", "Pre e post-esperas, autocontinuar e autoseguir, encadeados á mostra exacta."),
             ("Mesturador, EQ e efectos", "Matriz de enrutado, EQ de 8 bandas, reverb, delay, dinámica e máis, editados en directo."),
             ("Audio por obxectos", "Coloca sons nunha sala de altofalantes e móveos con fundidos."),

@@ -488,6 +488,12 @@ fn scene_input(stage: StageId, stages: &[Stage], layers: &[StageLayer], windows:
 
 /// A window's render thread: draws whenever something shows (paced by the display's vsync),
 /// once more when it goes empty (black), and on request.
+/// An output's mask as the renderer takes it (loading on first use).
+fn stage_mask(stage: &Stage) -> Option<(crate::media::mask::MaskState, bool)> {
+    let m = stage.mask.as_ref().filter(|m| !m.path.as_os_str().is_empty())?;
+    Some((crate::media::mask::cache().get(&m.path), m.invert))
+}
+
 fn render_loop(
     id: StageId,
     window: Arc<Window>,
@@ -555,6 +561,7 @@ fn render_loop(
             mapping,
             corners: corners.unwrap_or(stage.corners),
             overlay: overlay.as_deref().filter(|_| mapping),
+            mask: stage_mask(&stage),
         };
         let view = frame.texture.create_view(&Default::default());
         {
@@ -807,7 +814,7 @@ impl App {
             let gpu = self.ensure_gpu(None)?;
             let mut g = gpu.lock();
             let mut t = g.target();
-            let scene = Scene { stage: &st, source: &source, layers: &mine, mapping, corners, overlay: None };
+            let scene = Scene { stage: &st, source: &source, layers: &mine, mapping, corners, overlay: None, mask: stage_mask(&st) };
             let img = g.render_to_image(&mut t, &scene, size)?;
             drop(g);
             img.save(&path)?;

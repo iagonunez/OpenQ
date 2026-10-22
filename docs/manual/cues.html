@@ -25,6 +25,7 @@
       <li class="s3"><a href="#wall-clock-triggers">Wall-clock triggers</a></li>
       <li class="s3"><a href="#cues-that-change-cues">Cues that change other cues</a></li>
       <li class="s3"><a href="#midi-cues">MIDI cues</a></li>
+      <li class="s3"><a href="#midi-file-cues">MIDI File cues</a></li>
       <li class="s2"><a href="#timing">Timing and continues</a></li>
       <li class="s3"><a href="#groups">Groups</a></li>
       <li class="s2"><a href="#fades">Fades</a></li>
@@ -64,7 +65,7 @@
     <div class="type"><b><span class="ms" aria-hidden="true">&#xe1a2;</span>Pause</b><span class="d">Pauses another cue.</span></div>
     <div class="type"><b><span class="ms" aria-hidden="true">&#xe5da;</span>Go To</b><span class="d">Moves the playhead to another cue.</span></div>
     <div class="type"><b><span class="ms" aria-hidden="true">&#xe044;</span>Devamp</b><span class="d">Lets a looping audio slice finish its pass and play on.</span></div>
-    <div class="type"><b><span class="ms" aria-hidden="true">&#xeb2f;</span>Network</b><span class="d">Sends an OSC message to other gear, such as a lighting desk.</span></div>
+    <div class="type"><b><span class="ms" aria-hidden="true">&#xeb2f;</span>Network</b><span class="d">Sends an OSC message or a line of text (UDP or TCP) to other gear, such as a lighting desk or a projector.</span></div>
     <div class="type"><b><span class="ms" aria-hidden="true">&#xe31d;</span>Mic</b><span class="d">Plays a live audio input, such as a microphone, through the mixer.</span></div>
     <div class="type"><b><span class="ms" aria-hidden="true">&#xe412;</span>Camera</b><span class="d">Shows a live camera or capture card on a stage.</span></div>
     <div class="type"><b><span class="ms" aria-hidden="true">&#xe90f;</span>Light</b><span class="d">Plays a cue of the lighting design, or releases its sequences (see <a href="lighting.html#lighting">Lighting</a>).</span></div>
@@ -75,6 +76,7 @@
     <div class="type"><b><span class="ms" aria-hidden="true">&#xe55c;</span>Target</b><span class="d">Points a Fade, Start, Stop, Load… cue at a different cue.</span></div>
     <div class="type"><b><span class="ms" aria-hidden="true">&#xe521;</span>MIDI</b><span class="d">Sends a MIDI message: note, control or program change, pitch bend, MIDI Show Control or SysEx.</span></div>
     <div class="type"><b><span class="ms" aria-hidden="true">&#xe01b;</span>Timecode</b><span class="d">Sends timecode (LTC on an audio output, or MTC) from a start time while it runs.</span></div>
+    <div class="type"><b><span class="ms" aria-hidden="true">&#xe405;</span>MIDI File</b><span class="d">Plays a MIDI file (<code>.mid</code>) out of a MIDI output.</span></div>
   </div>
   <p>Every cue has a <strong>number</strong> (free text, like <code>4.2</code>), a <strong>name</strong>, <strong>notes</strong>,
   a <strong>colour</strong> and an <strong>armed</strong> switch, all on the Basics tab. A disarmed cue is skipped by GO. Basics also
@@ -117,6 +119,13 @@
   STOP, RESUME, LOAD…) with a cue number and list to a device ID (127 = all devices) in a command format, so OpenQ can
   run a lighting desk or another show computer. <strong>SysEx</strong> sends any System Exclusive message typed in hex
   (<code>F0 … F7</code>). The bytes that will be sent are shown under the settings.</p>
+  <h3 id="midi-file-cues">MIDI File cues</h3>
+  <p>A MIDI File cue plays a Standard MIDI File into a synth, a keys rig or a lighting desk. Pick the file on the
+  <strong>Basics</strong> tab (or drop a <code>.mid</code> on the cue list); on the <strong>Settings</strong> tab pick the
+  <strong>output</strong>, the <strong>speed</strong> (100&nbsp;% = the file's own tempo) and <em>Loop</em> to play it until
+  stopped. The cue's length is the file's, at that speed. Pausing or stopping the cue releases the notes still sounding.
+  Started part way through (a Load cue), it first sends each channel's latest program, controllers and pitch bend, so the
+  instruments sound as they would at that point.</p>
 </section>
 
 <section id="timing">

@@ -91,7 +91,7 @@ fn target_of(show: &Show, id: CueId) -> Option<Target> {
             opacity: c.opacity,
             source: Source::Camera(c.size.unwrap_or([1280, 720])),
             ghost: None,
-            anim: Animation::default(),
+            anim: c.animation.clone(),
         }),
         CueKind::Text(t) => Some(Target {
             layer,
@@ -278,6 +278,7 @@ impl App {
                     text_colors: *colors,
                     animated: false,
                     effects: Vec::new(),
+                    mask: None,
                 };
                 self.preview_text.textures.retain(|(id, _), _| *id == t.layer);
                 painter.extend(paint_layer(ui.ctx(), &mut self.preview_text.textures, &layer, canvas, place));
@@ -291,6 +292,23 @@ impl App {
         }
         painter.add(Shape::closed_line(outline(&q), Stroke::new(1.5, theme::ACCENT)));
         painter.rect_stroke(canvas_rect, 0.0, Stroke::new(1.0, theme::BORDER), egui::StrokeKind::Outside);
+        // Outputs showing parts of this stage: each part, its blend zones shaded.
+        for out in show.ws.stages.iter().filter(|s| s.span_of == Some(stage.id)) {
+            let c = out.crop;
+            let part = Rect::from_min_max(place(c[0], c[1]), place(c[2], c[3]));
+            let (w, h, b) = (part.width(), part.height(), out.blend);
+            let zones = [
+                Rect::from_min_max(part.min, pos2(part.left() + b[0] * w, part.bottom())),
+                Rect::from_min_max(part.min, pos2(part.right(), part.top() + b[1] * h)),
+                Rect::from_min_max(pos2(part.right() - b[2] * w, part.top()), part.max),
+                Rect::from_min_max(pos2(part.left(), part.bottom() - b[3] * h), part.max),
+            ];
+            for z in zones.into_iter().filter(|z| z.width() > 0.5 && z.height() > 0.5) {
+                painter.rect_filled(z, 0.0, theme::AMBER.gamma_multiply(0.14));
+            }
+            painter.rect_stroke(part.shrink(1.0), 0.0, Stroke::new(1.0, theme::AMBER.gamma_multiply(0.8)), egui::StrokeKind::Inside);
+            painter.text(part.left_bottom() + vec2(6.0, -5.0), egui::Align2::LEFT_BOTTOM, &out.name, theme::semibold(10.5), theme::AMBER);
+        }
         painter.text(
             canvas_rect.left_top() + vec2(6.0, 4.0),
             egui::Align2::LEFT_TOP,
