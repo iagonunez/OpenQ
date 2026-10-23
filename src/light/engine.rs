@@ -708,8 +708,14 @@ mod tests {
         let s2 = seen.clone();
         let cfg = OutputConfig { routes: vec![UniverseRoute { universe: 2, wire: 0 }], ..Default::default() };
         e.set_senders(vec![OutputSender::with_opener(cfg, Box::new(move || Ok(Box::new(Probe(s2.clone())) as Box<dyn DmxOutput>)))]);
-        let port = std::net::UdpSocket::bind("127.0.0.1:0").unwrap().local_addr().unwrap().port();
+        // Sender first, so the probed port can't be handed to it as well (macOS reuses them quickly).
         let tx = std::net::UdpSocket::bind("127.0.0.1:0").unwrap();
+        let port = loop {
+            let p = std::net::UdpSocket::bind("0.0.0.0:0").unwrap().local_addr().unwrap().port();
+            if p != tx.local_addr().unwrap().port() {
+                break p;
+            }
+        };
         let send = |v: u8| {
             let mut u = Universe::new(4);
             u.data[0] = v;
@@ -721,7 +727,7 @@ mod tests {
             let input = InputConfig { routes: vec![UniverseRoute { universe: 2, wire: 4 }], merge, ..Default::default() };
             let r = InputReceiver::start_on(input, port);
             let h = r.handle();
-            assert!(wait(|| h.status().open));
+            assert!(wait(|| h.status().open), "input never opened: {:?}", h.status().error);
             e.set_receivers(vec![r]);
             assert!(wait(|| {
                 send(77);

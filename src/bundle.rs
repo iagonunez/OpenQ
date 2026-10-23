@@ -226,7 +226,8 @@ mod tests {
         assert_eq!(paths[3], root.join("gone.wav"));
         assert_eq!(paths[4], dir.join("video/m.mp4"));
         assert_eq!(std::fs::read(&paths[1]).unwrap(), b"two");
-        let saved = std::fs::read_to_string(&p.show).unwrap();
+        // Windows stores its own separator (escaped in the JSON).
+        let saved = std::fs::read_to_string(&p.show).unwrap().replace("\\\\", "/");
         assert!(saved.contains("\"audio/x 2.wav\""), "stored relative");
         let _ = std::fs::remove_dir_all(&root);
     }

@@ -1775,6 +1775,7 @@ mod tests {
 
     /// GO on an audio cue whose file hasn't been probed yet must not probe on the engine thread:
     /// the start waits for the background probe (a stalled file never blocks the tick).
+    #[cfg(unix)]
     #[test]
     fn starting_an_unprobed_file_never_blocks() {
         use crate::engine::Backend;
@@ -1861,6 +1862,7 @@ mod tests {
     }
 
     /// A decoder that stops delivering without failing (a hung network share) is reported once.
+    #[cfg(unix)]
     #[test]
     fn a_stalled_decoder_is_reported() {
         let dir = std::env::temp_dir().join(format!("openq-stall-{}", std::process::id()));

@@ -161,7 +161,7 @@ mod tests {
             if p.extension().is_none_or(|e| e != "rs") || p.ends_with("i18n.rs") {
                 continue;
             }
-            let src = std::fs::read_to_string(&p).unwrap();
+            let src = std::fs::read_to_string(&p).unwrap().replace("\r\n", "\n");
             for start in ["t(", "tr!("] {
                 let mut from = 0;
                 while let Some(i) = src[from..].find(start) {
