@@ -2706,7 +2706,7 @@ fn triggers(ui: &mut Ui, cue: &mut Cue, ctx: &Ctx) -> Option<TriggerAsk> {
             });
             ui.add_space(4.0);
             ui.label(
-                RichText::new(t("The cue fires as running timecode passes this time. Jumps and dropouts don't fire cues."))
+                RichText::new(t("The cue fires as running timecode passes this time. What a jump does is set in the list's timecode window."))
                     .weak()
                     .small(),
             );

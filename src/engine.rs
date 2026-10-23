@@ -437,6 +437,27 @@ impl Engine {
         self.tick(ws, be, now);
     }
 
+    /// Start `id` as if it had been started `offset` seconds ago (timecode chase): pre-wait and
+    /// the part of the cue already played are skipped. Cues that would have ended by now don't
+    /// start. Returns whether it started.
+    pub fn chase_cue(&mut self, ws: &Workspace, be: &mut dyn Backend, id: CueId, offset: f64, now: Instant) -> bool {
+        let Some(cue) = ws.cue_list.find(id) else { return false };
+        let length = cue.pre_wait.max(0.0) + be.duration(cue).unwrap_or(0.0);
+        if (offset >= length && length > 0.0) || (offset > 0.0 && length == 0.0) {
+            return false;
+        }
+        if offset > 0.0 {
+            self.loaded.insert(id, offset);
+        }
+        self.start_cue(ws, be, id, now);
+        true
+    }
+
+    /// True while `id` has a running instance.
+    pub fn is_running(&self, id: CueId) -> bool {
+        self.instances.contains_key(&id)
+    }
+
     /// One of the cue's triggers fired (hotkey, MIDI, wall clock, timecode): start it, or, while
     /// it still runs, do its [`SecondTrigger`] action.
     pub fn trigger_cue(&mut self, ws: &Workspace, be: &mut dyn Backend, id: CueId, now: Instant) {
@@ -1916,6 +1937,26 @@ mod tests {
         e.set_playhead(Some(li));
         e.go(&w, &mut m, t0 + ms(20));
         assert_eq!(m.events.iter().filter(|x| *x == "start A from 1.5").count(), 2, "{:?}", m.events);
+    }
+
+    /// Chasing starts a cue part way through, and not at all once it would have ended.
+    #[test]
+    fn chase_starts_part_way_and_skips_ended_cues() {
+        let a = cue("A", KindTag::Audio);
+        let b = cue("B", KindTag::Audio);
+        let (ai, bi) = (a.id, b.id);
+        let w = ws(vec![a, b]);
+        let mut e = Engine::new();
+        let mut m = Mock::default();
+        m.durations.insert(ai, 10.0);
+        m.durations.insert(bi, 3.0);
+        let t0 = Instant::now();
+        assert!(e.chase_cue(&w, &mut m, ai, 4.0, t0));
+        assert!(m.events.iter().any(|x| x == "start A from 4"), "{:?}", m.events);
+        assert!(e.is_running(ai));
+        assert!(!e.chase_cue(&w, &mut m, bi, 5.0, t0), "ended 2 s ago");
+        assert!(!e.is_running(bi));
+        assert!(e.chase_cue(&w, &mut m, bi, 0.0, t0), "just reached: starts from the top");
     }
 
     #[test]

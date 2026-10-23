@@ -1708,7 +1708,7 @@ fn fuzz_devices() {
             let _ = ArtNetOutput::open(&n, true);
             let _ = SacnOutput::open(&n, 200);
             for source in [TimecodeSource::Ltc, TimecodeSource::Mtc] {
-                let sync = TimecodeSync { source, rate: TimecodeRate::Fps25, ltc_device: Some(n.clone()), ltc_channel: 9999, mtc_port: Some(n.clone()) };
+                let sync = TimecodeSync { source, rate: TimecodeRate::Fps25, ltc_device: Some(n.clone()), ltc_channel: 9999, mtc_port: Some(n.clone()), ..Default::default() };
                 let r = openq::media::tcio::Reader::open(&sync);
                 let _ = r.position(Instant::now());
             }

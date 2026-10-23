@@ -218,7 +218,21 @@ pub fn workspace(ws: &mut Workspace) {
             cart.cells.clear(); // more than there can be cues: forget the places, keep the buttons
         }
     }
+    let infos = std::iter::once(&mut ws.cue_list.info).chain(ws.cue_list.others.iter_mut().map(|o| &mut o.info));
+    for i in infos {
+        f64_in(&mut i.timecode.offset, -MAX_TIME, MAX_TIME);
+    }
     let s = &mut ws.settings;
+    let mut seen = Vec::new();
+    s.cue_templates.retain(|c| {
+        let tag = c.kind.tag();
+        let fresh = !seen.contains(&tag);
+        seen.push(tag);
+        fresh
+    });
+    for c in &mut s.cue_templates {
+        cue(c);
+    }
     fade(&mut s.panic_fade);
     db(&mut s.master_volume_db);
     f64_in(&mut s.double_go_protection, 0.0, MAX_DOUBLE_GO);

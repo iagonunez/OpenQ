@@ -53,6 +53,9 @@ enum Action {
     Warnings,
     CopyProps,
     PasteProps,
+    SetTemplate,
+    ClearTemplate,
+    Audition,
 }
 
 impl Action {
@@ -78,7 +81,7 @@ impl Action {
         use Action::*;
         [
             New, Open, Save, SaveAs, Bundle, Import, Quit, Undo, Redo, Duplicate, Delete, Group, Renumber, LevelLoudness, Settings, Go, Stop, Pause,
-            Resume, ToggleMode, Stages, Share, Connect, Disconnect, Preview, Log, OQVis, Manual, ErrorLog, About, Overrides, Warnings, CopyProps, PasteProps,
+            Resume, ToggleMode, Stages, Share, Connect, Disconnect, Preview, Log, OQVis, Manual, ErrorLog, About, Overrides, Warnings, CopyProps, PasteProps, SetTemplate, ClearTemplate, Audition,
         ]
         .into_iter()
         .find(|a| a.id() == id)
@@ -206,6 +209,8 @@ impl NativeMenu {
                 &sep(),
                 &item(Action::CopyProps, t("Copy cue properties")),
                 &item(Action::PasteProps, t("Paste cue properties…")),
+                &item(Action::SetTemplate, t("Use as default for new cues of this type")),
+                &item(Action::ClearTemplate, t("Forget the default for new cues of this type")),
                 &b,
                 &item(Action::Renumber, t("Renumber all cues")),
                 &item(Action::LevelLoudness, t("Level selected cues to loudness target")),
@@ -216,6 +221,8 @@ impl NativeMenu {
         for (i, tag) in KindTag::ALL.iter().enumerate().filter(|(_, t)| t.enabled()) {
             let _ = cue.append(&item(Action::NewCue(i), tr!("New {kind} cue", kind = tag.label())));
         }
+        let _ = cue.append(&sep());
+        let _ = cue.append(&item(Action::Audition, t("Audition selected audio cue")));
 
         let mode = item(Action::ToggleMode, t("Enter show mode"));
         let a = sep();
@@ -411,6 +418,9 @@ impl App {
             Action::Warnings => self.warnings.open = true,
             Action::CopyProps => self.copy_props(show),
             Action::PasteProps => self.paste_props.open = self.paste_props.from.is_some(),
+            Action::Audition => self.audition_selected(show),
+            Action::SetTemplate => self.set_template(show),
+            Action::ClearTemplate => self.clear_template(show),
         }
     }
 }

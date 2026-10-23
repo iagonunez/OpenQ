@@ -264,7 +264,7 @@ impl App {
 
     /// The current cue list's timecode input: source, rate and device, with what it receives.
     pub(super) fn list_timecode_window(&mut self, ctx: &egui::Context, show: &mut Show) {
-        use crate::model::{TimecodeRate, TimecodeSource};
+        use crate::model::{TimecodeJump, TimecodeRate, TimecodeSource};
         if !self.show_list_timecode {
             return;
         }
@@ -334,6 +334,27 @@ impl App {
                         }
                     }
                     if sync.source != TimecodeSource::Off {
+                        ui.label(t("Offset"));
+                        ui.horizontal(|ui| {
+                            ui.add(egui::DragValue::new(&mut sync.offset).speed(0.1).range(-crate::limits::MAX_TIME..=crate::limits::MAX_TIME).suffix(" s"))
+                                .on_hover_text(t("Added to the incoming time before it meets the cues' triggers (-3600 s for a clock that starts at 01:00:00:00)"));
+                        });
+                        ui.end_row();
+                        ui.label(t("On a jump"));
+                        egui::ComboBox::from_id_salt("list-tc-jump")
+                            .selected_text(match sync.on_jump {
+                                TimecodeJump::Ignore => t("Do nothing"),
+                                TimecodeJump::FireSkipped => t("Fire the cues skipped"),
+                                TimecodeJump::Chase => t("Chase"),
+                            })
+                            .show_ui(ui, |ui| {
+                                ui.selectable_value(&mut sync.on_jump, TimecodeJump::Ignore, t("Do nothing"));
+                                ui.selectable_value(&mut sync.on_jump, TimecodeJump::FireSkipped, t("Fire the cues skipped"))
+                                    .on_hover_text(t("A jump forward fires the cues it passed over"));
+                                ui.selectable_value(&mut sync.on_jump, TimecodeJump::Chase, t("Chase"))
+                                    .on_hover_text(t("Stops the cues this timecode started and starts those that would be running at the new time, part way through"));
+                            });
+                        ui.end_row();
                         ui.label(t("Receiving"));
                         let now = Instant::now();
                         match (show.timecode.position(&sync, now), show.timecode.error(&sync)) {
@@ -361,7 +382,7 @@ impl App {
             ui.label(
                 RichText::new(
                     t("Cues in this list with a timecode trigger (Triggers tab) fire as the timecode runs past their time. \
-                     Jumps and dropouts don't fire cues."),
+                     What a jump or a dropout does is set above."),
                 )
                 .weak()
                 .small(),

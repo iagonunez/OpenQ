@@ -590,6 +590,10 @@ pub struct Media {
     midi_files: HashMap<CueId, midifile::Player>,
     /// The audio patches' outputs (Settings → Audio), in order: patch n is `patches[n - 1]`.
     patches: Vec<PatchOut>,
+    /// The audition output (Settings → Audio): where Edit mode previews audio cues.
+    audition: PatchOut,
+    /// The voice being auditioned.
+    audition_id: Option<CueId>,
     /// Master level, for the patches' outputs too.
     master_db: f32,
     /// Open inputs of running Mic cues.
@@ -756,7 +760,70 @@ impl Media {
 
     /// Every open audio output: the main one, then the patches'.
     fn outputs(&mut self) -> impl Iterator<Item = &mut audio::AudioOutput> {
-        self.audio.iter_mut().chain(self.patches.iter_mut().filter_map(|p| p.out.as_mut()))
+        self.audio.iter_mut().chain(self.patches.iter_mut().filter_map(|p| p.out.as_mut())).chain(self.audition.out.as_mut())
+    }
+
+    /// Choose the audition output's device (None: none). Reopens only when it changed.
+    pub fn set_audition_device(&mut self, device: Option<&str>) {
+        if self.audition.device.as_deref() == device {
+            return;
+        }
+        self.stop_audition();
+        self.audition = PatchOut::new(device.map(str::to_string));
+    }
+
+    /// Play an Audio cue's sound (its file, trims, loops, speed, level, EQ and effects, but not its
+    /// routing) on the audition output, replacing what was auditioned before. Starts nothing in the
+    /// show: no cue is fired.
+    pub fn audition(&mut self, cue: &Cue) -> Result<(), String> {
+        let CueKind::Audio(p) = &cue.kind else { return Err("only audio cues can be auditioned".into()) };
+        self.stop_audition();
+        if p.path.as_os_str().is_empty() {
+            return Err("no audio file".into());
+        }
+        if !self.prober.exists(&p.path) {
+            return Err(format!("file not found: {}", p.path.display()));
+        }
+        let channels = match self.prober.get(&p.path) {
+            Some(Ok(i)) => i.channels.max(1),
+            Some(Err(e)) => return Err(e),
+            None => return Err("still reading the file, try again in a moment".into()),
+        };
+        let out = match &mut self.audition {
+            PatchOut { out: Some(a), .. } => a,
+            PatchOut { device: None, .. } => return Err("no audition output chosen (Settings → Audio)".into()),
+            PatchOut { error, .. } => return Err(format!("audition output unavailable: {}", error.as_deref().unwrap_or("opening…"))),
+        };
+        // The cue's own routing, gangs and objects are made for the show's outputs.
+        let mut p = p.clone();
+        p.routing = None;
+        p.gangs.clear();
+        p.objects = Default::default();
+        p.out_levels.clear();
+        let id = uuid::Uuid::new_v4();
+        out.start_from(id, &p, channels, Instant::now(), 0.0)?;
+        self.audition_id = Some(id);
+        Ok(())
+    }
+
+    /// Device name of the audition output and why it isn't open.
+    pub fn audition_status(&self) -> (Option<String>, Option<String>) {
+        (self.audition.out.as_ref().map(|a| a.device_name.clone()), self.audition.error.clone())
+    }
+
+    /// Stop the audition.
+    pub fn stop_audition(&mut self) {
+        if let (Some(id), Some(a)) = (self.audition_id.take(), self.audition.out.as_mut()) {
+            a.stop(id);
+        }
+    }
+
+    /// True while an audition plays.
+    pub fn auditioning(&self) -> bool {
+        match (self.audition_id, self.audition.out.as_ref()) {
+            (Some(id), Some(a)) => a.has(id),
+            _ => false,
+        }
     }
 
     /// Every open audio output (read only).
@@ -833,6 +900,8 @@ impl Media {
             timecode_out: HashMap::new(),
             midi_files: HashMap::new(),
             patches: Vec::new(),
+            audition: PatchOut::new(None),
+            audition_id: None,
             master_db: 0.0,
             mics: HashMap::new(),
             reconnect: None,
@@ -1595,7 +1664,7 @@ impl Backend for Media {
             self.light.set_audio(tap);
         }
         let (master, room) = (self.master_db, self.room.clone());
-        for p in &mut self.patches {
+        for p in self.patches.iter_mut().chain(std::iter::once(&mut self.audition)) {
             p.watch(now, master, &room, &mut self.notes);
         }
         self.watch_mics(now);

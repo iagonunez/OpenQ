@@ -34,6 +34,40 @@ impl App {
         self.notify(crate::tr!("Copied the properties of {cue}", cue = name));
     }
 
+    /// Edit menu items: make the primary cue the default for new cues of its type, or forget it.
+    pub(super) fn template_items(&mut self, ui: &mut egui::Ui, show: &mut Show) {
+        let primary = self.primary().and_then(|id| show.ws.cue_list.find(id)).map(|c| (c.shallow_clone(), c.kind.tag()));
+        let can = primary.is_some() && self.can_edit_show();
+        let label = primary.as_ref().map_or(t("type"), |p| p.1.label());
+        if ui.add_enabled(can, egui::Button::new(theme::with_icon(icons::CONTENT_COPY, &crate::tr!("Use as default for new {kind} cues", kind = label.to_string())))).clicked() {
+            self.set_template(show);
+            ui.close();
+        }
+        let has = primary.as_ref().is_some_and(|p| show.ws.settings.template(p.1).is_some());
+        if ui.add_enabled(can && has, egui::Button::new(theme::with_icon(icons::REFRESH, &crate::tr!("Forget the default for new {kind} cues", kind = label.to_string())))).clicked() {
+            self.clear_template(show);
+            ui.close();
+        }
+    }
+
+    /// Make the primary cue the default for new cues of its type.
+    pub(super) fn set_template(&mut self, show: &mut Show) {
+        let Some(c) = self.primary().and_then(|id| show.ws.cue_list.find(id)).map(|c| c.shallow_clone()) else { return };
+        let kind = c.kind.tag().label();
+        show.ws.settings.set_template(&c);
+        show.edited_outside_cues();
+        self.notify(crate::tr!("New {kind} cues start like this one", kind = kind.to_string()));
+    }
+
+    /// Forget the default of the primary cue's type.
+    pub(super) fn clear_template(&mut self, show: &mut Show) {
+        let Some(tag) = self.primary().and_then(|id| show.ws.cue_list.find(id)).map(|c| c.kind.tag()) else { return };
+        if show.ws.settings.clear_template(tag) {
+            show.edited_outside_cues();
+            self.notify(crate::tr!("New {kind} cues start from OpenQ's defaults", kind = tag.label().to_string()));
+        }
+    }
+
     pub(super) fn paste_props_window(&mut self, ctx: &egui::Context, show: &mut Show) {
         let st = &mut self.paste_props;
         if !st.open {

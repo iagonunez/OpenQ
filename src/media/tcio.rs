@@ -229,6 +229,7 @@ impl Follower {
 
     /// The inputs to keep open.
     pub fn set_wanted(&self, syncs: Vec<TimecodeSync>) {
+        let syncs: Vec<_> = syncs.iter().map(TimecodeSync::input).collect();
         let mut w = self.wanted.lock();
         if *w != syncs {
             *w = syncs;
@@ -236,7 +237,8 @@ impl Follower {
     }
 
     fn reader(&self, sync: &TimecodeSync) -> Option<Arc<Reader>> {
-        self.readers.lock().iter().find(|(k, _)| k == sync).map(|(_, r)| r.clone())
+        let sync = sync.input();
+        self.readers.lock().iter().find(|(k, _)| *k == sync).map(|(_, r)| r.clone())
     }
 
     /// Current position of the input `sync` describes (None: stopped, or not open yet).

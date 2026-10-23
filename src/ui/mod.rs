@@ -484,7 +484,10 @@ impl App {
         if !self.room_for_cues(show, 1) {
             return None;
         }
-        let mut cue = Cue::new(tag.default_kind());
+        let mut cue = match show.ws.settings.template(tag) {
+            Some(t) => Cue::from_template(t),
+            None => Cue::new(tag.default_kind()),
+        };
         cue.number = show.ws.cue_list.next_number();
         // Control cues target the currently selected cue.
         let sel = self.primary();
@@ -501,6 +504,18 @@ impl App {
         show.edited_shape([id]);
         self.select(show, Some(id));
         Some(id)
+    }
+
+    /// Cue → Audition: play the selected audio cue on the audition output, or stop it.
+    pub(super) fn audition_selected(&mut self, show: &mut Show) {
+        if show.media.auditioning() {
+            show.media.stop_audition();
+            return;
+        }
+        let Some(cue) = self.primary().and_then(|id| show.ws.cue_list.find(id)).cloned() else { return };
+        if let Err(e) = show.media.audition(&cue) {
+            self.notify_error(tr!("Can't audition: {e}", e = e));
+        }
     }
 
     fn add_media_cue(&mut self, show: &mut Show, path: PathBuf) -> Option<CueId> {
@@ -524,6 +539,17 @@ impl App {
             return None;
         }
         let mut cue = Cue::new(kind);
+        // The type's default settings, with this file.
+        if let Some(t) = show.ws.settings.template(cue.kind.tag()) {
+            let mut from = Cue::from_template(t);
+            match (&mut from.kind, &cue.kind) {
+                (CueKind::Audio(a), CueKind::Audio(b)) => a.path = b.path.clone(),
+                (CueKind::Video(a), CueKind::Video(b)) => a.path = b.path.clone(),
+                (CueKind::MidiFile(a), CueKind::MidiFile(b)) => a.path = b.path.clone(),
+                _ => {}
+            }
+            cue = from;
+        }
         cue.number = show.ws.cue_list.next_number();
         let id = cue.id;
         show.ws.cue_list.insert_after(self.primary(), cue);
@@ -1076,6 +1102,8 @@ impl App {
                     self.paste_props.open = true;
                 }
                 ui.separator();
+                self.template_items(ui, show);
+                ui.separator();
                 if ui.button(wi(I::REFRESH, t("Renumber all cues"))).clicked() {
                     self.renumber_all(show);
                 }
@@ -1105,6 +1133,16 @@ impl App {
                     if ui.add(b).clicked() {
                         self.add_cue(show, *tag);
                     }
+                }
+                ui.separator();
+                let playing = show.media.auditioning();
+                let label = if playing { t("Stop audition") } else { t("Audition selected audio cue") };
+                if ui
+                    .add_enabled(!show.replica, egui::Button::new(wi(if playing { I::STOP } else { I::PLAY_ARROW }, label)))
+                    .on_hover_text(t("Plays the cue's sound on the audition output (Settings → Audio) without firing it"))
+                    .clicked()
+                {
+                    self.audition_selected(show);
                 }
             });
             ui.menu_button(t("Show"), |ui| {
@@ -2083,6 +2121,36 @@ impl App {
                 ui.end_row();
             });
         ui.label(RichText::new(t("Changing the device stops all playback. Cue routing matrices address the device's outputs.")).weak());
+        ui.separator();
+        {
+            let current = show.ws.settings.audition_device.clone();
+            let mut chosen = current.clone();
+            ui.label(RichText::new(t("Audition output")).font(theme::semibold(14.0)));
+            ui.label(RichText::new(t("Cue → Audition plays the selected audio cue here (headphones, say), apart from the show's outputs. This computer's choice.")).weak());
+            let shown = match &chosen {
+                None => t("— none —").to_string(),
+                Some(id) => devices.iter().find(|d| &d.id == id).map_or_else(|| tr!("{id} (missing)", id = id.clone()), |d| d.name.clone()),
+            };
+            ui.horizontal(|ui| {
+                egui::ComboBox::from_id_salt("audition-dev").width(320.0).selected_text(shown).show_ui(ui, |ui| {
+                    ui.selectable_value(&mut chosen, None, t("— none —"));
+                    for d in &devices {
+                        ui.selectable_value(&mut chosen, Some(d.id.clone()), &d.name).on_hover_text(&d.id);
+                    }
+                });
+                if show.ws.settings.audition_device.is_some() {
+                    match show.media.audition_status() {
+                        (Some(name), _) => ui.label(RichText::new(name).color(GREEN)),
+                        (None, Some(e)) => ui.label(RichText::new(e).color(RED).small()),
+                        (None, None) => ui.label(""),
+                    };
+                }
+            });
+            if chosen != current {
+                show.ws.settings.audition_device = chosen;
+                show.edited_outside_cues();
+            }
+        }
         ui.separator();
         self.audio_patches(ui, show, &devices);
         ui.separator();

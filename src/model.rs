@@ -2162,6 +2162,36 @@ impl Cue {
         }
     }
 
+    /// What a template keeps of this cue: its type's settings and options, without what belongs
+    /// to one cue only (number, name, notes, hotkey, triggers, target, media file, children).
+    pub fn as_template(&self) -> Cue {
+        let mut c = self.shallow_clone();
+        c.number.clear();
+        c.name.clear();
+        c.notes.clear();
+        c.hotkey = None;
+        c.timecode_trigger = None;
+        c.midi_trigger = None;
+        c.wallclock_trigger = None;
+        if let Some(t) = c.kind.target_mut() {
+            *t = None;
+        }
+        match &mut c.kind {
+            CueKind::Audio(a) => a.path = Default::default(),
+            CueKind::Video(v) => v.path = Default::default(),
+            CueKind::MidiFile(m) => m.path = Default::default(),
+            _ => {}
+        }
+        c
+    }
+
+    /// A new cue (fresh id) that starts as a copy of a template made by [`Cue::as_template`].
+    pub fn from_template(template: &Cue) -> Cue {
+        let mut c = template.as_template();
+        c.id = Uuid::new_v4();
+        c
+    }
+
     /// Equal apart from a group's children.
     pub fn shallow_eq(&self, other: &Cue) -> bool {
         // Naming every field: a new one fails to compile here until it is compared too.
@@ -2346,6 +2376,20 @@ pub enum TimecodeSource {
     Mtc,
 }
 
+/// What a list does when its incoming timecode jumps (a relocate, a rewind, timecode that
+/// starts or comes back after a gap) instead of running on steadily.
+#[derive(Serialize, Deserialize, Clone, Copy, PartialEq, Eq, Debug, Default)]
+pub enum TimecodeJump {
+    /// Nothing fires; the list just takes the new time.
+    #[default]
+    Ignore,
+    /// A jump forward fires the cues it skipped over.
+    FireSkipped,
+    /// Cues triggered by this list's timecode stop, then those that would be running at the new
+    /// time start, part way through.
+    Chase,
+}
+
 /// A cue list's timecode input: cues with a timecode trigger fire when it passes their time.
 #[derive(Serialize, Deserialize, Clone, PartialEq, Debug, Default)]
 #[serde(default)]
@@ -2360,6 +2404,19 @@ pub struct TimecodeSync {
     pub ltc_channel: u16,
     /// MTC: MIDI input port name (None = the first port).
     pub mtc_port: Option<String>,
+    /// Added to the incoming time before it is compared with the cues' triggers, in seconds
+    /// (a clock that starts at 01:00:00:00 and a list that starts at 0 use -3600).
+    pub offset: f64,
+    /// What a jump in the incoming time does.
+    pub on_jump: TimecodeJump,
+}
+
+impl TimecodeSync {
+    /// Only the input itself (source, rate, device, channel, port): what a reader is opened for,
+    /// so changing the offset or the jump behaviour doesn't reopen it.
+    pub fn input(&self) -> Self {
+        Self { offset: 0.0, on_jump: TimecodeJump::Ignore, ..self.clone() }
+    }
 }
 
 /// Name and per-list state of one cue list.
@@ -2976,6 +3033,35 @@ pub struct Settings {
     /// Decode movies on the graphics card's video engine where it takes them (this computer's
     /// choice: a replica's edit doesn't change it). Off: always on the CPU.
     pub hardware_video_decoding: bool,
+    /// Default settings for new cues, at most one per type: a new cue of that type starts as a copy
+    /// ([`Cue::from_template`]). Made from a cue with [`Cue::as_template`].
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub cue_templates: Vec<Cue>,
+    /// Output device for auditioning audio cues in Edit mode, apart from the show's outputs (this
+    /// computer's choice: a replica's edit doesn't change it). None: no audition output.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub audition_device: Option<String>,
+}
+
+impl Settings {
+    /// The default for new cues of this type, if one was set.
+    pub fn template(&self, tag: KindTag) -> Option<&Cue> {
+        self.cue_templates.iter().find(|c| c.kind.tag() == tag)
+    }
+
+    /// Make `cue` the default for new cues of its type (replacing any earlier one).
+    pub fn set_template(&mut self, cue: &Cue) {
+        let t = cue.as_template();
+        self.cue_templates.retain(|c| c.kind.tag() != t.kind.tag());
+        self.cue_templates.push(t);
+    }
+
+    /// Forget the default for this type. Returns whether there was one.
+    pub fn clear_template(&mut self, tag: KindTag) -> bool {
+        let n = self.cue_templates.len();
+        self.cue_templates.retain(|c| c.kind.tag() != tag);
+        self.cue_templates.len() != n
+    }
 }
 
 impl Default for Settings {
@@ -2988,6 +3074,8 @@ impl Default for Settings {
             loudness_target: crate::loudness::DEFAULT_TARGET,
             patches: Vec::new(),
             hardware_video_decoding: true,
+            cue_templates: Vec::new(),
+            audition_device: None,
         }
     }
 }
@@ -3415,5 +3503,32 @@ mod tests {
         // A copy has its own (empty) cache and still works.
         let copy = l.clone();
         assert_eq!(copy.parent_of(inner.id), Some(g.id));
+    }
+}
+
+#[cfg(test)]
+mod template_tests {
+    use super::*;
+
+    #[test]
+    fn a_template_keeps_options_not_identity() {
+        let mut c = Cue::new(CueKind::Audio(AudioCue { path: "a.wav".into(), ..Default::default() }));
+        c.number = "7".into();
+        c.name = "Intro".into();
+        c.hotkey = Some("F1".into());
+        c.pre_wait = 1.5;
+        c.color = CueColor::Red;
+        let mut s = Settings::default();
+        s.set_template(&c);
+        s.set_template(&c);
+        assert_eq!(s.cue_templates.len(), 1);
+        let n = Cue::from_template(s.template(KindTag::Audio).unwrap());
+        assert_ne!(n.id, c.id);
+        assert!(n.number.is_empty() && n.name.is_empty() && n.hotkey.is_none());
+        assert_eq!(n.pre_wait, 1.5);
+        assert_eq!(n.color, CueColor::Red);
+        assert!(matches!(&n.kind, CueKind::Audio(a) if a.path.as_os_str().is_empty()));
+        assert!(s.template(KindTag::Video).is_none());
+        assert!(s.clear_template(KindTag::Audio) && !s.clear_template(KindTag::Audio));
     }
 }

@@ -166,7 +166,7 @@ impl Show {
     /// Fire cues whose timecode trigger the incoming timecode has just passed. Only a steady
     /// forward run fires cues; a jump (relocate, rewind) or dropout just moves the reference.
     fn follow_timecode(&mut self, now: Instant) {
-        use crate::model::{CueList, TimecodeSource};
+        use crate::model::{CueList, TimecodeJump, TimecodeSource};
         // Runs every millisecond: bail out before allocating when no list follows timecode.
         let cl = &self.ws.cue_list;
         let follows = |i: &crate::model::ListInfo| i.timecode.source != TimecodeSource::Off;
@@ -180,26 +180,55 @@ impl Show {
         }
         self.timecode.set_wanted(syncs);
         let mut due = Vec::new();
+        let mut chase = Vec::new();
         let mut seen = Vec::new();
         for (info, cues) in lists {
-            if info.timecode.source == TimecodeSource::Off {
+            let sync = &info.timecode;
+            if sync.source == TimecodeSource::Off {
                 continue;
             }
-            let Some(pos) = self.timecode.position(&info.timecode, now) else {
+            let Some(pos) = self.timecode.position(sync, now) else {
                 continue;
             };
+            let secs = pos.secs + sync.offset;
             seen.push(info.name.clone());
-            if let Some(&last) = self.tc_last.get(&info.name)
-                && crate::overrides::allowed(crate::overrides::Override::TimecodeIn)
-                && pos.secs > last
-                && pos.secs - last < 1.0
-            {
-                due.extend(CueList::timecode_due(cues, last, pos.secs));
+            let allowed = crate::overrides::allowed(crate::overrides::Override::TimecodeIn);
+            let last = self.tc_last.get(&info.name).copied();
+            let steady = last.is_some_and(|l| secs > l && secs - l < 1.0);
+            if allowed && steady {
+                due.extend(CueList::timecode_due(cues, last.unwrap_or(secs), secs));
+            } else if allowed && last != Some(secs) {
+                match sync.on_jump {
+                    TimecodeJump::Ignore => {}
+                    TimecodeJump::FireSkipped => {
+                        if let Some(l) = last.filter(|l| secs > *l) {
+                            due.extend(CueList::timecode_due(cues, l, secs));
+                        }
+                    }
+                    TimecodeJump::Chase => {
+                        let mut all: Vec<_> = CueList::timecode_due(cues, f64::NEG_INFINITY, f64::INFINITY)
+                            .into_iter()
+                            .filter_map(|id| Some((id, self.ws.cue_list.find(id)?.timecode_trigger?)))
+                            .collect();
+                        all.sort_by(|a, b| a.1.total_cmp(&b.1));
+                        chase.push((secs, all));
+                    }
+                }
             }
-            self.tc_last.insert(info.name.clone(), pos.secs);
+            self.tc_last.insert(info.name.clone(), secs);
         }
         self.tc_last.retain(|k, _| seen.contains(k));
         let Show { ws, engine, media, .. } = self;
+        for (secs, all) in chase {
+            for &(id, _) in &all {
+                if engine.is_running(id) {
+                    engine.stop_cue(ws, media, id);
+                }
+            }
+            for (id, at) in all.into_iter().filter(|(_, t)| *t <= secs) {
+                engine.chase_cue(ws, media, id, secs - at, now);
+            }
+        }
         for id in due {
             engine.trigger_cue(ws, media, id, now);
         }
@@ -298,6 +327,7 @@ impl Show {
         if !self.replica {
             // (A replica plays nothing: its patches' devices are the main device's.)
             self.media.set_patches(&self.ws.settings.patches);
+            self.media.set_audition_device(self.ws.settings.audition_device.as_deref());
         }
         self.sync_lighting();
     }
@@ -355,6 +385,7 @@ impl Show {
             p.device = mine.patches.get(i).and_then(|m| m.device.clone());
         }
         ws.settings.osc_enabled = mine.osc_enabled;
+        ws.settings.audition_device = mine.audition_device.clone();
         ws.settings.hardware_video_decoding = mine.hardware_video_decoding;
         ws.settings.osc_port = mine.osc_port;
         // A replica's display choices wait for the operator (`remote::netguard`, which already
@@ -466,6 +497,7 @@ impl Show {
         self.media.reopen_audio(self.ws.settings.audio_device.as_deref(), master);
         self.media.set_master(master);
         self.media.set_patches(&self.ws.settings.patches);
+        self.media.set_audition_device(self.ws.settings.audition_device.as_deref());
     }
 }
 
