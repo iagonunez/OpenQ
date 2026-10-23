@@ -728,6 +728,8 @@ mod tests {
             tx.send_to(&p, ("127.0.0.1", port)).unwrap();
         };
         for (merge, expect) in [(MergeMode::Capture, 0), (MergeMode::Htp, 77)] {
+            // The previous receiver still holds the port (macOS refuses a second bind); closing is retried below.
+            e.set_receivers(Vec::new());
             let input = InputConfig { routes: vec![UniverseRoute { universe: 2, wire: 4 }], merge, ..Default::default() };
             let r = InputReceiver::start_on(input, port);
             let h = r.handle();
