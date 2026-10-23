@@ -672,9 +672,13 @@ mod tests {
         }
     }
 
-    fn wait(mut f: impl FnMut() -> bool) -> bool {
+    fn wait(f: impl FnMut() -> bool) -> bool {
+        wait_for(Duration::from_secs(2), f)
+    }
+
+    fn wait_for(limit: Duration, mut f: impl FnMut() -> bool) -> bool {
         let t = Instant::now();
-        while t.elapsed() < Duration::from_secs(2) {
+        while t.elapsed() < limit {
             if f() {
                 return true;
             }
@@ -727,7 +731,8 @@ mod tests {
             let input = InputConfig { routes: vec![UniverseRoute { universe: 2, wire: 4 }], merge, ..Default::default() };
             let r = InputReceiver::start_on(input, port);
             let h = r.handle();
-            assert!(wait(|| h.status().open), "input never opened: {:?}", h.status().error);
+            // A bind that lost a race for the port retries after RETRY (2 s), longer than `wait` allows.
+            assert!(wait_for(Duration::from_secs(6), || h.status().open), "input never opened: {:?}", h.status().error);
             e.set_receivers(vec![r]);
             assert!(wait(|| {
                 send(77);
