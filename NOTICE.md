@@ -87,6 +87,15 @@ have expired. Some countries may still have patents on AAC. If you distribute bi
 commercially where those apply, think about patent licensing, or build Symphonia without the
 `aac` feature. Video codecs come from the system FFmpeg (see above) and aren't part of OpenQ.
 
+## Fixture profiles
+
+`assets/fixtures/library.gz` is the manufacturer library shipped with OpenQ (Patch → Fixture types →
+Manufacturer profiles). It holds fixture definitions from the Open Fixture Library
+(<https://open-fixture-library.org>, MIT License, copyright Florian Edelmann and contributors) and a
+few manufacturer GDTF profiles, converted to OpenQ's format by `examples/fixture_library.rs`. The
+fixtures' names and manufacturers' names belong to their owners and are used only to identify
+equipment.
+
 ## User manual
 
 `docs/manual` is part of OpenQ and is under the same license. Its screenshots show OpenQ itself. The web

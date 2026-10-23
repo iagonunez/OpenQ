@@ -387,9 +387,9 @@ impl App {
             ui.label(
                 RichText::new(format!(
                     "X {:.1}%  Y {:.1}%  ·  {} {:.0}% × {:.0}%  ·  {:.1}°{}",
-                    crate::i18n::t("Scale"),
                     g.x * 100.0,
                     g.y * 100.0,
+                    crate::i18n::t("Scale"),
                     g.scale_x * 100.0,
                     g.scale_y * 100.0,
                     g.rotation,

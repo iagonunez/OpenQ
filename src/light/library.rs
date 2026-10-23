@@ -13,6 +13,27 @@ fn mode(name: &str, ch: &[(A, bool)]) -> FixtureMode {
     FixtureMode::sequential(name, ch)
 }
 
+/// The manufacturer library shipped inside OpenQ (`assets/fixtures/library.gz`, built by
+/// `examples/fixture_library.rs`): Open Fixture Library fixtures and manufacturer GDTF profiles.
+/// Read once, on the first call (tens of milliseconds): call it from a worker, not a UI frame.
+pub fn bundled() -> &'static [FixtureType] {
+    use std::io::Read;
+    static BUNDLED: std::sync::OnceLock<Vec<FixtureType>> = std::sync::OnceLock::new();
+    BUNDLED.get_or_init(|| {
+        let mut text = String::new();
+        if flate2::read::GzDecoder::new(&include_bytes!("../../assets/fixtures/library.gz")[..]).read_to_string(&mut text).is_err() {
+            return Vec::new();
+        }
+        let mut types: Vec<FixtureType> = text
+            .lines()
+            .filter_map(|l| serde_json::from_str::<FixtureType>(l).ok())
+            .filter_map(|t| super::fixlib::sanitize(t).ok())
+            .collect();
+        types.sort_by_cached_key(|a| (a.manufacturer.to_lowercase(), a.name.to_lowercase()));
+        types
+    })
+}
+
 /// Every built-in type.
 pub fn generics() -> Vec<FixtureType> {
     let fixed = Physical { moving: false, ..Default::default() };
@@ -161,5 +182,19 @@ mod tests {
                 assert_eq!(m.footprint() as usize, n, "{} {}", t.id, m.name);
             }
         }
+    }
+}
+
+#[cfg(test)]
+mod bundled_tests {
+    #[test]
+    fn shipped_library_reads() {
+        let all = super::bundled();
+        assert!(all.len() > 600, "{} types", all.len());
+        assert!(all.iter().any(|t| t.manufacturer == "Robe Lighting" || t.manufacturer.starts_with("Robe")));
+        let mut ids: Vec<_> = all.iter().map(|t| &t.id).collect();
+        ids.sort();
+        ids.dedup();
+        assert_eq!(ids.len(), all.len());
     }
 }

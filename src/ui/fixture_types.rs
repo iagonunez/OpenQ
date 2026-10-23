@@ -65,6 +65,9 @@ pub(crate) struct TypeUi {
     snap: Arc<Snapshot>,
     pub(crate) edit: Option<TypeEdit>,
     filter: String,
+    /// The shipped manufacturer library, decoded on a thread the first time the page is shown.
+    bundled: Arc<Mutex<Option<&'static [FixtureType]>>>,
+    bundled_started: bool,
     /// Results of background saves, shown as notifications.
     results: Arc<Mutex<Vec<Result<String, String>>>>,
     /// Fixture files parsed in the background, waiting to go into the show.
@@ -89,6 +92,19 @@ impl TypeUi {
     /// The library, opened on first use.
     pub(crate) fn library(&mut self) -> &Library {
         self.lib.get_or_insert_with(Library::default)
+    }
+
+    /// The shipped manufacturer library once it has been read (starts reading on the first call).
+    fn bundled(&mut self) -> Option<&'static [FixtureType]> {
+        if !self.bundled_started {
+            self.bundled_started = true;
+            let slot = self.bundled.clone();
+            let _ = std::thread::Builder::new().name("openq-bundled-fixtures".into()).spawn(move || {
+                let types = crate::light::library::bundled();
+                *slot.lock() = Some(types);
+            });
+        }
+        *self.bundled.lock()
     }
 
     /// Refresh the snapshot when the library changed (cheap otherwise).
@@ -357,6 +373,18 @@ impl App {
                             open = Some(TypeEdit::new(ty, Origin::BuiltIn));
                         }
                     }
+                    let bundled = self.light.types.bundled();
+                    let n = bundled.map_or(0, <[_]>::len);
+                    let title = if bundled.is_some() { tr!("Manufacturer profiles ({n})", n = n.to_string()) } else { t("Manufacturer profiles…").to_string() };
+                    let hint = t("Shipped with OpenQ: saving makes a copy of your own");
+                    egui::CollapsingHeader::new(title).id_salt("bundled_types").open(if filter.is_empty() { None } else { Some(true) }).show(ui, |ui| {
+                        for ty in bundled.unwrap_or_default().iter().filter(|t| shown(t)) {
+                            let on = editing.as_ref() == Some(&(ty.id.clone(), Origin::BuiltIn));
+                            if ui.selectable_label(on, type_label(ty)).on_hover_text(hint).clicked() {
+                                open = Some(TypeEdit::new(ty.clone(), Origin::BuiltIn));
+                            }
+                        }
+                    });
                 });
             });
             ui.separator();

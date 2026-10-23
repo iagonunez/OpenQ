@@ -67,7 +67,7 @@
   all of them, out over the given time. Light cues fire together with sound and video, so a lighting change can sit on the
   same GO as an effect or a video.</p>
   <figure>
-    <img src="img/light-cue.webp" width="1100" height="783" alt="Cue list with Light cues targeting lighting cues 1/1 to 1/4, and the Settings tab of the selected Light cue.">
+    <img src="img/light-cue.webp" width="1100" height="759" alt="Cue list with Light cues targeting lighting cues 1/1 to 1/4, and the Settings tab of the selected Light cue.">
     <figcaption>Light cues in the cue list. The Target column shows the lighting cue each one fires.</figcaption>
   </figure>
   <div class="note tip"><span class="label">Stop</span><p>A Stop cue aimed at a Light cue releases that cue's sequence. With
@@ -86,14 +86,14 @@
   <em>break</em> per input, set in its fixture type) gets one address per break: click its slot count to set the universe
   and address of the other breaks.</p>
   <figure>
-    <img src="img/lighting-patch.webp" width="1100" height="484" alt="Patch sheet with eight RGB washes, two spots and a pixel bar, with address, position and rotation columns.">
+    <img src="img/lighting-patch.webp" width="1100" height="640" alt="Patch sheet with eight RGB washes, two spots and a pixel bar, with address, position and rotation columns.">
     <figcaption>The patch sheet. Positions are in metres, on the stage axes MVR files use: x across the stage, y depth (+ upstage), z height.</figcaption>
   </figure>
   <p>Fixtures with several cells, such as LED bars, are controlled cell by cell too: cell 3 of fixture 101 is <code>101.3</code>.
   <em>Plan</em> shows the rig from above. Click to select (<kbd>Ctrl</kbd> adds), drag to move the selection, drag empty space to
   pan and scroll to zoom. <a href="#focus-points">Focus points</a> show as green crosses; drag one to move it. With fixtures selected, <em>Arrange</em> spreads them along a line, an arc or a grid.</p>
   <figure>
-    <img src="img/lighting-plan.webp" width="1100" height="796" alt="Top view of the rig: a stage outline with a riser, two lighting bars LX1 and LX2, and fixtures; LX1 is selected with its handles.">
+    <img src="img/lighting-plan.webp" width="1100" height="1079" alt="Top view of the rig: a stage outline with a riser, two lighting bars LX1 and LX2, and fixtures; LX1 is selected with its handles.">
     <figcaption>The Plan view with the stage, a riser and two bars. The tick on each fixture shows which way it faces.</figcaption>
   </figure>
   <p>To make the plan look like the real venue, draw on it: choose <em>Bar</em> or <em>Rectangle</em> next to <em>Draw</em>
@@ -104,7 +104,7 @@
   bar or a rectangle to move it out of the way; the plot puts it there too, and
   <span class="ms" aria-hidden="true">&#xe042;</span> in the row above puts it back.</p>
   <h3 id="fixture-types">Fixture types</h3>
-  <p>OpenQ comes with generic types (dimmer, RGB, RGBW, CMY, moving heads, strobe, fog). <em>Import fixture…</em> (on the
+  <p>OpenQ comes with generic types (dimmer, RGB, RGBW, CMY, moving heads, strobe, fog) and a library of about 650 manufacturer profiles (the Open Fixture Library plus some manufacturer GDTF files), listed under <em>Manufacturer profiles</em> in <em>Fixture types</em>. Search for a fixture, open it and use <em>Add to this show</em>; saving it makes a copy of your own. <em>Import fixture…</em> (on the
   Sheet and the Plan) reads
   Open Fixture Library (<code>.json</code>), GDTF (<code>.gdtf</code>), QLC+ (<code>.qxf</code>) and OpenQ
   (<code>.oqfixture</code>) files. Imported types are copied into the show and saved in your fixture library, so they are there
@@ -116,7 +116,7 @@
   reversed); GDTF files also bring where the yoke, the head and the lens sit, so OpenQ aims from the lens as visualisers draw
   it.</p>
   <figure>
-    <img src="img/fixture-types.webp" width="1100" height="875" alt="Fixture type editor for a moving spot, listing channels with attribute, fine channel, default and ranges.">
+    <img src="img/fixture-types.webp" width="1100" height="1065" alt="Fixture type editor for a moving spot, listing channels with attribute, fine channel, default and ranges.">
     <figcaption>The fixture type editor.</figcaption>
   </figure>
   <p><strong>MVR files</strong> carry a rig between programs. <em>Import MVR…</em> (on the Sheet and the Plan) adds the fixtures
@@ -140,7 +140,7 @@
   </ul>
   <p>The changes are saved with the show, so the next export keeps them.</p>
   <figure>
-    <img src="img/lighting-plot.webp" width="1100" height="721" alt="Plot editor: an A3 page with the stage, bars, fixture symbols and labels, a legend, and the side column for the selected items.">
+    <img src="img/lighting-plot.webp" width="1100" height="747" alt="Plot editor: an A3 page with the stage, bars, fixture symbols and labels, a legend, and the side column for the selected items.">
     <figcaption>The plot editor.</figcaption>
   </figure>
 </section>
@@ -159,7 +159,7 @@
   the colour with its own LEDs. The LED colours come from the fixture type (GDTF files have them); without them OpenQ uses
   typical LED colours, and says so under the picker.</p>
   <figure>
-    <img src="img/lighting-programmer.webp" width="1100" height="702" alt="Programmer page: groups, presets and effects as cards in the left column, fixture tiles with eight washes selected, and the colour page with the colour range of the washes.">
+    <img src="img/lighting-programmer.webp" width="1100" height="969" alt="Programmer page: groups, presets and effects as cards in the left column, fixture tiles with eight washes selected, and the colour page with the colour range of the washes.">
     <figcaption>The programmer. Fixtures with values in the programmer show an orange dot.</figcaption>
   </figure>
   <p>Programmer values override the playback while they are set, and they are what <em>Record cue</em> stores. <em>Clear
@@ -183,7 +183,7 @@
   moving heads <em>at a point</em>, not at pan and tilt values: OpenQ works the pan and tilt out from each fixture's position,
   rotation and angles. Move the point (drag it on Patch → Plan) or a fixture, and every cue aimed at it follows.</p>
   <figure>
-    <img src="img/lighting-points.webp" width="1100" height="656" alt="Programmer with the focus points Centre, DSL and DSR in the left column, two spots aimed at DSL, and the Position page with the offset from the point and the Spread round the point row.">
+    <img src="img/lighting-points.webp" width="1100" height="969" alt="Programmer with the focus points Centre, DSL and DSR in the left column, two spots aimed at DSL, and the Position page with the offset from the point and the Spread round the point row.">
     <figcaption>Two spots aimed at the point DSL. The Position page shows where they aim, measured from the point.</figcaption>
   </figure>
   <ul>
@@ -234,7 +234,7 @@
   the fixtures. With <em>Size follows the sound</em> the effect grows with how loud OpenQ is playing: <em>Gain</em> sets how
   much, <em>Floor</em> how much is left in silence, and the bar next to them shows the level now.</p>
   <figure>
-    <img src="img/lighting-effects.webp" width="1100" height="737" alt="Effects page with a formula effect: settings, preview of red, green and blue across twelve fixtures, and the rainbow formula with its slider.">
+    <img src="img/lighting-effects.webp" width="1100" height="887" alt="Effects page with a formula effect: settings, preview of red, green and blue across twelve fixtures, and the rainbow formula with its slider.">
     <figcaption>A formula effect: the formula makes the colour table, the preview shows it across the selected fixtures.</figcaption>
   </figure>
   <p>Run an effect from the programmer (the effects pool, or <code>effect 2</code>), then record it into a cue. It keeps running
@@ -383,7 +383,7 @@ save_effect("wander.oqfx", "Wander", ["Pan", "Tilt"], STEPS, HEADS,
   <p>A sequence is a cue stack. Lighting cues <strong>track</strong>: a cue stores only what changes, and everything else
   carries on from the cues before it. Each cue has a fade, a separate down fade for intensity going down, and a delay.</p>
   <figure>
-    <img src="img/lighting-sequences.webp" width="1100" height="322" alt="Sequences page with sequence Main and its four cues, their fade, down fade and delay times.">
+    <img src="img/lighting-sequences.webp" width="1100" height="399" alt="Sequences page with sequence Main and its four cues, their fade, down fade and delay times.">
     <figcaption>A sequence. The arrow marks its current cue.</figcaption>
   </figure>
   <ul>
@@ -419,7 +419,7 @@ save_effect("wander.oqfx", "Wander", ["Pan", "Tilt"], STEPS, HEADS,
   <p><em>Open in a window</em> puts the Playback page in a window of its own; choose a <em>Display</em> to have it fill a
   touch screen. Each computer remembers whether its window is open and where, so it comes back after a restart.</p>
   <figure>
-    <img src="img/lighting-playback.webp" width="1100" height="553" alt="Playback page: grand master, blackout and tempo, sequence cards with GO and Release, and a page of executor buttons.">
+    <img src="img/lighting-playback.webp" width="1100" height="605" alt="Playback page: grand master, blackout and tempo, sequence cards with GO and Release, and a page of executor buttons.">
     <figcaption>The Playback page. In Show mode it plays only; executors are added and edited in Edit mode.</figcaption>
   </figure>
 
@@ -457,7 +457,7 @@ save_effect("wander.oqfx", "Wander", ["Pan", "Tilt"], STEPS, HEADS,
   the left, the number on the wire on the right (Art-Net counts from 0). Every output runs on its own, so a slow or unplugged
   device doesn't hold up the others, and a lost device is reopened by itself.</p>
   <figure>
-    <img src="img/lighting-outputs.webp" width="1100" height="443" alt="Outputs page with an Art-Net output sending, a disabled sACN output, and an sACN input set to merge.">
+    <img src="img/lighting-outputs.webp" width="1100" height="570" alt="Outputs page with an Art-Net output sending, a disabled sACN output, and an sACN input set to merge.">
     <figcaption>Outputs and inputs, each with its live status.</figcaption>
   </figure>
   <p><strong>Inputs</strong> receive Art-Net or sACN from another desk. Each one either <em>merges</em> with OpenQ's output
@@ -471,7 +471,7 @@ save_effect("wander.oqfx", "Wander", ["Pan", "Tilt"], STEPS, HEADS,
   <h3 id="dmx-monitor"><span class="ms" aria-hidden="true">&#xe9b0;</span> DMX monitor</h3>
   <p>The DMX monitor shows every slot of a universe as it goes out, inputs included. A yellow line marks where each fixture starts.</p>
   <figure>
-    <img src="img/lighting-monitor.webp" width="1100" height="368" alt="DMX monitor grid of universe 1 with values on the first slots.">
+    <img src="img/lighting-monitor.webp" width="1100" height="367" alt="DMX monitor grid of universe 1 with values on the first slots.">
     <figcaption>The DMX monitor.</figcaption>
   </figure>
   <h3 id="remote-devices-and-visualisers">Remote devices and visualisers</h3>
