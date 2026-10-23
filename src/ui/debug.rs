@@ -5,7 +5,8 @@
 //! `tab:<inspector tab>`, `preview` (toggle the geometry preview), `scrub` / `noscrub` (move the
 //! Animation tab playhead every frame), `drag` / `nodrag` (edit the selected cue's first keyframe
 //! every frame, like dragging it on the timeline), `cmd:<lighting command line>` (`cmd:go 1`),
-//! `gm:<0..1>`, `blackout` / `noblackout`, `quit`.
+//! `gm:<0..1>`, `blackout` / `noblackout`, `mode:show|edit`, `view:cues|lighting`, `page:<lighting page>`,
+//! `oqvis` (open the rig in OQVis), `quit`.
 //! `OPENQ_DEBUG_FRAMES=<file>` writes one CSV line per frame (seconds since start, time spent in
 //! `App::ui` in ms, time since the previous frame in ms, the previous frame's whole CPU time in ms
 //! including tessellation and painting) when the script quits.
@@ -64,6 +65,19 @@ impl App {
                 "scrub" | "noscrub" => self.debug_run.scrub = verb == "scrub",
                 "drag" | "nodrag" => self.debug_run.drag = verb == "drag",
                 "preview" => self.show_preview = !self.show_preview,
+                "mode" => self.mode = if arg == "show" { super::Mode::Show } else { super::Mode::Edit },
+                "view" => self.view = if arg == "lighting" { super::lighting::View::Lighting } else { super::lighting::View::Cues },
+                "page" => {
+                    self.view = super::lighting::View::Lighting;
+                    self.light.tab = super::lighting::LightTab::from_name(arg);
+                    if arg == "plan" {
+                        self.light.patch_view = super::lighting::PatchView::Plan;
+                    }
+                }
+                "oqvis" => {
+                    let (design, scope) = Self::oqvis_input(show);
+                    self.open_oqvis_with(design, scope);
+                }
                 "select" => {
                     let id = show.ws.cue_list.iter_all().iter().find(|c| c.number == arg).map(|c| c.id);
                     self.select(show, id);

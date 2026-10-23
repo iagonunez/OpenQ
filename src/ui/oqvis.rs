@@ -82,9 +82,19 @@ impl App {
     pub(super) fn open_oqvis(&mut self) {
         let (design, scope) = {
             let show = self.show.lock();
-            let scope = show.path.as_ref().and_then(|p| p.file_stem()).map(|s| s.to_string_lossy().into_owned()).unwrap_or_else(|| "OpenQ".into());
-            (show.ws.lighting.clone(), scope)
+            Self::oqvis_input(&show)
         };
+        self.open_oqvis_with(design, scope);
+    }
+
+    /// The design and the name OQVis shows it under.
+    pub(super) fn oqvis_input(show: &crate::show::Show) -> (crate::light::model::Lighting, String) {
+        let scope = show.path.as_ref().and_then(|p| p.file_stem()).map(|s| s.to_string_lossy().into_owned()).unwrap_or_else(|| "OpenQ".into());
+        (show.ws.lighting.clone(), scope)
+    }
+
+    /// `open_oqvis` for callers that already hold the show lock.
+    pub(super) fn open_oqvis_with(&mut self, design: crate::light::model::Lighting, scope: String) {
         if design.fixtures.is_empty() {
             return self.notify(t("Patch some fixtures first: OQVis shows the patch"));
         }
