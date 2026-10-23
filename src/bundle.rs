@@ -43,7 +43,8 @@ pub fn plan(ws: &Workspace, name: &str, folder: &Path, exists: &dyn Fn(&Path) ->
     let mut copies: Vec<(PathBuf, PathBuf)> = Vec::new();
     let mut missing = Vec::new();
     let mut by_source: HashMap<PathBuf, PathBuf> = HashMap::new();
-    let mut taken: std::collections::HashSet<PathBuf> = std::collections::HashSet::new();
+    // Lowercased: macOS and Windows file systems treat "Kick.wav" and "kick.WAV" as one file.
+    let mut taken: std::collections::HashSet<String> = std::collections::HashSet::new();
     let mut place = |path: &mut PathBuf, sub: &str| {
             if path.as_os_str().is_empty() {
                 return;
@@ -65,7 +66,7 @@ pub fn plan(ws: &Workspace, name: &str, folder: &Path, exists: &dyn Fn(&Path) ->
             };
             let mut to = dir.join(sub).join(clean_name(&file));
             let mut n = 2;
-            while !taken.insert(to.clone()) {
+            while !taken.insert(to.to_string_lossy().to_lowercase()) {
                 to = dir.join(sub).join(clean_name(&format!("{stem} {n}{ext}")));
                 n += 1;
             }
@@ -190,6 +191,17 @@ pub fn write(plan: &Plan, progress: &Mutex<Progress>, cancel: &AtomicBool) -> an
 mod tests {
     use super::*;
     use crate::model::{AudioCue, Cue, VideoCue};
+
+    /// Names that differ only in case would be one file on macOS and Windows.
+    #[test]
+    fn names_differing_in_case_stay_apart() {
+        let audio = |p: &str| Cue::new(CueKind::Audio(AudioCue { path: p.into(), ..Default::default() }));
+        let mut ws = Workspace::default();
+        ws.cue_list.cues = vec![audio("/a/Kick.wav"), audio("/b/kick.WAV")];
+        let p = plan(&ws, "s", Path::new("/out"), &|_| true);
+        let (x, y) = (p.copies[0].1.to_string_lossy().to_lowercase(), p.copies[1].1.to_string_lossy().to_lowercase());
+        assert_ne!(x, y);
+    }
 
     /// Media from two folders with one file name get two names; a cue using a file twice copies it
     /// once; the bundled show loads with its media inside the bundle.

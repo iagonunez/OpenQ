@@ -46,7 +46,9 @@ pub type Resolve = Arc<dyn Fn(&str, u16) -> Result<SocketAddr, String> + Send + 
 /// The system's lookup (blocking).
 fn system_resolve(host: &str, port: u16) -> Result<SocketAddr, String> {
     use std::net::ToSocketAddrs;
-    (host, port).to_socket_addrs().map_err(|e| format!("{host}: {e}"))?.next().ok_or_else(|| format!("cannot resolve {host}"))
+    let all: Vec<SocketAddr> = (host, port).to_socket_addrs().map_err(|e| format!("{host}: {e}"))?.collect();
+    // Show gear is nearly always IPv4; a name that also has an IPv6 address shouldn't make it the pick.
+    all.iter().find(|a| a.is_ipv4()).or(all.first()).copied().ok_or_else(|| format!("cannot resolve {host}"))
 }
 
 type Key = (String, u16);
@@ -80,7 +82,7 @@ impl NetSender {
         let thread = std::thread::Builder::new()
             .name("openq-net-send".into())
             .spawn(move || {
-                Worker { socket, resolve, errors: e, done: done_tx, cache: HashMap::new(), waiting: HashMap::new(), tcp: HashMap::new() }
+                Worker { socket, socket6: None, resolve, errors: e, done: done_tx, cache: HashMap::new(), waiting: HashMap::new(), tcp: HashMap::new() }
                     .run(rx)
             })?;
         Ok(Self { tx, errors, thread: Some(thread) })
@@ -114,6 +116,8 @@ impl Drop for NetSender {
 
 struct Worker {
     socket: UdpSocket,
+    /// For IPv6 destinations, bound when the first one is sent to.
+    socket6: Option<UdpSocket>,
     resolve: Resolve,
     errors: Arc<Mutex<Vec<String>>>,
     /// For lookup threads' answers (a blocking send only waits on the lookup's own thread).
@@ -140,8 +144,20 @@ impl Worker {
         push_error(&self.errors, e);
     }
 
-    fn send_to(&self, (host, port): &Key, addr: SocketAddr, bytes: &[u8]) {
-        if let Err(e) = self.socket.send_to(bytes, addr) {
+    fn send_to(&mut self, (host, port): &Key, addr: SocketAddr, bytes: &[u8]) {
+        let sent = if addr.is_ipv6() {
+            match &self.socket6 {
+                Some(s) => s.send_to(bytes, addr),
+                None => UdpSocket::bind("[::]:0").and_then(|s| {
+                    let r = s.send_to(bytes, addr);
+                    self.socket6 = Some(s);
+                    r
+                }),
+            }
+        } else {
+            self.socket.send_to(bytes, addr)
+        };
+        if let Err(e) = sent {
             self.error(format!("Network cue to {host}:{port}: {e}"));
         }
     }
@@ -219,11 +235,15 @@ impl Worker {
         }
         self.waiting.insert(key.clone(), VecDeque::from([bytes]));
         let (resolve, done) = (self.resolve.clone(), self.done.clone());
+        let lookup_key = key.clone();
         let spawned = std::thread::Builder::new().name(crate::recovery::thread_name("openq-dns-", &key.0)).spawn(move || {
+            let key = lookup_key;
             let r = crate::recovery::catch(|| resolve(&key.0, key.1).map_err(anyhow::Error::msg)).map_err(|e| format!("{e:#}"));
             let _ = done.send(Msg::Resolved(key, r));
         });
         if let Err(e) = spawned {
+            // No answer will ever come: don't leave the host waiting for one.
+            self.waiting.remove(&key);
             self.error(format!("Network cue: cannot look up a host name: {e}"));
         }
     }
@@ -332,6 +352,18 @@ mod tests {
         let mut buf = [0u8; 64];
         let n = s.recv(&mut buf).expect("a message");
         buf[..n].to_vec()
+    }
+
+    /// Messages to an IPv6 address go out (the IPv4 socket can't send them).
+    #[test]
+    fn sends_to_ipv6() {
+        let Ok(rx) = UdpSocket::bind("[::1]:0") else { return }; // no IPv6 here
+        rx.set_read_timeout(Some(Duration::from_secs(5))).unwrap();
+        let port = rx.local_addr().unwrap().port();
+        let net = NetSender::new().unwrap();
+        net.send("::1", port, NetTransport::Udp, b"v6".to_vec()).unwrap();
+        assert_eq!(recv(&rx), b"v6");
+        assert!(net.drain_errors().is_empty());
     }
 
     #[test]
