@@ -2,11 +2,11 @@
 # Fuzz tests (tests/fuzz.rs): damaged and hostile show files, media, fixture/effect files, config
 # files, remote messages, network packets and devices. Slow, so plain `cargo test` skips them.
 #
-#   tools/fuzz.sh                       # every target, OPENQ_FUZZ_SECS (default 20) each
+#   tools/fuzz.sh                       # every target, OPNQ_FUZZ_SECS (default 20) each
 #   tools/fuzz.sh show                  # only targets whose name contains "show"
-#   OPENQ_FUZZ_SECS=600 tools/fuzz.sh   # a long run
-#   OPENQ_FUZZ_SEED=<n> tools/fuzz.sh show            # repeat a run (each run prints its seed)
-#   OPENQ_FUZZ_REPLAY=<file> tools/fuzz.sh show_files # one saved input (target/tmp/fuzz-failures)
+#   OPNQ_FUZZ_SECS=600 tools/fuzz.sh   # a long run
+#   OPNQ_FUZZ_SEED=<n> tools/fuzz.sh show            # repeat a run (each run prints its seed)
+#   OPNQ_FUZZ_REPLAY=<file> tools/fuzz.sh show_files # one saved input (target/tmp/fuzz-failures)
 #
 # `tools/demo_show.sh --no-run` first gives fuzz_show_files every cue feature and real media.
 # Extra cargo flags go in CARGO_FLAGS, e.g. CARGO_FLAGS=--no-default-features.

@@ -1,4 +1,4 @@
-//! Benchmark runner (see `openq::bench`). Usually run through `tools/bench.sh`.
+//! Benchmark runner (see `opnq::bench`). Usually run through `tools/bench.sh`.
 //!
 //!   cargo run --release --example bench -- [options]
 //!
@@ -18,7 +18,7 @@
 //!
 //! Exit code 2: a regression against the report it was compared with.
 
-use openq::bench::{self, History, Options, Report, fmt_value as fmt};
+use opnq::bench::{self, History, Options, Report, fmt_value as fmt};
 use std::path::PathBuf;
 use std::process::ExitCode;
 

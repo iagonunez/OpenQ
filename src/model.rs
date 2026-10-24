@@ -3118,7 +3118,7 @@ impl Workspace {
     /// Current file format version.
     pub const FORMAT_VERSION: u32 = 1;
     /// File extension of workspaces.
-    pub const EXTENSION: &'static str = "openq";
+    pub const EXTENSION: &'static str = "opnq";
 
     /// Largest show file read (a big rig's lighting design takes a few hundred MB).
     pub const MAX_FILE: u64 = 1 << 30;
@@ -3296,9 +3296,9 @@ mod tests {
         child.id = group.id;
         group.children_mut().unwrap().push(child);
         ws.cue_list.cues = vec![group.clone(), group];
-        let dir = std::env::temp_dir().join(format!("openq-dup-ids-{}", std::process::id()));
+        let dir = std::env::temp_dir().join(format!("opnq-dup-ids-{}", std::process::id()));
         std::fs::create_dir_all(&dir).unwrap();
-        let p = dir.join("dup.openq");
+        let p = dir.join("dup.opnq");
         std::fs::write(&p, serde_json::to_vec(&ws).unwrap()).unwrap();
         let back = Workspace::load(&p).unwrap();
         let all = back.cue_list.iter_all();
@@ -3420,7 +3420,7 @@ mod tests {
 
     #[test]
     fn workspace_roundtrip_relative_paths() {
-        let dir = std::env::temp_dir().join(format!("openq-test-{}", Uuid::new_v4()));
+        let dir = std::env::temp_dir().join(format!("opnq-test-{}", Uuid::new_v4()));
         std::fs::create_dir_all(&dir).unwrap();
         let mut ws = Workspace::default();
         let mut cue = Cue::new(KindTag::Audio.default_kind());
@@ -3428,7 +3428,7 @@ mod tests {
             a.path = dir.join("sound.wav");
         }
         ws.cue_list.cues.push(cue);
-        let file = dir.join("show.openq");
+        let file = dir.join("show.opnq");
         ws.save(&file).unwrap();
         let raw = std::fs::read_to_string(&file).unwrap();
         assert!(raw.contains("\"sound.wav\""));

@@ -87,8 +87,8 @@ pub fn parse(p: &[u8]) -> Option<DataPacket<'_>> {
     })
 }
 
-/// The source id every sACN output of this process sends (one OpenQ = one source), so inputs
-/// can ignore OpenQ's own packets.
+/// The source id every sACN output of this process sends (one OpnQ = one source), so inputs
+/// can ignore OpnQ's own packets.
 pub fn own_cid() -> [u8; 16] {
     static CID: std::sync::OnceLock<[u8; 16]> = std::sync::OnceLock::new();
     *CID.get_or_init(|| uuid::Uuid::new_v4().into_bytes())
@@ -120,7 +120,7 @@ impl SacnOutput {
 impl DmxOutput for SacnOutput {
     fn send(&mut self, universe: &Universe) -> anyhow::Result<()> {
         self.sequence = self.sequence.wrapping_add(1);
-        data_packet(&self.cid, "OpenQ", self.priority, self.sequence, universe, &mut self.buf);
+        data_packet(&self.cid, "OpnQ", self.priority, self.sequence, universe, &mut self.buf);
         let to = self.unicast.unwrap_or_else(|| SocketAddr::from((multicast(universe.id), PORT)));
         self.socket.send_to(&self.buf[..], to)?;
         Ok(())

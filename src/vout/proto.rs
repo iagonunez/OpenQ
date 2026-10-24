@@ -1,7 +1,7 @@
-//! Messages between OpenQ and its video output process: one JSON object per line, OpenQ → video
+//! Messages between OpnQ and its video output process: one JSON object per line, OpnQ → video
 //! process on its stdin ([`ToVideo`]), the other way on its stdout ([`FromVideo`]).
 //!
-//! Times are [`Ns`]: nanoseconds on OpenQ's clock since the link started. The video process
+//! Times are [`Ns`]: nanoseconds on OpnQ's clock since the link started. The video process
 //! measures the offset to its own clock at the start ([`ToVideo::Ping`] / [`FromVideo::Pong`],
 //! then [`ToVideo::Clock`]), so a cue told to start at a time starts then, in both processes.
 
@@ -11,7 +11,7 @@ use serde::{Deserialize, Serialize};
 use std::io::{BufRead, Write};
 use std::path::PathBuf;
 
-/// Nanoseconds since the link's epoch, on OpenQ's monotonic clock.
+/// Nanoseconds since the link's epoch, on OpnQ's monotonic clock.
 pub type Ns = i64;
 
 /// What a layer shows.
@@ -25,7 +25,7 @@ pub enum Layer {
     Camera(CameraCue),
 }
 
-/// The picture side of a Fade cue (the level is faded in OpenQ's mixer).
+/// The picture side of a Fade cue (the level is faded in OpnQ's mixer).
 #[derive(Serialize, Deserialize, Clone, Debug, PartialEq)]
 pub struct VideoFade {
     /// Target opacity.
@@ -51,12 +51,12 @@ pub struct Windows {
     pub fullscreen: Vec<StageId>,
 }
 
-/// OpenQ → video process.
+/// OpnQ → video process.
 #[derive(Serialize, Deserialize, Clone, Debug, PartialEq)]
 pub enum ToVideo {
     /// Clock check: answer at once with [`FromVideo::Pong`].
     Ping(u32),
-    /// The video process's clock minus OpenQ's, in nanoseconds.
+    /// The video process's clock minus OpnQ's, in nanoseconds.
     Clock(i64),
     /// The workspace's stages.
     Stages(Vec<Stage>),
@@ -147,7 +147,7 @@ pub enum ToVideo {
     Crash,
 }
 
-/// Video process → OpenQ.
+/// Video process → OpnQ.
 #[derive(Serialize, Deserialize, Clone, Debug, PartialEq)]
 pub enum FromVideo {
     /// Answer to [`ToVideo::Ping`]: the video process's clock, in nanoseconds since its start.

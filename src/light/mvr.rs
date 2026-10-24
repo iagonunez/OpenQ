@@ -12,7 +12,7 @@
 //! Trusses and scene objects with a glTF geometry become plot bars and rectangles (their box:
 //! the mesh's bounds); [`merge`] puts the result into a design, renumbering clashing fixtures.
 //!
-//! Coordinates: OpenQ uses metres with x right, y up, z towards the audience; MVR uses
+//! Coordinates: OpnQ uses metres with x right, y up, z towards the audience; MVR uses
 //! millimetres with x right, y upstage, z up. Rotations are degrees about x, y and z, applied as
 //! heading (y) · tilt (x) · roll (z).
 //!
@@ -41,7 +41,7 @@ fn mul(a: &Mat, b: &Mat) -> Mat {
     m
 }
 
-/// Rotation of a fixture in OpenQ's axes: heading (y) · tilt (x) · roll (z).
+/// Rotation of a fixture in OpnQ's axes: heading (y) · tilt (x) · roll (z).
 fn rotation(deg: [f32; 3]) -> Mat {
     let [x, y, z] = deg.map(f32::to_radians);
     let rx = [[1.0, 0.0, 0.0], [0.0, x.cos(), -x.sin()], [0.0, x.sin(), x.cos()]];
@@ -50,7 +50,7 @@ fn rotation(deg: [f32; 3]) -> Mat {
     mul(&ry, &mul(&rx, &rz))
 }
 
-/// OpenQ axes → MVR axes: (x, y, z) → (x, −z, y).
+/// OpnQ axes → MVR axes: (x, y, z) → (x, −z, y).
 const TO_MVR: Mat = [[1.0, 0.0, 0.0], [0.0, 0.0, -1.0], [0.0, 1.0, 0.0]];
 
 /// The fixture's MVR `Matrix` text: `{u}{v}{w}{o}`, u/v/w the rotated MVR axes, o in mm.
@@ -71,7 +71,7 @@ pub fn matrix(f: &Fixture) -> String {
 /// A UUID that stays the same for the same show and fixture number, so a visualiser that
 /// re-imports the file keeps its own settings per fixture.
 fn stable_uuid(scope: &str, what: &str) -> Uuid {
-    let h = Sha256::digest(format!("openq-mvr\0{scope}\0{what}").as_bytes());
+    let h = Sha256::digest(format!("opnq-mvr\0{scope}\0{what}").as_bytes());
     let mut b: [u8; 16] = h[..16].try_into().expect("32-byte digest");
     b[6] = (b[6] & 0x0f) | 0x50; // name-based
     b[8] = (b[8] & 0x3f) | 0x80; // RFC 4122 variant
@@ -204,7 +204,7 @@ pub fn box_glb(min: [f32; 3], max: [f32; 3]) -> Vec<u8> {
     let f = |v: f32| format!("{v}");
     let json = format!(
         concat!(
-            r#"{{"asset":{{"version":"2.0","generator":"OpenQ"}},"scene":0,"scenes":[{{"nodes":[0]}}],"nodes":[{{"mesh":0}}],"#,
+            r#"{{"asset":{{"version":"2.0","generator":"OpnQ"}},"scene":0,"scenes":[{{"nodes":[0]}}],"nodes":[{{"mesh":0}}],"#,
             r#""meshes":[{{"primitives":[{{"attributes":{{"POSITION":0,"NORMAL":1}},"indices":2}}]}}],"#,
             r#""accessors":[{{"bufferView":0,"componentType":5126,"count":{n},"type":"VEC3","min":[{x0},{y0},{z0}],"max":[{x1},{y1},{z1}]}},"#,
             r#"{{"bufferView":1,"componentType":5126,"count":{n},"type":"VEC3"}},"#,
@@ -251,9 +251,9 @@ fn shape_file(s: &PlotShape) -> String {
 pub fn scene(l: &Lighting, scope: &str) -> String {
     let mut x = String::new();
     x.push_str("<?xml version=\"1.0\" encoding=\"UTF-8\" standalone=\"no\" ?>\n");
-    x.push_str(&format!("<GeneralSceneDescription verMajor=\"1\" verMinor=\"6\" provider=\"OpenQ\" providerVersion=\"{}\">\n", env!("CARGO_PKG_VERSION")));
+    x.push_str(&format!("<GeneralSceneDescription verMajor=\"1\" verMinor=\"6\" provider=\"OpnQ\" providerVersion=\"{}\">\n", env!("CARGO_PKG_VERSION")));
     x.push_str("  <UserData/>\n  <Scene>\n    <Layers>\n");
-    x.push_str(&format!("      <Layer name=\"{}\" uuid=\"{}\">\n        <ChildList>\n", esc(if scope.is_empty() { "OpenQ" } else { scope }), stable_uuid(scope, "layer")));
+    x.push_str(&format!("      <Layer name=\"{}\" uuid=\"{}\">\n        <ChildList>\n", esc(if scope.is_empty() { "OpnQ" } else { scope }), stable_uuid(scope, "layer")));
     let specs = spec_names(l);
     for f in &l.fixtures {
         let ty = l.fixture_type(&f.fixture_type);
@@ -389,7 +389,7 @@ fn parse_matrix(s: &str) -> Option<Transform> {
     Some(Transform { r, o: [nums[9], nums[10], nums[11]] })
 }
 
-/// OpenQ rotation (degrees, heading · tilt · roll) of an MVR rotation; scale is taken out.
+/// OpnQ rotation (degrees, heading · tilt · roll) of an MVR rotation; scale is taken out.
 fn angles(m: &Mat) -> [f32; 3] {
     let mut m = *m;
     for col in 0..3 {
@@ -412,7 +412,7 @@ fn angles(m: &Mat) -> [f32; 3] {
     [deg(x), deg(y), deg(z)]
 }
 
-/// OpenQ position (metres) of an MVR point (mm).
+/// OpnQ position (metres) of an MVR point (mm).
 fn position(p: [f32; 3]) -> [f32; 3] {
     let r = |v: f32| (v * 1e3).round() / 1e6;
     [r(p[0]), r(p[2]), r(-p[1])]
@@ -541,7 +541,7 @@ pub fn import(zip: &[u8], known: &[&FixtureType]) -> anyhow::Result<Imported> {
             }
         };
         let want = child_text(n, "GDTFMode").unwrap_or_default();
-        // The type's own mode name, or the one an OpenQ export gave it (a library type's "Standard [Lamp]"
+        // The type's own mode name, or the one an OpnQ export gave it (a library type's "Standard [Lamp]"
         // is "Standard (Lamp)" in the file).
         let exported = super::gdtf::mode_names(ty);
         let found = ty.modes.iter().find(|m| m.name == want).or_else(|| ty.modes.iter().zip(&exported).find(|(_, e)| **e == want).map(|(m, _)| m));
@@ -662,7 +662,7 @@ mod tests {
     fn transform_axes() {
         let mut f = Fixture { position: [1.0, 6.0, -2.0], ..Default::default() };
         assert_eq!(matrix(&f), "{1,0,0}{0,1,0}{0,0,1}{1000,2000,6000}");
-        // Heading 90°: the fixture's axis towards the audience (OpenQ +z) turns to OpenQ +x,
+        // Heading 90°: the fixture's axis towards the audience (OpnQ +z) turns to OpnQ +x,
         // which is MVR +x.
         f.rotation = [0.0, 90.0, 0.0];
         let m = mul(&TO_MVR, &rotation(f.rotation));
@@ -716,7 +716,7 @@ mod tests {
     #[test]
     fn shapes_become_truss_and_scene_objects() {
         let mut l = library::bench_rig(1, 1, 1);
-        // A bar 4 m long across the stage at 6 m, 2 m upstage (OpenQ z = −2); a 2 × 1 m riser.
+        // A bar 4 m long across the stage at 6 m, 2 m upstage (OpnQ z = −2); a 2 × 1 m riser.
         l.shapes.push(PlotShape { id: 1, kind: ShapeKind::Bar, name: "LX1".into(), a: [-2.0, -2.0], b: [2.0, -2.0], height: 6.0, label: [0.0, 0.0] });
         l.shapes.push(PlotShape { id: 2, kind: ShapeKind::Rect, a: [0.0, 0.0], b: [2.0, 1.0], height: 0.4, ..Default::default() });
         let x = scene(&l, "Show");
@@ -726,7 +726,7 @@ mod tests {
         assert_eq!(x.matches("<FixtureID></FixtureID>").count(), 2, "the schema wants one per shape");
         assert!(x.contains("{1000,-500,0}"), "riser centre");
         assert!(x.contains("fileName=\"shape-2.glb\""));
-        // A bar along OpenQ z turns 90° about MVR z.
+        // A bar along OpnQ z turns 90° about MVR z.
         let (m, min, max) = shape_box(&PlotShape { kind: ShapeKind::Bar, a: [0.0, 0.0], b: [0.0, -3.0], ..Default::default() });
         assert!(m.starts_with("{0,1,0}{-1,0,0}"), "{m}");
         assert_eq!((min[0], max[0]), (-1.5, 1.5));

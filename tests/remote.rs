@@ -1,12 +1,12 @@
 //! End to end: a main device and a replica in one process, over loopback.
 
-use openq::control::Command;
-use openq::media::Prober;
-use openq::model::{Cue, CueKind, Workspace};
-use openq::remote::client::{Auth, Link, LinkState};
-use openq::remote::server::Server;
-use openq::remote::{ClientMsg, RemoteConfig, Role, ServerMsg};
-use openq::show::Show;
+use opnq::control::Command;
+use opnq::media::Prober;
+use opnq::model::{Cue, CueKind, Workspace};
+use opnq::remote::client::{Auth, Link, LinkState};
+use opnq::remote::server::Server;
+use opnq::remote::{ClientMsg, RemoteConfig, Role, ServerMsg};
+use opnq::show::Show;
 use parking_lot::Mutex;
 use std::sync::Arc;
 use std::time::{Duration, Instant};
@@ -31,9 +31,9 @@ fn closed(link: &Link) -> Option<(String, bool)> {
 
 #[test]
 fn pair_sync_control_and_revoke() {
-    let dir = std::env::temp_dir().join(format!("openq-remote-test-{}", std::process::id()));
+    let dir = std::env::temp_dir().join(format!("opnq-remote-test-{}", std::process::id()));
     // SAFETY: set before any other thread reads the environment.
-    unsafe { std::env::set_var("OPENQ_CONFIG_DIR", &dir) };
+    unsafe { std::env::set_var("OPNQ_CONFIG_DIR", &dir) };
 
     let mut ws = Workspace::default();
     for (n, secs) in [("1", 30.0), ("2", 30.0)] {
@@ -46,8 +46,8 @@ fn pair_sync_control_and_revoke() {
     show.lock().replace_workspace(ws, None);
 
     let port = 40000 + (std::process::id() % 20000) as u16;
-    // Discovery's port is fixed: another OpenQ sharing on this computer may hold it.
-    let discovery_free = std::net::UdpSocket::bind(("0.0.0.0", openq::remote::DISCOVERY_PORT)).is_ok();
+    // Discovery's port is fixed: another OpnQ sharing on this computer may hold it.
+    let discovery_free = std::net::UdpSocket::bind(("0.0.0.0", opnq::remote::DISCOVERY_PORT)).is_ok();
     let server_cfg = Arc::new(Mutex::new(RemoteConfig { port, instance_name: "Main".into(), ..Default::default() }));
     let server = Server::start(show.clone(), server_cfg.clone(), || {}).unwrap();
     let client_cfg = Arc::new(Mutex::new(RemoteConfig { instance_name: "Tablet".into(), ..Default::default() }));
@@ -63,7 +63,7 @@ fn pair_sync_control_and_revoke() {
     let link = Link::connect(&addr, Auth::Pair("2222-2222".into()), client_cfg.clone(), || {});
     let (why, _) = wait_for("wrong code", || closed(&link));
     assert_eq!(why, "Wrong pairing code");
-    assert_eq!(server.pairing().unwrap().2, openq::remote::server::PAIRING_ATTEMPTS - 1);
+    assert_eq!(server.pairing().unwrap().2, opnq::remote::server::PAIRING_ATTEMPTS - 1);
 
     // Right code (typed loosely): paired, and pairing closes.
     let typed = code.to_lowercase().replace('-', " ");
@@ -118,13 +118,13 @@ fn pair_sync_control_and_revoke() {
 
     // The main device's displays reach the replica; a replica's stage display choice waits
     // for the operator.
-    let hdmi = openq::displays::Display { name: "HDMI-A-1".into(), size: [1920, 1080], position: [0, 0], refresh_hz: None };
+    let hdmi = opnq::displays::Display { name: "HDMI-A-1".into(), size: [1920, 1080], position: [0, 0], refresh_hz: None };
     server.set_displays(std::slice::from_ref(&hdmi));
     wait_for("display list", || {
         link.drain().into_iter().find_map(|m| matches!(&m, ServerMsg::Displays(l) if l == std::slice::from_ref(&hdmi)).then_some(()))
     });
     let mut staged = show.lock().ws.clone();
-    staged.stages.push(openq::model::Stage { output: Some("HDMI-A-1".into()), ..Default::default() });
+    staged.stages.push(opnq::model::Stage { output: Some("HDMI-A-1".into()), ..Default::default() });
     let stage = staged.stages.last().unwrap().id;
     link.send(ClientMsg::Edit(Box::new(staged)));
     wait_for("display request", || (!show.lock().network_requests.is_empty()).then_some(()));
@@ -155,9 +155,9 @@ fn pair_sync_control_and_revoke() {
     // replica edits come back as one, a cue list reshape keeps the design out of the message,
     // and masters are mirrored in the live state.
     {
-        use openq::light::model::Fixture;
+        use opnq::light::model::Fixture;
         let mut s = show.lock();
-        let dimmer = openq::light::library::generic("generic/dimmer").unwrap();
+        let dimmer = opnq::light::library::generic("generic/dimmer").unwrap();
         s.ws.lighting.add_type(&dimmer);
         let mode = dimmer.modes[0].name.clone();
         s.ws.lighting.fixtures.push(Fixture { id: 7, name: "Spot".into(), fixture_type: dimmer.id, mode, address: 1, ..Default::default() });
@@ -172,11 +172,11 @@ fn pair_sync_control_and_revoke() {
     });
     let mut replica = show.lock().ws.clone();
     replica.lighting = Default::default();
-    assert!(openq::light::patch::apply(&mut replica.lighting, &lp));
+    assert!(opnq::light::patch::apply(&mut replica.lighting, &lp));
     assert_eq!(replica.lighting.fixtures[0].name, "Spot");
     let mut mine = replica.lighting.clone();
-    mine.groups.push(openq::light::model::Group { id: 1, name: "From the tablet".into(), fixtures: vec![7] });
-    let lighting = openq::light::patch::diff(&replica.lighting, &mine).map(Box::new);
+    mine.groups.push(opnq::light::model::Group { id: 1, name: "From the tablet".into(), fixtures: vec![7] });
+    let lighting = opnq::light::patch::diff(&replica.lighting, &mine).map(Box::new);
     link.send(ClientMsg::Patch { cues: Vec::new(), lighting });
     wait_for("lighting edit applied", || (show.lock().ws.lighting.groups.len() == 1).then_some(()));
     let mut reshaped = show.lock().ws.clone();
@@ -217,7 +217,7 @@ fn pair_sync_control_and_revoke() {
     let mut added = Cue::new(CueKind::Memo);
     added.name = "Added on the tablet".into();
     mine.cue_list.cues.push(added);
-    let ops = openq::changes::Reshape::diff(&base, &mine).unwrap();
+    let ops = opnq::changes::Reshape::diff(&base, &mine).unwrap();
     link.send(ClientMsg::Ops { ops: Box::new(ops), lighting: None });
     wait_for("operations merged", || {
         let s = show.lock();
@@ -231,7 +231,7 @@ fn pair_sync_control_and_revoke() {
         assert_eq!(c[0].id, on_main, "the main device's own edit kept");
         assert!(s.ws.cue_list.find(last).is_none());
     }
-    link.send(ClientMsg::Command(Command::Light(openq::control::LightControl::GrandMaster(0.25))));
+    link.send(ClientMsg::Command(Command::Light(opnq::control::LightControl::GrandMaster(0.25))));
     wait_for("mirrored grand master", || {
         link.drain().into_iter().find_map(|m| match m {
             ServerMsg::State(s) if s.lighting.masters.grand_master == 0.25 => Some(()),
@@ -259,7 +259,7 @@ fn pair_sync_control_and_revoke() {
     // Network settings from a replica wait for the operator; the rest of the edit goes through.
     {
         let mut s = show.lock();
-        s.ws.cue_list.cues.push(Cue::new(CueKind::Network(openq::model::NetworkCue { host: "10.0.0.5".into(), ..Default::default() })));
+        s.ws.cue_list.cues.push(Cue::new(CueKind::Network(opnq::model::NetworkCue { host: "10.0.0.5".into(), ..Default::default() })));
         s.edited();
     }
     let mut net = show.lock().ws.clone();
@@ -285,7 +285,7 @@ fn pair_sync_control_and_revoke() {
 
     // A replica can't bring in media files.
     let mut sneaky = show.lock().ws.clone();
-    sneaky.cue_list.cues.push(Cue::new(CueKind::Audio(openq::model::AudioCue { path: "/etc/shadow".into(), ..Default::default() })));
+    sneaky.cue_list.cues.push(Cue::new(CueKind::Audio(opnq::model::AudioCue { path: "/etc/shadow".into(), ..Default::default() })));
     let cues_before = show.lock().ws.cue_list.cues.len();
     link.send(ClientMsg::Edit(Box::new(sneaky)));
     wait_for("media refused", || {
@@ -338,10 +338,10 @@ fn pair_sync_control_and_revoke() {
     assert!(needs && why.contains("isn't paired"), "{why}");
 
     // A forged token for a known device id fails authentication.
-    server_cfg.lock().devices.push(openq::remote::TrustedDevice {
+    server_cfg.lock().devices.push(opnq::remote::TrustedDevice {
         id: client_cfg.lock().instance_id,
         name: "Tablet".into(),
-        token: openq::remote::new_token(),
+        token: opnq::remote::new_token(),
         role: Role::Edit,
         paired_at: 0,
         last_seen: 0,
@@ -354,7 +354,7 @@ fn pair_sync_control_and_revoke() {
     drop(server);
     std::net::TcpListener::bind(("0.0.0.0", port)).expect("listening port still taken after the server stopped");
     if discovery_free {
-        std::net::UdpSocket::bind(("0.0.0.0", openq::remote::DISCOVERY_PORT)).expect("discovery port still taken after the server stopped");
+        std::net::UdpSocket::bind(("0.0.0.0", opnq::remote::DISCOVERY_PORT)).expect("discovery port still taken after the server stopped");
     }
     drop(Server::start(show.clone(), server_cfg.clone(), || {}).expect("sharing turned straight back on"));
     let _ = std::fs::remove_dir_all(dir);

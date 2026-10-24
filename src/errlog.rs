@@ -1,12 +1,12 @@
-//! Error log: every warning and error OpenQ logs (engine log entries, device failures, failed
+//! Error log: every warning and error OpnQ logs (engine log entries, device failures, failed
 //! saves, worker panics, crashes) is also appended to a plain-text file, so problems can be
-//! looked at after the show. The file is `<config dir>/logs/openq.log` ([`log_path`]); Help →
+//! looked at after the show. The file is `<config dir>/logs/opnq.log` ([`log_path`]); Help →
 //! Error log opens it.
 //!
 //! [`init`] installs the global logger: messages still go to stderr through `env_logger` (as
 //! filtered by `RUST_LOG`), and `Warn`/`Error` records from any crate go to the file whatever
 //! the filter says. When the file grows past [`MAX_BYTES`] at start-up it is moved to
-//! `openq.old.log` (one old file is kept). Times are UTC.
+//! `opnq.old.log` (one old file is kept). Times are UTC.
 
 use parking_lot::Mutex;
 use std::fs::{File, OpenOptions};
@@ -14,7 +14,7 @@ use std::io::Write;
 use std::path::{Path, PathBuf};
 use std::time::{SystemTime, UNIX_EPOCH};
 
-/// Size above which the log is rotated when OpenQ starts.
+/// Size above which the log is rotated when OpnQ starts.
 pub const MAX_BYTES: u64 = 2 << 20;
 
 /// Folder holding the error log.
@@ -24,7 +24,7 @@ pub fn log_dir() -> Option<PathBuf> {
 
 /// The error log file.
 pub fn log_path() -> Option<PathBuf> {
-    log_dir().map(|d| d.join("openq.log"))
+    log_dir().map(|d| d.join("opnq.log"))
 }
 
 /// An append-only log file.
@@ -34,18 +34,18 @@ pub struct ErrorLog {
 }
 
 impl ErrorLog {
-    /// Open (or create) `openq.log` in `dir`, rotating it first when it is over [`MAX_BYTES`],
+    /// Open (or create) `opnq.log` in `dir`, rotating it first when it is over [`MAX_BYTES`],
     /// and write a session header.
     pub fn open_in(dir: &Path) -> std::io::Result<Self> {
         std::fs::create_dir_all(dir)?;
-        let path = dir.join("openq.log");
+        let path = dir.join("opnq.log");
         if std::fs::metadata(&path).is_ok_and(|m| m.len() > MAX_BYTES) {
-            std::fs::rename(&path, dir.join("openq.old.log"))?;
+            std::fs::rename(&path, dir.join("opnq.old.log"))?;
         }
         let file = OpenOptions::new().create(true).append(true).open(&path)?;
         let log = ErrorLog { file: Mutex::new(file), path };
         log.line(&format!(
-            "---- OpenQ {} started (pid {}, {} {})",
+            "---- OpnQ {} started (pid {}, {} {})",
             env!("CARGO_PKG_VERSION"),
             std::process::id(),
             std::env::consts::OS,
@@ -164,18 +164,18 @@ mod tests {
 
     #[test]
     fn appends_entries_and_rotates_big_files() {
-        let dir = std::env::temp_dir().join(format!("openq-errlog-{}", std::process::id()));
+        let dir = std::env::temp_dir().join(format!("opnq-errlog-{}", std::process::id()));
         let _ = std::fs::remove_dir_all(&dir);
         let log = ErrorLog::open_in(&dir).unwrap();
-        log.write(log::Level::Error, "openq::engine", "Cue 3 'Song': file missing");
+        log.write(log::Level::Error, "opnq::engine", "Cue 3 'Song': file missing");
         drop(log);
-        let text = std::fs::read_to_string(dir.join("openq.log")).unwrap();
-        assert!(text.contains("started (pid") && text.contains("ERROR [") && text.contains("openq::engine: Cue 3 'Song': file missing"), "{text}");
+        let text = std::fs::read_to_string(dir.join("opnq.log")).unwrap();
+        assert!(text.contains("started (pid") && text.contains("ERROR [") && text.contains("opnq::engine: Cue 3 'Song': file missing"), "{text}");
 
-        std::fs::write(dir.join("openq.log"), vec![b'x'; MAX_BYTES as usize + 1]).unwrap();
+        std::fs::write(dir.join("opnq.log"), vec![b'x'; MAX_BYTES as usize + 1]).unwrap();
         ErrorLog::open_in(&dir).unwrap();
-        assert_eq!(std::fs::metadata(dir.join("openq.old.log")).unwrap().len(), MAX_BYTES + 1);
-        assert!(std::fs::metadata(dir.join("openq.log")).unwrap().len() < 200);
+        assert_eq!(std::fs::metadata(dir.join("opnq.old.log")).unwrap().len(), MAX_BYTES + 1);
+        assert!(std::fs::metadata(dir.join("opnq.log")).unwrap().len() < 200);
         let _ = std::fs::remove_dir_all(&dir);
     }
 }

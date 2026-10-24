@@ -1,4 +1,4 @@
-//! Authenticated, encrypted link between two OpenQ instances.
+//! Authenticated, encrypted link between two OpnQ instances.
 //!
 //! Both ends share a secret: the pairing code shown on the main device, or the device token
 //! handed out when pairing. The handshake:
@@ -304,10 +304,10 @@ fn derive(spake_key: &[u8], transcript: &[u8; 32]) -> Keys {
         out
     };
     Keys {
-        c2s: k(b"openq remote v1 client-to-server"),
-        s2c: k(b"openq remote v1 server-to-client"),
-        confirm_client: k(b"openq remote v1 confirm client"),
-        confirm_server: k(b"openq remote v1 confirm server"),
+        c2s: k(b"opnq remote v1 client-to-server"),
+        s2c: k(b"opnq remote v1 server-to-client"),
+        confirm_client: k(b"opnq remote v1 confirm client"),
+        confirm_server: k(b"opnq remote v1 confirm server"),
     }
 }
 
@@ -324,7 +324,7 @@ fn mac_ok(key: &[u8; 32], transcript: &[u8; 32], tag: &[u8]) -> bool {
 }
 
 fn identities(client: Uuid, server: Uuid) -> (Identity, Identity) {
-    (Identity::new(format!("openq-client:{client}").as_bytes()), Identity::new(format!("openq-server:{server}").as_bytes()))
+    (Identity::new(format!("opnq-client:{client}").as_bytes()), Identity::new(format!("opnq-server:{server}").as_bytes()))
 }
 
 fn channel(stream: TcpStream, send_key: [u8; 32], recv_key: [u8; 32]) -> anyhow::Result<(Sender, Receiver)> {
@@ -356,7 +356,7 @@ pub fn client_handshake(
         HelloReply::Challenge { protocol, server_id, server_name } => {
             if protocol != PROTOCOL {
                 return Err(HandshakeError::Refused(format!(
-                    "The other OpenQ uses a different remote protocol (v{protocol}, this one is v{PROTOCOL}). Update both."
+                    "The other OpnQ uses a different remote protocol (v{protocol}, this one is v{PROTOCOL}). Update both."
                 )));
             }
             ServerInfo { id: server_id, name: server_name }
@@ -410,7 +410,7 @@ pub fn server_handshake(
         HandshakeError::Refused(why)
     };
     if hello.protocol != PROTOCOL {
-        return Err(refuse(&mut stream, format!("This OpenQ uses remote protocol v{PROTOCOL}; the connecting one uses v{}. Update both.", hello.protocol)));
+        return Err(refuse(&mut stream, format!("This OpnQ uses remote protocol v{PROTOCOL}; the connecting one uses v{}. Update both.", hello.protocol)));
     }
     let secret = match secret_for(&hello) {
         Ok(s) => s,

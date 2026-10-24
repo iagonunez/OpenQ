@@ -1,6 +1,6 @@
 //! The light thread: runs [`Playback`] at [`RATE`] and hands each frame to the DMX outputs.
 //!
-//! It shares no lock with the OpenQ engine, the UI or the audio callback: commands arrive on a
+//! It shares no lock with the OpnQ engine, the UI or the audio callback: commands arrive on a
 //! channel and are applied at the next frame (their timestamps keep fades exact), the latest
 //! frame and sequence states are published with `try_lock`, so a reader never stalls it.
 //! A panic inside a frame is caught: the last good frame keeps going out and it's reported once.
@@ -20,7 +20,7 @@ pub const RATE: f64 = 44.0;
 /// Commands wait at most this long for a recompiled show.
 const HOLD_LIMIT: Duration = Duration::from_secs(5);
 /// Name of the light thread.
-pub const THREAD: &str = "openq-light";
+pub const THREAD: &str = "opnq-light";
 
 /// A release fade as given by OSC, a surface or a replica, made safe: not negative, at most an
 /// hour, and 0 for NaN.
@@ -220,7 +220,7 @@ impl LightEngine {
         // Dropping a receiver waits for its thread to notice (a fraction of a second): not here.
         let old = std::mem::replace(&mut self.receivers, receivers);
         if !old.is_empty() {
-            let _ = std::thread::Builder::new().name("openq-dmx-close".into()).spawn(move || drop(old));
+            let _ = std::thread::Builder::new().name("opnq-dmx-close".into()).spawn(move || drop(old));
         }
     }
 
@@ -404,7 +404,7 @@ impl LightEngine {
 /// when the engine drops its sender (not joined: a long compile must not hold up the drop).
 fn start_compiler(tx: mpsc::Sender<LightCommand>) -> Option<mpsc::Sender<(u64, Lighting)>> {
     let (ctx, crx) = mpsc::channel::<(u64, Lighting)>();
-    let spawned = std::thread::Builder::new().name("openq-light-compile".into()).spawn(move || {
+    let spawned = std::thread::Builder::new().name("opnq-light-compile".into()).spawn(move || {
         // The last design compiled and its show: unchanged sequences are kept from it.
         let mut prev: Option<(Lighting, Arc<LightShow>)> = None;
         while let Ok(mut job) = crx.recv() {
@@ -489,7 +489,7 @@ fn run(rx: mpsc::Receiver<LightCommand>, shared: Arc<Shared>) {
                     let old = std::mem::replace(&mut outputs, o);
                     // A stuck device could make dropping slow: not on this thread.
                     if !old.is_empty() {
-                        let _ = std::thread::Builder::new().name("openq-dmx-close".into()).spawn(move || drop(old));
+                        let _ = std::thread::Builder::new().name("opnq-dmx-close".into()).spawn(move || drop(old));
                     }
                 }
                 Ok(LightCommand::Inputs(i)) => inputs = i.into_iter().filter(|h| h.merge != MergeMode::Capture).map(|h| (h, DmxFrame::default())).collect(),

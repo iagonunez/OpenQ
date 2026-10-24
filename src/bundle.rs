@@ -1,7 +1,7 @@
 //! Bundle a show: copy the show file and every media file it plays into one folder, so the show
 //! can move to another computer (or be archived) in one piece.
 //!
-//! The bundle is `<folder>/<show name>/<show name>.openq` with the media in `audio/`, `video/` and `midi/`
+//! The bundle is `<folder>/<show name>/<show name>.opnq` with the media in `audio/`, `video/` and `midi/`
 //! next to it; the copy's media paths point there (stored relative, like any show next to its
 //! media). Files with the same name from different folders get " 2", " 3"... Missing files are left
 //! out and listed. The copy runs on a thread of its own ([`Job`]); the open show is unchanged.
@@ -130,7 +130,7 @@ impl Job {
         let cancel = Arc::new(AtomicBool::new(false));
         let missing = plan.missing.clone();
         let (p, c) = (progress.clone(), cancel.clone());
-        let spawned = std::thread::Builder::new().name("openq-bundle".into()).spawn(move || {
+        let spawned = std::thread::Builder::new().name("opnq-bundle".into()).spawn(move || {
             let r = crate::recovery::catch(|| write(&plan, &p, &c)).map_err(|e| format!("{e:#}"));
             p.lock().done = Some(r.map(|()| plan.show.clone()));
         });
@@ -159,7 +159,7 @@ pub fn write(plan: &Plan, progress: &Mutex<Progress>, cancel: &AtomicBool) -> an
         if let Some(d) = to.parent() {
             std::fs::create_dir_all(d).with_context(|| d.display().to_string())?;
         }
-        let tmp = to.with_extension("openq-part");
+        let tmp = to.with_extension("opnq-part");
         let mut copy = || -> anyhow::Result<()> {
             let mut src = std::fs::File::open(from).with_context(|| from.display().to_string())?;
             let mut dst = std::fs::File::create(&tmp).with_context(|| tmp.display().to_string())?;
@@ -207,7 +207,7 @@ mod tests {
     /// once; the bundled show loads with its media inside the bundle.
     #[test]
     fn bundles_media_next_to_the_show() {
-        let root = std::env::temp_dir().join(format!("openq-bundle-{}", std::process::id()));
+        let root = std::env::temp_dir().join(format!("opnq-bundle-{}", std::process::id()));
         let _ = std::fs::remove_dir_all(&root);
         let (a, b) = (root.join("a"), root.join("b"));
         std::fs::create_dir_all(&a).unwrap();
@@ -231,7 +231,7 @@ mod tests {
         let back = Workspace::load(&p.show).unwrap();
         let paths: Vec<PathBuf> = back.cue_list.cues.iter().filter_map(|c| c.kind.media_path().map(Path::to_path_buf)).collect();
         let dir = root.join("out").join("My_ show");
-        assert_eq!(p.show, dir.join("My_ show.openq"));
+        assert_eq!(p.show, dir.join("My_ show.opnq"));
         assert_eq!(paths[0], dir.join("audio/x.wav"));
         assert_eq!(paths[1], dir.join("audio/x 2.wav"));
         assert_eq!(paths[2], paths[0]);

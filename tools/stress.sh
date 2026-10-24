@@ -4,7 +4,7 @@
 #
 #   tools/stress.sh            # full suite, about a minute or two
 #   tools/stress.sh timing     # only tests whose name contains "timing"
-#   OPENQ_STRESS_SCALE=5 tools/stress.sh   # five times the work (longer soak, more fuzzing)
+#   OPNQ_STRESS_SCALE=5 tools/stress.sh   # five times the work (longer soak, more fuzzing)
 #
 # Extra cargo flags go in CARGO_FLAGS, e.g. CARGO_FLAGS=--no-default-features (as CI does).
 set -euo pipefail

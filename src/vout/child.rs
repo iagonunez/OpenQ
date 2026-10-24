@@ -1,11 +1,11 @@
-//! The video output process (`openq --video-output`): stage windows with their own wgpu
-//! renderer, and the movie/still/text/camera players. OpenQ talks to it through stdin/stdout
-//! ([`super::proto`]). It never waits on OpenQ's UI, and if it crashes or hangs OpenQ carries on
+//! The video output process (`opnq --video-output`): stage windows with their own wgpu
+//! renderer, and the movie/still/text/camera players. OpnQ talks to it through stdin/stdout
+//! ([`super::proto`]). It never waits on OpnQ's UI, and if it crashes or hangs OpnQ carries on
 //! and starts a new one.
 //!
 //! Threads: the main thread runs the winit event loop and draws the windows (each paced at its
-//! display's refresh rate); `openq-video-in` applies OpenQ's commands; `openq-video-tick` advances
-//! fades and reports finished layers, positions, errors and heartbeats; `openq-video-out` writes
+//! display's refresh rate); `opnq-video-in` applies OpnQ's commands; `opnq-video-tick` advances
+//! fades and reports finished layers, positions, errors and heartbeats; `opnq-video-out` writes
 //! the reports. Decoding runs on one thread per movie, as in [`crate::media::video`].
 
 use super::proto::{self, FromVideo, Layer, Ns, ToVideo, Windows};
@@ -35,7 +35,7 @@ const TICK: Duration = Duration::from_millis(10);
 const POSITION_EVERY: Duration = Duration::from_millis(100);
 /// How often the watched layer's picture is sent ([`ToVideo::Watch`]).
 const THUMB_EVERY: Duration = Duration::from_millis(200);
-/// How often OpenQ hears that the process is alive.
+/// How often OpnQ hears that the process is alive.
 const HEARTBEAT: Duration = Duration::from_millis(250);
 /// The drawing loop counts as stuck after this long without a turn (no heartbeats then).
 const STUCK: Duration = Duration::from_secs(3);
@@ -43,7 +43,7 @@ const STUCK: Duration = Duration::from_secs(3);
 const DISPLAY_RECHECK: Duration = Duration::from_secs(5);
 /// Longest wait of an idle event loop (new layers and finished ones are picked up this fast).
 const IDLE_POLL: Duration = Duration::from_millis(15);
-/// Corner drags are sent to OpenQ at most this often.
+/// Corner drags are sent to OpnQ at most this often.
 const CORNER_SEND: Duration = Duration::from_millis(40);
 /// A stage that closes when nothing plays ([`Stage::close_when_idle`]) waits this long after its
 /// last layer, so a cue following straight on doesn't make the window close and open again.
@@ -53,7 +53,7 @@ const IDLE_CLOSE: Duration = Duration::from_secs(1);
 struct Core {
     video: VideoOutput,
     epoch: Instant,
-    /// This clock minus OpenQ's.
+    /// This clock minus OpnQ's.
     offset: i64,
     stages: Vec<Stage>,
     windows: Windows,
@@ -62,7 +62,7 @@ struct Core {
     /// Cues showing a movie (their progress includes the media position).
     movies: HashSet<CueId>,
     snapshots: Vec<(StageId, PathBuf)>,
-    /// The layer whose picture OpenQ's geometry preview shows.
+    /// The layer whose picture OpnQ's geometry preview shows.
     watch: Option<CueId>,
     quit: bool,
     /// Stages or windows changed: the event loop syncs its windows.
@@ -70,7 +70,7 @@ struct Core {
 }
 
 impl Core {
-    /// An OpenQ time on this process's clock.
+    /// An OpnQ time on this process's clock.
     fn instant(&self, ns: Ns) -> Instant {
         let mine = ns.saturating_add(self.offset);
         if mine >= 0 {
@@ -184,11 +184,11 @@ struct Wake;
 /// Run the video output process. Returns the exit code.
 pub fn main() -> i32 {
     // Only stderr: stdout carries the protocol.
-    let _ = crate::errlog::stderr_logger("openq=info").target(env_logger::Target::Stderr).try_init();
+    let _ = crate::errlog::stderr_logger("opnq=info").target(env_logger::Target::Stderr).try_init();
     crate::i18n::init();
     let (out_tx, out_rx) = mpsc::channel::<FromVideo>();
     let writer = std::thread::Builder::new()
-        .name("openq-video-out".into())
+        .name("opnq-video-out".into())
         .spawn(move || {
             let mut stdout = std::io::stdout().lock();
             for m in out_rx {
@@ -216,7 +216,7 @@ fn run(out: mpsc::Sender<FromVideo>) -> i32 {
     let mut builder = EventLoop::<Wake>::with_user_event();
     #[cfg(target_os = "macos")]
     {
-        // No Dock icon or menu bar of its own: the windows belong to OpenQ.
+        // No Dock icon or menu bar of its own: the windows belong to OpnQ.
         use winit::platform::macos::{ActivationPolicy, EventLoopBuilderExtMacOS};
         builder.with_activation_policy(ActivationPolicy::Accessory);
     }
@@ -267,7 +267,7 @@ fn stamp(epoch: Instant) -> u64 {
     epoch.elapsed().as_millis() as u64
 }
 
-/// End the process if a helper thread panics: OpenQ starts a fresh one.
+/// End the process if a helper thread panics: OpnQ starts a fresh one.
 fn guarded(name: &'static str, f: impl FnOnce() + Send + 'static) {
     let spawned = std::thread::Builder::new().name(name.into()).spawn(move || {
         if let Err(e) = crate::recovery::catch(|| {
@@ -284,7 +284,7 @@ fn guarded(name: &'static str, f: impl FnOnce() + Send + 'static) {
 }
 
 fn spawn_input(core: Arc<Mutex<Core>>, out: mpsc::Sender<FromVideo>, proxy: EventLoopProxy<Wake>) {
-    guarded("openq-video-in", move || {
+    guarded("opnq-video-in", move || {
         let epoch = core.lock().epoch;
         let mut input = std::io::BufReader::new(std::io::stdin().lock());
         let mut buf = Vec::new();
@@ -304,7 +304,7 @@ fn spawn_input(core: Arc<Mutex<Core>>, out: mpsc::Sender<FromVideo>, proxy: Even
                         return;
                     }
                 }
-                // OpenQ went away: close everything.
+                // OpnQ went away: close everything.
                 Ok(None) | Err(_) => {
                     core.lock().quit = true;
                     let _ = proxy.send_event(Wake);
@@ -316,7 +316,7 @@ fn spawn_input(core: Arc<Mutex<Core>>, out: mpsc::Sender<FromVideo>, proxy: Even
 }
 
 fn spawn_tick(core: Arc<Mutex<Core>>, out: mpsc::Sender<FromVideo>, alive: Arc<AtomicU64>, probe: Arc<GpuProbe>) {
-    guarded("openq-video-tick", move || {
+    guarded("opnq-video-tick", move || {
         let epoch = core.lock().epoch;
         let (mut last_pos, mut last_beat) = (Instant::now(), Instant::now() - HEARTBEAT);
         let mut last_thumb = (Instant::now(), None::<(CueId, u64)>);
@@ -364,7 +364,7 @@ fn spawn_tick(core: Arc<Mutex<Core>>, out: mpsc::Sender<FromVideo>, alive: Arc<A
                 }
             }
             // Heartbeats only while the window loop turns and the GPU finishes work: a stuck
-            // loop or a hung driver stops them, and OpenQ replaces the process.
+            // loop or a hung driver stops them, and OpnQ replaces the process.
             let turned = alive.load(Ordering::Relaxed);
             let ms = stamp(epoch);
             if now - last_beat >= HEARTBEAT && ms.saturating_sub(turned) < STUCK.as_millis() as u64 && probe.ok(ms) {
@@ -382,7 +382,7 @@ fn spawn_tick(core: Arc<Mutex<Core>>, out: mpsc::Sender<FromVideo>, alive: Arc<A
 struct View {
     /// Window size in pixels.
     size: [u32; 2],
-    /// Corners moved in this window, drawn until OpenQ's stage list has them.
+    /// Corners moved in this window, drawn until OpnQ's stage list has them.
     corners: Option<[[f32; 2]; 4]>,
     /// Mapping pins and instructions.
     overlay: Option<Arc<Overlay>>,
@@ -420,7 +420,7 @@ struct Win {
     last_click: Option<Instant>,
     /// Corner being dragged.
     drag: Option<usize>,
-    /// Corners moved here, until OpenQ's stage list has them.
+    /// Corners moved here, until OpnQ's stage list has them.
     corners: Option<([[f32; 2]; 4], Instant)>,
     corners_sent: Instant,
     /// What the mapping overlay was drawn for.
@@ -433,7 +433,7 @@ impl Win {
         [s.width.max(1), s.height.max(1)]
     }
 
-    /// The corners to draw with: ones moved here (until OpenQ has them), else the stage's.
+    /// The corners to draw with: ones moved here (until OpnQ has them), else the stage's.
     fn corners(&self, stage: &Stage) -> [[f32; 2]; 4] {
         match self.corners {
             Some((c, at)) if self.drag.is_some() || (c != stage.corners && at.elapsed() < Duration::from_secs(1)) => c,
@@ -451,7 +451,7 @@ impl Drop for Win {
 }
 
 /// Lets the tick thread check that the GPU still finishes work (a hung driver stops the
-/// heartbeats, and OpenQ replaces the process).
+/// heartbeats, and OpnQ replaces the process).
 struct GpuProbe {
     queue: Mutex<Option<(wgpu::Device, wgpu::Queue)>>,
     /// A check is on its way, sent at this stamp.
@@ -486,7 +486,7 @@ struct App {
     gpu: Option<Arc<Mutex<Gpu>>>,
     wins: HashMap<StageId, Win>,
     by_window: HashMap<WindowId, StageId>,
-    /// Stages whose window opened by itself (reported to OpenQ once).
+    /// Stages whose window opened by itself (reported to OpnQ once).
     auto_opened: HashSet<StageId>,
     /// Stages closing when idle that have had nothing to show since then.
     idle_since: HashMap<StageId, Instant>,
@@ -500,7 +500,7 @@ fn source_of<'a>(stage: &'a Stage, stages: &'a [Stage]) -> &'a Stage {
     stage.span_of.filter(|id| *id != stage.id).and_then(|id| stages.iter().find(|s| s.id == id)).unwrap_or(stage)
 }
 
-/// A monitor's name as OpenQ's display list shows it.
+/// A monitor's name as OpnQ's display list shows it.
 fn monitor_name(m: &MonitorHandle, i: usize) -> String {
     m.name().unwrap_or_else(|| format!("Display {}", i + 1)).replace('\t', " ")
 }
@@ -621,7 +621,7 @@ impl App {
         self.monitors.iter().enumerate().find(|(i, m)| monitor_name(m, *i) == name).map(|(_, m)| m.clone())
     }
 
-    /// Open, close and place the windows OpenQ (and the layers) want.
+    /// Open, close and place the windows OpnQ (and the layers) want.
     fn sync(&mut self, el: &ActiveEventLoop) {
         let (stages, windows, layers, snapshots) = {
             let mut c = self.core.lock();
@@ -651,7 +651,7 @@ impl App {
             }
         }
         // Outputs that close when nothing plays: closed a moment after their last layer, and
-        // OpenQ told (the next layer opens them again).
+        // OpnQ told (the next layer opens them again).
         let now = Instant::now();
         let closing: Vec<StageId> = stages.iter().filter(|s| s.close_when_idle && want.contains(&s.id)).map(|s| s.id).collect();
         for id in closing {
@@ -714,7 +714,7 @@ impl App {
             let mapping = windows.mapping.contains(&stage.id);
             // The audience never sees a pointer on an output.
             w.window.set_cursor_visible(mapping || w.fullscreen.is_none());
-            let title = format!("{} — OpenQ Stage", stage.name);
+            let title = format!("{} — OpnQ Stage", stage.name);
             if w.window.title() != title {
                 w.window.set_title(&title);
             }
@@ -789,7 +789,7 @@ impl App {
     fn open(&mut self, el: &ActiveEventLoop, stage: &Stage) -> anyhow::Result<()> {
         let aspect = stage.height.max(1) as f64 / stage.width.max(1) as f64;
         let attrs = Window::default_attributes()
-            .with_title(format!("{} — OpenQ Stage", stage.name))
+            .with_title(format!("{} — OpnQ Stage", stage.name))
             .with_inner_size(LogicalSize::new(960.0, 960.0 * aspect))
             .with_window_icon(window_icon())
             // Opening an output never takes the keyboard from the operator's window.
@@ -797,7 +797,7 @@ impl App {
         #[cfg(any(target_os = "linux", target_os = "freebsd"))]
         let attrs = {
             use winit::platform::wayland::WindowAttributesExtWayland;
-            attrs.with_name("openq", "openq-stage")
+            attrs.with_name("opnq", "opnq-stage")
         };
         let window = Arc::new(el.create_window(attrs)?);
         let surface = self.instance.create_surface(window.clone())?;
@@ -828,7 +828,7 @@ impl App {
         painter.update(|v| v.size = [config.width, config.height]);
         let (w, p, core) = (window.clone(), painter.clone(), self.core.clone());
         let id = stage.id;
-        std::thread::Builder::new().name(crate::recovery::thread_name("openq-video-out-", &stage.name)).spawn(move || {
+        std::thread::Builder::new().name(crate::recovery::thread_name("opnq-video-out-", &stage.name)).spawn(move || {
             if let Err(e) = crate::recovery::catch(|| {
                 render_loop(id, w, surface, config, gpu, core, p);
                 Ok(())
@@ -878,7 +878,7 @@ impl App {
     }
 
     /// Fullscreen on or off for a window without a display of its own (one with a display stays
-    /// on it), and tell OpenQ.
+    /// on it), and tell OpnQ.
     fn toggle_fullscreen(&mut self, el: &ActiveEventLoop, id: StageId, on: bool) {
         {
             let mut c = self.core.lock();

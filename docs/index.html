@@ -3,15 +3,15 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>OpenQ — live show control for sound, video and the stage</title>
-<meta name="description" content="OpenQ runs a show from a list of cues: music, sound effects, video, text, fades and OSC, fired with one GO button. Free for any production.">
-<meta property="og:title" content="OpenQ">
-<meta property="og:description" content="OpenQ runs a show from a list of cues: music, sound effects, video, text, fades and OSC, fired with one GO button. Free for any production.">
-<meta property="og:image" content="https://iagonunez.github.io/OpenQ/img/screenshot.webp">
+<title>OpnQ — live show control for sound, video and the stage</title>
+<meta name="description" content="OpnQ runs a show from a list of cues: music, sound effects, video, text, fades and OSC, fired with one GO button. Free for any production.">
+<meta property="og:title" content="OpnQ">
+<meta property="og:description" content="OpnQ runs a show from a list of cues: music, sound effects, video, text, fades and OSC, fired with one GO button. Free for any production.">
+<meta property="og:image" content="https://iagonunez.github.io/OpnQ/img/screenshot.webp">
 <meta name="theme-color" content="#141518">
-<link rel="alternate" hreflang="en" href="https://iagonunez.github.io/OpenQ/">
-<link rel="alternate" hreflang="es" href="https://iagonunez.github.io/OpenQ/es/">
-<link rel="alternate" hreflang="gl" href="https://iagonunez.github.io/OpenQ/gl/">
+<link rel="alternate" hreflang="en" href="https://iagonunez.github.io/OpnQ/">
+<link rel="alternate" hreflang="es" href="https://iagonunez.github.io/OpnQ/es/">
+<link rel="alternate" hreflang="gl" href="https://iagonunez.github.io/OpnQ/gl/">
 <link rel="icon" href="site/icon.svg" type="image/svg+xml">
 <link rel="alternate icon" href="favicon.ico" sizes="16x16 24x24 32x32 48x48">
 <link rel="preconnect" href="https://fonts.googleapis.com">
@@ -21,53 +21,53 @@
 </head>
 <body>
 <header class="top">
-  <a href="" aria-label="OpenQ"><img class="mini" src="site/logo.svg" alt="OpenQ"></a>
+  <a href="" aria-label="OpnQ"><img class="mini" src="site/logo.svg" alt="OpnQ"></a>
   <nav>
     <a class="hide-sm" href="#install">Install</a>
     <a class="hide-sm" href="manual/index.html">User manual</a>
-    <a href="https://github.com/iagonunez/OpenQ">GitHub</a>
+    <a href="https://github.com/iagonunez/OpnQ">GitHub</a>
     <span class="langs"><a href="" hreflang="en" title="English" aria-current="page">EN</a><a href="es/" hreflang="es" title="Español">ES</a><a href="gl/" hreflang="gl" title="Galego">GL</a></span>
   </nav>
 </header>
 
 <main>
 <section class="hero">
-  <img class="logo" src="site/logo.svg" alt="OpenQ" width="340" height="140">
+  <img class="logo" src="site/logo.svg" alt="OpnQ" width="340" height="173">
   <h1>Live show control for sound, video and the stage</h1>
   <p>Build a list of cues — music, effects, movies, titles, fades, messages to the lighting desk — and run the whole show with one GO button. Free for any production, commercial ones included.</p>
   <div class="badges">
     <a class="btn go" href="#install">Install</a>
     <a class="btn" href="manual/index.html">📖 User manual</a>
-    <a class="btn" href="https://github.com/iagonunez/OpenQ">⭐ Source code</a>
+    <a class="btn" href="https://github.com/iagonunez/OpnQ">⭐ Source code</a>
   </div>
 </section>
 
 <section class="install" id="install">
-  <h2>Install OpenQ</h2>
+  <h2>Install OpnQ</h2>
   <div class="card">
-    <div class="tabs" role="tablist" aria-label="Install OpenQ"><button role="tab" id="tab-linux" aria-controls="panel-linux" aria-selected="true"><span aria-hidden="true">🐧</span>Linux</button><button role="tab" id="tab-macos" aria-controls="panel-macos" aria-selected="false" tabindex="-1"><span aria-hidden="true">🍎</span>macOS</button><button role="tab" id="tab-windows" aria-controls="panel-windows" aria-selected="false" tabindex="-1"><span aria-hidden="true">🪟</span>Windows</button></div>
+    <div class="tabs" role="tablist" aria-label="Install OpnQ"><button role="tab" id="tab-linux" aria-controls="panel-linux" aria-selected="true"><span aria-hidden="true">🐧</span>Linux</button><button role="tab" id="tab-macos" aria-controls="panel-macos" aria-selected="false" tabindex="-1"><span aria-hidden="true">🍎</span>macOS</button><button role="tab" id="tab-windows" aria-controls="panel-windows" aria-selected="false" tabindex="-1"><span aria-hidden="true">🪟</span>Windows</button></div>
 <div class="panel" id="panel-linux" role="tabpanel" aria-labelledby="tab-linux">
   <p class="where">In a terminal:</p>
   <div class="cmd"><code>curl --proto '=https' --tlsv1.2 -fsSL https://github.com/iagonunez/OQup/releases/latest/download/install.sh | sh</code><button class="copy" type="button" data-done="Copied">Copy</button></div>
-  <p class="after">Downloads the newest release (x86_64 or ARM64; a distribution from 2022 or later), installs missing sound and device libraries from your distribution's packages (it asks first) and adds OpenQ to your applications menu.</p>
+  <p class="after">Downloads the newest release (x86_64 or ARM64; a distribution from 2022 or later), installs missing sound and device libraries from your distribution's packages (it asks first) and adds OpnQ to your applications menu.</p>
 </div>
 <div class="panel" id="panel-macos" role="tabpanel" aria-labelledby="tab-macos" hidden>
   <p class="where">In a terminal:</p>
   <div class="cmd"><code>curl --proto '=https' --tlsv1.2 -fsSL https://github.com/iagonunez/OQup/releases/latest/download/install.sh | sh</code><button class="copy" type="button" data-done="Copied">Copy</button></div>
-  <p class="after">macOS 11 or later, Apple silicon or Intel. OpenQ ends up in Applications in your home folder.</p>
+  <p class="after">macOS 11 or later, Apple silicon or Intel. OpnQ ends up in Applications in your home folder.</p>
 </div>
 <div class="panel" id="panel-windows" role="tabpanel" aria-labelledby="tab-windows" hidden>
   <p class="where">In PowerShell:</p>
   <div class="cmd ps"><code>powershell -ExecutionPolicy Bypass -c &quot;irm https://github.com/iagonunez/OQup/releases/latest/download/install.ps1 | iex&quot;</code><button class="copy" type="button" data-done="Copied">Copy</button></div>
-  <p class="after">Windows 10/11, 64-bit. OpenQ is then in the Start menu.</p>
+  <p class="after">Windows 10/11, 64-bit. OpnQ is then in the Start menu.</p>
 </div>
   </div>
-  <p class="more">The installer, <a href="https://github.com/iagonunez/OQup">OQup</a>, downloads OpenQ with the LGPL FFmpeg libraries it uses and, with lighting, the OQVis 3D visualiser. Later: <code>oqup update</code> · <code>oqup versions</code> · <code>oqup uninstall</code>; <code>oqup install --build-source</code> compiles it on your computer instead, <code>--no-lighting</code> installs the cues only.</p>
+  <p class="more">The installer, <a href="https://github.com/iagonunez/OQup">OQup</a>, downloads OpnQ with the LGPL FFmpeg libraries it uses and, with lighting, the OQVis 3D visualiser. Later: <code>oqup update</code> · <code>oqup versions</code> · <code>oqup uninstall</code>; <code>oqup install --build-source</code> compiles it on your computer instead, <code>--no-lighting</code> installs the cues only.</p>
 </section>
 <section class="guide" id="guide">
   <h2>Step by step</h2>
-  <p>OpenQ is installed by its installer, <a href="https://github.com/iagonunez/OQup">OQup</a>. OQup downloads the newest
-  release of OpenQ for your system, checks it, adds the FFmpeg libraries it uses for video (an LGPL build) and installs it
+  <p>OpnQ is installed by its installer, <a href="https://github.com/iagonunez/OQup">OQup</a>. OQup downloads the newest
+  release of OpnQ for your system, checks it, adds the FFmpeg libraries it uses for video (an LGPL build) and installs it
   with a menu entry. With the lighting workspace (the default) it also installs <strong>OQVis</strong>, the 3D visualiser
   that <a href="manual/lighting.html#lighting-oqvis">Open in OQVis</a> starts. Your shows are never touched.</p>
   <div class="note tip"><span class="label">Before you start</span><p>You need an internet connection. On Linux OQup may
@@ -79,12 +79,12 @@
 <pre><code>curl --proto '=https' --tlsv1.2 -fsSL https://github.com/iagonunez/OQup/releases/latest/download/install.sh | sh</code></pre></li>
     <li>The first step downloads OQup, checks it against the published checksum and puts it in
     <code>~/.local/bin</code>. Then it starts.</li>
-    <li>If system libraries OpenQ needs are missing (ALSA, PipeWire, udev), OQup lists them and asks before installing
+    <li>If system libraries OpnQ needs are missing (ALSA, PipeWire, udev), OQup lists them and asks before installing
     them with your distribution's package manager. Answer yes; the package manager asks for your password.</li>
-    <li>Leave the terminal open until it says that OpenQ is installed.</li>
-    <li>Open OpenQ from your applications menu (search for "OpenQ"), or type <code>openq</code> in a terminal.</li>
+    <li>Leave the terminal open until it says that OpnQ is installed.</li>
+    <li>Open OpnQ from your applications menu (search for "OpnQ"), or type <code>opnq</code> in a terminal.</li>
   </ol>
-  <p>If the terminal says <code>openq: command not found</code>, <code>~/.local/bin</code> is not in your PATH yet. Add it
+  <p>If the terminal says <code>opnq: command not found</code>, <code>~/.local/bin</code> is not in your PATH yet. Add it
   once, then open a new terminal:</p>
 <pre><code>fish_add_path ~/.local/bin                                 # fish
 echo 'export PATH="$HOME/.local/bin:$PATH"' &gt;&gt; ~/.bashrc   # bash (zsh: ~/.zshrc)</code></pre>
@@ -94,7 +94,7 @@ echo 'export PATH="$HOME/.local/bin:$PATH"' &gt;&gt; ~/.bashrc   # bash (zsh: ~/
     <li>Open Terminal (press ⌘ Space and type "Terminal").</li>
     <li>Paste the command below and press Enter:
 <pre><code>curl --proto '=https' --tlsv1.2 -fsSL https://github.com/iagonunez/OQup/releases/latest/download/install.sh | sh</code></pre></li>
-    <li>The app is placed at <code>~/Applications/OpenQ.app</code>, the Applications folder in your home folder, with
+    <li>The app is placed at <code>~/Applications/OpnQ.app</code>, the Applications folder in your home folder, with
     FFmpeg inside it. Open it from the Finder (Go → Home → Applications) or with Spotlight.</li>
   </ol>
 
@@ -103,11 +103,11 @@ echo 'export PATH="$HOME/.local/bin:$PATH"' &gt;&gt; ~/.bashrc   # bash (zsh: ~/
     <li>Open PowerShell: press the Start key, type <em>PowerShell</em> and press Enter.</li>
     <li>Paste the command below and press Enter:
 <pre><code>powershell -ExecutionPolicy Bypass -c "irm https://github.com/iagonunez/OQup/releases/latest/download/install.ps1 | iex"</code></pre></li>
-    <li>When it is done, OpenQ is in the Start menu and listed under <em>Settings → Apps → Installed apps</em>.</li>
+    <li>When it is done, OpnQ is in the Start menu and listed under <em>Settings → Apps → Installed apps</em>.</li>
   </ol>
 
   <h4>Building on your own computer</h4>
-  <p><code>oqup install --build-source</code> compiles OpenQ (and OQVis) from the source code on your computer instead of
+  <p><code>oqup install --build-source</code> compiles OpnQ (and OQVis) from the source code on your computer instead of
   downloading the release. OQup installs what the build needs first: a private copy of Rust if there is none, a C
   compiler and libclang, and FFmpeg (on Linux from your distribution's packages, after asking; on macOS Apple's Command
   Line Tools, then FFmpeg compiled from its source; on Windows Microsoft's C++ Build Tools, whose installer opens for you
@@ -121,18 +121,18 @@ echo 'export PATH="$HOME/.local/bin:$PATH"' &gt;&gt; ~/.bashrc   # bash (zsh: ~/
   </ul>
 
   <h4>Updating and removing</h4>
-  <p>To get a newer version, run <code>oqup update</code>: it installs OpenQ again when a new version is released, the same
+  <p>To get a newer version, run <code>oqup update</code>: it installs OpnQ again when a new version is released, the same
   way as last time. <code>oqup versions</code> lists the versions you can install, and <code>oqup install --ref v0.4.0</code>
-  installs one of them. To remove OpenQ, run <code>oqup uninstall</code>; it asks first. Add <code>--purge</code> to remove
-  OQup's downloads, Rust, dependencies and build cache as well. On Windows you can also remove OpenQ from
+  installs one of them. To remove OpnQ, run <code>oqup uninstall</code>; it asks first. Add <code>--purge</code> to remove
+  OQup's downloads, Rust, dependencies and build cache as well. On Windows you can also remove OpnQ from
   <em>Settings → Apps → Installed apps</em>. Your shows are never touched.</p>
-  <p>If you only need cues, <code>oqup install --no-lighting</code> installs OpenQ without the lighting workspace (no
+  <p>If you only need cues, <code>oqup install --no-lighting</code> installs OpnQ without the lighting workspace (no
   Lighting view, Light cues, fixture downloads or OQVis). Shows with a lighting design still open, keep it and play their
   Light cues. <code>oqup install --lighting</code> adds it back; <code>--no-oqvis</code> keeps the lighting but leaves
   OQVis out.</p>
 </section>
 
-<div class="shot"><img src="img/screenshot.webp" width="1600" height="1466" alt="OpenQ running a show: the GO button, the standby cue, a cue list with audio, video, text, group, fade and network cues, and the cues that are playing" loading="lazy"></div>
+<div class="shot"><img src="img/screenshot.webp" width="1600" height="1466" alt="OpnQ running a show: the GO button, the standby cue, a cue list with audio, video, text, group, fade and network cues, and the cues that are playing" loading="lazy"></div>
 
 <section class="section">
   <h2>What it does</h2>
@@ -152,8 +152,8 @@ echo 'export PATH="$HOME/.local/bin:$PATH"' &gt;&gt; ~/.bashrc   # bash (zsh: ~/
 </main>
 
 <footer>
-  <span>© 2026 Iago Núñez · <a href="https://github.com/iagonunez/OpenQ/blob/master/LICENSE.md">License</a>: Apache 2.0: free to use, change, share and sell, including for commercial productions.</span>
-  <span><a href="https://github.com/iagonunez/OpenQ/blob/master/README.md">README</a> · <a href="https://github.com/iagonunez/OpenQ">GitHub</a></span>
+  <span>© 2026 Iago Núñez · <a href="https://github.com/iagonunez/OpnQ/blob/master/LICENSE.md">License</a>: Apache 2.0: free to use, change, share and sell, including for commercial productions.</span>
+  <span><a href="https://github.com/iagonunez/OpnQ/blob/master/README.md">README</a> · <a href="https://github.com/iagonunez/OpnQ">GitHub</a></span>
 </footer>
 <script src="site/site.js"></script>
 </body>

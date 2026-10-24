@@ -23,7 +23,7 @@ pub(crate) enum Origin {
     Show,
     /// The user's library.
     Library,
-    /// Built into OpenQ (saving makes a new type).
+    /// Built into OpnQ (saving makes a new type).
     BuiltIn,
     /// Made from scratch.
     New,
@@ -99,7 +99,7 @@ impl TypeUi {
         if !self.bundled_started {
             self.bundled_started = true;
             let slot = self.bundled.clone();
-            let _ = std::thread::Builder::new().name("openq-bundled-fixtures".into()).spawn(move || {
+            let _ = std::thread::Builder::new().name("opnq-bundled-fixtures".into()).spawn(move || {
                 let types = crate::light::library::bundled();
                 *slot.lock() = Some(types);
             });
@@ -376,7 +376,7 @@ impl App {
                     let bundled = self.light.types.bundled();
                     let n = bundled.map_or(0, <[_]>::len);
                     let title = if bundled.is_some() { tr!("Manufacturer profiles ({n})", n = n.to_string()) } else { t("Manufacturer profiles…").to_string() };
-                    let hint = t("Shipped with OpenQ: saving makes a copy of your own");
+                    let hint = t("Shipped with OpnQ: saving makes a copy of your own");
                     egui::CollapsingHeader::new(title).id_salt("bundled_types").open(if filter.is_empty() { None } else { Some(true) }).show(ui, |ui| {
                         for ty in bundled.unwrap_or_default().iter().filter(|t| shown(t)) {
                             let on = editing.as_ref() == Some(&(ty.id.clone(), Origin::BuiltIn));
@@ -608,7 +608,7 @@ impl App {
             .add_filter(t("Open Fixture Library"), &["json"])
             .add_filter("GDTF", &["gdtf"])
             .add_filter("QLC+", &["qxf"])
-            .add_filter("OpenQ", &[crate::light::fixlib::EXTENSION])
+            .add_filter("OpnQ", &[crate::light::fixlib::EXTENSION])
             .pick_files()
         else {
             return;
@@ -633,7 +633,7 @@ impl App {
             done.lock().push(batch);
             ctx.request_repaint();
         };
-        if let Err(e) = std::thread::Builder::new().name("openq-fixture-import".into()).spawn(parse) {
+        if let Err(e) = std::thread::Builder::new().name("opnq-fixture-import".into()).spawn(parse) {
             self.notify_error(tr!("Can't import the fixture: {e}", e = e.to_string()));
         }
     }
@@ -770,7 +770,7 @@ impl App {
     pub(super) fn export_fixture(&mut self, ty: FixtureType) {
         let stem: String = type_label(&ty).chars().map(|c| if c.is_alphanumeric() || c == '-' || c == ' ' { c } else { '_' }).collect();
         let Some(path) = rfd::FileDialog::new()
-            .add_filter(t("OpenQ fixture"), &[crate::light::fixlib::EXTENSION])
+            .add_filter(t("OpnQ fixture"), &[crate::light::fixlib::EXTENSION])
             .set_file_name(format!("{}.{}", stem.trim(), crate::light::fixlib::EXTENSION))
             .save_file()
         else {

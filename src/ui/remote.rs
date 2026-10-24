@@ -1,4 +1,4 @@
-//! Remote UI: sharing this OpenQ with paired devices, and running as a replica of another one.
+//! Remote UI: sharing this OpnQ with paired devices, and running as a replica of another one.
 
 use super::widgets::{AMBER, RED};
 use super::{App, Mode, icons, theme};
@@ -544,7 +544,7 @@ impl App {
             .anchor(egui::Align2::CENTER_CENTER, [0.0, 0.0])
             .fixed_size([520.0, 0.0])
             .show(ctx, |ui| {
-                ui.label(tr!("{device} asks to change where this OpenQ sends or listens on the network:", device = r.device.as_str()));
+                ui.label(tr!("{device} asks to change where this OpnQ sends or listens on the network:", device = r.device.as_str()));
                 ui.add_space(6.0);
                 theme::card_frame().show(ui, |ui| {
                     ui.set_width(ui.available_width());
@@ -588,7 +588,7 @@ impl App {
             .collapsible(false)
             .show(ctx, |ui| {
                 ui.horizontal(|ui| {
-                    theme::tab(ui, &mut self.remote.tab, RemoteTab::Share, icons::LAN, t("Share this OpenQ"));
+                    theme::tab(ui, &mut self.remote.tab, RemoteTab::Share, icons::LAN, t("Share this OpnQ"));
                     theme::tab(ui, &mut self.remote.tab, RemoteTab::Connect, icons::CABLE, t("Connect to another"));
                 });
                 ui.separator();
@@ -809,7 +809,7 @@ impl App {
         let mut go: Option<(String, Auth)> = None;
         match found {
             None => {
-                ui.label(RichText::new(t("Search to list OpenQ devices sharing on this network.")).weak());
+                ui.label(RichText::new(t("Search to list OpnQ devices sharing on this network.")).weak());
             }
             Some(Err(e)) => {
                 ui.label(RichText::new(e).color(RED));

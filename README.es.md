@@ -1,30 +1,32 @@
 <p align="center">
   <picture>
     <source media="(prefers-color-scheme: dark)" srcset="docs/img/logo-dark.svg">
-    <img src="docs/img/logo-light.svg" alt="OpenQ" width="300">
+    <img src="docs/img/logo-light.svg" alt="OpnQ" width="300">
   </picture>
 </p>
 
 <h3 align="center">Control de espectáculos en directo para sonido, vídeo y escena</h3>
 
+<p align="center"><sub>Se pronuncia «open cue»: OpnQ se lee <i>open cue</i>, /ˈoʊpən kjuː/.</sub></p>
+
 <p align="center">
   <a href="README.md">English</a> · <b>Español</b> · <a href="README.gl.md">Galego</a>
-  &nbsp;|&nbsp; 🌐 <a href="https://iagonunez.github.io/OpenQ/es/">Web</a>
-  &nbsp;|&nbsp; 📖 <a href="https://iagonunez.github.io/OpenQ/manual/index.es.html">Manual de usuario</a>
+  &nbsp;|&nbsp; 🌐 <a href="https://iagonunez.github.io/OpnQ/es/">Web</a>
+  &nbsp;|&nbsp; 📖 <a href="https://iagonunez.github.io/OpnQ/manual/index.es.html">Manual de usuario</a>
 </p>
 
 ---
 
 ## 🎭 Acerca de
 
-OpenQ lleva una obra de teatro, un concierto o un evento a partir de una lista de cues: cada pulsación
+OpnQ lleva una obra de teatro, un concierto o un evento a partir de una lista de cues: cada pulsación
 de **GO** dispara la siguiente, ya sea música, un efecto de sonido, una película en un proyector, un
 rótulo en una pantalla, un fundido o un mensaje a la mesa de luces. Es una aplicación de código
 disponible escrita en Rust con [egui](https://github.com/emilk/egui), y su uso es gratuito, también
 en producciones comerciales.
 
 <p align="center">
-  <img src="docs/img/screenshot.es.webp" alt="OpenQ llevando un espectáculo: el botón GO, la cue en espera, una lista con cues de audio, vídeo, texto, grupo, fundido y red, y las cues que están sonando" width="900">
+  <img src="docs/img/screenshot.es.webp" alt="OpnQ llevando un espectáculo: el botón GO, la cue en espera, una lista con cues de audio, vídeo, texto, grupo, fundido y red, y las cues que están sonando" width="900">
 </p>
 
 <p align="center">
@@ -33,13 +35,13 @@ en producciones comerciales.
 
 ## 📦 Instalación
 
-OpenQ se instala con **[OQup](https://github.com/iagonunez/OQup)**, un instalador al estilo de
-rustup. Descarga la versión más reciente de OpenQ para tu sistema con las bibliotecas FFmpeg solo
+OpnQ se instala con **[OQup](https://github.com/iagonunez/OQup)**, un instalador al estilo de
+rustup. Descarga la versión más reciente de OpnQ para tu sistema con las bibliotecas FFmpeg solo
 LGPL que usa (en Linux instala además las bibliotecas de sonido y dispositivos que falten con los
 paquetes de tu distribución, preguntando antes), añade el visualizador 3D OQVis para el espacio de
 iluminación e instala la aplicación con su entrada en el menú. `oqup update` instala una versión
 nueva cuando sale, `oqup versions` las muestra y `oqup uninstall` la elimina.
-`oqup install --build-source` compila OpenQ en tu ordenador (instalando Rust y las dependencias de
+`oqup install --build-source` compila OpnQ en tu ordenador (instalando Rust y las dependencias de
 compilación si faltan). `oqup install --no-lighting` instala solo los cues, sin el espacio de
 iluminación ni OQVis (`--lighting` lo vuelve a añadir).
 
@@ -51,7 +53,7 @@ curl --proto '=https' --tlsv1.2 -fsSL https://github.com/iagonunez/OQup/releases
 
 Los binarios de Linux necesitan Debian 12, Ubuntu 23.04, Fedora 37 o posterior (glibc 2.36). En sistemas más
 antiguos usa `oqup install --build-source --no-default-features --features video,lighting` (sonido por ALSA: su
-PipeWire es demasiado antiguo para el soporte de PipeWire de OpenQ).
+PipeWire es demasiado antiguo para el soporte de PipeWire de OpnQ).
 
 ### 🪟 Windows 10/11 (64 bits), en PowerShell
 
@@ -59,9 +61,9 @@ PipeWire es demasiado antiguo para el soporte de PipeWire de OpenQ).
 powershell -ExecutionPolicy Bypass -c "irm https://github.com/iagonunez/OQup/releases/latest/download/install.ps1 | iex"
 ```
 
-La aplicación se instala en `~/Applications/OpenQ.app` (macOS, firmada ad hoc o con tu Developer ID:
-`--sign`), `%LOCALAPPDATA%\Programs\OpenQ` (Windows) o `~/.local/share/oqup/app` con un enlace en
-`~/.local/bin/openq` (Linux). El README de OQup enumera cada descarga, su origen y su licencia.
+La aplicación se instala en `~/Applications/OpnQ.app` (macOS, firmada ad hoc o con tu Developer ID:
+`--sign`), `%LOCALAPPDATA%\Programs\OpnQ` (Windows) o `~/.local/share/oqup/app` con un enlace en
+`~/.local/bin/opnq` (Linux). El README de OQup enumera cada descarga, su origen y su licencia.
 
 ### 🛠️ Desde el código, a mano (Linux; lo que hace allí `oqup install --build-source`)
 
@@ -73,8 +75,8 @@ sudo apt install build-essential clang pkg-config libasound2-dev libpipewire-0.3
 # Fedora:  sudo dnf install clang pkgconf alsa-lib-devel pipewire-devel systemd-devel ffmpeg-free-devel
 # Arch:    sudo pacman -S --needed base-devel clang pkgconf alsa-lib libpipewire ffmpeg
 curl https://sh.rustup.rs -sSf | sh          # Rust, si no lo tienes
-git clone https://github.com/iagonunez/OpenQ && cd OpenQ
-cargo build --release && ./target/release/openq
+git clone https://github.com/iagonunez/OpnQ && cd OpnQ
+cargo build --release && ./target/release/opnq
 ```
 
 > [!NOTE]
@@ -111,7 +113,7 @@ cargo build --release && ./target/release/openq
 | ⌨️ | **Disparadores** | Dispara cualquier cue con su propia tecla, un mensaje MIDI o una hora del día, o desde un cart: una cuadrícula de botones. |
 | 🎹 | **Salida MIDI** | Las cues MIDI envían notas, cambios de control y de programa, MIDI Show Control y SysEx. |
 | 📦 | **Empaquetar** | Copia un espectáculo y todos sus medios en una carpeta para moverlo o archivarlo. |
-| 📡 | **OSC** | Controla OpenQ desde otros equipos por OSC y envía OSC a mesas de luces con las cues de red. |
+| 📡 | **OSC** | Controla OpnQ desde otros equipos por OSC y envía OSC a mesas de luces con las cues de red. |
 | 📱 | **Dispositivos remotos** | Empareja un portátil o una tableta para seguir el espectáculo, llevarlo o editarlo, con conexión cifrada. |
 | 🛟 | **Seguridad ante fallos** | Autoguardado y recuperación, guardado atómico, dispositivos de audio que se reconectan solos y un registro de errores. |
 | ↩️ | **Deshacer y rehacer** | Hasta 200 pasos. |
@@ -121,8 +123,8 @@ cargo build --release && ./target/release/openq
 
 Todo lo anterior se explica paso a paso, con imágenes, en el **manual de usuario**, que viene con la
 aplicación: elige **Ayuda → Manual de usuario** o pulsa **F1** y se abre en
-tu navegador. Funciona sin conexión y siempre corresponde a tu versión de OpenQ. Como la propia aplicación (el idioma se elige la primera vez que se abre o en
-**Ajustes → General**), está en español, gallego e inglés, y también puedes leerlo [en línea](https://iagonunez.github.io/OpenQ/manual/index.es.html).
+tu navegador. Funciona sin conexión y siempre corresponde a tu versión de OpnQ. Como la propia aplicación (el idioma se elige la primera vez que se abre o en
+**Ajustes → General**), está en español, gallego e inglés, y también puedes leerlo [en línea](https://iagonunez.github.io/OpnQ/manual/index.es.html).
 
 ## 🎨 Aspecto y créditos
 
@@ -131,7 +133,7 @@ La interfaz usa un tema oscuro (`src/ui/theme.rs`) con fuentes incluidas en `ass
 - Iconos [Material Symbols Rounded](https://fonts.google.com/icons) (Apache-2.0)
 - [Inter](https://fonts.google.com/specimen/Inter) para el texto,
   [JetBrains Mono](https://fonts.google.com/specimen/JetBrains+Mono) para los tiempos y
-  [Barlow Condensed](https://fonts.google.com/specimen/Barlow+Condensed) para el título de OpenQ
+  [Barlow Condensed](https://fonts.google.com/specimen/Barlow+Condensed) para el título de OpnQ
   (SIL OFL 1.1)
 
 Solo incluyen los glifos que se usan. Para añadir un icono, pon su nombre en `tools/icons.txt` y
@@ -140,17 +142,17 @@ también regenera `src/ui/icons.rs`.
 
 ## ⚖️ Licencia
 
-Copyright 2026 Iago Núñez. OpenQ se distribuye bajo la **Apache License 2.0** ([LICENSE.md](LICENSE.md)). Este resumen es orientativo; el texto en inglés es el que vale:
+Copyright 2026 Iago Núñez. OpnQ se distribuye bajo la **Apache License 2.0** ([LICENSE.md](LICENSE.md)). Este resumen es orientativo; el texto en inglés es el que vale:
 
 - ✅ **Permitido:** cualquier uso, también en producciones comerciales. Puedes hacer funciones,
   conciertos, eventos e instalaciones de pago, y cobrar por programarlos u operarlos. Puedes copiar,
-  modificar y compartir OpenQ, conservando el aviso de copyright, `LICENSE.md` y `NOTICE.md` en cada copia.
-- ✅ **También permitido:** vender copias o versiones modificadas de OpenQ, y servicios de
+  modificar y compartir OpnQ, conservando el aviso de copyright, `LICENSE.md` y `NOTICE.md` en cada copia.
+- ✅ **También permitido:** vender copias o versiones modificadas de OpnQ, y servicios de
   alojamiento, soporte o consultoría basados en él. Los archivos modificados deben indicarlo.
 
 Las fuentes, crates y bibliotecas del sistema de terceros conservan sus propias licencias. Están en
 [NOTICE.md](NOTICE.md) y [THIRD_PARTY_LICENSES.md](THIRD_PARTY_LICENSES.md), y también en la
-aplicación en **Ayuda → Acerca de OpenQ y licencias**. Dos cosas a tener en cuenta al distribuir binarios:
+aplicación en **Ayuda → Acerca de OpnQ y licencias**. Dos cosas a tener en cuenta al distribuir binarios:
 
 - Incluye con ellos `LICENSE.md`, `NOTICE.md`, `THIRD_PARTY_LICENSES.md` y `assets/fonts/*.txt`.
   La aplicación también contiene estos textos.
@@ -160,4 +162,4 @@ aplicación en **Ayuda → Acerca de OpenQ y licencias**. Dos cosas a tener en c
 
 Después de cambiar dependencias, ejecuta `python3 -I tools/third_party_licenses.py`.
 
-OpenQ es de código abierto: la Apache License 2.0 está aprobada por la Open Source Initiative.
+OpnQ es de código abierto: la Apache License 2.0 está aprobada por la Open Source Initiative.

@@ -11,15 +11,15 @@
 //! One at a time (`--test-threads=1`), because some of them measure timing, thread counts and
 //! memory of the whole process. Nothing here needs a sound card: audio goes to a virtual output
 //! (`AudioOutput::open_virtual`) that can also record what it plays, so start times are checked
-//! to the sample. `OPENQ_STRESS_SCALE=<n>` multiplies the amount of work (default 1).
+//! to the sample. `OPNQ_STRESS_SCALE=<n>` multiplies the amount of work (default 1).
 //! Tests marked `fault-injection` need that feature; they make real code paths panic.
 
-use openq::control::{Command, CueAction, apply};
-use openq::engine::{Backend, Engine, FadeRequest};
-use openq::media::Prober;
-use openq::media::audio::AudioOutput;
-use openq::model::{AudioCue, ContinueMode, Cue, CueId, CueKind, FadeCue, GroupMode, KindTag, NetworkCue, Workspace};
-use openq::show::{SharedShow, Show};
+use opnq::control::{Command, CueAction, apply};
+use opnq::engine::{Backend, Engine, FadeRequest};
+use opnq::media::Prober;
+use opnq::media::audio::AudioOutput;
+use opnq::model::{AudioCue, ContinueMode, Cue, CueId, CueKind, FadeCue, GroupMode, KindTag, NetworkCue, Workspace};
+use opnq::show::{SharedShow, Show};
 use parking_lot::Mutex;
 use std::collections::{HashMap, HashSet};
 use std::path::{Path, PathBuf};
@@ -30,11 +30,11 @@ use std::time::{Duration, Instant};
 // ------------------------------------------------------------------ helpers
 
 fn scale() -> usize {
-    std::env::var("OPENQ_STRESS_SCALE").ok().and_then(|s| s.parse().ok()).unwrap_or(1).max(1)
+    std::env::var("OPNQ_STRESS_SCALE").ok().and_then(|s| s.parse().ok()).unwrap_or(1).max(1)
 }
 
 fn tmpdir(name: &str) -> PathBuf {
-    let d = std::env::temp_dir().join(format!("openq-stress-{name}-{}", std::process::id()));
+    let d = std::env::temp_dir().join(format!("opnq-stress-{name}-{}", std::process::id()));
     let _ = std::fs::remove_dir_all(&d);
     std::fs::create_dir_all(&d).unwrap();
     d
@@ -196,8 +196,8 @@ fn random_cue(rng: &mut fastrand::Rng, depth: usize, n: &mut usize) -> Cue {
         77 => CueKind::Network(NetworkCue {
             host: "127.0.0.1".into(),
             port: 9,
-            format: openq::model::NetFormat::Text,
-            transport: openq::model::NetTransport::Tcp,
+            format: opnq::model::NetFormat::Text,
+            transport: opnq::model::NetTransport::Tcp,
             text: r"GO\r\n".into(),
             ..Default::default()
         }),
@@ -458,7 +458,7 @@ fn stress_timing_sample_accuracy() {
     let (tx, mut rx) = rtrb::RingBuffer::<f32>::new((48_000.0 * 2.0 * (secs + 2.0)) as usize);
     let show = virtual_show(Some(tx));
     install(&show, ws);
-    openq::show::spawn_engine_thread(show.clone(), || {});
+    opnq::show::spawn_engine_thread(show.clone(), || {});
 
     let done = Arc::new(AtomicBool::new(false));
     let mut load = Vec::new();
@@ -566,7 +566,7 @@ fn stress_audio_soak_releases_everything() {
     let ids: Vec<CueId> = ws.cue_list.cues.iter().map(|c| c.id).collect();
     let show = virtual_show(None);
     install(&show, ws);
-    openq::show::spawn_engine_thread(show.clone(), || {});
+    opnq::show::spawn_engine_thread(show.clone(), || {});
 
     let round = |rng: &mut fastrand::Rng, ops: usize| {
         for _ in 0..ops {
@@ -619,7 +619,7 @@ fn stress_voice_limit() {
     tone(&p, 5.0, 330.0);
     let mut a = AudioOutput::open_virtual(48_000, 2, None).unwrap();
     let cue = AudioCue { path: p.clone(), ..Default::default() };
-    let max = openq::media::audio::MAX_VOICES;
+    let max = opnq::media::audio::MAX_VOICES;
     let ids: Vec<CueId> = (0..max + 40).map(|_| CueId::new_v4()).collect();
     let mut refused = 0;
     for id in &ids {
@@ -649,7 +649,7 @@ fn stress_voice_limit() {
 #[ignore = "stress"]
 fn stress_workspace_files() {
     let dir = tmpdir("files");
-    let path = dir.join("show.openq");
+    let path = dir.join("show.opnq");
     for seed in 0..(100 * scale()) as u64 {
         let mut rng = fastrand::Rng::with_seed(seed);
         let count = rng.usize(1..80);
@@ -691,7 +691,7 @@ fn stress_workspace_files() {
     // A big show.
     let mut ws = Workspace::default();
     // (At most as many as a show may hold.)
-    for i in 0..(20_000 * scale()).min(openq::limits::MAX_CUES) {
+    for i in 0..(20_000 * scale()).min(opnq::limits::MAX_CUES) {
         let mut c = Cue::new(KindTag::Wait.default_kind());
         c.number = i.to_string();
         ws.cue_list.cues.push(c);
@@ -743,8 +743,8 @@ fn stress_garbage_media_and_timecode() {
     wait_for("garbage cues to end", 30.0, || ids.iter().all(|id| a.is_finished(*id)));
 
     // Timecode decoders on noise, then a real signal.
-    use openq::model::TimecodeRate;
-    use openq::timecode::{LtcDecoder, LtcEncoder, MtcDecoder};
+    use opnq::model::TimecodeRate;
+    use opnq::timecode::{LtcDecoder, LtcEncoder, MtcDecoder};
     let mut ltc = LtcDecoder::new(48_000);
     let noise: Vec<f32> = (0..48_000 * 10).map(|i| if i % 997 < 400 { rng.f32() * 2.0 - 1.0 } else { ((i / rng.usize(1..50)) % 2) as f32 - 0.5 }).collect();
     for chunk in noise.chunks(rng.usize(64..2048)) {
@@ -776,9 +776,9 @@ fn stress_osc_flood() {
     let three = ws.cue_list.cues[2].id;
     let show = virtual_show(None);
     install(&show, ws);
-    openq::show::spawn_engine_thread(show.clone(), || {});
+    opnq::show::spawn_engine_thread(show.clone(), || {});
     let port = 41000 + (std::process::id() % 10000) as u16;
-    let _osc = openq::osc::OscServer::start(port, show.clone(), || {}).unwrap();
+    let _osc = opnq::osc::OscServer::start(port, show.clone(), || {}).unwrap();
     let sock = std::net::UdpSocket::bind("127.0.0.1:0").unwrap();
     let to = ("127.0.0.1", port);
     let msg = |addr: &str| {
@@ -811,13 +811,13 @@ fn stress_osc_flood() {
 #[test]
 #[ignore = "stress"]
 fn stress_remote_junk_connections() {
-    use openq::remote::client::{Auth, Link, LinkState};
-    use openq::remote::server::Server;
-    use openq::remote::{RemoteConfig, Role};
+    use opnq::remote::client::{Auth, Link, LinkState};
+    use opnq::remote::server::Server;
+    use opnq::remote::{RemoteConfig, Role};
     use std::io::Write;
     let dir = tmpdir("remote");
     // SAFETY: set before other threads of this test read the environment.
-    unsafe { std::env::set_var("OPENQ_CONFIG_DIR", &dir) };
+    unsafe { std::env::set_var("OPNQ_CONFIG_DIR", &dir) };
     let show = virtual_show(None);
     let port = 42000 + (std::process::id() % 10000) as u16;
     let cfg = Arc::new(Mutex::new(RemoteConfig { port, instance_name: "Main".into(), ..Default::default() }));
@@ -858,28 +858,28 @@ fn stress_remote_junk_connections() {
 #[test]
 #[ignore = "stress"]
 fn stress_crash_leaves_recoverable_autosave() {
-    use openq::recovery::{Autosave, find_orphans_in, install_panic_hook};
-    if let Ok(dir) = std::env::var("OPENQ_STRESS_CHILD") {
+    use opnq::recovery::{Autosave, find_orphans_in, install_panic_hook};
+    if let Ok(dir) = std::env::var("OPNQ_STRESS_CHILD") {
         // Child: edit a show, autosave, panic on a worker, then die hard.
         let dir = PathBuf::from(dir);
-        unsafe { std::env::set_var("OPENQ_CONFIG_DIR", &dir) };
+        unsafe { std::env::set_var("OPNQ_CONFIG_DIR", &dir) };
         let show: SharedShow = Arc::new(Mutex::new(Show::new(Prober::new())));
         {
             let mut s = show.lock();
-            s.path = Some(PathBuf::from("/shows/Crashy.openq"));
+            s.path = Some(PathBuf::from("/shows/Crashy.opnq"));
             s.ws.settings.osc_port = 5151;
             s.edited();
         }
         let a = Arc::new(Mutex::new(Autosave::new_in(&dir.join("recovery")).unwrap()));
         install_panic_hook(&show, a.clone());
-        let _ = std::thread::Builder::new().name("openq-doomed".into()).spawn(|| panic!("worker went down")).unwrap().join();
+        let _ = std::thread::Builder::new().name("opnq-doomed".into()).spawn(|| panic!("worker went down")).unwrap().join();
         a.lock().sync(&show).unwrap();
         std::process::abort();
     }
     let dir = tmpdir("crash");
     let status = std::process::Command::new(std::env::current_exe().unwrap())
         .args(["--exact", "stress_crash_leaves_recoverable_autosave", "--ignored", "--nocapture"])
-        .env("OPENQ_STRESS_CHILD", &dir)
+        .env("OPNQ_STRESS_CHILD", &dir)
         .status()
         .unwrap();
     assert!(!status.success(), "child should have crashed");
@@ -890,7 +890,7 @@ fn stress_crash_leaves_recoverable_autosave() {
     let logs: Vec<_> = std::fs::read_dir(dir.join("crash")).unwrap().flatten().collect();
     assert!(!logs.is_empty(), "crash report written");
     let report = std::fs::read_to_string(logs[0].path()).unwrap();
-    assert!(report.contains("worker went down") && report.contains("openq-doomed"), "{report}");
+    assert!(report.contains("worker went down") && report.contains("opnq-doomed"), "{report}");
     found[0].discard();
     assert!(find_orphans_in(&dir.join("recovery"), None).is_empty());
     let _ = std::fs::remove_dir_all(&dir);
@@ -899,7 +899,7 @@ fn stress_crash_leaves_recoverable_autosave() {
 #[cfg(feature = "fault-injection")]
 mod faults {
     use super::*;
-    use openq::recovery::{Fault, arm};
+    use opnq::recovery::{Fault, arm};
 
     /// The engine panics mid-show: the thread survives, everything stops, the log says why, and
     /// the next GO works.
@@ -914,7 +914,7 @@ mod faults {
         }
         let show = virtual_show(None);
         install(&show, ws);
-        openq::show::spawn_engine_thread(show.clone(), || {});
+        opnq::show::spawn_engine_thread(show.clone(), || {});
         apply(&mut show.lock(), Command::Go, Instant::now()).unwrap();
         assert!(show.lock().engine.is_active());
         arm(Fault::EngineTick);
@@ -944,7 +944,7 @@ mod faults {
         ws.cue_list.cues.push(audio_cue("2", &p));
         let show = virtual_show(None);
         install(&show, ws);
-        openq::show::spawn_engine_thread(show.clone(), || {});
+        opnq::show::spawn_engine_thread(show.clone(), || {});
         apply(&mut show.lock(), Command::Go, Instant::now()).unwrap();
         arm(Fault::AudioCallback);
         // Reconnecting to a virtual output takes milliseconds, so watch the log, not the state.
@@ -1000,7 +1000,7 @@ mod faults {
     #[test]
     #[ignore = "stress"]
     fn stress_light_panic_is_recovered() {
-        use openq::light::{engine::LightEngine, library, model::*};
+        use opnq::light::{engine::LightEngine, library, model::*};
         let mut l = Lighting::default();
         let t = library::generic("generic/dimmer").unwrap();
         l.add_type(&t);
@@ -1070,13 +1070,13 @@ fn stress_long_list_few_running() {
 
 mod lighting {
     use super::{rss, scale, tmpdir, wait_for};
-    use openq::light::engine::LightEngine;
-    use openq::light::effects::{Effect, EffectRun, Shape};
-    use openq::light::fixlib::{self, Library};
-    use openq::light::import::{Format, import};
-    use openq::light::library;
-    use openq::light::model::*;
-    use openq::light::playback::{LightShow, Playback};
+    use opnq::light::engine::LightEngine;
+    use opnq::light::effects::{Effect, EffectRun, Shape};
+    use opnq::light::fixlib::{self, Library};
+    use opnq::light::import::{Format, import};
+    use opnq::light::library;
+    use opnq::light::model::*;
+    use opnq::light::playback::{LightShow, Playback};
     use std::sync::Arc;
     use std::time::{Duration, Instant};
 
@@ -1279,7 +1279,7 @@ mod lighting {
         p.tick(t0);
     }
 
-    /// Damaged and hostile fixture files (OFL, QLC+, GDTF, OpenQ): never a panic, a hang or a
+    /// Damaged and hostile fixture files (OFL, QLC+, GDTF, OpnQ): never a panic, a hang or a
     /// memory blow-up; whatever imports stays within the limits and plays.
     #[test]
     #[ignore = "stress"]
@@ -1288,7 +1288,7 @@ mod lighting {
         let gdtf = zip(&[("description.xml", GDTF.as_bytes())], true);
         let oq = fixlib::write(&import(OFL.as_bytes(), Format::Ofl, "fuzz").unwrap().fixture);
         let samples: [(&str, Format, Vec<u8>); 4] =
-            [("ofl", Format::Ofl, OFL.into()), ("qxf", Format::Qxf, QXF.into()), ("gdtf", Format::Gdtf, gdtf), ("oqfixture", Format::OpenQ, oq.into_bytes())];
+            [("ofl", Format::Ofl, OFL.into()), ("qxf", Format::Qxf, QXF.into()), ("gdtf", Format::Gdtf, gdtf), ("oqfixture", Format::OpnQ, oq.into_bytes())];
         for (name, f, bytes) in &samples {
             check_type(&import(bytes, *f, "fuzz").unwrap_or_else(|e| panic!("{name}: {e:#}")).fixture, name);
         }
@@ -1300,7 +1300,7 @@ mod lighting {
             // GDTF: damage the XML inside a valid zip too, not only the zip.
             let bytes = if *f == Format::Gdtf && rng.bool() {
                 zip(&[("description.xml", &mutate(&mut rng, GDTF.as_bytes()))], rng.bool())
-            } else if matches!(f, Format::Ofl | Format::OpenQ) && rng.u8(..3) > 0 {
+            } else if matches!(f, Format::Ofl | Format::OpnQ) && rng.u8(..3) > 0 {
                 let mut v: serde_json::Value = serde_json::from_slice(src).expect("sample");
                 mutate_json(&mut rng, &mut v);
                 serde_json::to_vec(&v).expect("json")
@@ -1343,7 +1343,7 @@ mod lighting {
         check_type(&import(wide.as_bytes(), Format::Ofl, "x").expect("long repeat list, cut at 512").fixture, "wide mode");
         let mut far = import(OFL.as_bytes(), Format::Ofl, "x").unwrap().fixture;
         far.modes[0].channels[0].offset = 4000;
-        assert!(import(fixlib::write(&far).as_bytes(), Format::OpenQ, "x").is_err(), "offsets past the universe refused");
+        assert!(import(fixlib::write(&far).as_bytes(), Format::OpnQ, "x").is_err(), "offsets past the universe refused");
         if let (Some(a), Some(b)) = (rss0, rss()) {
             eprintln!("RSS {} → {} MB", a >> 20, b >> 20);
             assert!(b < a + (200 << 20), "memory grew by {} MB", (b - a) >> 20);

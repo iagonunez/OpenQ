@@ -120,7 +120,7 @@ fn clip(s: &str) -> String {
 fn agent() -> ureq::Agent {
     ureq::Agent::config_builder()
         .timeout_global(Some(Duration::from_secs(30)))
-        .user_agent(concat!("OpenQ/", env!("CARGO_PKG_VERSION")))
+        .user_agent(concat!("OpnQ/", env!("CARGO_PKG_VERSION")))
         .build()
         .into()
 }
@@ -141,7 +141,7 @@ fn agent() -> NoAgent {
 
 #[cfg(not(feature = "fixture-download"))]
 fn get(_: &NoAgent, _: &str) -> anyhow::Result<Vec<u8>> {
-    anyhow::bail!("OpenQ was built without fixture downloads")
+    anyhow::bail!("OpnQ was built without fixture downloads")
 }
 
 /// Read the manufacturer list answer: (key, name) pairs.
@@ -277,7 +277,7 @@ impl Browser {
             return;
         }
         let me = self.clone();
-        self.spawn("openq-ofl", move || {
+        self.spawn("opnq-ofl", move || {
             let cached = load_cache();
             let fetch = cached.as_ref().is_none_or(Catalogue::is_old);
             me.state.lock().catalogue = cached.map(Arc::new);
@@ -294,7 +294,7 @@ impl Browser {
             return;
         }
         let me = self.clone();
-        self.spawn("openq-ofl", move || me.fetch(&repaint));
+        self.spawn("opnq-ofl", move || me.fetch(&repaint));
     }
 
     fn fetch(&self, repaint: &(dyn Fn() + Send + Sync)) {
@@ -338,7 +338,7 @@ impl Browser {
             s.downloading.extend(ids.iter().cloned());
         }
         let me = self.clone();
-        self.spawn("openq-ofl-download", move || {
+        self.spawn("opnq-ofl-download", move || {
             for (e, id) in entries.iter().zip(&ids) {
                 let r = crate::recovery::catch(|| download(e));
                 me.state.lock().downloading.retain(|x| x != id);

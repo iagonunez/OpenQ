@@ -3341,7 +3341,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "c08d65885ee38876c4f86fa503fb49d7b507c2b62552df7c70b2fce627e06381"
 
 [[package]]
-name = "openq"
+name = "opnq"
 version = "0.6.1"
 dependencies = [
  "anyhow",

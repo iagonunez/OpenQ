@@ -3,7 +3,7 @@
 //! [`VideoOutput`] runs in the video output process ([`crate::vout`]): each movie has its own
 //! decode thread, which publishes the decoded pictures into a shared slot at their presentation
 //! time, as they come from the decoder ([`Picture`]: YUV planes, converted to RGB by the output's
-//! shader). In OpenQ itself a [`VideoOutput::soundtracks`] decodes only the soundtracks: resampled
+//! shader). In OpnQ itself a [`VideoOutput::soundtracks`] decodes only the soundtracks: resampled
 //! to the mixer's rate and fed to a mixer voice, so they get level, fades, EQ and routing like an
 //! audio cue. Using FFmpeg directly means any format the system FFmpeg can play works, with no
 //! codec plugins to install.
@@ -23,7 +23,7 @@ use std::sync::Arc;
 use std::sync::atomic::Ordering;
 use std::time::{Duration, Instant};
 
-/// Where a video's soundtrack goes: into the OpenQ mixer at this rate/channel count.
+/// Where a video's soundtrack goes: into the OpnQ mixer at this rate/channel count.
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub struct AudioTap {
     /// Mixer sample rate.
@@ -465,7 +465,7 @@ fn join_briefly(t: std::thread::JoinHandle<()>, what: &str) {
 
 struct DecodeJob {
     params: VideoCue,
-    /// Decode the pictures (false: only the soundtrack, for OpenQ's side of a movie whose
+    /// Decode the pictures (false: only the soundtrack, for OpnQ's side of a movie whose
     /// pictures the video output process decodes itself).
     video: bool,
     frame: FrameSlot,
@@ -611,7 +611,7 @@ impl DecodeJob {
         };
         if vdec.is_none() && adec.is_none() {
             if self.video && ictx.streams().best(ff::media::Type::Audio).is_some() {
-                // A sound file on a stage: nothing to show (its sound plays in OpenQ's mixer).
+                // A sound file on a stage: nothing to show (its sound plays in OpnQ's mixer).
                 return Ok(());
             }
             return Err(anyhow!("no playable video or audio stream"));
@@ -1211,7 +1211,7 @@ impl Capture {
         let c = c.clone();
         let (q, p, f, e) = (quit.clone(), paused.clone(), finished.clone(), error.clone());
         let thread = std::thread::Builder::new()
-            .name("openq-camera".into())
+            .name("opnq-camera".into())
             .spawn(move || {
                 if let Err(err) = crate::recovery::catch(|| capture(&c, &frame, &q, &p)) {
                     log::error!("camera: {err:#}");
@@ -1360,7 +1360,7 @@ fn svg_scale(params: &VideoCue, longest: f32) -> f32 {
 fn load_still(params: &VideoCue, slot: FrameSlot) -> Arc<Mutex<Option<String>>> {
     let error = Arc::new(Mutex::new(None));
     let (err, params) = (error.clone(), params.clone());
-    let spawned = std::thread::Builder::new().name("openq-still".into()).spawn(move || {
+    let spawned = std::thread::Builder::new().name("opnq-still".into()).spawn(move || {
         let path = &params.path;
         let res = crate::recovery::catch(|| {
             let (w, h) = if super::still::is_svg(path) { super::still::dimensions(path)? } else { (1, 1) };
@@ -1467,7 +1467,7 @@ impl Player {
                 audio_state: audio_state.clone(),
                 skip,
             };
-            let name = crate::recovery::thread_name("openq-video-", &params.path.file_name().map(|f| f.to_string_lossy()).unwrap_or_default());
+            let name = crate::recovery::thread_name("opnq-video-", &params.path.file_name().map(|f| f.to_string_lossy()).unwrap_or_default());
             let thread = std::thread::Builder::new().name(name).spawn(move || job.run())?;
             Source::Movie(Movie { ctl, thread: Some(thread) })
         };
@@ -1670,7 +1670,7 @@ impl Player {
 }
 
 /// All playing video, image and text layers (in the video output process), or the soundtracks of
-/// playing movies (in OpenQ itself, see [`VideoOutput::soundtracks`]).
+/// playing movies (in OpnQ itself, see [`VideoOutput::soundtracks`]).
 pub struct VideoOutput {
     /// Decode pictures (false: soundtracks only).
     video: bool,
@@ -2246,7 +2246,7 @@ mod tests {
     #[test]
     fn media_files_are_local_only() {
         init().unwrap();
-        let dir = std::env::temp_dir().join(format!("openq-local-only-{}", std::process::id()));
+        let dir = std::env::temp_dir().join(format!("opnq-local-only-{}", std::process::id()));
         std::fs::create_dir_all(&dir).unwrap();
         let wav = dir.join("a.wav");
         crate::media::decoder::tests::write_wav(&wav, 48000, 0.2);
@@ -2379,7 +2379,7 @@ mod tests {
     /// A movie that stops delivering pictures without failing (a hung share) is reported once.
     #[test]
     fn a_stalled_movie_is_reported() {
-        let dir = std::env::temp_dir().join(format!("openq-movie-stall-{}", std::process::id()));
+        let dir = std::env::temp_dir().join(format!("opnq-movie-stall-{}", std::process::id()));
         std::fs::create_dir_all(&dir).unwrap();
         let fifo = dir.join("hung-drive.mp4");
         let _ = std::fs::remove_file(&fifo);
@@ -2417,7 +2417,7 @@ mod hw_tests {
     /// computer with a hardware decoder; elsewhere both are CPU decoding).
     #[test]
     fn hardware_decoded_movies_end_and_loop() {
-        let dir = std::env::temp_dir().join(format!("openq-hwdec-{}", std::process::id()));
+        let dir = std::env::temp_dir().join(format!("opnq-hwdec-{}", std::process::id()));
         std::fs::create_dir_all(&dir).unwrap();
         let movie = dir.join("blue.mp4");
         let made = std::process::Command::new("ffmpeg")

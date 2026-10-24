@@ -4,7 +4,7 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
 <!-- Built by tools/build_manual.py around the content block below: edit only that, then run the script. -->
-<title>Seguridade e axuda · Manual de usuario de OpenQ</title>
+<title>Seguridade e axuda · Manual de usuario de OpnQ</title>
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Barlow+Condensed:wght@500;600;700&family=Inter:wght@400;500;600&family=JetBrains+Mono:wght@400;500&display=swap">
@@ -37,18 +37,18 @@
 
 <main>
 <header class="chapter-head">
-  <div class="eyebrow">Capítulo 7 · Manual de usuario de OpenQ</div>
+  <div class="eyebrow">Capítulo 7 · Manual de usuario de OpnQ</div>
   <h1>Seguridade e axuda</h1>
 </header>
 
 <!--content-->
 <section id="safety">
   <h2><span class="n">7.1</span>Seguridade ante fallos</h2>
-  <p>Un espectáculo ten que seguir cando algo sae mal. OpenQ mantén os problemas o máis pequenos posible e
+  <p>Un espectáculo ten que seguir cando algo sae mal. OpnQ mantén os problemas o máis pequenos posible e
   recupera o teu traballo se chega a caer.</p>
   <h3 id="autosave-and-recovery">Autogardado e recuperación</h3>
-  <p>Mentres un espectáculo ten cambios sen gardar, OpenQ garda unha copia cada poucos segundos. Gardar o espectáculo,
-  ou saír con normalidade, borra a copia. Se OpenQ ou o ordenador caen, o seguinte arranque ofréceche a copia:</p>
+  <p>Mentres un espectáculo ten cambios sen gardar, OpnQ garda unha copia cada poucos segundos. Gardar o espectáculo,
+  ou saír con normalidade, borra a copia. Se OpnQ ou o ordenador caen, o seguinte arranque ofréceche a copia:</p>
   <figure class="narrow">
     <img src="img/gl/recovery.webp" width="702" height="378" alt="Xanela Recuperar traballo sen gardar con dous espectáculos autogardados, cada un con botóns Recuperar e Descartar, e un botón Máis tarde.">
     <figcaption>Despois dun fallo: cada espectáculo con cambios sen gardar, cando se autogardou e a que ficheiro pertence.</figcaption>
@@ -63,10 +63,10 @@
   fallo ou un corte de luz durante o gardado deixa intacta a versión anterior.</p>
   <h3 id="when-something-fails-during-a-show">Cando algo falla durante unha función</h3>
   <div class="table-wrap"><table>
-    <thead><tr><th>Que pasa</th><th>Que fai OpenQ</th></tr></thead>
+    <thead><tr><th>Que pasa</th><th>Que fai OpnQ</th></tr></thead>
     <tbody>
       <tr><td>O dispositivo de audio desaparece (desconectado, servidor de audio reiniciado)</td><td>Os seus sons páranse e a
-      barra de estado amosa <em>audio perdido · reconectando…</em>. OpenQ tenta abrir o mesmo dispositivo cada
+      barra de estado amosa <em>audio perdido · reconectando…</em>. OpnQ tenta abrir o mesmo dispositivo cada
       2 segundos e segue en canto volve. O vídeo e as demais cues seguen a funcionar.</td></tr>
       <tr><td>Un ficheiro de medios está danado</td><td>Esa cue remata cun erro en <span class="menu">Ver → Rexistro do motor</span>;
       todas as demais cues seguen a soar.</td></tr>
@@ -77,14 +77,14 @@
       <tr><td>Máis de 256 sons á vez</td><td>As cues de audio adicionais rexéitanse cun erro no rexistro.</td></tr>
     </tbody>
   </table></div>
-  <p>Os autogardados e os informes de fallos están no cartafol de axustes de OpenQ: <code>~/.config/openq</code> en Linux,
-  <code>~/Library/Application Support/OpenQ</code> en macOS, <code>%APPDATA%\OpenQ</code> en Windows, en
+  <p>Os autogardados e os informes de fallos están no cartafol de axustes de OpnQ: <code>~/.config/opnq</code> en Linux,
+  <code>~/Library/Application Support/OpnQ</code> en macOS, <code>%APPDATA%\OpnQ</code> en Windows, en
   <code>recovery</code> e <code>crash</code>. Un informe de fallo contén que saíu mal e onde; achégao, por favor,
   cando informes dun problema.</p>
   <p><strong>Rexistro de erros.</strong> Cada aviso e erro (entradas do rexistro do motor, fallos de dispositivos, gardados ou
-  aperturas fallidos, caídas) tamén se escribe, coa data e a hora en UTC, en <code>logs/openq.log</code> dentro do mesmo
+  aperturas fallidos, caídas) tamén se escribe, coa data e a hora en UTC, en <code>logs/opnq.log</code> dentro do mesmo
   cartafol, para que poidas revisalo despois da función. <span class="menu">Axuda → Rexistro de erros</span> ábreo. Cando supera
-  os 2 MB, móvese a <code>openq.old.log</code> a próxima vez que arrinca OpenQ.</p>
+  os 2 MB, móvese a <code>opnq.old.log</code> a próxima vez que arrinca OpnQ.</p>
 </section>
 
 <section id="trouble">
@@ -95,7 +95,7 @@
       <tr><td>Non hai son</td><td>Mira a barra de estado. Se di <em>sen audio</em>, escolle outro dispositivo en Axustes → Audio.
       Comproba o volume mestre e o nivel e o enrutado da cue.</td></tr>
       <tr><td>Unha cue Micro non soa</td><td>Comproba o dispositivo de entrada e as canles na súa lapela I/O; a barra de nivel amosa
-      se chega algo. En macOS e Windows, OpenQ precisa permiso para usar o micrófono.</td></tr>
+      se chega algo. En macOS e Windows, OpnQ precisa permiso para usar o micrófono.</td></tr>
       <tr><td>Os disparadores por código de tempo non se disparan</td><td>Abre a xanela <em>Timecode…</em> da lista e comproba que
       recibe código de tempo á frecuencia correcta. As cues só se disparan mentres o código avanza polo seu tempo de disparo.</td></tr>
       <tr><td>Unha cue Cámara non amosa nada</td><td>Comproba o dispositivo na súa lapela Cámara (usa <span class="ms" aria-hidden="true">&#xe5d5;</span>
@@ -104,11 +104,11 @@
       Básico da cue para atopalo de novo. Tras reconectar unha unidade, dálle uns dous segundos para que desapareza.</td></tr>
       <tr><td>Un vídeo non aparece</td><td>Abre a xanela do escenario desde o menú Vídeo. Comproba o escenario, a opacidade
       e a capa da cue, e busca erros do descodificador en <span class="menu">Ver → Rexistro do motor</span>. Unha tarxeta gráfica só
-      pode amosar imaxes ata certo tamaño (a miúdo 8192 ou 16384 píxeles de ancho). OpenQ reduce imaxes fixas, SVG e texto
+      pode amosar imaxes ata certo tamaño (a miúdo 8192 ou 16384 píxeles de ancho). OpnQ reduce imaxes fixas, SVG e texto
       para que caiban, pero unha película maior queda fóra: convértea a un tamaño menor.</td></tr>
       <tr><td>A barra de estado di <em>audio perdido · reconectando…</em></td><td>O dispositivo de audio desapareceu. Volve conectalo
-      ou reinicia o servizo de audio; OpenQ reconéctase só. Para usar outro dispositivo, escólleo en Axustes → Audio.</td></tr>
-      <tr><td>OpenQ pide recuperar traballo sen gardar</td><td>A última vez non se pechou con normalidade. Ver <a href="#safety">Seguridade ante fallos</a>.</td></tr>
+      ou reinicia o servizo de audio; OpnQ reconéctase só. Para usar outro dispositivo, escólleo en Axustes → Audio.</td></tr>
+      <tr><td>OpnQ pide recuperar traballo sen gardar</td><td>A última vez non se pechou con normalidade. Ver <a href="#safety">Seguridade ante fallos</a>.</td></tr>
       <tr><td>GO parece non facer nada</td><td>A cue baixo o cabezal pode estar desarmada, ou a segunda pulsación pode ter
       chegado dentro da protección contra dobre GO.</td></tr>
       <tr><td>Un dispositivo remoto non atopa o principal</td><td>Asegúrate de que o acceso remoto está activado e de que os dous
@@ -123,25 +123,25 @@
 
 <section id="license">
   <h2><span class="n">7.3</span>Licenza e créditos</h2>
-  <p>OpenQ distribúese baixo a <a href="https://www.apache.org/licenses/LICENSE-2.0">Apache License 2.0</a>. Este resumo é orientativo; o texto en inglés é o que vale.</p>
+  <p>OpnQ distribúese baixo a <a href="https://www.apache.org/licenses/LICENSE-2.0">Apache License 2.0</a>. Este resumo é orientativo; o texto en inglés é o que vale.</p>
   <div class="table-wrap split"><table>
     <thead><tr><th>Podes</th><th>Debes</th></tr></thead>
     <tbody>
-      <tr><td>Usar OpenQ para calquera cousa, tamén comercial: facer funcións, concertos, xiras, eventos e instalacións de pago, e cobrar por programalos ou operalos.</td><td>Conservar o aviso de copyright, <code>LICENSE.md</code> e <code>NOTICE.md</code> en cada copia.</td></tr>
+      <tr><td>Usar OpnQ para calquera cousa, tamén comercial: facer funcións, concertos, xiras, eventos e instalacións de pago, e cobrar por programalos ou operalos.</td><td>Conservar o aviso de copyright, <code>LICENSE.md</code> e <code>NOTICE.md</code> en cada copia.</td></tr>
       <tr><td>Copialo, modificalo e compartilo.</td><td>Indicar nos ficheiros que modifiques que cambiaron.</td></tr>
-      <tr><td>Vender copias, versións modificadas ou servizos baseados nel.</td><td>Non usar o nome OpenQ como marca: a licenza non dá dereito a iso.</td></tr>
+      <tr><td>Vender copias, versións modificadas ou servizos baseados nel.</td><td>Non usar o nome OpnQ como marca: a licenza non dá dereito a iso.</td></tr>
     </tbody>
   </table></div>
-  <pre><code>Copyright 2026 Iago Núñez — OpenQ (https://github.com/iagonunez/OpenQ)</code></pre>
-  <p><span class="menu">Axuda → Acerca de OpenQ e licenzas</span> amosa a versión, a licenza e todos os avisos de terceiros.
+  <pre><code>Copyright 2026 Iago Núñez — OpnQ (https://github.com/iagonunez/OpnQ)</code></pre>
+  <p><span class="menu">Axuda → Acerca de OpnQ e licenzas</span> amosa a versión, a licenza e todos os avisos de terceiros.
   Son as fontes (Inter, JetBrains Mono e Barlow Condensed baixo a SIL Open Font License; Material Symbols baixo Apache 2.0; as
-  fontes incluídas en egui) e as bibliotecas Rust de código aberto coas que se constrúe OpenQ, cada unha coa súa propia
+  fontes incluídas en egui) e as bibliotecas Rust de código aberto coas que se constrúe OpnQ, cada unha coa súa propia
   licenza. Os mesmos textos están en <code>NOTICE.md</code> e <code>THIRD_PARTY_LICENSES.md</code> xunto ao programa.</p>
-  <div class="note"><span class="label">Vídeo e FFmpeg</span><p>OpenQ reproduce vídeo coas bibliotecas FFmpeg. En Windows e
-  macOS o instalador pon dentro de OpenQ unha compilación sen partes GPL, coa súa licenza no cartafol <code>Licenses</code>;
-  en Linux OpenQ usa o FFmpeg do sistema. FFmpeg ten a súa propia licenza. Se pasas un OpenQ compilado a outras persoas, usa
+  <div class="note"><span class="label">Vídeo e FFmpeg</span><p>OpnQ reproduce vídeo coas bibliotecas FFmpeg. En Windows e
+  macOS o instalador pon dentro de OpnQ unha compilación sen partes GPL, coa súa licenza no cartafol <code>Licenses</code>;
+  en Linux OpnQ usa o FFmpeg do sistema. FFmpeg ten a súa propia licenza. Se pasas un OpnQ compilado a outras persoas, usa
   un FFmpeg sen partes GPL, ou a GPL 3 cubrirá todo o programa. Ver <code>NOTICE.md</code>.</p></div>
-  <footer>OpenQ · Apache 2.0. Fontes: Inter, JetBrains Mono, Barlow Condensed (SIL OFL 1.1) e Material Symbols (Apache 2.0).</footer>
+  <footer>OpnQ · Apache 2.0. Fontes: Inter, JetBrains Mono, Barlow Condensed (SIL OFL 1.1) e Material Symbols (Apache 2.0).</footer>
 </section>
 <!--/content-->
 

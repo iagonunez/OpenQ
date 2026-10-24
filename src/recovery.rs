@@ -27,7 +27,7 @@ pub const AUTOSAVE_INTERVAL: Duration = Duration::from_secs(5);
 /// Crash reports kept in the crash folder (oldest are deleted).
 const MAX_CRASH_LOGS: usize = 20;
 /// Name of the engine thread, whose panics are recovered in place.
-pub const ENGINE_THREAD: &str = "openq-engine";
+pub const ENGINE_THREAD: &str = "opnq-engine";
 
 /// The text of a panic payload.
 pub fn panic_message(p: &(dyn Any + Send)) -> String {
@@ -50,7 +50,7 @@ pub fn catch<T>(f: impl FnOnce() -> anyhow::Result<T>) -> anyhow::Result<T> {
 
 // ------------------------------------------------------------------ fault injection
 
-/// Places where the stress tests can make OpenQ panic on purpose.
+/// Places where the stress tests can make OpnQ panic on purpose.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Fault {
     /// The next engine tick.
@@ -203,7 +203,7 @@ impl Autosave {
     }
 
     fn data_path(&self) -> PathBuf {
-        self.dir.join(format!("session-{}.openq", self.id))
+        self.dir.join(format!("session-{}.opnq", self.id))
     }
 
     fn info_path(&self) -> PathBuf {
@@ -223,7 +223,7 @@ impl Autosave {
         Ok(())
     }
 
-    /// Remove the copy (the show was saved, or OpenQ is quitting normally).
+    /// Remove the copy (the show was saved, or OpnQ is quitting normally).
     pub fn clear(&mut self) {
         if self.has_copy {
             let _ = std::fs::remove_file(self.data_path());
@@ -288,7 +288,7 @@ impl Drop for Autosave {
 /// Autosave in the background every [`AUTOSAVE_INTERVAL`] (or at once when `now` is set).
 pub fn spawn_autosave(show: SharedShow, autosave: Arc<Mutex<Autosave>>, now: Arc<AtomicBool>) {
     std::thread::Builder::new()
-        .name("openq-autosave".into())
+        .name("opnq-autosave".into())
         .spawn(move || {
             let mut last = Instant::now();
             loop {
@@ -308,7 +308,7 @@ pub fn spawn_autosave(show: SharedShow, autosave: Arc<Mutex<Autosave>>, now: Arc
         .expect("spawn autosave thread");
 }
 
-/// A show autosaved by an OpenQ that didn't quit normally.
+/// A show autosaved by an OpnQ that didn't quit normally.
 #[derive(Clone, Debug)]
 pub struct Orphan {
     /// The copy of the show.
@@ -350,7 +350,7 @@ fn is_file(p: &Path) -> bool {
     std::fs::metadata(p).is_ok_and(|m| m.is_file())
 }
 
-/// Autosaves in `dir` whose session no running OpenQ holds, newest first. `own` (this
+/// Autosaves in `dir` whose session no running OpnQ holds, newest first. `own` (this
 /// instance's session) is never listed.
 pub fn find_orphans_in(dir: &Path, own: Option<&Autosave>) -> Vec<Orphan> {
     let Ok(entries) = std::fs::read_dir(dir) else { return Vec::new() };
@@ -362,14 +362,14 @@ pub fn find_orphans_in(dir: &Path, own: Option<&Autosave>) -> Vec<Orphan> {
         if !name.starts_with("session-") || own.is_some_and(|a| a.is_own(&name)) {
             continue;
         }
-        if ext == "lock" && !data.with_extension("openq").exists() {
+        if ext == "lock" && !data.with_extension("opnq").exists() {
             // A session that ended (or crashed) with nothing unsaved: just tidy up its lock.
             if is_file(&data) && File::options().write(true).open(&data).ok().is_some_and(|f| f.try_lock().is_ok()) {
                 let _ = std::fs::remove_file(&data);
             }
             continue;
         }
-        if ext != "openq" {
+        if ext != "opnq" {
             continue;
         }
         // A live instance holds its lock file; if we can take it, nobody does.
@@ -403,7 +403,7 @@ fn write_crash_log(info: &std::panic::PanicHookInfo) -> Option<PathBuf> {
     std::fs::create_dir_all(&dir).ok()?;
     let thread = std::thread::current();
     let report = format!(
-        "OpenQ {} crash report\ntime: {} (unix)\nthread: {}\npanic: {}\nat: {}\n\nbacktrace:\n{}\n",
+        "OpnQ {} crash report\ntime: {} (unix)\nthread: {}\npanic: {}\nat: {}\n\nbacktrace:\n{}\n",
         env!("CARGO_PKG_VERSION"),
         unix_secs(),
         thread.name().unwrap_or("?"),
@@ -469,7 +469,7 @@ mod tests {
     use super::*;
 
     fn tmpdir(name: &str) -> PathBuf {
-        let d = std::env::temp_dir().join(format!("openq-recovery-{name}-{}", std::process::id()));
+        let d = std::env::temp_dir().join(format!("opnq-recovery-{name}-{}", std::process::id()));
         let _ = std::fs::remove_dir_all(&d);
         d
     }
@@ -483,8 +483,8 @@ mod tests {
 
     #[test]
     fn thread_names_from_the_show_are_safe() {
-        let name = thread_name("openq-dec-", "a\0b.wav");
-        assert_eq!(name, "openq-dec-ab.wav");
+        let name = thread_name("opnq-dec-", "a\0b.wav");
+        assert_eq!(name, "opnq-dec-ab.wav");
         assert!(std::thread::Builder::new().name(thread_name("x-", &"\0".repeat(500))).spawn(|| {}).unwrap().join().is_ok());
     }
 
@@ -506,10 +506,10 @@ mod tests {
             }
         }
         // A failed atomic write leaves no temporary file.
-        let blocked = dir.join("folder.openq");
+        let blocked = dir.join("folder.opnq");
         std::fs::create_dir_all(blocked.join("x")).unwrap();
         assert!(write_atomic(&blocked, b"x").is_err());
-        assert!(!dir.join("folder.openq.tmp").exists());
+        assert!(!dir.join("folder.opnq.tmp").exists());
         assert!(write_atomic(Path::new(""), b"x").is_err());
         let _ = std::fs::remove_dir_all(&dir);
     }
@@ -520,7 +520,7 @@ mod tests {
         let mut ws = Workspace::default();
         ws.settings.osc_port = 4242;
         let mut a = Autosave::new_in(&dir).unwrap();
-        a.write(&ws, Some(Path::new("/shows/Hamlet.openq"))).unwrap();
+        a.write(&ws, Some(Path::new("/shows/Hamlet.opnq"))).unwrap();
         let mut b = Autosave::new_in(&dir).unwrap();
         b.write(&ws, None).unwrap();
         // Both alive: nothing to recover (and a session never sees itself).

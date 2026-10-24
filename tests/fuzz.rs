@@ -1,6 +1,6 @@
-//! Fuzz tests: damaged and hostile input from every place OpenQ reads it.
+//! Fuzz tests: damaged and hostile input from every place OpnQ reads it.
 //!
-//! Each test throws random and deliberately malicious data at one way in and checks that OpenQ
+//! Each test throws random and deliberately malicious data at one way in and checks that OpnQ
 //! answers with an error (or a sane result) instead of crashing, hanging or running away with
 //! memory:
 //!
@@ -21,9 +21,9 @@
 //! * `fuzz_devices`: sound cards, inputs, MIDI ports, serial ports and network outputs that don't
 //!   exist or aren't what they claim to be.
 //!
-//! A panic anywhere counts, also on a worker thread whose panic OpenQ catches and turns into an
+//! A panic anywhere counts, also on a worker thread whose panic OpnQ catches and turns into an
 //! error (`recovery::catch`): the panic hook records them all. The one exception is a panic inside
-//! the SVG rasteriser (a bug in that library) that OpenQ caught: it is listed, not failed. A call that doesn't return in time
+//! the SVG rasteriser (a bug in that library) that OpnQ caught: it is listed, not failed. A call that doesn't return in time
 //! counts as a hang. The failing input is saved under `target/tmp/fuzz-failures/` and the message
 //! says how to run it again; after a crash that ends the process (a stack overflow), the input
 //! being tried is there as `<test>-last.<ext>`.
@@ -34,18 +34,18 @@
 //! cargo test --release --test fuzz -- --ignored --test-threads=1
 //! ```
 //!
-//! `OPENQ_FUZZ_SECS` sets the time per test (default 20), `OPENQ_FUZZ_SEED` the random seed (each
-//! run prints its own), `OPENQ_FUZZ_REPLAY=<file>` runs one saved show or media file only.
+//! `OPNQ_FUZZ_SECS` sets the time per test (default 20), `OPNQ_FUZZ_SEED` the random seed (each
+//! run prints its own), `OPNQ_FUZZ_REPLAY=<file>` runs one saved show or media file only.
 //! `fuzz_show_files` also draws cues and lighting from the demo show (`tools/demo_show.sh`) when
 //! it's there, which brings in every cue feature and real media.
 
-use openq::control::{Command, CueAction, LightControl, apply};
-use openq::light::model::{Fixture, LightCue, Sequence};
-use openq::light::{Lighting, library};
-use openq::media::Prober;
-use openq::media::audio::AudioOutput;
-use openq::model::{AudioCue, Cue, CueId, CueKind, KindTag, Workspace};
-use openq::show::{SharedShow, Show};
+use opnq::control::{Command, CueAction, LightControl, apply};
+use opnq::light::model::{Fixture, LightCue, Sequence};
+use opnq::light::{Lighting, library};
+use opnq::media::Prober;
+use opnq::media::audio::AudioOutput;
+use opnq::model::{AudioCue, Cue, CueId, CueKind, KindTag, Workspace};
+use opnq::show::{SharedShow, Show};
 use parking_lot::Mutex;
 use serde_json::Value;
 use std::path::{Path, PathBuf};
@@ -56,7 +56,7 @@ use std::time::{Duration, Instant};
 
 static PANICS: Mutex<Vec<String>> = Mutex::new(Vec::new());
 
-/// Panics inside the SVG rasteriser that OpenQ caught (`still::render_svg`): bugs in that library
+/// Panics inside the SVG rasteriser that OpnQ caught (`still::render_svg`): bugs in that library
 /// we can't fix here. They don't fail a test as long as the call returned; they are listed.
 static CONTAINED: Mutex<Vec<String>> = Mutex::new(Vec::new());
 
@@ -79,27 +79,27 @@ fn watch_panics() {
         // No stage windows: video cues end with "video output unavailable", as on a machine
         // without a display.
         // SAFETY: set before any thread of this test reads the environment.
-        unsafe { std::env::set_var("OPENQ_VIDEO_EXE", "/nonexistent/openq-fuzz-no-video") };
+        unsafe { std::env::set_var("OPNQ_VIDEO_EXE", "/nonexistent/opnq-fuzz-no-video") };
     });
 }
 
 fn budget() -> Duration {
-    Duration::from_secs_f64(std::env::var("OPENQ_FUZZ_SECS").ok().and_then(|s| s.parse().ok()).unwrap_or(20.0))
+    Duration::from_secs_f64(std::env::var("OPNQ_FUZZ_SECS").ok().and_then(|s| s.parse().ok()).unwrap_or(20.0))
 }
 
 fn base_seed() -> u64 {
-    std::env::var("OPENQ_FUZZ_SEED").ok().and_then(|s| s.parse().ok()).unwrap_or_else(|| {
+    std::env::var("OPNQ_FUZZ_SEED").ok().and_then(|s| s.parse().ok()).unwrap_or_else(|| {
         let t = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map(|d| d.as_nanos() as u64).unwrap_or(1);
         t ^ (std::process::id() as u64) << 32
     })
 }
 
 fn replay() -> Option<PathBuf> {
-    std::env::var_os("OPENQ_FUZZ_REPLAY").map(PathBuf::from)
+    std::env::var_os("OPNQ_FUZZ_REPLAY").map(PathBuf::from)
 }
 
 fn tmpdir(name: &str) -> PathBuf {
-    let d = std::env::temp_dir().join(format!("openq-fuzz-{name}-{}", std::process::id()));
+    let d = std::env::temp_dir().join(format!("opnq-fuzz-{name}-{}", std::process::id()));
     let _ = std::fs::remove_dir_all(&d);
     std::fs::create_dir_all(&d).unwrap();
     d
@@ -119,7 +119,7 @@ impl Fuzz {
         watch_panics();
         PANICS.lock().clear();
         let seed = base_seed();
-        eprintln!("{name}: OPENQ_FUZZ_SEED={seed}, {:.0} s", budget().as_secs_f64());
+        eprintln!("{name}: OPNQ_FUZZ_SEED={seed}, {:.0} s", budget().as_secs_f64());
         Self { name, seed, t0: Instant::now(), rng: fastrand::Rng::with_seed(seed), iteration: 0 }
     }
 
@@ -137,16 +137,16 @@ impl Fuzz {
         let file = dir.join(format!("{}-{}-{}.{ext}", self.name, self.seed, self.iteration));
         let saved = std::fs::write(&file, input).map(|_| format!("input saved to {}", file.display())).unwrap_or_else(|e| format!("input not saved: {e}"));
         panic!(
-            "{}: iteration {}: {why}\n{saved}\nrun again: OPENQ_FUZZ_SEED={} tools/fuzz.sh {}{}",
+            "{}: iteration {}: {why}\n{saved}\nrun again: OPNQ_FUZZ_SEED={} tools/fuzz.sh {}{}",
             self.name,
             self.iteration,
             self.seed,
             self.name,
-            if input.is_empty() { String::new() } else { format!("  (or OPENQ_FUZZ_REPLAY={} for this input)", file.display()) }
+            if input.is_empty() { String::new() } else { format!("  (or OPNQ_FUZZ_REPLAY={} for this input)", file.display()) }
         )
     }
 
-    /// Fail if anything panicked since the last check (except rasteriser panics OpenQ caught).
+    /// Fail if anything panicked since the last check (except rasteriser panics OpnQ caught).
     fn check_panics(&self, input: &[u8]) {
         let (contained, p): (Vec<String>, Vec<String>) = std::mem::take(&mut *PANICS.lock()).into_iter().partition(|p| is_rasteriser_panic(p));
         CONTAINED.lock().extend(contained);
@@ -244,7 +244,7 @@ fn hostile_string(rng: &mut fastrand::Rng) -> String {
         "\u{202e}gnp.exe",
         "\0",
         "a\0b",
-        "$(touch /tmp/openq-pwned)",
+        "$(touch /tmp/opnq-pwned)",
         "`id`",
         "'; DROP TABLE cues; --",
         "<script>alert(1)</script>",
@@ -472,7 +472,7 @@ fn seed_lighting() -> Lighting {
         address += t.modes[0].footprint();
     }
     let units = l.units();
-    let attrs = openq::light::model::Attribute::ALL;
+    let attrs = opnq::light::model::Attribute::ALL;
     let cues = (0..4)
         .map(|c| {
             let mut cue = LightCue { number: (c + 1).to_string(), fade: 0.5, ..Default::default() };
@@ -483,7 +483,7 @@ fn seed_lighting() -> Lighting {
         })
         .collect();
     l.sequences.push(Sequence { id: 1, cues, ..Default::default() });
-    l.effects.push(openq::light::effects::Effect { id: 1, ..Default::default() });
+    l.effects.push(opnq::light::effects::Effect { id: 1, ..Default::default() });
     l
 }
 
@@ -513,9 +513,9 @@ fn seed_workspace(media: &Path) -> Workspace {
             }
             CueKind::Light(l) => l.sequence = Some(1),
             // Never out of this computer's real MIDI ports.
-            CueKind::Midi(m) => m.port = Some("openq-fuzz-no-port".into()),
-            CueKind::Timecode(t) => t.midi_port = Some("openq-fuzz-no-port".into()),
-            CueKind::MidiFile(m) => m.port = Some("openq-fuzz-no-port".into()),
+            CueKind::Midi(m) => m.port = Some("opnq-fuzz-no-port".into()),
+            CueKind::Timecode(t) => t.midi_port = Some("opnq-fuzz-no-port".into()),
+            CueKind::MidiFile(m) => m.port = Some("opnq-fuzz-no-port".into()),
             CueKind::Target { target: t, new_target } => {
                 *t = target;
                 *new_target = Some(ids[(i * 3) % ids.len()]);
@@ -531,7 +531,7 @@ fn seed_workspace(media: &Path) -> Workspace {
             }
         }
     }
-    let group = Cue::new(CueKind::Group { mode: openq::model::GroupMode::StartAll, children: cues[..4].iter().map(|c| Cue { id: CueId::new_v4(), ..c.clone() }).collect() });
+    let group = Cue::new(CueKind::Group { mode: opnq::model::GroupMode::StartAll, children: cues[..4].iter().map(|c| Cue { id: CueId::new_v4(), ..c.clone() }).collect() });
     cues.push(group);
     ws.cue_list.cues = cues;
     let tab = ws.cue_list.add_list("Second", None);
@@ -559,7 +559,7 @@ impl Corpus {
         let base = serde_json::to_value(seed_workspace(media)).unwrap();
         let mut cues = Vec::new();
         let mut lighting = None;
-        let demo = std::env::var_os("OPENQ_FUZZ_SHOW").map(PathBuf::from).unwrap_or_else(|| PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("target/demo-show/demo.openq"));
+        let demo = std::env::var_os("OPNQ_FUZZ_SHOW").map(PathBuf::from).unwrap_or_else(|| PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("target/demo-show/demo.opnq"));
         match Workspace::load(&demo) {
             Ok(ws) => {
                 for c in ws.cue_list.iter_all().into_iter().take(3000) {
@@ -602,7 +602,7 @@ impl Corpus {
 /// Keep a fuzzed show off the network and the real sound card: Network cues and DMX outputs go
 /// to loopback, DMX inputs and the Enttec port are off, audio stays on the virtual output.
 fn keep_local(ws: &mut Workspace) {
-    use openq::light::dmx::OutputProtocol;
+    use opnq::light::dmx::OutputProtocol;
     ws.settings.audio_device = None;
     for list in ws.cue_list.all_roots_mut() {
         visit(list, &mut |c| {
@@ -661,23 +661,23 @@ fn virtual_show() -> SharedShow {
 /// it for a few simulated seconds with random commands.
 fn exercise_show(f: &Fuzz, show: &SharedShow, path: &Path, bytes: &[u8], rng_seed: u64) -> bool {
     let p = path.to_path_buf();
-    let loaded = f.guard("loading", Duration::from_secs(5), bytes, "openq", move || Workspace::load(&p).map_err(|e| format!("{e:#}")));
+    let loaded = f.guard("loading", Duration::from_secs(5), bytes, "opnq", move || Workspace::load(&p).map_err(|e| format!("{e:#}")));
     let Ok(mut ws) = loaded else { return false };
     // Every value came in within its plausible range (`limits`): clamping again changes nothing.
     let mut again = ws.clone();
-    openq::limits::workspace(&mut again);
+    opnq::limits::workspace(&mut again);
     if again != ws {
-        f.fail(bytes, "openq", "a loaded show still holds values out of range");
+        f.fail(bytes, "opnq", "a loaded show still holds values out of range");
     }
     keep_local(&mut ws);
     let (show, path) = (show.clone(), path.to_path_buf());
-    f.guard("saving and playing", Duration::from_secs(30), bytes, "openq", move || {
+    f.guard("saving and playing", Duration::from_secs(30), bytes, "opnq", move || {
         let mut rng = fastrand::Rng::with_seed(rng_seed);
-        let _ = ws.save(&path.with_extension("again.openq"));
-        let _ = openq::remote::vet::workspace(&openq::remote::vet::media_paths(&ws).into_iter().collect(), &ws);
+        let _ = ws.save(&path.with_extension("again.opnq"));
+        let _ = opnq::remote::vet::workspace(&opnq::remote::vet::media_paths(&ws).into_iter().collect(), &ws);
         let _ = ws.lighting.validate();
-        let _ = openq::light::patch::diff(&Lighting::default(), &ws.lighting).map(|p| openq::light::patch::apply(&mut Lighting::default(), &p));
-        let _ = openq::light::plot::svg(&ws.lighting, "fuzz");
+        let _ = opnq::light::patch::diff(&Lighting::default(), &ws.lighting).map(|p| opnq::light::patch::apply(&mut Lighting::default(), &p));
+        let _ = opnq::light::plot::svg(&ws.lighting, "fuzz");
         let ids: Vec<CueId> = ws.cue_list.iter_all().iter().map(|c| c.id).collect();
         let mut s = show.lock();
         s.replace_workspace(ws, None);
@@ -714,7 +714,7 @@ fn fuzz_show_files() {
     let media = dir.join("tone.wav");
     write_wav(&media, 48_000, 2, 0.5);
     let show = virtual_show();
-    let path = dir.join("fuzz.openq");
+    let path = dir.join("fuzz.opnq");
     if let Some(r) = replay() {
         let bytes = std::fs::read(&r).unwrap();
         std::fs::write(&path, &bytes).unwrap();
@@ -748,13 +748,13 @@ fn fuzz_show_files() {
     for (name, bytes) in [("deep", deep.into_bytes()), ("nested", "[".repeat(1_000_000).into_bytes()), ("big string", format!("{{\"stages\":[{{\"name\":\"{}\"}}]}}", "x".repeat(50 << 20)).into_bytes())] {
         std::fs::write(&path, &bytes).unwrap();
         let p = path.clone();
-        f.guard(name, Duration::from_secs(10), &[], "openq", move || {
+        f.guard(name, Duration::from_secs(10), &[], "opnq", move || {
             let _ = Workspace::load(&p);
         });
     }
     for special in special_files(&dir) {
         let p = special.clone();
-        let r = f.guard(&format!("loading {}", special.display()), Duration::from_secs(5), &[], "openq", move || Workspace::load(&p).is_ok());
+        let r = f.guard(&format!("loading {}", special.display()), Duration::from_secs(5), &[], "opnq", move || Workspace::load(&p).is_ok());
         assert!(!r, "{} loaded as a show", special.display());
     }
     if let (Some(a), Some(b)) = (rss0, rss()) {
@@ -901,25 +901,25 @@ fn hostile_svgs() -> Vec<String> {
 /// Run every media reader on `p`. Errors are fine; a panic or a hang isn't.
 fn read_media(p: &Path, prober: &Prober, audio: &Mutex<AudioOutput>) {
     let _ = prober.get_blocking(p);
-    let _ = openq::media::decoder::probe(p);
-    if let Ok(w) = openq::media::decoder::waveform(p) {
+    let _ = opnq::media::decoder::probe(p);
+    if let Ok(w) = opnq::media::decoder::waveform(p) {
         let _ = w.range(0.0, w.duration);
         let _ = w.range(-1.0, 1e300);
     }
-    let _ = openq::media::still::dimensions(p);
-    let _ = openq::media::still::load(p, 1.0);
-    let _ = openq::media::still::load(p, 64.0);
-    let _ = openq::media::still::thumbnail(p, 96);
-    let _ = openq::media::mask::load(p);
-    if let Ok(song) = openq::media::midifile::load(p) {
+    let _ = opnq::media::still::dimensions(p);
+    let _ = opnq::media::still::load(p, 1.0);
+    let _ = opnq::media::still::load(p, 64.0);
+    let _ = opnq::media::still::thumbnail(p, 96);
+    let _ = opnq::media::mask::load(p);
+    if let Ok(song) = opnq::media::midifile::load(p) {
         let i = song.index_at(song.duration / 2.0);
         let _ = song.chase(i);
     }
     // Played as a movie (decoded on the graphics card where it takes the codec).
     #[cfg(feature = "video")]
-    if let Ok(mut v) = openq::media::video::VideoOutput::new() {
+    if let Ok(mut v) = opnq::media::video::VideoOutput::new() {
         let id = CueId::new_v4();
-        if v.start(id, &openq::model::VideoCue { path: p.to_path_buf(), ..Default::default() }, Instant::now(), None).is_ok() {
+        if v.start(id, &opnq::model::VideoCue { path: p.to_path_buf(), ..Default::default() }, Instant::now(), None).is_ok() {
             let t0 = Instant::now();
             while t0.elapsed() < Duration::from_millis(60) && !v.is_finished(id) {
                 std::thread::sleep(Duration::from_millis(10));
@@ -946,8 +946,8 @@ fn fuzz_media_files() {
     let mut f = Fuzz::new("fuzz_media_files");
     let dir = tmpdir("media");
     let prober = Prober::new();
-    let posters = openq::media::Posters::new();
-    let waveforms = openq::media::Waveforms::new();
+    let posters = opnq::media::Posters::new();
+    let waveforms = opnq::media::Waveforms::new();
     let audio = Arc::new(Mutex::new(AudioOutput::open_virtual(48_000, 2, None).unwrap()));
     if let Some(r) = replay() {
         let bytes = std::fs::read(&r).unwrap_or_default();
@@ -967,11 +967,11 @@ fn fuzz_media_files() {
         std::fs::write(&p, svg).unwrap();
         specials.push(p);
     }
-    let marker = Path::new("/tmp/openq-pwned");
+    let marker = Path::new("/tmp/opnq-pwned");
     for p in specials {
         eprintln!("  special: {}", p.display());
         let (pr, au, q) = (prober.clone(), audio.clone(), p.clone());
-        let input = openq::recovery::read_file(&p, 1 << 20).unwrap_or_default();
+        let input = opnq::recovery::read_file(&p, 1 << 20).unwrap_or_default();
         f.guard(&format!("reading {}", p.display()), Duration::from_secs(15), &input, "svg", move || read_media(&q, &pr, &au));
         let _ = posters.get(&p, 0.0);
         let _ = waveforms.get(&p);
@@ -1038,11 +1038,11 @@ fn fuzz_media_files() {
 #[test]
 #[ignore = "fuzz"]
 fn fuzz_lighting_files() {
-    use openq::light::{command, fixlib, fxfile, gobo, mvr, usitt, zipread};
+    use opnq::light::{command, fixlib, fxfile, gobo, mvr, usitt, zipread};
     let mut f = Fuzz::new("fuzz_lighting_files");
     let dir = tmpdir("lighting");
     let l = seed_lighting();
-    let effect = openq::light::effects::Effect { id: 3, name: "Chase".into(), ..Default::default() };
+    let effect = opnq::light::effects::Effect { id: 3, name: "Chase".into(), ..Default::default() };
     let fx = fxfile::write(&effect, "fuzz", "a chase");
     let types: Vec<String> = l.fixture_types.iter().map(fixlib::write).collect();
     let zip = zipread::write(&[("description.xml", b"<GDTF/>"), ("wheels/gobo1.png", b"\x89PNG\r\n\x1a\n"), ("a/b/c.txt", &[7; 3000])]).unwrap();
@@ -1123,14 +1123,14 @@ fn fuzz_lighting_files() {
                 5 => mvr::import(&i, &[]).is_ok_and(|imp| {
                     let mut l = Lighting::default();
                     mvr::merge(&mut l, imp);
-                    openq::limits::lighting(&mut l);
+                    opnq::limits::lighting(&mut l);
                     let _ = l.validate();
                     true
                 }),
                 _ => usitt::read(&text).is_ok_and(|file| {
                     let mut l = Lighting::default();
                     usitt::merge(&mut l, &file, "fuzz");
-                    openq::limits::lighting(&mut l);
+                    opnq::limits::lighting(&mut l);
                     let _ = l.validate();
                     true
                 }),
@@ -1154,25 +1154,25 @@ fn fuzz_lighting_files() {
 
 // ------------------------------------------------------------------ config files
 
-/// Garbage in every file of the config folder, and file system errors when saving: OpenQ starts
+/// Garbage in every file of the config folder, and file system errors when saving: OpnQ starts
 /// with defaults or ignores the file.
 #[test]
 #[ignore = "fuzz"]
 fn fuzz_config_files() {
-    use openq::recovery::{Autosave, find_orphans_in};
+    use opnq::recovery::{Autosave, find_orphans_in};
     let mut f = Fuzz::new("fuzz_config_files");
     let dir = tmpdir("config");
     // SAFETY: this test reads the variable only on its own threads, after setting it.
-    unsafe { std::env::set_var("OPENQ_CONFIG_DIR", &dir) };
-    let remote = serde_json::to_vec(&openq::remote::RemoteConfig { instance_name: "Main".into(), ..Default::default() }).unwrap();
+    unsafe { std::env::set_var("OPNQ_CONFIG_DIR", &dir) };
+    let remote = serde_json::to_vec(&opnq::remote::RemoteConfig { instance_name: "Main".into(), ..Default::default() }).unwrap();
     let ws = serde_json::to_vec(&seed_workspace(Path::new("/nonexistent.wav"))).unwrap();
     let samples: Vec<(&str, Vec<u8>)> = vec![
         ("remote.json", remote),
         ("language", b"es".to_vec()),
         ("midi-surface", b"Midi Through:Midi Through Port-0 14:0".to_vec()),
         ("ofl-catalogue.json", br#"{"fetched":1700000000,"entries":[{"maker":"generic","key":"dimmer","name":"Dimmer","categories":["Dimmer"]}]}"#.to_vec()),
-        ("recovery/session-1-1.openq", ws.clone()),
-        ("recovery/session-1-1.json", br#"{"path":"/shows/a.openq","saved":1700000000}"#.to_vec()),
+        ("recovery/session-1-1.opnq", ws.clone()),
+        ("recovery/session-1-1.json", br#"{"path":"/shows/a.opnq","saved":1700000000}"#.to_vec()),
         ("recovery/session-1-1.lock", Vec::new()),
     ];
     let mut n = 0;
@@ -1201,11 +1201,11 @@ fn fuzz_config_files() {
         }
         let d = dir.clone();
         f.guard(&format!("reading {name}"), Duration::from_secs(5), &bytes, "bin", move || {
-            let cfg = openq::remote::RemoteConfig::load();
+            let cfg = opnq::remote::RemoteConfig::load();
             let _ = cfg.save();
-            let _ = openq::i18n::init();
-            let _ = openq::surface::saved_midi_port();
-            let _ = openq::light::oflsite::load_cache();
+            let _ = opnq::i18n::init();
+            let _ = opnq::surface::saved_midi_port();
+            let _ = opnq::light::oflsite::load_cache();
             for o in find_orphans_in(&d.join("recovery"), None) {
                 let _ = o.name();
                 let _ = o.load();
@@ -1224,9 +1224,9 @@ fn fuzz_config_files() {
         use std::os::unix::fs::PermissionsExt;
         std::fs::set_permissions(&ro, std::fs::Permissions::from_mode(0o500)).unwrap();
     }
-    let blocked = dir.join("a-folder.openq");
+    let blocked = dir.join("a-folder.opnq");
     std::fs::create_dir_all(&blocked).unwrap();
-    for p in [dir.join("missing/dir/show.openq"), blocked.clone(), ro.join("show.openq"), PathBuf::from("/proc/version"), PathBuf::from("")] {
+    for p in [dir.join("missing/dir/show.opnq"), blocked.clone(), ro.join("show.opnq"), PathBuf::from("/proc/version"), PathBuf::from("")] {
         let (w, q) = (ws.clone(), p.clone());
         f.guard(&format!("saving to {}", p.display()), Duration::from_secs(5), &[], "bin", move || {
             let _ = w.save(&q);
@@ -1240,7 +1240,7 @@ fn fuzz_config_files() {
         if let Ok(mut a) = Autosave::new_in(&r2.join("x")) {
             let _ = a.write(&Workspace::default(), None);
         }
-        let _ = openq::errlog::ErrorLog::open_in(&r2.join("show.openq"));
+        let _ = opnq::errlog::ErrorLog::open_in(&r2.join("show.opnq"));
     });
     #[cfg(unix)]
     {
@@ -1263,8 +1263,8 @@ fn wait_for(what: &str, secs: f64, mut f: impl FnMut() -> bool) {
 
 /// What a replica does with each message from the main device (the same calls as the remote
 /// panel in the UI).
-fn apply_as_replica(show: &mut Show, synced: &mut Option<Workspace>, waveforms: &openq::media::Waveforms, msg: openq::remote::ServerMsg) {
-    use openq::remote::ServerMsg;
+fn apply_as_replica(show: &mut Show, synced: &mut Option<Workspace>, waveforms: &opnq::media::Waveforms, msg: opnq::remote::ServerMsg) {
+    use opnq::remote::ServerMsg;
     let now = Instant::now();
     match msg {
         ServerMsg::Workspace { mut ws, keep_lighting, .. } => {
@@ -1277,13 +1277,13 @@ fn apply_as_replica(show: &mut Show, synced: &mut Option<Workspace>, waveforms: 
             show.sync_lighting();
         }
         ServerMsg::Cues(patch) => {
-            if synced.as_mut().is_some_and(|s| openq::remote::apply_cue_patch(s, &patch)) {
-                openq::remote::apply_cue_patch(&mut show.ws, &patch);
+            if synced.as_mut().is_some_and(|s| opnq::remote::apply_cue_patch(s, &patch)) {
+                opnq::remote::apply_cue_patch(&mut show.ws, &patch);
                 show.engine.workspace_changed();
             }
         }
         ServerMsg::Ops(mut ops) => {
-            ops.cues_mut().for_each(openq::limits::cue);
+            ops.cues_mut().for_each(opnq::limits::cue);
             if synced.as_mut().is_some_and(|s| ops.apply(s)) {
                 if !ops.apply(&mut show.ws) {
                     show.ws = synced.clone().unwrap();
@@ -1292,8 +1292,8 @@ fn apply_as_replica(show: &mut Show, synced: &mut Option<Workspace>, waveforms: 
             }
         }
         ServerMsg::Lighting(patch) => {
-            if synced.as_mut().is_some_and(|s| openq::light::patch::apply(&mut s.lighting, &patch)) {
-                if !openq::light::patch::apply(&mut show.ws.lighting, &patch) {
+            if synced.as_mut().is_some_and(|s| opnq::light::patch::apply(&mut s.lighting, &patch)) {
+                if !opnq::light::patch::apply(&mut show.ws.lighting, &patch) {
                     show.ws.lighting = synced.as_ref().unwrap().lighting.clone();
                 }
                 show.sync_lighting();
@@ -1317,7 +1317,7 @@ fn apply_as_replica(show: &mut Show, synced: &mut Option<Workspace>, waveforms: 
             waveforms.insert(p, w.map(Arc::new));
         }
         ServerMsg::Displays(list) => {
-            let list: Vec<_> = list.into_iter().take(openq::displays::MAX_REMOTE).map(openq::displays::Display::cleaned).collect();
+            let list: Vec<_> = list.into_iter().take(opnq::displays::MAX_REMOTE).map(opnq::displays::Display::cleaned).collect();
             assert!(list.iter().all(|d| d.name.chars().count() <= 64));
         }
         ServerMsg::Welcome { .. } | ServerMsg::Role(_) | ServerMsg::Refused(_) => {}
@@ -1334,22 +1334,22 @@ fn apply_as_replica(show: &mut Show, synced: &mut Option<Workspace>, waveforms: 
 #[test]
 #[ignore = "fuzz"]
 fn fuzz_remote_messages() {
-    use openq::remote::client::{Auth, Link, LinkState};
-    use openq::remote::secure::Hello;
-    use openq::remote::server::Server;
-    use openq::remote::{ClientMsg, LightLive, LiveState, RemoteConfig, Role, ServerMsg};
+    use opnq::remote::client::{Auth, Link, LinkState};
+    use opnq::remote::secure::Hello;
+    use opnq::remote::server::Server;
+    use opnq::remote::{ClientMsg, LightLive, LiveState, RemoteConfig, Role, ServerMsg};
     use std::io::{Read, Write};
     let mut f = Fuzz::new("fuzz_remote_messages");
     let dir = tmpdir("remote");
     // SAFETY: set before the server's threads start.
-    unsafe { std::env::set_var("OPENQ_CONFIG_DIR", &dir) };
+    unsafe { std::env::set_var("OPNQ_CONFIG_DIR", &dir) };
     let media = dir.join("tone.wav");
     write_wav(&media, 48_000, 2, 0.5);
     let mut ws = seed_workspace(&media);
     keep_local(&mut ws);
     let show = virtual_show();
     show.lock().replace_workspace(ws.clone(), None);
-    openq::show::spawn_engine_thread(show.clone(), || {});
+    opnq::show::spawn_engine_thread(show.clone(), || {});
     let port = 43000 + (std::process::id() % 10000) as u16;
     let cfg = Arc::new(Mutex::new(RemoteConfig { port, instance_name: "Main".into(), ..Default::default() }));
     let server = Server::start(show.clone(), cfg.clone(), || {}).unwrap();
@@ -1362,7 +1362,7 @@ fn fuzz_remote_messages() {
     wait_for("edit role", 10.0, || link.drain().iter().any(|m| matches!(m, ServerMsg::Role(Role::Edit))));
 
     // 1. Handshakes: valid hellos with hostile fields, damaged hellos, junk after the hello.
-    let hello = serde_json::to_value(Hello { protocol: openq::remote::PROTOCOL, client_id: uuid::Uuid::new_v4(), client_name: "x".into(), pairing: true }).unwrap();
+    let hello = serde_json::to_value(Hello { protocol: opnq::remote::PROTOCOL, client_id: uuid::Uuid::new_v4(), client_name: "x".into(), pairing: true }).unwrap();
     let handshakes = (budget() / 6).max(Duration::from_secs(2));
     let t = Instant::now();
     let mut shakes = 0;
@@ -1397,7 +1397,7 @@ fn fuzz_remote_messages() {
         o
     };
     let ids: Vec<CueId> = ws.cue_list.iter_all().iter().map(|c| c.id).collect();
-    let lp = openq::light::patch::diff(&Lighting::default(), &ws.lighting).map(Box::new);
+    let lp = opnq::light::patch::diff(&Lighting::default(), &ws.lighting).map(Box::new);
     // Cues moved, removed and added, for operations.
     let reshaped = {
         let mut o = ws.clone();
@@ -1409,7 +1409,7 @@ fn fuzz_remote_messages() {
     let seeds: Vec<Value> = [
         ClientMsg::Edit(Box::new(ws.clone())),
         ClientMsg::Reshape { ws: Box::new(others.clone()), lighting: lp.clone() },
-        ClientMsg::Ops { ops: Box::new(openq::changes::Reshape::diff(&ws, &reshaped).unwrap()), lighting: lp.clone() },
+        ClientMsg::Ops { ops: Box::new(opnq::changes::Reshape::diff(&ws, &reshaped).unwrap()), lighting: lp.clone() },
         ClientMsg::Patch { cues: ws.cue_list.cues.iter().take(6).map(|c| c.shallow_clone()).collect(), lighting: lp.clone() },
         ClientMsg::Command(Command::Go),
         ClientMsg::Command(Command::Cue(ids[0], CueAction::Start)),
@@ -1463,7 +1463,7 @@ fn fuzz_remote_messages() {
         // Whatever the replica sent, the show holds only plausible values.
         let s = show.lock();
         let mut again = s.ws.clone();
-        openq::limits::workspace(&mut again);
+        opnq::limits::workspace(&mut again);
         assert!(again == s.ws, "values out of range got into the main device's show");
     }
     eprintln!("{sent} hostile messages from an editing replica");
@@ -1475,7 +1475,7 @@ fn fuzz_remote_messages() {
         s
     };
     let replica = Arc::new(Mutex::new(replica_show));
-    let waveforms = openq::media::Waveforms::new();
+    let waveforms = opnq::media::Waveforms::new();
     let info = show.lock().media.prober.get_blocking(&media);
     let state = {
         let s = show.lock();
@@ -1498,14 +1498,14 @@ fn fuzz_remote_messages() {
             let mut o = ws.clone();
             o.cue_list.cues.reverse();
             o.cue_list.cues.truncate(8);
-            openq::changes::Reshape::diff(&ws, &o).unwrap()
+            opnq::changes::Reshape::diff(&ws, &o).unwrap()
         })),
         ServerMsg::Dmx(vec![(1, vec![255; 512]), (2, vec![0; 512])]),
         ServerMsg::State(Box::new(state)),
         ServerMsg::MediaInfo(vec![(media.clone(), info)]),
-        ServerMsg::Waveform(media.clone(), Ok(openq::media::decoder::waveform(&media).unwrap())),
+        ServerMsg::Waveform(media.clone(), Ok(opnq::media::decoder::waveform(&media).unwrap())),
         ServerMsg::Role(Role::Control),
-        ServerMsg::Displays(vec![openq::displays::Display {
+        ServerMsg::Displays(vec![opnq::displays::Display {
             name: "HDMI-A-1".into(),
             size: [1920, 1080],
             position: [0, 0],
@@ -1546,9 +1546,9 @@ fn fuzz_remote_messages() {
 #[test]
 #[ignore = "fuzz"]
 fn fuzz_network_packets() {
-    use openq::light::dmx::{Universe, UniverseRoute};
-    use openq::light::dmxin::{InputConfig, InputProtocol, InputReceiver};
-    use openq::light::{artnet, sacn};
+    use opnq::light::dmx::{Universe, UniverseRoute};
+    use opnq::light::dmxin::{InputConfig, InputProtocol, InputReceiver};
+    use opnq::light::{artnet, sacn};
     let mut f = Fuzz::new("fuzz_network_packets");
     let mut universe = Universe::new(3);
     universe.data[0] = 255;
@@ -1585,14 +1585,14 @@ fn fuzz_network_packets() {
     let ws = Workspace { lighting: seed_lighting(), ..Default::default() };
     let show = virtual_show();
     show.lock().replace_workspace(ws, None);
-    show.lock().ws.settings.surfaces.msc = openq::msc::MscSettings { enabled: true, device: 1, ..Default::default() };
-    let hub = openq::surface::SurfaceHub::new();
+    show.lock().ws.settings.surfaces.msc = opnq::msc::MscSettings { enabled: true, device: 1, ..Default::default() };
+    let hub = opnq::surface::SurfaceHub::new();
     let osc_port = base + 2;
-    let _osc = openq::osc::OscServer::start_with(osc_port, show.clone(), hub.clone(), || {}).unwrap();
+    let _osc = opnq::osc::OscServer::start_with(osc_port, show.clone(), hub.clone(), || {}).unwrap();
     let sock = std::net::UdpSocket::bind("127.0.0.1:0").unwrap();
-    let mut mtc = openq::timecode::MtcDecoder::default();
-    let mut clock = openq::surface::MidiClock::default();
-    let mut ltc = openq::timecode::LtcDecoder::new(48_000);
+    let mut mtc = opnq::timecode::MtcDecoder::default();
+    let mut clock = opnq::surface::MidiClock::default();
+    let mut ltc = opnq::timecode::LtcDecoder::new(48_000);
     let mut n = 0u64;
     while f.next() {
         let kind = f.rng.u8(..6);
@@ -1611,8 +1611,8 @@ fn fuzz_network_packets() {
         let _ = artnet::parse_poll_reply(&p);
         let _ = sacn::parse(&p);
         let _ = sacn::parse_data(&p);
-        let _ = openq::surface::parse_midi(&p);
-        if let Some(m) = openq::msc::parse(&p) {
+        let _ = opnq::surface::parse_midi(&p);
+        if let Some(m) = opnq::msc::parse(&p) {
             hub.msc(&show, &m);
         }
         let _ = clock.message(&p, n * 20_833);
@@ -1620,9 +1620,9 @@ fn fuzz_network_packets() {
         let samples: Vec<f32> = p.iter().map(|b| *b as f32 / 127.5 - 1.0).collect();
         let _ = ltc.push(&samples);
         if let Ok((_, rosc::OscPacket::Message(m))) = rosc::decoder::decode_udp(&p)
-            && openq::osc::sanitize(&m).is_ok()
+            && opnq::osc::sanitize(&m).is_ok()
         {
-            let _ = openq::osc::handle_message(&show, &hub, &m);
+            let _ = opnq::osc::handle_message(&show, &hub, &m);
         }
         // And over the wire.
         let port = match kind {
@@ -1669,9 +1669,9 @@ fn fuzz_network_packets() {
 #[test]
 #[ignore = "fuzz"]
 fn fuzz_devices() {
-    use openq::light::{artnet::ArtNetOutput, enttec::EnttecPro, sacn::SacnOutput};
-    use openq::media::audio::Endpoint;
-    use openq::model::{TimecodeRate, TimecodeSource, TimecodeSync};
+    use opnq::light::{artnet::ArtNetOutput, enttec::EnttecPro, sacn::SacnOutput};
+    use opnq::media::audio::Endpoint;
+    use opnq::model::{TimecodeRate, TimecodeSource, TimecodeSync};
     let mut f = Fuzz::new("fuzz_devices");
     let mut names: Vec<String> = vec![
         "".into(),
@@ -1703,13 +1703,13 @@ fn fuzz_devices() {
         let n = name.clone();
         f.guard(&format!("opening {name:?}"), Duration::from_secs(20), name.as_bytes(), "txt", move || {
             let _ = AudioOutput::open(Some(&n));
-            let _ = openq::media::input::open_input(Some(&n), |_, _| {});
+            let _ = opnq::media::input::open_input(Some(&n), |_, _| {});
             let _ = EnttecPro::open(&n);
             let _ = ArtNetOutput::open(&n, true);
             let _ = SacnOutput::open(&n, 200);
             for source in [TimecodeSource::Ltc, TimecodeSource::Mtc] {
                 let sync = TimecodeSync { source, rate: TimecodeRate::Fps25, ltc_device: Some(n.clone()), ltc_channel: 9999, mtc_port: Some(n.clone()), ..Default::default() };
-                let r = openq::media::tcio::Reader::open(&sync);
+                let r = opnq::media::tcio::Reader::open(&sync);
                 let _ = r.position(Instant::now());
             }
         });
@@ -1728,12 +1728,12 @@ fn fuzz_devices() {
     }
     // A MIDI surface on a port that isn't there; an OSC listener on a port that is taken.
     let show = virtual_show();
-    let midi = openq::surface::MidiSurface::start("Nope:Nope 99:0".into(), show.clone(), openq::surface::SurfaceHub::new(), || {});
+    let midi = opnq::surface::MidiSurface::start("Nope:Nope 99:0".into(), show.clone(), opnq::surface::SurfaceHub::new(), || {});
     std::thread::sleep(Duration::from_millis(300));
     let _ = midi.status();
     let taken = std::net::UdpSocket::bind("0.0.0.0:0").unwrap();
     let port = taken.local_addr().unwrap().port();
-    assert!(openq::osc::OscServer::start(port, show.clone(), || {}).is_err(), "OSC on a taken port");
+    assert!(opnq::osc::OscServer::start(port, show.clone(), || {}).is_err(), "OSC on a taken port");
     // Cues that need devices: a Mic on a missing input, a Camera on a missing device, a Network
     // cue to a host that doesn't resolve (an mDNS name takes seconds to fail: the lookup must not
     // hold up the engine).
@@ -1743,7 +1743,7 @@ fn fuzz_devices() {
         match &mut c.kind {
             CueKind::Mic(m) => m.device = Some("nonexistent".into()),
             CueKind::Camera(cam) => cam.device = Some("/dev/video99".into()),
-            CueKind::Network(n) => n.host = "openq-fuzz-missing-desk.local".into(),
+            CueKind::Network(n) => n.host = "opnq-fuzz-missing-desk.local".into(),
             _ => {}
         }
         ws.cue_list.cues.push(c);

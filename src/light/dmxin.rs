@@ -6,7 +6,7 @@
 //! that goes quiet is dropped after [`SOURCE_TIMEOUT`] (an sACN source that terminates its stream
 //! at once). The result, in logical universe numbers, sits in a slot the light thread reads with
 //! `try_lock` every frame and merges into the output as the input's [`MergeMode`] says; the UI
-//! reads it to [`capture`] another desk's look into the programmer. OpenQ's own packets
+//! reads it to [`capture`] another desk's look into the programmer. OpnQ's own packets
 //! (`artnet::is_own_port`, `sacn::own_cid`) are ignored, so a broadcast output can't loop back.
 
 use super::dmx::{DmxFrame, UniverseRoute, RETRY, SLOTS};
@@ -52,13 +52,13 @@ impl InputProtocol {
     }
 }
 
-/// How an input's universes combine with OpenQ's output.
+/// How an input's universes combine with OpnQ's output.
 #[derive(Serialize, Deserialize, Clone, Copy, PartialEq, Eq, Debug, Default)]
 pub enum MergeMode {
-    /// Every slot takes the higher of OpenQ and the input.
+    /// Every slot takes the higher of OpnQ and the input.
     #[default]
     Htp,
-    /// Universes the input receives are output as received (OpenQ's values there are replaced).
+    /// Universes the input receives are output as received (OpnQ's values there are replaced).
     Input,
     /// Not output: only shown and available to capture into the programmer.
     Capture,
@@ -194,7 +194,7 @@ impl InputReceiver {
     pub fn start_on(config: InputConfig, port: u16) -> Self {
         let shared = Arc::new(Shared { frame: Mutex::new(DmxFrame::default()), status: Mutex::new(InputStatus::default()), quit: AtomicBool::new(false) });
         let (s, c) = (shared.clone(), config.clone());
-        let name = format!("openq-dmx-in-{}", config.protocol.label());
+        let name = format!("opnq-dmx-in-{}", config.protocol.label());
         let thread = std::thread::Builder::new()
             .name(name)
             .spawn(move || {
@@ -240,7 +240,7 @@ impl Drop for InputReceiver {
 
 const READ_TIMEOUT: Duration = Duration::from_millis(50);
 
-/// Bind the protocol's port shared with other programs (SO_REUSEADDR), so a desk and OpenQ can
+/// Bind the protocol's port shared with other programs (SO_REUSEADDR), so a desk and OpnQ can
 /// listen on one machine; sACN joins the multicast group of each routed universe.
 fn open_socket(config: &InputConfig, port: u16) -> anyhow::Result<UdpSocket> {
     use socket2::{Domain, Protocol, Socket, Type};
@@ -330,7 +330,7 @@ fn run(shared: &Shared, config: &InputConfig, port: u16) {
         match sock.recv_from(&mut buf) {
             Ok((n, from)) => {
                 if config.protocol == InputProtocol::ArtNet && super::artnet::is_poll(&buf[..n]) {
-                    // Replies are bigger than polls: capped, so forged polls can't use OpenQ to
+                    // Replies are bigger than polls: capped, so forged polls can't use OpnQ to
                     // flood someone else.
                     if poll_budget.take() {
                         answer_poll(sock, config, from);
@@ -391,13 +391,13 @@ fn run(shared: &Shared, config: &InputConfig, port: u16) {
 }
 
 /// Answer an ArtPoll with this input's universes, so desks that only unicast to nodes they
-/// found send to OpenQ too. Replies go to the poller's Art-Net port, and to the port it polled
+/// found send to OpnQ too. Replies go to the poller's Art-Net port, and to the port it polled
 /// from when that is another one (controllers that poll from a private port listen there).
 fn answer_poll(sock: &UdpSocket, config: &InputConfig, from: SocketAddr) {
     let std::net::IpAddr::V4(peer) = from.ip() else { return };
     let Some(ip) = super::artnet::local_ip_toward(peer) else { return };
     let wires: Vec<u16> = config.routes.iter().map(|r| r.wire).collect();
-    let name = if config.name.trim().is_empty() { "OpenQ".to_string() } else { format!("OpenQ · {}", config.name.trim()) };
+    let name = if config.name.trim().is_empty() { "OpnQ".to_string() } else { format!("OpnQ · {}", config.name.trim()) };
     let mut to = vec![SocketAddr::from((peer, super::artnet::PORT))];
     if from.port() != super::artnet::PORT {
         to.push(from);
@@ -412,7 +412,7 @@ fn answer_poll(sock: &UdpSocket, config: &InputConfig, from: SocketAddr) {
 }
 
 /// Take a packet into `sources`. False if it isn't for this input (other protocol or universe,
-/// OpenQ's own, sACN preview data).
+/// OpnQ's own, sACN preview data).
 /// Take a packet into its source's data; the wire it came on, if it changed anything.
 fn take(config: &InputConfig, p: &[u8], from: SocketAddr, sources: &mut Vec<Source>) -> Option<u16> {
     let (key, name, wire, priority, data, terminated) = match config.protocol {
@@ -466,14 +466,14 @@ fn take(config: &InputConfig, p: &[u8], from: SocketAddr, sources: &mut Vec<Sour
 }
 
 /// True for loopback and this machine's addresses as far as cheaply known (the unspecified
-/// address counts too). A remote desk that happens to send from an OpenQ output's port number is
+/// address counts too). A remote desk that happens to send from an OpnQ output's port number is
 /// still taken.
 fn is_local(a: SocketAddr) -> bool {
     a.ip().is_loopback() || a.ip().is_unspecified() || local_ips().contains(&a.ip())
 }
 
 /// This machine's IPv4 addresses, found once by asking the OS which source it routes through
-/// (no packet is sent). Enough to spot OpenQ's own broadcasts on the main interface.
+/// (no packet is sent). Enough to spot OpnQ's own broadcasts on the main interface.
 fn local_ips() -> &'static [std::net::IpAddr] {
     static IPS: std::sync::OnceLock<Vec<std::net::IpAddr>> = std::sync::OnceLock::new();
     IPS.get_or_init(|| {
@@ -610,7 +610,7 @@ mod tests {
         // Our own packets and other universes are ignored.
         let mut u = Universe::new(7);
         u.data[0] = 255;
-        super::super::sacn::data_packet(&super::super::sacn::own_cid(), "OpenQ", 200, 1, &u, &mut buf);
+        super::super::sacn::data_packet(&super::super::sacn::own_cid(), "OpnQ", 200, 1, &u, &mut buf);
         tx.send_to(&buf[..], ("127.0.0.1", port)).unwrap();
         std::thread::sleep(Duration::from_millis(100));
         assert_eq!(h.frame().get(3).unwrap().data[0], 5);
@@ -640,7 +640,7 @@ mod tests {
         let n = poller.recv(&mut buf).unwrap();
         let node = super::super::artnet::parse_poll_reply(&buf[..n]).unwrap();
         assert_eq!(node.outputs, [0, 1]);
-        assert_eq!(node.long_name, "OpenQ · Desk");
+        assert_eq!(node.long_name, "OpnQ · Desk");
         assert_eq!(rx.handle().status().packets, 0, "a poll isn't DMX");
     }
 

@@ -4,7 +4,7 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
 <!-- Built by tools/build_manual.py around the content block below: edit only that, then run the script. -->
-<title>Iluminación · Manual de usuario de OpenQ</title>
+<title>Iluminación · Manual de usuario de OpnQ</title>
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Barlow+Condensed:wght@500;600;700&family=Inter:wght@400;500;600&family=JetBrains+Mono:wght@400;500&display=swap">
@@ -49,14 +49,14 @@
 
 <main>
 <header class="chapter-head">
-  <div class="eyebrow">Capítulo 5 · Manual de usuario de OpenQ</div>
+  <div class="eyebrow">Capítulo 5 · Manual de usuario de OpnQ</div>
   <h1>Iluminación</h1>
 </header>
 
 <!--content-->
 <section id="lighting">
   <h2><span class="n">5.1</span>Diseño</h2>
-  <p>OpenQ controla la iluminación por DMX. El <strong>diseño de iluminación</strong> (patch, grupos, presets, efectos y
+  <p>OpnQ controla la iluminación por DMX. El <strong>diseño de iluminación</strong> (patch, grupos, presets, efectos y
   secuencias de cues de iluminación) se guarda aparte de la lista de cues, en el espacio de <strong>Iluminación</strong>: cambia
   entre <span class="menu"><span class="ms" aria-hidden="true">&#xe90f;</span> Iluminación</span> y <em>Cues</em> encima de la
   lista de cues. El diseño solo se puede cambiar en modo edición. En modo función, el espacio de Iluminación muestra la
@@ -107,8 +107,8 @@
   los aparatos a lo largo de la vara, a su altura. Arrastra la etiqueta de una vara o un rectángulo para apartarla; el plano
   la pone ahí también, y <span class="ms" aria-hidden="true">&#xe042;</span> en la fila de arriba la devuelve a su sitio.</p>
   <h3 id="fixture-types">Tipos de aparato</h3>
-  <p>OpenQ trae tipos genéricos (dimmer, RGB, RGBW, CMY, cabezas móviles, estrobo, humo) y una biblioteca de unos 650 perfiles de fabricantes (la Open Fixture Library más algunos GDTF de fabricantes), en <em>Perfiles de fabricantes</em> dentro de <em>Tipos de aparato</em>. Busca un aparato, ábrelo y usa <em>Añadir a este espectáculo</em>; al guardarlo se crea una copia propia. <em>Importar aparato…</em> (en la
-  Tabla y la Planta) lee archivos de Open Fixture Library (<code>.json</code>), GDTF (<code>.gdtf</code>), QLC+ (<code>.qxf</code>) y OpenQ
+  <p>OpnQ trae tipos genéricos (dimmer, RGB, RGBW, CMY, cabezas móviles, estrobo, humo) y una biblioteca de unos 650 perfiles de fabricantes (la Open Fixture Library más algunos GDTF de fabricantes), en <em>Perfiles de fabricantes</em> dentro de <em>Tipos de aparato</em>. Busca un aparato, ábrelo y usa <em>Añadir a este espectáculo</em>; al guardarlo se crea una copia propia. <em>Importar aparato…</em> (en la
+  Tabla y la Planta) lee archivos de Open Fixture Library (<code>.json</code>), GDTF (<code>.gdtf</code>), QLC+ (<code>.qxf</code>) y OpnQ
   (<code>.oqfixture</code>). Los tipos importados se copian en el espectáculo y se guardan en tu biblioteca de aparatos, así
   que estarán en el siguiente espectáculo. <em>Tipos de aparato</em> abre el editor: canales y sus atributos, canales finos de
   16 bits, valores por defecto, el valor que usa Resaltar y los <strong>rangos</strong>: las partes con nombre de un canal, como
@@ -116,7 +116,7 @@
   que se ven en el desplegable de ese canal en el programador; los archivos GDTF traen las imágenes de los gobos y los colores
   de los LED del aparato, que usa el selector de color. Para las cabezas móviles, el editor fija los ángulos de pan, tilt y zoom en el valor DMX más bajo y en el más alto (un
   archivo que gira al revés los trae invertidos); los archivos GDTF traen además dónde están la horquilla, la cabeza y la
-  lente, así que OpenQ apunta desde la lente como lo dibujan los visualizadores.</p>
+  lente, así que OpnQ apunta desde la lente como lo dibujan los visualizadores.</p>
   <figure>
     <img src="img/es/fixture-types.webp" width="1100" height="1065" alt="Editor de tipos de aparato de un spot móvil, con los canales, su atributo, canal fino, valor por defecto y rangos.">
     <figcaption>El editor de tipos de aparato.</figcaption>
@@ -163,7 +163,7 @@
   <p>El selector de color muestra todos los colores visibles e ilumina los que puede dar el aparato seleccionado: la forma
   entre los colores de sus LED. Los de fuera se ven apagados, y un clic ahí toma el color más cercano que puede dar. Cada
   aparato mezcla el color con sus propios LED. Los colores de los LED vienen del tipo de aparato (los archivos GDTF los
-  traen); sin ellos OpenQ usa colores de LED típicos, y lo indica bajo el selector.</p>
+  traen); sin ellos OpnQ usa colores de LED típicos, y lo indica bajo el selector.</p>
   <figure>
     <img src="img/es/lighting-programmer.webp" width="1100" height="969" alt="Página Programador: grupos, presets y efectos como tarjetas en la columna de la izquierda, fichas de aparatos con ocho washes seleccionados, y la página de color con el rango de color de los washes.">
     <figcaption>El programador. Los aparatos con valores en el programador llevan un punto naranja.</figcaption>
@@ -186,7 +186,7 @@
   </ul>
   <h3 id="focus-points">Puntos de enfoque</h3>
   <p>Un <strong>punto de enfoque</strong> es un lugar del escenario con nombre, como el centro, las esquinas del proscenio o una
-  tarima. Las cues apuntan las cabezas móviles <em>a un punto</em>, no a valores de pan y tilt: OpenQ calcula el pan y el tilt
+  tarima. Las cues apuntan las cabezas móviles <em>a un punto</em>, no a valores de pan y tilt: OpnQ calcula el pan y el tilt
   a partir de la posición, la rotación y los ángulos de cada aparato. Mueve el punto (arrástralo en Patch → Planta) o un
   aparato, y todas las cues que apuntan a él lo siguen.</p>
   <figure>
@@ -238,7 +238,7 @@
   <em>Tamaño</em> y <em>Base</em> fijan la oscilación; va alrededor del valor de la cue o, con <em>Absoluto</em>, alrededor de la
   base. El <em>Desfase</em> escalona los aparatos, <em>Grupos</em> mueve varios aparatos juntos y <em>Alas</em> refleja el
   dibujo. La vista previa muestra el resultado en los aparatos. Con <em>El tamaño sigue al sonido</em> el efecto crece con el
-  volumen al que suena OpenQ: <em>Ganancia</em> dice cuánto, <em>Mínimo</em> cuánto queda en silencio, y la barra de al lado
+  volumen al que suena OpnQ: <em>Ganancia</em> dice cuánto, <em>Mínimo</em> cuánto queda en silencio, y la barra de al lado
   muestra el nivel del momento.</p>
   <figure>
     <img src="img/es/lighting-effects.webp" width="1100" height="887" alt="Página Efectos con un efecto de fórmula: ajustes, vista previa de rojo, verde y azul en doce aparatos, y la fórmula del arcoíris con su deslizador.">
@@ -253,7 +253,7 @@
   <h4 id="formulas">Efectos de fórmula</h4>
   <p>Para dibujos que las formas de onda no pueden hacer, escribe una <strong>fórmula</strong>. Pulsa
   <span class="ms" aria-hidden="true">&#xe86f;</span> (<em>Nuevo efecto con fórmula</em>) en la lista de efectos, edita la
-  fórmula en la tarjeta <em>Fórmula</em> y pulsa <em>Ejecutar</em> (o Ctrl+Intro). OpenQ convierte la fórmula en una tabla:
+  fórmula en la tarjeta <em>Fórmula</em> y pulsa <em>Ejecutar</em> (o Ctrl+Intro). OpnQ convierte la fórmula en una tabla:
   para cada fila del patrón y cada paso de un ciclo, fija los atributos que nombras. El primer aparato reproduce la fila 0, el
   siguiente la fila 1 y así sucesivamente, volviendo a empezar tras la última fila. La velocidad, el tamaño, el desfase y los
   demás ajustes se siguen aplicando encima. Una fórmula es solo aritmética: no puede abrir archivos ni repetir bucles, y nunca
@@ -314,14 +314,14 @@ dimmer = if(step == row, 1, 0)
 # Cabezas vecinas que se mueven en sentidos opuestos (Modo: Alrededor del valor de la cue).
 effect "Scissors" steps 64 width 2 smooth
 pan = 0.5 + pick(row, 0.5, -0.5) * wave(t)</code></pre>
-  <p>Un error aparece bajo el editor con su línea y columna, y el efecto conserva su última tabla. Los espectáculos de OpenQ 0.3
+  <p>Un error aparece bajo el editor con su línea y columna, y el efecto conserva su última tabla. Los espectáculos de OpnQ 0.3
   con efectos de script de Python los siguen reproduciendo; el script antiguo se muestra bajo la tarjeta Fórmula para
   reescribirlo como fórmula, o en Python como se explica abajo.</p>
 
   <h4 id="python-effects">Efectos hechos en Python</h4>
   <p>Algunos dibujos necesitan un programa de verdad: un valor que depende del paso anterior (un paseo aleatorio, un dibujo que
-  crece), bucles o datos de otro sitio. Escríbelos en Python en tu ordenador y guárdalos como archivo de efecto. OpenQ lo importa
-  como cualquier otro archivo <code>.oqfx</code>, como datos: dentro de OpenQ no se ejecuta nada. Sirve cualquier Python 3, sin
+  crece), bucles o datos de otro sitio. Escríbelos en Python en tu ordenador y guárdalos como archivo de efecto. OpnQ lo importa
+  como cualquier otro archivo <code>.oqfx</code>, como datos: dentro de OpnQ no se ejecuta nada. Sirve cualquier Python 3, sin
   módulos extra.</p>
   <ol>
     <li>Guarda esto como <code>wander.py</code>. Hace que cuatro cabezas móviles deambulen al azar y vuelvan a donde empezaron:
@@ -331,7 +331,7 @@ import random
 
 def save_effect(path, name, attributes, steps, width, level,
                 smooth=True, **settings):
-    """Write an OpenQ effect file (.oqfx).
+    """Write an OpnQ effect file (.oqfx).
 
     level(row, step) returns one level (0 to 1) per attribute.
     """
@@ -348,7 +348,7 @@ def save_effect(path, name, attributes, steps, width, level,
               "attribute": attributes[0], "table": table}
     effect.update(settings)
     with open(path, "w", encoding="utf-8") as f:
-        json.dump({"openq_effect": 1, "effect": effect}, f)
+        json.dump({"opnq_effect": 1, "effect": effect}, f)
 
 
 def walk(steps, seed):
@@ -370,12 +370,12 @@ save_effect("wander.oqfx", "Wander", ["Pan", "Tilt"], STEPS, HEADS,
             speed=0.05, relative=True, size=0.5, spread=0)</code></pre></li>
     <li>Ejecútalo: <code>python3 wander.py</code> (<code>py wander.py</code> en Windows). Escribe <code>wander.oqfx</code> en
     la misma carpeta.</li>
-    <li>En OpenQ, ve a <span class="menu">Iluminación → Efectos</span>, pulsa <span class="ms" aria-hidden="true">&#xe9fc;</span>
+    <li>En OpnQ, ve a <span class="menu">Iluminación → Efectos</span>, pulsa <span class="ms" aria-hidden="true">&#xe9fc;</span>
     (<em>Importar archivos de efecto</em>) y elige el archivo. El efecto se añade a la lista; lánzalo en cuatro cabezas.</li>
   </ol>
   <p><code>save_effect</code> es la parte que hay que conservar para tus propios efectos:</p>
   <ul>
-    <li><strong>attributes</strong>: los nombres que guarda OpenQ, en inglés y con mayúsculas: <code>Dimmer</code>,
+    <li><strong>attributes</strong>: los nombres que guarda OpnQ, en inglés y con mayúsculas: <code>Dimmer</code>,
     <code>Red</code>, <code>Green</code>, <code>Blue</code>, <code>White</code>, <code>Pan</code>, <code>Tilt</code>,
     <code>Zoom</code>, <code>Iris</code>, <code>GoboRotation</code>, <code>Extra3</code>…</li>
     <li><strong>steps</strong>: muestras por ciclo (1 a 4096); <strong>width</strong>: filas del patrón (1 a 512). Como mucho
@@ -384,10 +384,10 @@ save_effect("wander.oqfx", "Wander", ["Pan", "Tilt"], STEPS, HEADS,
     <li><strong>smooth</strong>: fundir entre muestras (<code>False</code> mantiene cada una, para persecuciones).</li>
     <li>El resto son los ajustes del efecto, todos opcionales: <code>speed</code> (Hz), <code>sync</code> (seguir el tempo),
     <code>size</code> y <code>base</code> (0 a 1), <code>relative</code> (<code>True</code> = alrededor del valor de la cue),
-    <code>spread</code> (grados), <code>groups</code>, <code>wings</code>. Todos se pueden cambiar después en OpenQ.</li>
+    <code>spread</code> (grados), <code>groups</code>, <code>wings</code>. Todos se pueden cambiar después en OpnQ.</li>
   </ul>
   <div class="note tip"><span class="label">Consejo</span><p>El último paso de un ciclo enlaza directamente con el primero.
-  Haz que coincidan, como hace <code>walk</code>, o el efecto dará un salto en cada ciclo. OpenQ comprueba cada archivo que
+  Haz que coincidan, como hace <code>walk</code>, o el efecto dará un salto en cada ciclo. OpnQ comprueba cada archivo que
   importa y rechaza los que tienen tamaños o valores incorrectos.</p></div>
 </section>
 
@@ -478,14 +478,14 @@ save_effect("wander.oqfx", "Wander", ["Pan", "Tilt"], STEPS, HEADS,
     <img src="img/es/lighting-outputs.webp" width="1100" height="570" alt="Página Salidas con una salida Art-Net enviando, una salida sACN desactivada y una entrada sACN que mezcla.">
     <figcaption>Salidas y entradas, cada una con su estado en directo.</figcaption>
   </figure>
-  <p>Las <strong>entradas</strong> reciben Art-Net o sACN de otra mesa. Cada una <em>mezcla</em> con la salida de OpenQ (gana el
+  <p>Las <strong>entradas</strong> reciben Art-Net o sACN de otra mesa. Cada una <em>mezcla</em> con la salida de OpnQ (gana el
   valor más alto), la <em>sustituye</em> en los universos que recibe, o queda <em>solo para capturar</em>. Si varias mesas envían
-  el mismo universo sACN, gana la de más prioridad. OpenQ ignora sus propios paquetes, así que una salida en difusión no vuelve
+  el mismo universo sACN, gana la de más prioridad. OpnQ ignora sus propios paquetes, así que una salida en difusión no vuelve
   a entrar por una entrada.</p>
     <p>Una salida Art-Net puede mandar <strong>ArtSync</strong> tras cada fotograma, para que los nodos que lo admiten cambien
   todos sus universos a la vez. Mayús+clic en un nodo de la lista <em>Nodos</em> le envía los universos que emite; un aviso
   indica cuándo la salida manda un universo que el nodo elegido no tiene. Una entrada Art-Net responde a las mesas que buscan
-  nodos (ArtPoll), así que las mesas que solo envían a los nodos que encuentran también envían a OpenQ.</p>
+  nodos (ArtPoll), así que las mesas que solo envían a los nodos que encuentran también envían a OpnQ.</p>
   <h3 id="dmx-monitor"><span class="ms" aria-hidden="true">&#xe9b0;</span> Monitor DMX</h3>
   <p>El monitor DMX muestra cada canal de un universo tal como sale, entradas incluidas. Una línea amarilla marca dónde empieza
   cada aparato.</p>
@@ -496,12 +496,12 @@ save_effect("wander.oqfx", "Wander", ["Pan", "Tilt"], STEPS, HEADS,
   <h3 id="remote-devices-and-visualisers">Dispositivos remotos y visualizadores</h3>
   <p>Un <a href="remote.es.html#remote">dispositivo remoto</a> recibe el diseño de iluminación y sus cambios, y muestra los ejecutores y la
   salida DMX del dispositivo principal; su GO y sus faders actúan en el dispositivo principal. Un dispositivo con el rol de
-  edición también puede cambiar el diseño. Un visualizador puede seguir a OpenQ del mismo modo, o leer el DMX por Art-Net o sACN
+  edición también puede cambiar el diseño. Un visualizador puede seguir a OpnQ del mismo modo, o leer el DMX por Art-Net o sACN
   y el montaje de un MVR exportado.</p>
   <p id="lighting-oqvis"><span class="menu">Ver → Abrir en OQVis</span> (también en Patch → Planta) muestra el montaje en
-  <strong>OQVis</strong>, el visualizador 3D que se instala con OpenQ: OpenQ guarda el patch como archivo MVR y abre OQVis con
+  <strong>OQVis</strong>, el visualizador 3D que se instala con OpnQ: OpnQ guarda el patch como archivo MVR y abre OQVis con
   él. Si lo eliges otra vez mientras OQVis está abierto, solo se reescribe el archivo y OQVis lo vuelve a cargar. OQVis recibe
-  el DMX por Art-Net, sACN o su propio enlace con OpenQ. Si OpenQ no encuentra OQVis, pregunta dónde está el programa y lo
+  el DMX por Art-Net, sACN o su propio enlace con OpnQ. Si OpnQ no encuentra OQVis, pregunta dónde está el programa y lo
   recuerda.</p>
 </section>
 <!--/content-->

@@ -26,7 +26,7 @@ fn frame(ctx: &egui::Context, app: &mut App, shared: &SharedShow) -> Duration {
     t0.elapsed()
 }
 
-/// A context with OpenQ's fonts and theme, like the real window. Headless egui allows 2048 px
+/// A context with OpnQ's fonts and theme, like the real window. Headless egui allows 2048 px
 /// textures, smaller than most GPUs: pictures must be made to fit (egui panics otherwise).
 fn context() -> egui::Context {
     crate::media::set_max_texture_side(2048);
@@ -66,7 +66,7 @@ fn show_with(text: &str, extra: usize) -> (SharedShow, Arc<Prober>) {
     for i in 0..extra {
         let kind = match i % 3 {
             0 => CueKind::Memo,
-            1 => CueKind::Audio(AudioCue { path: format!("/nonexistent/openq-perf/{i}.wav").into(), ..Default::default() }),
+            1 => CueKind::Audio(AudioCue { path: format!("/nonexistent/opnq-perf/{i}.wav").into(), ..Default::default() }),
             _ => CueKind::Fade(FadeCue { target: Some(last.id), ..Default::default() }),
         };
         let mut c = Cue::new(kind);

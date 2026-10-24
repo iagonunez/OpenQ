@@ -1,5 +1,5 @@
 //! Art-Net 4: ArtDmx output (optionally followed by ArtSync), ArtPoll node discovery, and the
-//! ArtPollReply an OpenQ input sends so desks that only unicast to polled nodes find it.
+//! ArtPollReply an OpnQ input sends so desks that only unicast to polled nodes find it.
 
 use super::dmx::{DmxOutput, Universe, SLOTS};
 use std::net::{Ipv4Addr, SocketAddr, UdpSocket};
@@ -13,8 +13,8 @@ const OP_POLL_REPLY: u16 = 0x2100;
 const OP_DMX: u16 = 0x5000;
 const OP_SYNC: u16 = 0x5200;
 const PROTOCOL: u16 = 14;
-/// Short name OpenQ answers ArtPoll with (its own replies are left out of discovery).
-pub const SHORT_NAME: &str = "OpenQ";
+/// Short name OpnQ answers ArtPoll with (its own replies are left out of discovery).
+pub const SHORT_NAME: &str = "OpnQ";
 
 /// An ArtDmx packet for a 15-bit port address.
 pub fn dmx_packet(sequence: u8, universe: &Universe, out: &mut Vec<u8>) {
@@ -46,7 +46,7 @@ pub fn is_poll(p: &[u8]) -> bool {
 }
 
 /// The ArtPollReply packets describing a device at `ip` that receives the 15-bit port addresses
-/// `universes` (an OpenQ input: "output ports" in Art-Net terms, DMX taken from the network).
+/// `universes` (an OpnQ input: "output ports" in Art-Net terms, DMX taken from the network).
 /// A reply holds up to four ports sharing one net/sub-net, so several replies are made (bind
 /// index 1, 2…); a device with no universes still answers once.
 pub fn poll_replies(ip: Ipv4Addr, long_name: &str, universes: &[u16]) -> Vec<Vec<u8>> {
@@ -83,7 +83,7 @@ pub fn poll_replies(ip: Ipv4Addr, long_name: &str, universes: &[u16]) -> Vec<Vec
             let long = long_name.as_bytes();
             let n = long.len().min(63);
             p[44..44 + n].copy_from_slice(&long[..n]);
-            let report = b"#0001 [0000] OpenQ input";
+            let report = b"#0001 [0000] OpnQ input";
             p[108..108 + report.len()].copy_from_slice(report);
             p[173] = ports.len() as u8;
             for (k, port) in ports.iter().enumerate() {
@@ -120,7 +120,7 @@ pub fn parse_dmx(p: &[u8]) -> Option<(u16, &[u8])> {
     p.get(18..18 + len).map(|d| (universe, d))
 }
 
-/// Local ports OpenQ's Art-Net outputs send from: inputs ignore packets from them (a broadcast
+/// Local ports OpnQ's Art-Net outputs send from: inputs ignore packets from them (a broadcast
 /// output would otherwise come back in and latch through an HTP merge).
 static OWN_PORTS: parking_lot::Mutex<Vec<u16>> = parking_lot::Mutex::new(Vec::new());
 
@@ -247,7 +247,7 @@ pub fn discover(wait: Duration) -> anyhow::Result<Vec<Node>> {
         socket.set_read_timeout(Some(left))?;
         let Ok((n, _)) = socket.recv_from(&mut buf) else { break };
         let Some(node) = parse_poll_reply(&buf[..n]) else { continue };
-        // OpenQ's own inputs answer too.
+        // OpnQ's own inputs answer too.
         if node.short_name == SHORT_NAME && local_ip_toward(node.ip) == Some(node.ip) {
             continue;
         }
@@ -292,18 +292,18 @@ mod tests {
         assert_eq!(&buf[..n], &sync_packet(), "ArtSync follows the batch");
     }
 
-    /// OpenQ's replies parse back as a node outputting the input's universes, split by sub-net
+    /// OpnQ's replies parse back as a node outputting the input's universes, split by sub-net
     /// and four ports per reply.
     #[test]
     fn own_poll_replies() {
         let ip = Ipv4Addr::new(10, 0, 0, 9);
-        let r = poll_replies(ip, "OpenQ show", &[0, 1, 2, 3, 4, 0x123, 1]);
+        let r = poll_replies(ip, "OpnQ show", &[0, 1, 2, 3, 4, 0x123, 1]);
         assert_eq!(r.len(), 3, "0..=3, 4, 0x123");
         let nodes: Vec<Node> = r.iter().map(|p| parse_poll_reply(p).unwrap()).collect();
         assert_eq!(nodes[0].outputs, [0, 1, 2, 3]);
         assert_eq!(nodes[1].outputs, [4]);
         assert_eq!(nodes[2].outputs, [0x123]);
-        assert!(nodes.iter().all(|n| n.ip == ip && n.short_name == SHORT_NAME && n.long_name == "OpenQ show"));
+        assert!(nodes.iter().all(|n| n.ip == ip && n.short_name == SHORT_NAME && n.long_name == "OpnQ show"));
         assert_eq!(r.iter().map(|p| p[211]).collect::<Vec<_>>(), [1, 2, 3]);
         let one = poll_replies(ip, "x", &[]);
         assert_eq!((one.len(), one[0][173], one[0][211]), (1, 0, 0));

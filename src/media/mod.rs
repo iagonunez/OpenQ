@@ -65,7 +65,7 @@ fn windows_network_path(s: &str) -> bool {
 pub fn check_local(path: &Path) -> anyhow::Result<()> {
     if is_network_path(path) {
         anyhow::bail!(
-            "{} is on a network share: OpenQ doesn't open \\\\server paths (Windows would send your login to that server). Map the share to a drive letter.",
+            "{} is on a network share: OpnQ doesn't open \\\\server paths (Windows would send your login to that server). Map the share to a drive letter.",
             path.display()
         );
     }
@@ -197,7 +197,7 @@ impl Waveforms {
     pub fn new() -> Arc<Self> {
         Arc::new_cyclic(|weak: &std::sync::Weak<Self>| {
             let weak = weak.clone();
-            let jobs = pool::Pool::new("openq-waveform", 2, move |path: PathBuf| {
+            let jobs = pool::Pool::new("opnq-waveform", 2, move |path: PathBuf| {
                 let res = crate::recovery::catch(|| decoder::waveform(&path)).map(Arc::new).map_err(|e| format!("{e:#}"));
                 if let Some(w) = weak.upgrade() {
                     w.cache.lock().insert(path, res);
@@ -337,7 +337,7 @@ impl Posters {
     pub fn new() -> Arc<Self> {
         Arc::new_cyclic(|weak: &std::sync::Weak<Self>| {
             let weak = weak.clone();
-            let jobs = pool::Pool::new("openq-poster", 2, move |key: PosterKey| {
+            let jobs = pool::Pool::new("opnq-poster", 2, move |key: PosterKey| {
                 let res = crate::recovery::catch(|| load_poster(&key.0, key.1 as f64 / 100.0)).map_err(|e| format!("{e:#}"));
                 if let Some(p) = weak.upgrade() {
                     p.cache.lock().insert(key, Some(res));
@@ -437,7 +437,7 @@ impl Prober {
     pub fn new() -> Arc<Self> {
         Arc::new_cyclic(|weak: &std::sync::Weak<Self>| {
             let w = weak.clone();
-            let stat_jobs = pool::Pool::new("openq-stat", 8, move |path: PathBuf| {
+            let stat_jobs = pool::Pool::new("opnq-stat", 8, move |path: PathBuf| {
                 // A network path isn't even looked at (see `is_network_path`): it reads as missing.
                 let size = if is_network_path(&path) { None } else { std::fs::metadata(&path).ok().filter(|m| m.is_file()).map(|m| m.len()) };
                 if let Some(p) = w.upgrade() {
@@ -445,7 +445,7 @@ impl Prober {
                 }
             });
             let w = weak.clone();
-            let probes = pool::Pool::new("openq-probe", 4, move |path: PathBuf| {
+            let probes = pool::Pool::new("opnq-probe", 4, move |path: PathBuf| {
                 let t = std::time::Instant::now();
                 log::debug!("probing {}", path.display());
                 let res = crate::recovery::catch(|| {
@@ -637,7 +637,7 @@ impl MicInput {
     fn open(&mut self) {
         let (tx, rx) = std::sync::mpsc::channel();
         let (device, sink) = (self.device.clone(), self.sink.clone());
-        let spawned = std::thread::Builder::new().name("openq-mic-open".into()).spawn(move || {
+        let spawned = std::thread::Builder::new().name("opnq-mic-open".into()).spawn(move || {
             let r = input::open_input(device.as_deref(), move |data, in_ch| {
                 // A reopen swaps the rate under the lock; skipping one chunk then is fine.
                 if let Some(mut s) = sink.try_lock() {
@@ -730,7 +730,7 @@ impl PatchOut {
         }
         if self.out.is_none() && now >= self.next_try {
             let (tx, rx) = std::sync::mpsc::channel();
-            let spawned = std::thread::Builder::new().name("openq-patch-open".into()).spawn(move || {
+            let spawned = std::thread::Builder::new().name("opnq-patch-open".into()).spawn(move || {
                 let _ = tx.send(crate::recovery::catch(|| audio::AudioOutput::open(Some(&device))));
             });
             match spawned {
@@ -1121,7 +1121,7 @@ impl Media {
                 let (tx, rx) = std::sync::mpsc::channel();
                 let ep = r.endpoint.clone();
                 let spawned = std::thread::Builder::new()
-                    .name("openq-audio-reopen".into())
+                    .name("opnq-audio-reopen".into())
                     .spawn(move || {
                         let _ = tx.send(crate::recovery::catch(|| audio::AudioOutput::open_endpoint(&ep, None)));
                     });
@@ -1711,7 +1711,7 @@ mod tests {
     #[test]
     fn stat_is_cached_and_refreshed_in_the_background() {
         let p = Prober::new();
-        let dir = std::env::temp_dir().join(format!("openq-stat-{}", std::process::id()));
+        let dir = std::env::temp_dir().join(format!("opnq-stat-{}", std::process::id()));
         std::fs::create_dir_all(&dir).unwrap();
         let file = dir.join("a.wav");
         let _ = std::fs::remove_file(&file);
@@ -1758,7 +1758,7 @@ mod tests {
     #[test]
     fn preloading_never_blocks_on_a_file() {
         use crate::engine::Backend;
-        let dir = std::env::temp_dir().join(format!("openq-preload-{}", std::process::id()));
+        let dir = std::env::temp_dir().join(format!("opnq-preload-{}", std::process::id()));
         std::fs::create_dir_all(&dir).unwrap();
         let fifo = dir.join("hung-drive-stalled.wav");
         let _ = std::fs::remove_file(&fifo);
@@ -1779,7 +1779,7 @@ mod tests {
     #[test]
     fn starting_an_unprobed_file_never_blocks() {
         use crate::engine::Backend;
-        let dir = std::env::temp_dir().join(format!("openq-cold-go-{}", std::process::id()));
+        let dir = std::env::temp_dir().join(format!("opnq-cold-go-{}", std::process::id()));
         std::fs::create_dir_all(&dir).unwrap();
         let fifo = dir.join("hung-drive-stalled.wav");
         let _ = std::fs::remove_file(&fifo);
@@ -1822,7 +1822,7 @@ mod tests {
     #[test]
     fn cues_play_through_their_audio_patch() {
         use crate::engine::Backend;
-        let dir = std::env::temp_dir().join(format!("openq-patch-{}", std::process::id()));
+        let dir = std::env::temp_dir().join(format!("opnq-patch-{}", std::process::id()));
         std::fs::create_dir_all(&dir).unwrap();
         let wav = dir.join("p.wav");
         decoder::tests::write_wav(&wav, 48000, 0.5);
@@ -1865,7 +1865,7 @@ mod tests {
     #[cfg(unix)]
     #[test]
     fn a_stalled_decoder_is_reported() {
-        let dir = std::env::temp_dir().join(format!("openq-stall-{}", std::process::id()));
+        let dir = std::env::temp_dir().join(format!("opnq-stall-{}", std::process::id()));
         std::fs::create_dir_all(&dir).unwrap();
         // A FIFO nobody writes to blocks whoever opens it. A show can't use one (it isn't a
         // file: refused at once), but here it stands in for a hung network drive.

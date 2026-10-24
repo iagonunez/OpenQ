@@ -1,7 +1,7 @@
 //! System displays (monitors) that a stage can be sent to.
 //!
 //! winit only lists monitors from inside a running event loop and eframe doesn't share its own,
-//! so the list comes from a short-lived child process (`openq --list-displays`). Its order is
+//! so the list comes from a short-lived child process (`opnq --list-displays`). Its order is
 //! winit's `available_monitors()` order, which is what egui's `with_monitor(index)` expects.
 
 use std::process::Command;

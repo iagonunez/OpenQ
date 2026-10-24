@@ -221,7 +221,7 @@ pub fn spawn(path: PathBuf, params: DecodeParams, out_rate: u32, tx: rtrb::Produ
     let vamp = params.segments.iter().any(|s| s.plays.is_none());
     let channels = params.channels.max(1);
     let fill_limit = if vamp { (out_rate as usize * 3 / 10) * channels } else { usize::MAX };
-    let name = crate::recovery::thread_name("openq-dec-", &path.file_name().map(|f| f.to_string_lossy()).unwrap_or_default());
+    let name = crate::recovery::thread_name("opnq-dec-", &path.file_name().map(|f| f.to_string_lossy()).unwrap_or_default());
     let sh = shared.clone();
     let res = std::thread::Builder::new().name(name).spawn(move || {
         let mut sink = Sink {
@@ -671,7 +671,7 @@ pub(crate) mod tests {
 
     #[test]
     fn integrated_fades_shape_start_and_end() {
-        let path = std::env::temp_dir().join(format!("openq-fade-{}.wav", std::process::id()));
+        let path = std::env::temp_dir().join(format!("opnq-fade-{}.wav", std::process::id()));
         write_wav(&path, 48000, 2.0);
         let seg = |plays| vec![Segment { start: 0.0, end: None, plays }];
         let params = |fade_in, fade_out, plays| DecodeParams {
@@ -699,7 +699,7 @@ pub(crate) mod tests {
     /// A start part way through skips whole passes, then starts the next one that far in, past the fade-in.
     #[test]
     fn skip_starts_part_way_through() {
-        let path = std::env::temp_dir().join(format!("openq-skip-{}.wav", std::process::id()));
+        let path = std::env::temp_dir().join(format!("opnq-skip-{}.wav", std::process::id()));
         write_wav(&path, 48000, 2.0);
         let params = |skip| DecodeParams {
             skip,

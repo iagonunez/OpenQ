@@ -10,25 +10,25 @@
 //!
 //! `tools/demo_show.sh` downloads the media and runs this as `demo_show <dir>`: it reads
 //! `<dir>/durations.tsv` (media path relative to `<dir>/media` → seconds) and writes
-//! `<dir>/demo.openq` with 400 media cues (Audio, Video, Text, Mic, Camera) and 300 lighting cues.
+//! `<dir>/demo.opnq` with 400 media cues (Audio, Video, Text, Mic, Camera) and 300 lighting cues.
 
-use openq::animation::{AnimProp, Animation, Ease, Key, Repeat, Track};
-use openq::effects::{AudioEffect, AudioFxKind, VideoEffect, VideoFxKind};
-use openq::light::dmx::{OutputConfig, OutputProtocol, UniverseRoute};
-use openq::light::dmxin::{InputConfig, InputProtocol, MergeMode};
-use openq::light::effects::{AudioReact, Effect, EffectRun, Shape};
-use openq::light::model::{
+use opnq::animation::{AnimProp, Animation, Ease, Key, Repeat, Track};
+use opnq::effects::{AudioEffect, AudioFxKind, VideoEffect, VideoFxKind};
+use opnq::light::dmx::{OutputConfig, OutputProtocol, UniverseRoute};
+use opnq::light::dmxin::{InputConfig, InputProtocol, MergeMode};
+use opnq::light::effects::{AudioReact, Effect, EffectRun, Shape};
+use opnq::light::model::{
     LightButton, Look,
     cell_id, Attribute as A, ChannelDef, ChannelRange, DmxAddress, Feature, FeatureTime, Fixture, FixtureId, FixtureMode, FixtureType, Group,
     FocusPoint, Head, LightCue, Lighting, Physical, PlotItem, PlotNote, PlotShape, PlotSymbol, Preset, Sequence, ShapeKind, Value,
 };
-use openq::model::{
+use opnq::model::{
     AudioCue, BlendMode, CameraCue, ContinueMode, Cue, CueColor, CueId, CueKind, CueList, EqBand, EqKind, FadeCue, FadeCurve, Geometry, GroupMode,
     LightAction, LightingCue, ListInfo, MicCue, NetFormat, NetTransport, NetworkCue, OtherList, SliceMarker, Stage, StageId, TextAlign, TextCue, TimecodeRate,
     TimecodeSource, TimecodeSync, VideoCue, VideoFit, Workspace, MIN_DB,
 };
-use openq::spatial::{AudioObject, ObjectAudio, Speaker};
-use openq::surface::{Mapping, SurfaceAction, SurfaceInput, SurfaceSettings};
+use opnq::spatial::{AudioObject, ObjectAudio, Speaker};
+use opnq::surface::{Mapping, SurfaceAction, SurfaceInput, SurfaceSettings};
 use std::collections::{BTreeMap, HashMap};
 use std::path::PathBuf;
 
@@ -54,7 +54,7 @@ fn main() {
         .collect();
     let mut g = Gen::new(dir.join("media"), dur);
     let ws = g.build();
-    let out = dir.join("demo.openq");
+    let out = dir.join("demo.opnq");
     ws.save(&out).expect("save");
     let (media, light_go) = count(&ws);
     let light_cues: usize = ws.lighting.sequences.iter().map(|s| s.cues.len()).sum();
@@ -671,7 +671,7 @@ impl Gen {
                 cues: storm,
             },
             OtherList {
-                info: ListInfo { name: "SFX pad".into(), cart: Some(openq::model::Cart { columns: 8, rows: 5, ..Default::default() }), ..Default::default() },
+                info: ListInfo { name: "SFX pad".into(), cart: Some(opnq::model::Cart { columns: 8, rows: 5, ..Default::default() }), ..Default::default() },
                 cues: pad,
             },
         ];
@@ -687,7 +687,7 @@ impl Gen {
         // The lighthouse flat stands down right: the projector must not light it.
         let flat = self.media.join("masks/main-flat.png");
         write_mask(&flat, 480, 270, |x, y| if x > 0.78 && y > 0.45 { 0.0 } else { 1.0 });
-        main.mask = Some(openq::model::Mask { path: flat, invert: false });
+        main.mask = Some(opnq::model::Mask { path: flat, invert: false });
         let mut cyc = Stage::new("Cyc surface");
         cyc.width = 3840;
         let mut left = Stage::new("Cyc L");
@@ -1165,7 +1165,7 @@ impl Gen {
                         let d = ((x - 0.5).powi(2) + (y - 0.5).powi(2)).sqrt() * 2.0;
                         (1.0 - (d - 0.8) / 0.2).clamp(0.0, 1.0)
                     });
-                    c.mask = Some(openq::model::Mask { path: iris, invert: false });
+                    c.mask = Some(opnq::model::Mask { path: iris, invert: false });
                 }
                 let id = cam.id;
                 out.push(cam);
@@ -1392,15 +1392,15 @@ impl Gen {
         });
         // P is Pause all: a function key instead. A second press takes the slide away.
         phones.hotkey = Some("F9".into());
-        phones.second_trigger = openq::model::SecondTrigger::Stop;
-        phones.midi_trigger = Some(openq::model::MidiTrigger { kind: openq::model::MidiTriggerKind::Note, channel: Some(9), number: 36 });
+        phones.second_trigger = opnq::model::SecondTrigger::Stop;
+        phones.midi_trigger = Some(opnq::model::MidiTrigger { kind: opnq::model::MidiTriggerKind::Note, channel: Some(9), number: 36 });
         out.push(phones);
         let mut ring = self.sfx("Phone ring (announcement)", "phone_alerts_and_rings");
         if let CueKind::Audio(a) = &mut ring.kind {
             // The mono file to both pros, ganged: one drag moves both.
             a.routing = Some(vec![vec![0.0, -3.0]]);
             a.gangs = vec![vec![1, 1]];
-            a.volume_db = openq::loudness::gain_to(-16.0, openq::loudness::DEFAULT_TARGET);
+            a.volume_db = opnq::loudness::gain_to(-16.0, opnq::loudness::DEFAULT_TARGET);
         }
         let ring_id = ring.id;
         out.push(ring);
@@ -1410,9 +1410,9 @@ impl Gen {
             a.end_time = Some(4.0);
         }
         // Rung by the clock on performance days (Tuesday to Saturday) if nobody GOes it first.
-        bell.wallclock_trigger = Some(openq::model::WallClockTrigger { time: 19 * 3600 + 25 * 60, days: 0b0111110 });
+        bell.wallclock_trigger = Some(opnq::model::WallClockTrigger { time: 19 * 3600 + 25 * 60, days: 0b0111110 });
         // Already ringing (GOne by hand just before): the clock doesn't ring it again.
-        bell.second_trigger = openq::model::SecondTrigger::Ignore;
+        bell.second_trigger = opnq::model::SecondTrigger::Ignore;
         out.push(bell);
         let mut lobby = self.sfx("Lobby call (lobby speakers patch)", "medium_bell_ringing_near");
         if let CueKind::Audio(a) = &mut lobby.kind {
@@ -1422,17 +1422,17 @@ impl Gen {
         out.push(lobby);
         let mut band = self.numbered(
             "Tell the band: MSC GO 1",
-            CueKind::Midi(openq::model::MidiCue { msc_cue: "1".into(), msc_list: "1".into(), message: openq::model::MidiMessageKind::Msc, ..Default::default() }),
+            CueKind::Midi(opnq::model::MidiCue { msc_cue: "1".into(), msc_list: "1".into(), message: opnq::model::MidiMessageKind::Msc, ..Default::default() }),
         );
         band.notes = "MIDI Show Control to the band's playback rig (first MIDI output).".into();
         out.push(band);
         out.push(self.numbered(
             "Keys to patch 12",
-            CueKind::Midi(openq::model::MidiCue { message: openq::model::MidiMessageKind::Program, channel: 1, number: 11, ..Default::default() }),
+            CueKind::Midi(opnq::model::MidiCue { message: opnq::model::MidiMessageKind::Program, channel: 1, number: 11, ..Default::default() }),
         ));
         let mid = self.media.join("midi/foghorn-pad.mid");
         write_midi_pad(&mid);
-        let mut pad = self.numbered("Foghorn pad (keys rig)", CueKind::MidiFile(openq::model::MidiFileCue { path: mid, port: None, rate: 0.9, infinite_loop: false }));
+        let mut pad = self.numbered("Foghorn pad (keys rig)", CueKind::MidiFile(opnq::model::MidiFileCue { path: mid, port: None, rate: 0.9, infinite_loop: false }));
         pad.notes = "Plays a MIDI file into the keys rig (first MIDI output), a touch slower than written.".into();
         out.push(pad);
         // Operator tools for the phone announcement.
@@ -1512,7 +1512,7 @@ impl Gen {
             .collect();
         let mut bg = self.group("Bar bells (timeline)", GroupMode::Timeline, bells);
         bg.hotkey = Some("B".into());
-        bg.second_trigger = openq::model::SecondTrigger::FadeOut;
+        bg.second_trigger = opnq::model::SecondTrigger::FadeOut;
         out.push(bg);
         let mut half = self.lx(2);
         half.name = format!("{} (beginners)", half.name);
@@ -1528,7 +1528,7 @@ impl Gen {
         // Rehearsals without the band: send that timecode ourselves.
         out.push(self.numbered(
             "Rehearsal: MTC from 09:59:55:00",
-            CueKind::Timecode(openq::model::TimecodeCue { output: openq::model::TimecodeOutput::Mtc, start: TC_START - 5.0, duration: 70.0, ..Default::default() }),
+            CueKind::Timecode(opnq::model::TimecodeCue { output: opnq::model::TimecodeOutput::Mtc, start: TC_START - 5.0, duration: 70.0, ..Default::default() }),
         ));
         let hits = [("thunder_crack", 2.0), ("rolling_thunder", 9.5), ("low_thunder_rolls", 17.0), ("thunder_crack", 23.0), ("distant_thunder", 31.0), ("thunder_crack", 38.0), ("rolling_thunder", 44.5), ("low_thunder_rolls", 52.0)];
         for (k, (stem, t)) in hits.iter().enumerate() {
@@ -1568,7 +1568,7 @@ impl Gen {
         files.sort();
         let names: Vec<String> = files.iter().map(|p| p.trim_start_matches("sfx/").rsplit_once('.').map_or(p.as_str(), |(s, _)| s).to_string()).collect();
         stems.extend(names.iter().map(String::as_str));
-        // Not the keys OpenQ itself uses (F1 manual, P pause, R resume) nor ones other cues have (F9, B).
+        // Not the keys OpnQ itself uses (F1 manual, P pause, R resume) nor ones other cues have (F9, B).
         let keys: Vec<String> =
             (2..=12).filter(|k| *k != 9).map(|k| format!("F{k}")).chain(('A'..='Z').filter(|c| !matches!(c, 'P' | 'B' | 'R')).map(|c| c.to_string())).collect();
         let mut media = 0;
@@ -1631,8 +1631,8 @@ fn ckey(t: f64, v: [f32; 4]) -> Key {
     Key { t, v, ease: Ease::Linear }
 }
 
-fn radio_eq() -> openq::model::Eq {
-    openq::model::Eq {
+fn radio_eq() -> opnq::model::Eq {
+    opnq::model::Eq {
         enabled: true,
         bands: vec![
             EqBand { enabled: true, kind: EqKind::HighPass, freq: 350.0, gain_db: 0.0, q: 0.707 },
@@ -1654,7 +1654,7 @@ fn pretty(stem: &str) -> String {
     }
 }
 
-fn settings() -> openq::model::Settings {
+fn settings() -> opnq::model::Settings {
     let speakers = vec![
         Speaker { name: "Pros L".into(), output: 0, x: -1.0, y: -1.0 },
         Speaker { name: "Pros R".into(), output: 1, x: 1.0, y: -1.0 },
@@ -1676,7 +1676,7 @@ fn settings() -> openq::model::Settings {
         Mapping { input: SurfaceInput::MidiNote { channel: 0, number: 55 }, action: SurfaceAction::PageNext },
         Mapping { input: SurfaceInput::MidiProgram { channel: 0, number: 0 }, action: SurfaceAction::Go },
     ]);
-    openq::model::Settings {
+    opnq::model::Settings {
         panic_fade: 2.0,
         master_volume_db: -3.0,
         double_go_protection: 0.3,
@@ -1689,9 +1689,9 @@ fn settings() -> openq::model::Settings {
             page_size: 5,
             soft_takeover: true,
             osc_feedback_port: 9000,
-            msc: openq::msc::MscSettings { enabled: true, device: 1, group: Some(1), format: Some(0x10) },
+            msc: opnq::msc::MscSettings { enabled: true, device: 1, group: Some(1), format: Some(0x10) },
         },
-        patches: vec![openq::model::AudioPatch { name: "Lobby speakers".into(), device: None }],
+        patches: vec![opnq::model::AudioPatch { name: "Lobby speakers".into(), device: None }],
         loudness_target: -20.0,
         ..Default::default()
     }
@@ -1812,7 +1812,7 @@ impl Rig {
     }
 
     fn patch(&mut self) {
-        let generic = |id: &str| openq::light::library::generic(id).expect("generic type");
+        let generic = |id: &str| opnq::light::library::generic(id).expect("generic type");
         let bar = |id, name: &str, a: [f32; 2], b: [f32; 2], h| PlotShape { id, kind: ShapeKind::Bar, name: name.into(), a, b, height: h, label: [0.0, 0.0] };
         self.l.shapes = vec![
             PlotShape { id: 1, kind: ShapeKind::Rect, name: "Stage".into(), a: [-6.0, -4.0], b: [6.0, 4.0], height: 0.0, label: [0.0, 0.0] },
@@ -2551,7 +2551,7 @@ fn profile_type() -> FixtureType {
                 let mut range = r(i as u8 * 10, i as u8 * 10 + 9, n);
                 if i > 0 {
                     let file = format!("{}.svg", n.to_lowercase());
-                    match openq::light::gobo::thumbnail(gobo_svg(n).as_bytes()) {
+                    match opnq::light::gobo::thumbnail(gobo_svg(n).as_bytes()) {
                         Ok(png) => {
                             images.insert(file.clone(), png);
                         }
@@ -2597,8 +2597,8 @@ fn profile_type() -> FixtureType {
     let extended = FixtureMode { name: "Extended (26 ch)".into(), channels, heads: Vec::new(), slots: 26 };
     let basic = FixtureMode::sequential("Basic (16 ch)", &[(A::Pan, true), (A::Tilt, true), (A::Dimmer, false), (A::Shutter, false), (A::ColorWheel, false), (A::Gobo, false), (A::Prism, false), (A::Focus, false), (A::Zoom, false), (A::Iris, false), (A::Control, false), (A::Frost, false)]);
     FixtureType {
-        id: "openq-demo/profile-575".into(),
-        manufacturer: "OpenQ Demo".into(),
+        id: "opnq-demo/profile-575".into(),
+        manufacturer: "OpnQ Demo".into(),
         name: "Profile 575".into(),
         modes: vec![extended, basic],
         physical: Physical { pan_range: 540.0, tilt_range: 270.0, beam_min: 12.0, beam_max: 38.0, moving: true, ..Default::default() },
@@ -2616,8 +2616,8 @@ fn batten_type() -> FixtureType {
         .collect();
     let shutter = ChannelDef { ranges: vec![r(0, 9, "Open"), r(10, 250, "Strobe slow → fast"), r(251, 255, "Open")], default: Some(0.0), ..ch(A::Shutter, 1, None) };
     FixtureType {
-        id: "openq-demo/pixel-batten-8".into(),
-        manufacturer: "OpenQ Demo".into(),
+        id: "opnq-demo/pixel-batten-8".into(),
+        manufacturer: "OpnQ Demo".into(),
         name: "Pixel batten 8".into(),
         modes: vec![FixtureMode { name: "8 cells + master (34 ch)".into(), channels: vec![ch(A::Dimmer, 0, None), shutter], heads, slots: 0 }],
         physical: Physical { beam_min: 30.0, beam_max: 30.0, moving: false, ..Default::default() },
@@ -2638,8 +2638,8 @@ fn hybrid_type() -> FixtureType {
         })
         .collect();
     FixtureType {
-        id: "openq-demo/beam-hybrid".into(),
-        manufacturer: "OpenQ Demo".into(),
+        id: "opnq-demo/beam-hybrid".into(),
+        manufacturer: "OpnQ Demo".into(),
         name: "Beam hybrid".into(),
         modes: vec![m],
         // Measured pixel colours (as a GDTF file gives them): the colour picker shows this gamut.
@@ -2650,9 +2650,9 @@ fn hybrid_type() -> FixtureType {
             beam_max: 20.0,
             moving: true,
             emitters: vec![
-                openq::light::model::Emitter { attribute: A::Red, x: 0.692, y: 0.307, luminance: 0.25 },
-                openq::light::model::Emitter { attribute: A::Green, x: 0.192, y: 0.718, luminance: 0.68 },
-                openq::light::model::Emitter { attribute: A::Blue, x: 0.141, y: 0.046, luminance: 0.07 },
+                opnq::light::model::Emitter { attribute: A::Red, x: 0.692, y: 0.307, luminance: 0.25 },
+                opnq::light::model::Emitter { attribute: A::Green, x: 0.192, y: 0.718, luminance: 0.68 },
+                opnq::light::model::Emitter { attribute: A::Blue, x: 0.141, y: 0.046, luminance: 0.07 },
             ],
             ..Default::default()
         },
@@ -2684,7 +2684,7 @@ param sat 1 0..1
 effect "Rainbow" steps 64 width 8 smooth
 red, green, blue = hsv(t + row / width, sat)
 "#;
-    let out = openq::light::formula::evaluate(FORMULA, &[]).expect("rainbow formula");
+    let out = opnq::light::formula::evaluate(FORMULA, &[]).expect("rainbow formula");
     let table = out.effects[0].1.clone();
     Effect {
         id: FX_RAINBOW,

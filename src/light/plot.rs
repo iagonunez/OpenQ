@@ -867,7 +867,7 @@ fn write_pdf(content: &str, size: [f32; 2], title: &str) -> Vec<u8> {
         },
         b"<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica /Encoding /WinAnsiEncoding >>".to_vec(),
         b"<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica-Bold /Encoding /WinAnsiEncoding >>".to_vec(),
-        format!("<< /Title {} /Producer (OpenQ) >>", pdf_string(title)).into_bytes(),
+        format!("<< /Title {} /Producer (OpnQ) >>", pdf_string(title)).into_bytes(),
     ];
     let mut out = b"%PDF-1.4\n%\xe2\xe3\xcf\xd3\n".to_vec();
     let mut offsets = Vec::new();
@@ -1057,7 +1057,7 @@ mod tests {
         assert_eq!(S::guess("ETC Source Four 26°", false), S::Profile);
         assert_eq!(S::guess("Generic PAR 64", false), S::Par);
         assert_eq!(S::guess("Generic Fog / haze", false), S::Effect);
-        assert_eq!(S::guess("OpenQ Demo Pixel batten 8", false), S::Batten);
+        assert_eq!(S::guess("OpnQ Demo Pixel batten 8", false), S::Batten);
         assert_eq!(S::guess("Generic Dimmer", false), S::Rectangle);
         assert_eq!(S::guess("Anything", true), S::Circle);
         let mut l = rig();

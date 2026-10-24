@@ -71,7 +71,7 @@ pub fn open_input(device: Option<&str>, on_data: impl FnMut(&[f32], usize) + Sen
     let (stop2, peak2) = (stop.clone(), peak.clone());
     let wanted = device.map(str::to_string);
     let mut on_data: OnData = Box::new(on_data);
-    std::thread::Builder::new().name("openq-audio-in".into()).spawn(move || {
+    std::thread::Builder::new().name("opnq-audio-in".into()).spawn(move || {
         let res = (|| -> anyhow::Result<(cpal::Stream, u32, usize, String)> {
             let host = cpal::default_host();
             let dev = match &wanted {

@@ -13,7 +13,7 @@ fn mode(name: &str, ch: &[(A, bool)]) -> FixtureMode {
     FixtureMode::sequential(name, ch)
 }
 
-/// The manufacturer library shipped inside OpenQ (`assets/fixtures/library.gz`, built by
+/// The manufacturer library shipped inside OpnQ (`assets/fixtures/library.gz`, built by
 /// `examples/fixture_library.rs`): Open Fixture Library fixtures and manufacturer GDTF profiles.
 /// Read once, on the first call (tens of milliseconds): call it from a worker, not a UI frame.
 pub fn bundled() -> &'static [FixtureType] {

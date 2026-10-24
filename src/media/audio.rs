@@ -1119,7 +1119,7 @@ impl AudioOutput {
         };
 
         // The cpal stream isn't Send on every platform, so it lives on its own thread.
-        let handle = std::thread::Builder::new().name("openq-audio-out".into()).spawn(move || match ep {
+        let handle = std::thread::Builder::new().name("opnq-audio-out".into()).spawn(move || match ep {
             Endpoint::Device(wanted) => {
                 let res = (|| -> anyhow::Result<(cpal::Stream, u32, usize, String, Arc<Clock>)> {
                     let host = cpal::default_host();

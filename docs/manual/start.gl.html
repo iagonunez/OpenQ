@@ -4,7 +4,7 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
 <!-- Built by tools/build_manual.py around the content block below: edit only that, then run the script. -->
-<title>Primeiros pasos · Manual de usuario de OpenQ</title>
+<title>Primeiros pasos · Manual de usuario de OpnQ</title>
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Barlow+Condensed:wght@500;600;700&family=Inter:wght@400;500;600&family=JetBrains+Mono:wght@400;500&display=swap">
@@ -44,7 +44,7 @@
 
 <main>
 <header class="chapter-head">
-  <div class="eyebrow">Capítulo 1 · Manual de usuario de OpenQ</div>
+  <div class="eyebrow">Capítulo 1 · Manual de usuario de OpnQ</div>
   <h1>Primeiros pasos</h1>
 </header>
 
@@ -52,8 +52,8 @@
 <section id="start">
   <h2><span class="n">1.1</span>Instalación e primeiro espectáculo</h2>
   <h3 id="installing">Instalación</h3>
-  <p>OpenQ instálase co seu instalador, <a href="https://github.com/iagonunez/OQup">OQup</a>. OQup descarga a versión máis
-  recente de OpenQ para o teu sistema, compróbaa, engade as bibliotecas de FFmpeg que usa para o vídeo (unha versión LGPL)
+  <p>OpnQ instálase co seu instalador, <a href="https://github.com/iagonunez/OQup">OQup</a>. OQup descarga a versión máis
+  recente de OpnQ para o teu sistema, compróbaa, engade as bibliotecas de FFmpeg que usa para o vídeo (unha versión LGPL)
   e instálaa cunha entrada no menú. Co espazo de iluminación (o predeterminado) instala tamén <strong>OQVis</strong>, o
   visualizador 3D que abre <a href="lighting.gl.html#lighting-oqvis">Abrir en OQVis</a>. Os teus espectáculos nunca se tocan.</p>
   <div class="note tip"><span class="label">Antes de comezar</span><p>Necesitas conexión a internet. En Linux, OQup pode
@@ -65,12 +65,12 @@
 <pre><code>curl --proto '=https' --tlsv1.2 -fsSL https://github.com/iagonunez/OQup/releases/latest/download/install.sh | sh</code></pre></li>
     <li>O primeiro paso descarga OQup, comproba a suma de control publicada e gárdao en
     <code>~/.local/bin</code>. Despois arranca.</li>
-    <li>Se faltan bibliotecas do sistema que OpenQ necesita (ALSA, PipeWire, udev), OQup amósaas e pregunta antes de
+    <li>Se faltan bibliotecas do sistema que OpnQ necesita (ALSA, PipeWire, udev), OQup amósaas e pregunta antes de
     instalalas co xestor de paquetes da túa distribución. Responde que si; o xestor pedirá o teu contrasinal.</li>
-    <li>Deixa o terminal aberto ata que diga que OpenQ está instalado.</li>
-    <li>Abre OpenQ desde o menú de aplicacións (busca "OpenQ"), ou escribe <code>openq</code> nun terminal.</li>
+    <li>Deixa o terminal aberto ata que diga que OpnQ está instalado.</li>
+    <li>Abre OpnQ desde o menú de aplicacións (busca "OpnQ"), ou escribe <code>opnq</code> nun terminal.</li>
   </ol>
-  <p>Se o terminal di <code>openq: orde non atopada</code>, <code>~/.local/bin</code> aínda non está no teu PATH.
+  <p>Se o terminal di <code>opnq: orde non atopada</code>, <code>~/.local/bin</code> aínda non está no teu PATH.
   Engádeo unha vez e abre un terminal novo:</p>
 <pre><code>fish_add_path ~/.local/bin                                 # fish
 echo 'export PATH="$HOME/.local/bin:$PATH"' &gt;&gt; ~/.bashrc   # bash (zsh: ~/.zshrc)</code></pre>
@@ -80,7 +80,7 @@ echo 'export PATH="$HOME/.local/bin:$PATH"' &gt;&gt; ~/.bashrc   # bash (zsh: ~/
     <li>Abre Terminal (preme ⌘ Espazo e escribe "Terminal").</li>
     <li>Pega a orde de abaixo e preme Intro:
 <pre><code>curl --proto '=https' --tlsv1.2 -fsSL https://github.com/iagonunez/OQup/releases/latest/download/install.sh | sh</code></pre></li>
-    <li>A app queda en <code>~/Applications/OpenQ.app</code>, o cartafol Applications do teu cartafol persoal, con FFmpeg
+    <li>A app queda en <code>~/Applications/OpnQ.app</code>, o cartafol Applications do teu cartafol persoal, con FFmpeg
     dentro. Ábrea desde o Finder (Ir → Cartafol persoal → Applications) ou con Spotlight.</li>
   </ol>
 
@@ -89,11 +89,11 @@ echo 'export PATH="$HOME/.local/bin:$PATH"' &gt;&gt; ~/.bashrc   # bash (zsh: ~/
     <li>Abre PowerShell: preme a tecla Inicio, escribe <em>PowerShell</em> e preme Intro.</li>
     <li>Pega a orde de abaixo e preme Intro:
 <pre><code>powershell -ExecutionPolicy Bypass -c "irm https://github.com/iagonunez/OQup/releases/latest/download/install.ps1 | iex"</code></pre></li>
-    <li>Ao rematar, OpenQ está no menú Inicio e en <em>Configuración → Aplicacións → Aplicacións instaladas</em>.</li>
+    <li>Ao rematar, OpnQ está no menú Inicio e en <em>Configuración → Aplicacións → Aplicacións instaladas</em>.</li>
   </ol>
 
   <h4>Compilar no teu ordenador</h4>
-  <p><code>oqup install --build-source</code> compila OpenQ (e OQVis) desde o código fonte no teu ordenador en vez de
+  <p><code>oqup install --build-source</code> compila OpnQ (e OQVis) desde o código fonte no teu ordenador en vez de
   descargar a versión publicada. Antes, OQup instala o que necesita a compilación: unha copia privada de Rust se non hai
   ningunha, un compilador de C e libclang, e FFmpeg (en Linux cos paquetes da túa distribución, preguntando antes; en macOS
   as Command Line Tools de Apple e despois FFmpeg compilado desde o seu código; en Windows as C++ Build Tools de Microsoft,
@@ -108,21 +108,21 @@ echo 'export PATH="$HOME/.local/bin:$PATH"' &gt;&gt; ~/.bashrc   # bash (zsh: ~/
   </ul>
 
   <h4>Actualizar e desinstalar</h4>
-  <p>Para obter unha versión máis nova, executa <code>oqup update</code>: volve instalar OpenQ cando sae unha versión nova,
+  <p>Para obter unha versión máis nova, executa <code>oqup update</code>: volve instalar OpnQ cando sae unha versión nova,
   do mesmo xeito ca a última vez. <code>oqup versions</code> amosa as versións que podes instalar, e
-  <code>oqup install --ref v0.4.0</code> instala unha delas. Para quitar OpenQ, executa <code>oqup uninstall</code>;
+  <code>oqup install --ref v0.4.0</code> instala unha delas. Para quitar OpnQ, executa <code>oqup uninstall</code>;
   pregunta antes. Con <code>--purge</code> quita tamén as descargas, o Rust, as dependencias e a caché de compilación de
   OQup. En Windows tamén podes quitalo desde <em>Configuración → Aplicacións → Aplicacións instaladas</em>. Os teus
   espectáculos nunca se tocan.</p>
-  <p>Se só necesitas cues, <code>oqup install --no-lighting</code> instala OpenQ sen o espazo de iluminación (sen vista
+  <p>Se só necesitas cues, <code>oqup install --no-lighting</code> instala OpnQ sen o espazo de iluminación (sen vista
   Iluminación, cues de luz, descargas de aparatos nin OQVis). Os espectáculos cun deseño de iluminación séguense abrindo,
   consérvano e reproducen as súas cues de luz. <code>oqup install --lighting</code> vólveo engadir; <code>--no-oqvis</code>
   mantén a iluminación pero deixa fóra OQVis.</p>
   <p>Para executar unha copia na que esteas a traballar desde o código fonte:</p>
 <pre><code>cargo run --release                  # comezar cun espectáculo baleiro
-cargo run --release -- show.openq    # abrir un espectáculo gardado</code></pre>
-  <p>Este manual vén dentro de OpenQ: escolle <span class="menu">Axuda → Manual de usuario</span> ou preme <kbd>F1</kbd>
-  para abrilo no teu navegador, na lingua da interface. Funciona sen conexión a internet e sempre corresponde á túa versión de OpenQ.</p>
+cargo run --release -- show.opnq    # abrir un espectáculo gardado</code></pre>
+  <p>Este manual vén dentro de OpnQ: escolle <span class="menu">Axuda → Manual de usuario</span> ou preme <kbd>F1</kbd>
+  para abrilo no teu navegador, na lingua da interface. Funciona sen conexión a internet e sempre corresponde á túa versión de OpnQ.</p>
   <h3 id="your-first-show">O teu primeiro espectáculo</h3>
   <ol class="steps">
     <li>Arrastra ficheiros de audio ou vídeo desde o teu xestor de ficheiros á xanela. Cada ficheiro convértese nunha cue.
@@ -130,14 +130,14 @@ cargo run --release -- show.openq    # abrir un espectáculo gardado</code></pre
     <li>Engade outras cues desde a barra de ferramentas sobre a lista de cues, ou preme <kbd>Ctrl</kbd>+<kbd>1</kbd>…<kbd>0</kbd>.</li>
     <li>Selecciona unha cue e axusta as súas opcións no inspector, na parte inferior da xanela.</li>
     <li>Fai clic na primeira cue para poñer o <strong>cabezal</strong> (playhead) sobre ela e preme <kbd>Espazo</kbd> (GO).</li>
-    <li>Garda con <kbd>Ctrl</kbd>+<kbd>S</kbd>. Os espectáculos gárdanse como ficheiros <code>.openq</code>. As rutas dos
+    <li>Garda con <kbd>Ctrl</kbd>+<kbd>S</kbd>. Os espectáculos gárdanse como ficheiros <code>.opnq</code>. As rutas dos
     medios gárdanse relativas ao ficheiro do espectáculo, así que podes mover o cartafol do espectáculo enteiro.</li>
   </ol>
   <div class="note tip"><span class="label">Consello</span><p>Garda o ficheiro do espectáculo no mesmo cartafol ca os seus medios.
   Así o cartafol pódese copiar a outro ordenador e abrirse alí sen cambios.</p></div>
   <h3 id="bundling-a-show">Empaquetar un espectáculo</h3>
   <p><span class="menu">Ficheiro → Empaquetar función…</span> copia o espectáculo e todos os sons e películas que usa nun
-  cartafol: escolle onde e OpenQ crea un cartafol co nome do espectáculo, co seu ficheiro dentro e os medios en
+  cartafol: escolle onde e OpnQ crea un cartafol co nome do espectáculo, co seu ficheiro dentro e os medios en
   <code>audio/</code> e <code>video/</code>. Copia ese cartafol a outro ordenador ou gárdao como arquivo. Os ficheiros que
   faltan no disco lístanse e déixanse fóra. O espectáculo que tes aberto non cambia.</p>
 </section>
@@ -145,7 +145,7 @@ cargo run --release -- show.openq    # abrir un espectáculo gardado</code></pre
 <section id="window">
   <h2><span class="n">1.2</span>A xanela principal</h2>
   <figure>
-    <img src="img/gl/edit-mode.webp" width="1400" height="1527" alt="Xanela principal de OpenQ en modo edición: botón GO, tarxeta de espera, transporte, medidores, barra de ferramentas, lista de cues e inspector.">
+    <img src="img/gl/edit-mode.webp" width="1400" height="1527" alt="Xanela principal de OpnQ en modo edición: botón GO, tarxeta de espera, transporte, medidores, barra de ferramentas, lista de cues e inspector.">
     <figcaption>Modo edición coa primeira cue seleccionada e o inspector amosando a súa lapela Tempo e bucles.</figcaption>
   </figure>
   <ul>
@@ -255,7 +255,7 @@ cargo run --release -- show.openq    # abrir un espectáculo gardado</code></pre
   LFE), ou un anel para outros números de canles. Os predefinidos configuran esas salas, e <em>Usar o predeterminado</em> volve seguir o
   dispositivo. A fronte, onde está o escenario, queda arriba. Varios altofalantes poden compartir unha saída.</p>
   <p>Os axustes de acceso remoto e as claves dos dispositivos pertencen ao ordenador, non ao espectáculo. Están en
-  <code>~/.config/openq/remote.json</code>, lexible só pola túa conta de usuario.</p>
+  <code>~/.config/opnq/remote.json</code>, lexible só pola túa conta de usuario.</p>
 </section>
 
 <section id="keys">

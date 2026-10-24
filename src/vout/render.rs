@@ -251,7 +251,7 @@ impl Gpu {
         .context("no GPU adapter")?;
         let limits = adapter.limits();
         let (device, queue) = pollster::block_on(adapter.request_device(&wgpu::DeviceDescriptor {
-            label: Some("openq-video"),
+            label: Some("opnq-video"),
             required_features: wgpu::Features::empty(),
             required_limits: limits.clone(),
             ..Default::default()
@@ -260,34 +260,34 @@ impl Gpu {
         let info = adapter.get_info();
         log::info!("video output on {} ({:?})", info.name, info.backend);
         let module = device.create_shader_module(wgpu::ShaderModuleDescriptor {
-            label: Some("openq-video"),
+            label: Some("opnq-video"),
             source: wgpu::ShaderSource::Wgsl(include_str!("shader.wgsl").into()),
         });
         let sampler_entry = |b| layout_entry(b, wgpu::BindingType::Sampler(wgpu::SamplerBindingType::Filtering), false);
         let layer_bgl = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
-            label: Some("openq-layer"),
+            label: Some("opnq-layer"),
             entries: &[texture_entry(0), texture_entry(1), texture_entry(2), texture_entry(3), sampler_entry(4), uniform_entry(5, false), texture_entry(6)],
         });
         let view_bgl = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
-            label: Some("openq-view"),
+            label: Some("opnq-view"),
             entries: &[uniform_entry(0, true)],
         });
         let warp_bgl = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
-            label: Some("openq-warp"),
+            label: Some("opnq-warp"),
             entries: &[texture_entry(0), sampler_entry(1), uniform_entry(2, false), texture_entry(3)],
         });
         let overlay_bgl = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
-            label: Some("openq-overlay"),
+            label: Some("opnq-overlay"),
             entries: &[texture_entry(0), sampler_entry(1)],
         });
         let pl = |label, groups: &[Option<&wgpu::BindGroupLayout>]| {
             device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor { label: Some(label), bind_group_layouts: groups, immediate_size: 0 })
         };
-        let layer_layout = pl("openq-layer", &[Some(&layer_bgl), Some(&view_bgl)]);
-        let warp_layout = pl("openq-warp", &[Some(&warp_bgl)]);
-        let overlay_layout = pl("openq-overlay", &[Some(&overlay_bgl)]);
+        let layer_layout = pl("opnq-layer", &[Some(&layer_bgl), Some(&view_bgl)]);
+        let warp_layout = pl("opnq-warp", &[Some(&warp_bgl)]);
+        let overlay_layout = pl("opnq-overlay", &[Some(&overlay_bgl)]);
         let sampler = device.create_sampler(&wgpu::SamplerDescriptor {
-            label: Some("openq-linear"),
+            label: Some("opnq-linear"),
             mag_filter: wgpu::FilterMode::Linear,
             min_filter: wgpu::FilterMode::Linear,
             mipmap_filter: wgpu::MipmapFilterMode::Linear,
@@ -299,7 +299,7 @@ impl Gpu {
             .into_iter()
             .map(|format| {
                 let pipe = device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
-                    label: Some("openq-mip"),
+                    label: Some("opnq-mip"),
                     layout: Some(&overlay_layout),
                     vertex: wgpu::VertexState { module: &module, entry_point: Some("vs_full"), buffers: &[], compilation_options: Default::default() },
                     primitive: wgpu::PrimitiveState::default(),
@@ -320,13 +320,13 @@ impl Gpu {
         let index = wgpu::util::DeviceExt::create_buffer_init(
             &device,
             &wgpu::util::BufferInitDescriptor {
-                label: Some("openq-grid"),
+                label: Some("opnq-grid"),
                 contents: &grid_indices().iter().flat_map(|i| i.to_le_bytes()).collect::<Vec<u8>>(),
                 usage: wgpu::BufferUsages::INDEX,
             },
         );
         let white = device.create_texture(&wgpu::TextureDescriptor {
-            label: Some("openq-white"),
+            label: Some("opnq-white"),
             size: wgpu::Extent3d { width: 1, height: 1, depth_or_array_layers: 1 },
             mip_level_count: 1,
             sample_count: 1,
@@ -374,13 +374,13 @@ impl Gpu {
                 mapped_at_creation: false,
             })
         };
-        let view_uniform = buf("openq-view", 16);
+        let view_uniform = buf("opnq-view", 16);
         let view_bind = self.device.create_bind_group(&wgpu::BindGroupDescriptor {
-            label: Some("openq-view"),
+            label: Some("opnq-view"),
             layout: &self.view_bgl,
             entries: &[wgpu::BindGroupEntry { binding: 0, resource: view_uniform.as_entire_binding() }],
         });
-        Target { canvas: None, view_uniform, view_bind, warp_uniform: buf("openq-warp", 80), warp_bind: None, warp_made: None, pattern: None, overlay: None }
+        Target { canvas: None, view_uniform, view_bind, warp_uniform: buf("opnq-warp", 80), warp_bind: None, warp_made: None, pattern: None, overlay: None }
     }
 
     fn layer_pipe(&mut self, mode: BlendMode) -> &wgpu::RenderPipeline {
@@ -390,7 +390,7 @@ impl Gpu {
             // The canvas alpha stays as it is.
             let alpha = wgpu::BlendComponent { src_factor: wgpu::BlendFactor::Zero, dst_factor: wgpu::BlendFactor::One, operation: wgpu::BlendOperation::Add };
             device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
-                label: Some("openq-layer"),
+                label: Some("opnq-layer"),
                 layout: Some(layer_layout),
                 vertex: wgpu::VertexState {
                     module,
@@ -451,13 +451,13 @@ impl Gpu {
 
     fn new_draw(&self) -> Draw {
         let uniform = self.device.create_buffer(&wgpu::BufferDescriptor {
-            label: Some("openq-layer"),
+            label: Some("opnq-layer"),
             size: (LAYER_FLOATS * 4) as u64,
             usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
             mapped_at_creation: false,
         });
         let vertices = self.device.create_buffer(&wgpu::BufferDescriptor {
-            label: Some("openq-layer-mesh"),
+            label: Some("opnq-layer-mesh"),
             size: ((GRID + 1) * (GRID + 1) * 16) as u64,
             usage: wgpu::BufferUsages::VERTEX | wgpu::BufferUsages::COPY_DST,
             mapped_at_creation: false,
@@ -475,7 +475,7 @@ impl Gpu {
             .iter()
             .map(|v| {
                 self.device.create_bind_group(&wgpu::BindGroupDescriptor {
-                    label: Some("openq-mip"),
+                    label: Some("opnq-mip"),
                     layout: &self.overlay_bgl,
                     entries: &[
                         wgpu::BindGroupEntry { binding: 0, resource: wgpu::BindingResource::TextureView(v) },
@@ -492,7 +492,7 @@ impl Gpu {
         let Some(pipe) = self.mip_pipes.get(&format) else { return };
         for (read, target) in mips.reads.iter().zip(&mips.views[1..]) {
             let mut pass = enc.begin_render_pass(&wgpu::RenderPassDescriptor {
-                label: Some("openq-mip"),
+                label: Some("opnq-mip"),
                 color_attachments: &[Some(wgpu::RenderPassColorAttachment {
                     view: target,
                     depth_slice: None,
@@ -512,7 +512,7 @@ impl Gpu {
         if d.planes.iter().all(|p| p.3.as_ref().is_none_or(|m| m.reads.is_empty())) {
             return;
         }
-        let mut enc = self.device.create_command_encoder(&wgpu::CommandEncoderDescriptor { label: Some("openq-mips") });
+        let mut enc = self.device.create_command_encoder(&wgpu::CommandEncoderDescriptor { label: Some("opnq-mips") });
         for (_, _, format, mips) in &d.planes {
             if let Some(m) = mips {
                 self.record_mips(&mut enc, m, *format);
@@ -540,7 +540,7 @@ impl Gpu {
         } else {
             let size = [img.size[0].max(1), img.size[1].max(1)];
             let texture = self.device.create_texture(&wgpu::TextureDescriptor {
-                label: Some("openq-mask"),
+                label: Some("opnq-mask"),
                 size: wgpu::Extent3d { width: size[0], height: size[1], depth_or_array_layers: 1 },
                 mip_level_count: 1,
                 sample_count: 1,
@@ -580,7 +580,7 @@ impl Gpu {
                 }
                 let size = [size[0].max(1), size[1].max(1)];
                 let t = self.device.create_texture(&wgpu::TextureDescriptor {
-                    label: Some("openq-plane"),
+                    label: Some("opnq-plane"),
                     size: wgpu::Extent3d { width: size[0], height: size[1], depth_or_array_layers: 1 },
                     mip_level_count: if mipped { mip_levels(size) } else { 1 },
                     sample_count: 1,
@@ -597,7 +597,7 @@ impl Gpu {
         let views: Vec<wgpu::TextureView> = d.planes.iter().map(|p| p.0.create_view(&Default::default())).collect();
         let view = |i: usize| views.get(i).unwrap_or(&self.dummy);
         d.bind = Some(self.device.create_bind_group(&wgpu::BindGroupDescriptor {
-            label: Some("openq-layer"),
+            label: Some("opnq-layer"),
             layout: &self.layer_bgl,
             entries: &[
                 wgpu::BindGroupEntry { binding: 0, resource: wgpu::BindingResource::TextureView(view(0)) },
@@ -765,7 +765,7 @@ impl Gpu {
         let size = canvas_size(scene.stage, scene.source, self.max_side.min(8192));
         if t.canvas.as_ref().is_none_or(|c| c.2 != size) {
             let tex = self.device.create_texture(&wgpu::TextureDescriptor {
-                label: Some("openq-canvas"),
+                label: Some("opnq-canvas"),
                 size: wgpu::Extent3d { width: size[0], height: size[1], depth_or_array_layers: 1 },
                 mip_level_count: mip_levels(size),
                 sample_count: 1,
@@ -782,7 +782,7 @@ impl Gpu {
         if t.warp_made != Some((mask, size)) {
             let canvas = &t.canvas.as_ref().expect("canvas").1;
             t.warp_bind = Some(self.device.create_bind_group(&wgpu::BindGroupDescriptor {
-                label: Some("openq-warp"),
+                label: Some("opnq-warp"),
                 layout: &self.warp_bgl,
                 entries: &[
                     wgpu::BindGroupEntry { binding: 0, resource: wgpu::BindingResource::TextureView(canvas) },
@@ -823,7 +823,7 @@ impl Gpu {
             self.full_pipe(format, true);
             if t.overlay.as_ref().is_none_or(|(g, s, ..)| *g != o.generation || *s != o.size) {
                 let tex = self.device.create_texture(&wgpu::TextureDescriptor {
-                    label: Some("openq-overlay"),
+                    label: Some("opnq-overlay"),
                     size: wgpu::Extent3d { width: o.size[0], height: o.size[1], depth_or_array_layers: 1 },
                     mip_level_count: 1,
                     sample_count: 1,
@@ -835,7 +835,7 @@ impl Gpu {
                 write_plane(&self.queue, &tex, &o.rgba, o.size[0] as usize * 4, o.size, 4);
                 let view = tex.create_view(&Default::default());
                 let bind = self.device.create_bind_group(&wgpu::BindGroupDescriptor {
-                    label: Some("openq-overlay"),
+                    label: Some("opnq-overlay"),
                     layout: &self.overlay_bgl,
                     entries: &[
                         wgpu::BindGroupEntry { binding: 0, resource: wgpu::BindingResource::TextureView(&view) },
@@ -846,12 +846,12 @@ impl Gpu {
             }
         }
 
-        let mut enc = self.device.create_command_encoder(&wgpu::CommandEncoderDescriptor { label: Some("openq-frame") });
+        let mut enc = self.device.create_command_encoder(&wgpu::CommandEncoderDescriptor { label: Some("opnq-frame") });
         let (.., canvas_mips) = t.canvas.as_ref().expect("canvas");
         {
             let canvas = &canvas_mips.views[0];
             let mut pass = enc.begin_render_pass(&wgpu::RenderPassDescriptor {
-                label: Some("openq-canvas"),
+                label: Some("opnq-canvas"),
                 color_attachments: &[Some(wgpu::RenderPassColorAttachment {
                     view: canvas,
                     depth_slice: None,
@@ -887,7 +887,7 @@ impl Gpu {
         self.record_mips(&mut enc, canvas_mips, CANVAS_FORMAT);
         {
             let mut pass = enc.begin_render_pass(&wgpu::RenderPassDescriptor {
-                label: Some("openq-warp"),
+                label: Some("opnq-warp"),
                 color_attachments: &[Some(wgpu::RenderPassColorAttachment {
                     view: out,
                     depth_slice: None,
@@ -914,7 +914,7 @@ impl Gpu {
     pub fn render_to_image(&mut self, t: &mut Target, scene: &Scene, size: [u32; 2]) -> anyhow::Result<image::RgbaImage> {
         let format = wgpu::TextureFormat::Rgba8Unorm;
         let tex = self.device.create_texture(&wgpu::TextureDescriptor {
-            label: Some("openq-snapshot"),
+            label: Some("opnq-snapshot"),
             size: wgpu::Extent3d { width: size[0].max(1), height: size[1].max(1), depth_or_array_layers: 1 },
             mip_level_count: 1,
             sample_count: 1,
@@ -927,7 +927,7 @@ impl Gpu {
         let (w, h) = (size[0].max(1), size[1].max(1));
         let row = (w * 4).div_ceil(256) * 256;
         let buf = self.device.create_buffer(&wgpu::BufferDescriptor {
-            label: Some("openq-snapshot"),
+            label: Some("opnq-snapshot"),
             size: (row * h) as u64,
             usage: wgpu::BufferUsages::COPY_DST | wgpu::BufferUsages::MAP_READ,
             mapped_at_creation: false,

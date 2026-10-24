@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # Benchmarks to compare builds (src/bench.rs, examples/bench.rs). Every complete run is compared
-# with the previous one (and with the last run of the previous OpenQ version), added to
+# with the previous one (and with the last run of the previous OpnQ version), added to
 # bench/history.json, and docs/performance.html's results section (tables + charts) is
 # regenerated from that history.
 #

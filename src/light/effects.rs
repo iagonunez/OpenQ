@@ -183,7 +183,7 @@ pub struct Effect {
     /// Custom effects: the generated curves.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub table: Option<std::sync::Arc<EffectTable>>,
-    /// Audio-reactive: the depth follows the sound OpenQ plays.
+    /// Audio-reactive: the depth follows the sound OpnQ plays.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub audio: Option<AudioReact>,
     /// Custom effects: the sliders the formula declares (`param`); a change works the formula
@@ -194,7 +194,7 @@ pub struct Effect {
     /// edited and worked out again; empty for tables without one).
     #[serde(skip_serializing_if = "String::is_empty")]
     pub formula: String,
-    /// A Python script from OpenQ 0.3 that made `table`. Kept as text so it can be rewritten as a
+    /// A Python script from OpnQ 0.3 that made `table`. Kept as text so it can be rewritten as a
     /// formula; never run.
     #[serde(skip_serializing_if = "String::is_empty")]
     pub script: String,
@@ -270,7 +270,7 @@ pub fn sanitize_params(params: Vec<EffectParam>) -> Vec<EffectParam> {
 }
 
 /// How an effect follows the audio output ([`Effect::audio`]): its size is scaled by the level
-/// of everything OpenQ plays (peak over all outputs, after the master; instant attack, release
+/// of everything OpnQ plays (peak over all outputs, after the master; instant attack, release
 /// [`AUDIO_RELEASE`]). Quiet passages shrink the effect to `floor` of its size, loud ones play it
 /// in full: a chase that pumps with the music, or a dimmer that follows it (an absolute Square
 /// with the on time at 100 %).

@@ -158,7 +158,7 @@ fn manual_dir() -> anyhow::Result<PathBuf> {
         return Ok(d.join("manual").join(version));
     }
     // No settings folder: a new folder of our own (creating it fails if the name is taken).
-    let dir = std::env::temp_dir().join(format!("openq-manual-{version}-{}", uuid::Uuid::new_v4().simple()));
+    let dir = std::env::temp_dir().join(format!("opnq-manual-{version}-{}", uuid::Uuid::new_v4().simple()));
     #[allow(unused_mut)] // only Unix sets a mode
     let mut b = std::fs::DirBuilder::new();
     #[cfg(unix)]
@@ -259,7 +259,7 @@ mod tests {
             }
         }
         assert_eq!((page_for("es_ES.UTF-8"), page_for("gl_ES"), page_for("en_GB"), page_for("")), ("index.es.html", "index.gl.html", "index.html", "index.html"));
-        let dir = std::env::temp_dir().join(format!("openq-manual-test-{}", std::process::id()));
+        let dir = std::env::temp_dir().join(format!("opnq-manual-test-{}", std::process::id()));
         let index = extract(&dir).unwrap();
         assert!(index.is_file() && dir.join("fonts/MaterialSymbolsRounded.ttf").is_file());
         std::fs::remove_dir_all(dir).unwrap();

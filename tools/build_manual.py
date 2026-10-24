@@ -35,11 +35,11 @@ CHAPTERS = [
 ]
 
 TEXT = {
-    "en": {"manual": "OpenQ User Manual", "sub": "User manual", "chapters": "Chapters", "chapter": "Chapter",
+    "en": {"manual": "OpnQ User Manual", "sub": "User manual", "chapters": "Chapters", "chapter": "Chapter",
            "contents": "Contents", "prev": "Previous", "next": "Next", "pages": "Previous and next chapter"},
-    "es": {"manual": "Manual de usuario de OpenQ", "sub": "Manual de usuario", "chapters": "Capítulos", "chapter": "Capítulo",
+    "es": {"manual": "Manual de usuario de OpnQ", "sub": "Manual de usuario", "chapters": "Capítulos", "chapter": "Capítulo",
            "contents": "Contenido", "prev": "Anterior", "next": "Siguiente", "pages": "Capítulo anterior y siguiente"},
-    "gl": {"manual": "Manual de usuario de OpenQ", "sub": "Manual de usuario", "chapters": "Capítulos", "chapter": "Capítulo",
+    "gl": {"manual": "Manual de usuario de OpnQ", "sub": "Manual de usuario", "chapters": "Capítulos", "chapter": "Capítulo",
            "contents": "Contido", "prev": "Anterior", "next": "Seguinte", "pages": "Capítulo anterior e seguinte"},
 }
 

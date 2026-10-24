@@ -40,7 +40,7 @@ pub fn refresh(d: &SharedDevices, ctx: &egui::Context) {
     d.lock().loading = true;
     let (d, ctx) = (d.clone(), ctx.clone());
     std::thread::Builder::new()
-        .name("openq-devices".into())
+        .name("opnq-devices".into())
         .spawn(move || {
             let audio_in = crate::media::input::list_input_devices();
             #[cfg(feature = "video")]

@@ -227,7 +227,7 @@ impl OutputSender {
             quit: AtomicBool::new(false),
         });
         let s = shared.clone();
-        let name = format!("openq-dmx-{}", config.protocol.label());
+        let name = format!("opnq-dmx-{}", config.protocol.label());
         let thread = std::thread::Builder::new().name(name).spawn(move || run(s, opener)).ok();
         Self { config, shared, thread }
     }

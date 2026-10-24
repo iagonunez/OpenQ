@@ -1,8 +1,8 @@
 [package]
-name = "openq"
+name = "opnq"
 version = "0.6.1"
 license = "Apache-2.0"
-repository = "https://github.com/iagonunez/OpenQ"
+repository = "https://github.com/iagonunez/OpnQ"
 description = "Show-control and cue playback system"
 publish = false
 edition = "2024"
@@ -69,7 +69,7 @@ winresource = "0.1"
 [features]
 default = ["video", "pipewire", "lighting"]
 # The lighting workspace (Lighting view, Light cues, playback window) with fixture downloads. Without it
-# OpenQ is cues only; lighting designs in a show are kept and still play.
+# OpnQ is cues only; lighting designs in a show are kept and still play.
 lighting = ["fixture-download"]
 video = ["dep:ffmpeg-next"]
 # Linux: talk to PipeWire directly (every sink/source listed by name, no ALSA device busy errors).

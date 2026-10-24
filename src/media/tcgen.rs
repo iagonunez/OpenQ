@@ -45,7 +45,7 @@ impl TcGen {
 
     /// Feed LTC starting at `start` (label-seconds) into a voice's queue.
     pub fn ltc(mut tx: rtrb::Producer<f32>, start: f64, rate: TimecodeRate, sample_rate: u32, amplitude: f32) -> Self {
-        Self::spawn("openq-ltc-out", move |stop, _, _, _| {
+        Self::spawn("opnq-ltc-out", move |stop, _, _, _| {
             let mut enc = LtcEncoder::new(start, rate, sample_rate, amplitude);
             let mut buf = vec![0.0f32; 256];
             while !stop.load(Ordering::Acquire) {
@@ -68,8 +68,8 @@ impl TcGen {
     /// Send MTC starting at `start` (label-seconds) from `at`, out of `port` (None = the first
     /// MIDI output).
     pub fn mtc(port: Option<String>, start: f64, rate: TimecodeRate, at: Instant) -> Self {
-        Self::spawn("openq-mtc-out", move |stop, paused, resume, errors| {
-            let (mut conn, _) = match super::midiout::connect(port.as_deref(), "openq-mtc") {
+        Self::spawn("opnq-mtc-out", move |stop, paused, resume, errors| {
+            let (mut conn, _) = match super::midiout::connect(port.as_deref(), "opnq-mtc") {
                 Ok(c) => c,
                 Err(e) => {
                     errors.lock().push(format!("MTC: {e}"));

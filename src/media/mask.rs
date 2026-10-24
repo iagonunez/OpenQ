@@ -65,7 +65,7 @@ impl MaskCache {
         }
         let state = Arc::new(Mutex::new(MaskState::Loading));
         let (s, p) = (state.clone(), path.to_path_buf());
-        let spawned = std::thread::Builder::new().name("openq-mask".into()).spawn(move || {
+        let spawned = std::thread::Builder::new().name("opnq-mask".into()).spawn(move || {
             let r = crate::recovery::catch(|| load(&p));
             *s.lock() = match r {
                 Ok(m) => MaskState::Ready(Arc::new(m)),
@@ -80,7 +80,7 @@ impl MaskCache {
     }
 }
 
-/// Read a mask picture (any still OpenQ shows, SVG included).
+/// Read a mask picture (any still OpnQ shows, SVG included).
 pub fn load(path: &Path) -> anyhow::Result<MaskImage> {
     let s = super::still::load(path, 1.0)?;
     let (mut w, mut h, mut rgba) = (s.width, s.height, s.rgba);
@@ -116,7 +116,7 @@ mod tests {
 
     #[test]
     fn masks_load_once_in_the_background() {
-        let dir = std::env::temp_dir().join(format!("openq-mask-{}", std::process::id()));
+        let dir = std::env::temp_dir().join(format!("opnq-mask-{}", std::process::id()));
         std::fs::create_dir_all(&dir).unwrap();
         let path = dir.join("m.png");
         image::RgbaImage::from_fn(4, 2, |x, _| if x < 2 { image::Rgba([255; 4]) } else { image::Rgba([0, 0, 0, 255]) }).save(&path).unwrap();

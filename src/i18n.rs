@@ -86,10 +86,10 @@ fn config_file() -> Option<std::path::PathBuf> {
     crate::remote::config_dir().map(|d| d.join("language"))
 }
 
-/// Loads the saved language and makes it current. `OPENQ_LANG` overrides it. Returns false when
+/// Loads the saved language and makes it current. `OPNQ_LANG` overrides it. Returns false when
 /// none was ever chosen (first run), so the UI can ask.
 pub fn init() -> bool {
-    if let Some(l) = std::env::var("OPENQ_LANG").ok().and_then(|v| Lang::from_code(&v)) {
+    if let Some(l) = std::env::var("OPNQ_LANG").ok().and_then(|v| Lang::from_code(&v)) {
         set_lang(l);
         return true;
     }

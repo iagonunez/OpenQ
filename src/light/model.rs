@@ -17,7 +17,7 @@ pub type FixtureId = u32;
 pub type GroupId = u32;
 /// User-facing sequence number.
 pub type SequenceId = u32;
-/// Stable id of a lighting cue (what OpenQ Light cues target).
+/// Stable id of a lighting cue (what OpnQ Light cues target).
 pub type LightCueId = Uuid;
 
 /// Highest universe number (Art-Net 15-bit port address, 1-based).
@@ -513,7 +513,7 @@ pub struct FixtureMode {
     /// numbered `fixture.cell` (`101.1`, `101.2`…).
     #[serde(skip_serializing_if = "Vec::is_empty")]
     pub heads: Vec<Head>,
-    /// DMX slots the mode takes, counting channels OpenQ doesn't use (0 = up to the last
+    /// DMX slots the mode takes, counting channels OpnQ doesn't use (0 = up to the last
     /// channel). Imports set it so an unused last channel still gets its address.
     #[serde(skip_serializing_if = "is_zero")]
     pub slots: u16,
@@ -1185,7 +1185,7 @@ impl LightButton {
 #[derive(Serialize, Deserialize, Clone, PartialEq, Debug)]
 #[serde(default)]
 pub struct LightCue {
-    /// Stable id; OpenQ Light cues refer to it.
+    /// Stable id; OpnQ Light cues refer to it.
     pub id: LightCueId,
     /// Number shown ("1", "1.5").
     pub number: String,

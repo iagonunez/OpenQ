@@ -24,7 +24,7 @@ pub fn ports() -> Vec<String> {
 }
 
 /// True for names a serial port can have (`/dev/ttyUSB0`, `/dev/cu.usbserial-1`, `COM3`): the port
-/// comes from the show file, which mustn't make OpenQ open (and write DMX into) any other file.
+/// comes from the show file, which mustn't make OpnQ open (and write DMX into) any other file.
 pub fn is_serial_port_name(port: &str) -> bool {
     if cfg!(windows) {
         let p = port.strip_prefix(r"\\.\").unwrap_or(port);

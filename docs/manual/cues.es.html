@@ -4,7 +4,7 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
 <!-- Built by tools/build_manual.py around the content block below: edit only that, then run the script. -->
-<title>Cues y tiempos · Manual de usuario de OpenQ</title>
+<title>Cues y tiempos · Manual de usuario de OpnQ</title>
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Barlow+Condensed:wght@500;600;700&family=Inter:wght@400;500;600&family=JetBrains+Mono:wght@400;500&display=swap">
@@ -45,7 +45,7 @@
 
 <main>
 <header class="chapter-head">
-  <div class="eyebrow">Capítulo 2 · Manual de usuario de OpenQ</div>
+  <div class="eyebrow">Capítulo 2 · Manual de usuario de OpnQ</div>
   <h1>Cues y tiempos</h1>
 </header>
 
@@ -53,7 +53,7 @@
 <section id="cues">
   <h2><span class="n">2.1</span>Tipos de cue</h2>
   <div class="types">
-    <div class="type"><b><span class="ms" aria-hidden="true">&#xe050;</span>Audio</b><span class="d">Reproduce un archivo de sonido por el mezclador de OpenQ, con recortes, bucles, fragmentos, EQ y enrutado.</span></div>
+    <div class="type"><b><span class="ms" aria-hidden="true">&#xe050;</span>Audio</b><span class="d">Reproduce un archivo de sonido por el mezclador de OpnQ, con recortes, bucles, fragmentos, EQ y enrutado.</span></div>
     <div class="type"><b><span class="ms" aria-hidden="true">&#xe404;</span>Vídeo</b><span class="d">Reproduce una película o una imagen fija en un escenario; su banda sonora pasa por el mezclador.</span></div>
     <div class="type"><b><span class="ms" aria-hidden="true">&#xe262;</span>Texto</b><span class="d">Muestra texto en un escenario, como títulos, sobretítulos o avisos para los intérpretes.</span></div>
     <div class="type"><b><span class="ms" aria-hidden="true">&#xe2c7;</span>Grupo</b><span class="d">Contiene otras cues y las dispara de una de cuatro maneras.</span></div>
@@ -119,7 +119,7 @@
   <strong>mensaje</strong>. Las notas y los cambios de control llevan canal, número y valor; el cambio de programa, un
   programa; el pitch bend, un valor de 0 a 16383 (8192 es el centro). <strong>MIDI Show Control</strong> envía una orden
   (GO, STOP, RESUME, LOAD…) con número de cue y lista a un ID de dispositivo (127 = todos) en un formato de orden, para que
-  OpenQ maneje una mesa de iluminación u otro ordenador de espectáculo. <strong>SysEx</strong> envía cualquier mensaje System
+  OpnQ maneje una mesa de iluminación u otro ordenador de espectáculo. <strong>SysEx</strong> envía cualquier mensaje System
   Exclusive escrito en hexadecimal (<code>F0 … F7</code>). Debajo de los ajustes se ven los bytes que se enviarán.</p>
   <h3 id="midi-file-cues">Cues de archivo MIDI</h3>
   <p>Una cue de archivo MIDI reproduce un Standard MIDI File hacia un sintetizador, un rig de teclados o una mesa de luces.
@@ -195,7 +195,7 @@
 
 <section id="timecode">
   <h2><span class="n">2.4</span>Código de tiempo</h2>
-  <p>OpenQ puede llevar una lista de cues a partir de código de tiempo SMPTE entrante, para un espectáculo sincronizado con un vídeo,
+  <p>OpnQ puede llevar una lista de cues a partir de código de tiempo SMPTE entrante, para un espectáculo sincronizado con un vídeo,
   el click de una banda o una mesa de luces. Lee <strong>LTC</strong> (código de tiempo como señal de audio) en una entrada de audio o
   <strong>MTC</strong> (MIDI Time Code) en una entrada MIDI, a 24, 25, 29,97 drop-frame o 30 fps.</p>
   <h3 id="setting-up-a-cue-list">Configurar una lista de cues</h3>

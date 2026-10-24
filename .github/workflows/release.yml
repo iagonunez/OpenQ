@@ -1,16 +1,16 @@
-# A `v*` tag builds OpenQ for each system and publishes a release that OQup (https://github.com/iagonunez/OQup)
+# A `v*` tag builds OpnQ for each system and publishes a release that OQup (https://github.com/iagonunez/OQup)
 # installs from: users always install through OQup, which downloads these archives (checked against GitHub's SHA-256
 # digest of each asset) plus the LGPL FFmpeg libraries, or builds the same tag from source with
 # `oqup install --build-source`. Can also be run by hand (builds only, no release).
 #
 # Assets (target = x86_64/aarch64-unknown-linux-gnu, aarch64/x86_64-apple-darwin, x86_64-pc-windows-msvc):
-#   openq-<tag>-<target>.tar.gz|.zip        default features (video, PipeWire, lighting)
-#   openq-cues-<tag>-<target>.tar.gz|.zip   without lighting (`oqup install --no-lighting`)
+#   opnq-<tag>-<target>.tar.gz|.zip        default features (video, PipeWire, lighting)
+#   opnq-cues-<tag>-<target>.tar.gz|.zip   without lighting (`oqup install --no-lighting`)
 #   ffmpeg-<version>-lgpl-<target>.tar.gz   macOS only: the LGPL FFmpeg the macOS builds link (compiled here from the
 #                                           official tarball; Linux and Windows use BtbN's LGPL shared builds, which
 #                                           OQup downloads from BtbN itself)
 #   SHA256SUMS
-# Archive layout (one top folder): openq[.exe], LICENSE.md, NOTICE.md, THIRD_PARTY_LICENSES.md, VERSION,
+# Archive layout (one top folder): opnq[.exe], LICENSE.md, NOTICE.md, THIRD_PARTY_LICENSES.md, VERSION,
 # assets/icon/*, assets/fonts/*.txt (font licences). FFmpeg is never inside: the program finds it next to itself
 # (Windows), in `lib/` (Linux, rpath $ORIGIN/lib) or in the bundle's Frameworks (macOS, rpath).
 #
@@ -90,8 +90,8 @@ jobs:
           - { os: macos-15, target: aarch64-apple-darwin }
           - { os: macos-15-intel, target: x86_64-apple-darwin }
           - { os: windows-latest, target: x86_64-pc-windows-msvc, btbn: win64 }
-          - { variant: full, prefix: openq, cargo_features: "" }
-          - { variant: cues, prefix: openq-cues, cargo_features: "--no-default-features --features video,pipewire" }
+          - { variant: full, prefix: opnq, cargo_features: "" }
+          - { variant: cues, prefix: opnq-cues, cargo_features: "--no-default-features --features video,pipewire" }
     runs-on: ${{ matrix.os }}
     defaults: { run: { shell: bash } }
     steps:
@@ -132,10 +132,10 @@ jobs:
             # No VC++ runtime needed on the user's computer.
             Windows) export RUSTFLAGS='-C target-feature=+crt-static' ;;
           esac
-          cargo build --release --locked --target ${{ matrix.target }} --bin openq ${{ matrix.cargo_features }}
+          cargo build --release --locked --target ${{ matrix.target }} --bin opnq ${{ matrix.cargo_features }}
       - name: Check the FFmpeg links
         run: |
-          exe="target/${{ matrix.target }}/release/openq"
+          exe="target/${{ matrix.target }}/release/opnq"
           case "${{ runner.os }}" in
             Linux) readelf -d "$exe" | grep -F 'RPATH' | grep -F '$ORIGIN/lib' ;;
             macOS) ! otool -L "$exe" | grep -E 'libav|libsw' | grep -v '@rpath' ;;
@@ -146,7 +146,7 @@ jobs:
           name="${{ matrix.prefix }}-$tag-${{ matrix.target }}"
           ext=""; [[ "${{ matrix.target }}" == *windows* ]] && ext=".exe"
           d="dist/$name"; mkdir -p "$d/assets/icon" "$d/assets/fonts"
-          cp "target/${{ matrix.target }}/release/openq$ext" LICENSE.md NOTICE.md THIRD_PARTY_LICENSES.md "$d/"
+          cp "target/${{ matrix.target }}/release/opnq$ext" LICENSE.md NOTICE.md THIRD_PARTY_LICENSES.md "$d/"
           cp assets/icon/* "$d/assets/icon/" && cp assets/fonts/*.txt "$d/assets/fonts/"
           grep -m1 '^version' Cargo.toml | cut -d'"' -f2 > "$d/VERSION"
           cd dist
@@ -170,11 +170,11 @@ jobs:
         run: |
           (cd dist && sha256sum * > SHA256SUMS)
           cat > notes.md <<NOTES
-          OpenQ $GITHUB_REF_NAME. Install or update it with [OQup](https://github.com/iagonunez/OQup): it downloads the
+          OpnQ $GITHUB_REF_NAME. Install or update it with [OQup](https://github.com/iagonunez/OQup): it downloads the
           archive for your system and the LGPL FFmpeg libraries (BtbN's builds on Linux and Windows, the
           \`ffmpeg-*\` archives here on macOS), or builds this version from source with \`--build-source\`.
 
           \`SHA256SUMS\` lists every file's checksum; \`gh attestation verify <file> -R $GITHUB_REPOSITORY\` checks where
           it was built.
           NOTES
-          gh release create "$GITHUB_REF_NAME" dist/* --repo "$GITHUB_REPOSITORY" --title "OpenQ $GITHUB_REF_NAME" --notes-file notes.md --verify-tag
+          gh release create "$GITHUB_REF_NAME" dist/* --repo "$GITHUB_REPOSITORY" --title "OpnQ $GITHUB_REF_NAME" --notes-file notes.md --verify-tag

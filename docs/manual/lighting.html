@@ -4,7 +4,7 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
 <!-- Built by tools/build_manual.py around the content block below: edit only that, then run the script. -->
-<title>Lighting · OpenQ User Manual</title>
+<title>Lighting · OpnQ User Manual</title>
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Barlow+Condensed:wght@500;600;700&family=Inter:wght@400;500;600&family=JetBrains+Mono:wght@400;500&display=swap">
@@ -49,14 +49,14 @@
 
 <main>
 <header class="chapter-head">
-  <div class="eyebrow">Chapter 5 · OpenQ User Manual</div>
+  <div class="eyebrow">Chapter 5 · OpnQ User Manual</div>
   <h1>Lighting</h1>
 </header>
 
 <!--content-->
 <section id="lighting">
   <h2><span class="n">5.1</span>Design</h2>
-  <p>OpenQ drives lighting over DMX. The <strong>lighting design</strong> (patch, groups, presets, effects and sequences of
+  <p>OpnQ drives lighting over DMX. The <strong>lighting design</strong> (patch, groups, presets, effects and sequences of
   lighting cues) is kept apart from the cue list, in the <strong>Lighting</strong> workspace: switch between
   <span class="menu"><span class="ms" aria-hidden="true">&#xe90f;</span> Lighting</span> and <em>Cues</em> above the cue list.
   The design can only be changed in Edit mode. In Show mode the Lighting workspace shows the Playback page and the DMX monitor.</p>
@@ -104,16 +104,16 @@
   bar or a rectangle to move it out of the way; the plot puts it there too, and
   <span class="ms" aria-hidden="true">&#xe042;</span> in the row above puts it back.</p>
   <h3 id="fixture-types">Fixture types</h3>
-  <p>OpenQ comes with generic types (dimmer, RGB, RGBW, CMY, moving heads, strobe, fog) and a library of about 650 manufacturer profiles (the Open Fixture Library plus some manufacturer GDTF files), listed under <em>Manufacturer profiles</em> in <em>Fixture types</em>. Search for a fixture, open it and use <em>Add to this show</em>; saving it makes a copy of your own. <em>Import fixture…</em> (on the
+  <p>OpnQ comes with generic types (dimmer, RGB, RGBW, CMY, moving heads, strobe, fog) and a library of about 650 manufacturer profiles (the Open Fixture Library plus some manufacturer GDTF files), listed under <em>Manufacturer profiles</em> in <em>Fixture types</em>. Search for a fixture, open it and use <em>Add to this show</em>; saving it makes a copy of your own. <em>Import fixture…</em> (on the
   Sheet and the Plan) reads
-  Open Fixture Library (<code>.json</code>), GDTF (<code>.gdtf</code>), QLC+ (<code>.qxf</code>) and OpenQ
+  Open Fixture Library (<code>.json</code>), GDTF (<code>.gdtf</code>), QLC+ (<code>.qxf</code>) and OpnQ
   (<code>.oqfixture</code>) files. Imported types are copied into the show and saved in your fixture library, so they are there
   for the next show. <em>Fixture types</em> opens the editor: channels and their attributes, 16-bit fine channels, defaults,
   the value used by Highlight, and <strong>ranges</strong>: the named parts of a channel, such as the slots of a colour wheel or
   a gobo wheel. A range can have a colour and a picture (<em>Image (gobo)</em>), shown in the programmer's drop-down for that channel;
   GDTF files bring the gobo pictures and the colours of the fixture's LEDs, which the colour picker uses. For moving heads the
   editor sets the pan, tilt and zoom angles at the lowest and the highest DMX value (a file that turns the other way has them
-  reversed); GDTF files also bring where the yoke, the head and the lens sit, so OpenQ aims from the lens as visualisers draw
+  reversed); GDTF files also bring where the yoke, the head and the lens sit, so OpnQ aims from the lens as visualisers draw
   it.</p>
   <figure>
     <img src="img/fixture-types.webp" width="1100" height="1065" alt="Fixture type editor for a moving spot, listing channels with attribute, fine channel, default and ranges.">
@@ -156,7 +156,7 @@
   iris, frost, fog…) always get a bar; if the fixture file names ranges of them, the ranges are a picker below it.</p>
   <p>The colour picker shows every colour you can see, and brightens the ones the selected fixture can make: the shape between
   its LED colours. Colours outside it are dimmed, and a click there takes the nearest colour it can make. Each fixture mixes
-  the colour with its own LEDs. The LED colours come from the fixture type (GDTF files have them); without them OpenQ uses
+  the colour with its own LEDs. The LED colours come from the fixture type (GDTF files have them); without them OpnQ uses
   typical LED colours, and says so under the picker.</p>
   <figure>
     <img src="img/lighting-programmer.webp" width="1100" height="969" alt="Programmer page: groups, presets and effects as cards in the left column, fixture tiles with eight washes selected, and the colour page with the colour range of the washes.">
@@ -180,7 +180,7 @@
   </ul>
   <h3 id="focus-points">Focus points</h3>
   <p>A <strong>focus point</strong> is a named place on stage, such as centre stage, the downstage corners or a riser. Cues aim
-  moving heads <em>at a point</em>, not at pan and tilt values: OpenQ works the pan and tilt out from each fixture's position,
+  moving heads <em>at a point</em>, not at pan and tilt values: OpnQ works the pan and tilt out from each fixture's position,
   rotation and angles. Move the point (drag it on Patch → Plan) or a fixture, and every cue aimed at it follows.</p>
   <figure>
     <img src="img/lighting-points.webp" width="1100" height="969" alt="Programmer with the focus points Centre, DSL and DSR in the left column, two spots aimed at DSL, and the Position page with the offset from the point and the Spread round the point row.">
@@ -231,7 +231,7 @@
   pan and tilt. <em>Speed</em> is in Hz, or per beat with <em>Follow tempo</em>. <em>Size</em> and <em>Base</em> set the swing;
   it runs around the cue's value or, with <em>Absolute</em>, around the base. <em>Phase spread</em> staggers the fixtures,
   <em>Groups</em> moves several fixtures together and <em>Wings</em> mirrors the pattern. The preview shows the result across
-  the fixtures. With <em>Size follows the sound</em> the effect grows with how loud OpenQ is playing: <em>Gain</em> sets how
+  the fixtures. With <em>Size follows the sound</em> the effect grows with how loud OpnQ is playing: <em>Gain</em> sets how
   much, <em>Floor</em> how much is left in silence, and the bar next to them shows the level now.</p>
   <figure>
     <img src="img/lighting-effects.webp" width="1100" height="887" alt="Effects page with a formula effect: settings, preview of red, green and blue across twelve fixtures, and the rainbow formula with its slider.">
@@ -246,7 +246,7 @@
   <h4 id="formulas">Formula effects</h4>
   <p>For patterns the waveforms can't make, write a <strong>formula</strong>. Press
   <span class="ms" aria-hidden="true">&#xe86f;</span> (<em>New formula effect</em>) on the effects pool, edit the formula on the
-  <em>Formula</em> card and press <em>Run</em> (or Ctrl+Enter). OpenQ works the formula out into a table: for every pattern row
+  <em>Formula</em> card and press <em>Run</em> (or Ctrl+Enter). OpnQ works the formula out into a table: for every pattern row
   and every step of one cycle, it sets the attributes you name. The first fixture plays row 0, the next one row 1 and so on,
   starting again after the last row. Speed, size, phase spread and the other settings still apply on top. A formula is only
   arithmetic: it can't open files or loop, and it never runs during the show; only the table it made plays.</p>
@@ -301,14 +301,14 @@ dimmer = if(step == row, 1, 0)
 # Neighbouring heads swing opposite ways (Mode: Around the cue's value).
 effect "Scissors" steps 64 width 2 smooth
 pan = 0.5 + pick(row, 0.5, -0.5) * wave(t)</code></pre>
-  <p>A mistake shows under the editor with its line and column, and the effect keeps its last table. Shows from OpenQ 0.3
+  <p>A mistake shows under the editor with its line and column, and the effect keeps its last table. Shows from OpnQ 0.3
   with Python script effects still play them; the old script is shown under the Formula card so it can be rewritten as a
   formula, or in Python as below.</p>
 
   <h4 id="python-effects">Effects made in Python</h4>
   <p>Some patterns need a real program: a value that depends on the step before (a random walk, a pattern that grows),
-  loops, or data from elsewhere. Write those in Python on your computer and save them as an effect file. OpenQ imports it
-  like any other <code>.oqfx</code> file, as plain data: nothing runs inside OpenQ. Any Python 3 works, with no extra modules.</p>
+  loops, or data from elsewhere. Write those in Python on your computer and save them as an effect file. OpnQ imports it
+  like any other <code>.oqfx</code> file, as plain data: nothing runs inside OpnQ. Any Python 3 works, with no extra modules.</p>
   <ol>
     <li>Save this as <code>wander.py</code>. It makes four moving heads wander at random and come back to where they started:
 <pre><code>import json
@@ -317,7 +317,7 @@ import random
 
 def save_effect(path, name, attributes, steps, width, level,
                 smooth=True, **settings):
-    """Write an OpenQ effect file (.oqfx).
+    """Write an OpnQ effect file (.oqfx).
 
     level(row, step) returns one level (0 to 1) per attribute.
     """
@@ -334,7 +334,7 @@ def save_effect(path, name, attributes, steps, width, level,
               "attribute": attributes[0], "table": table}
     effect.update(settings)
     with open(path, "w", encoding="utf-8") as f:
-        json.dump({"openq_effect": 1, "effect": effect}, f)
+        json.dump({"opnq_effect": 1, "effect": effect}, f)
 
 
 def walk(steps, seed):
@@ -356,12 +356,12 @@ save_effect("wander.oqfx", "Wander", ["Pan", "Tilt"], STEPS, HEADS,
             speed=0.05, relative=True, size=0.5, spread=0)</code></pre></li>
     <li>Run it: <code>python3 wander.py</code> (<code>py wander.py</code> on Windows). It writes <code>wander.oqfx</code> in
     the same folder.</li>
-    <li>In OpenQ, go to <span class="menu">Lighting → Effects</span>, press <span class="ms" aria-hidden="true">&#xe9fc;</span>
+    <li>In OpnQ, go to <span class="menu">Lighting → Effects</span>, press <span class="ms" aria-hidden="true">&#xe9fc;</span>
     (<em>Import effect files</em>) and pick the file. The effect joins the pool; run it on four heads.</li>
   </ol>
   <p><code>save_effect</code> is the part to keep for your own effects:</p>
   <ul>
-    <li><strong>attributes</strong>: the names OpenQ stores, with capitals: <code>Dimmer</code>, <code>Red</code>,
+    <li><strong>attributes</strong>: the names OpnQ stores, with capitals: <code>Dimmer</code>, <code>Red</code>,
     <code>Green</code>, <code>Blue</code>, <code>White</code>, <code>Pan</code>, <code>Tilt</code>, <code>Zoom</code>,
     <code>Iris</code>, <code>GoboRotation</code>, <code>Extra3</code>…</li>
     <li><strong>steps</strong>: samples per cycle (1 to 4096); <strong>width</strong>: pattern rows (1 to 512). At most
@@ -370,10 +370,10 @@ save_effect("wander.oqfx", "Wander", ["Pan", "Tilt"], STEPS, HEADS,
     <li><strong>smooth</strong>: blend between samples (<code>False</code> holds each one, for chases).</li>
     <li>The rest are the effect's settings, all optional: <code>speed</code> (Hz), <code>sync</code> (follow the tempo),
     <code>size</code> and <code>base</code> (0 to 1), <code>relative</code> (<code>True</code> = around the cue's value),
-    <code>spread</code> (degrees), <code>groups</code>, <code>wings</code>. They can all be changed in OpenQ afterwards.</li>
+    <code>spread</code> (degrees), <code>groups</code>, <code>wings</code>. They can all be changed in OpnQ afterwards.</li>
   </ul>
   <div class="note tip"><span class="label">Tip</span><p>The last step of a cycle runs straight into the first. Make them meet,
-  as <code>walk</code> does, or the effect jumps once a cycle. OpenQ checks every file it imports and refuses one with wrong
+  as <code>walk</code> does, or the effect jumps once a cycle. OpnQ checks every file it imports and refuses one with wrong
   sizes or values.</p></div>
 </section>
 
@@ -460,14 +460,14 @@ save_effect("wander.oqfx", "Wander", ["Pan", "Tilt"], STEPS, HEADS,
     <img src="img/lighting-outputs.webp" width="1100" height="570" alt="Outputs page with an Art-Net output sending, a disabled sACN output, and an sACN input set to merge.">
     <figcaption>Outputs and inputs, each with its live status.</figcaption>
   </figure>
-  <p><strong>Inputs</strong> receive Art-Net or sACN from another desk. Each one either <em>merges</em> with OpenQ's output
+  <p><strong>Inputs</strong> receive Art-Net or sACN from another desk. Each one either <em>merges</em> with OpnQ's output
   (the highest value wins), <em>replaces</em> it on the universes it receives, or is kept for <em>capture only</em>. When
-  several desks send the same sACN universe, the highest priority wins. OpenQ ignores its own packets, so a broadcast output
+  several desks send the same sACN universe, the highest priority wins. OpnQ ignores its own packets, so a broadcast output
   doesn't come back in through an input.</p>
     <p>An Art-Net output can send <strong>ArtSync</strong> after every frame, so nodes that support it change all their
   universes at the same moment. Shift-click a node in the <em>Nodes</em> list to send it the universes it outputs; a warning
   shows when the output sends a universe the chosen node doesn't have. An Art-Net input answers desks that look for nodes
-  (ArtPoll), so desks that only send to nodes they found send to OpenQ too.</p>
+  (ArtPoll), so desks that only send to nodes they found send to OpnQ too.</p>
   <h3 id="dmx-monitor"><span class="ms" aria-hidden="true">&#xe9b0;</span> DMX monitor</h3>
   <p>The DMX monitor shows every slot of a universe as it goes out, inputs included. A yellow line marks where each fixture starts.</p>
   <figure>
@@ -477,11 +477,11 @@ save_effect("wander.oqfx", "Wander", ["Pan", "Tilt"], STEPS, HEADS,
   <h3 id="remote-devices-and-visualisers">Remote devices and visualisers</h3>
   <p>A <a href="remote.html#remote">remote device</a> gets the lighting design and its changes, and shows the main device's executors
   and DMX output; its GO and faders act on the main device. A device with the edit role can change the design too.
-  A visualiser can follow OpenQ the same way, or read the DMX from Art-Net or sACN and the rig from an MVR export.</p>
+  A visualiser can follow OpnQ the same way, or read the DMX from Art-Net or sACN and the rig from an MVR export.</p>
   <p id="lighting-oqvis"><span class="menu">View → Open in OQVis</span> (also on Patch → Plan) shows the rig in
-  <strong>OQVis</strong>, the 3D visualiser installed with OpenQ: OpenQ saves the patch as an MVR file and starts OQVis on it.
+  <strong>OQVis</strong>, the 3D visualiser installed with OpnQ: OpnQ saves the patch as an MVR file and starts OQVis on it.
   Choose it again while OQVis runs and only the file is rewritten; OQVis reloads it. OQVis gets the DMX over Art-Net, sACN or
-  its own link to OpenQ. If OpenQ can't find OQVis, it asks where the program is and remembers it.</p>
+  its own link to OpnQ. If OpnQ can't find OQVis, it asks where the program is and remembers it.</p>
 </section>
 <!--/content-->
 

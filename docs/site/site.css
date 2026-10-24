@@ -1,4 +1,4 @@
-/* OpenQ website: one landing page per language (index.html, es/, gl/). Colours are the app's
+/* OpnQ website: one landing page per language (index.html, es/, gl/). Colours are the app's
    own theme (src/ui/theme.rs). */
 :root {
   --bg: #141518; --panel: #1b1c20; --raised: #24252b; --border: #32343b;

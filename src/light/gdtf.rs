@@ -27,7 +27,7 @@ const MAX_XML: usize = 32 << 20;
 /// Most DMX breaks a mode may use.
 const MAX_BREAKS: u8 = 8;
 
-/// A GDTF `DMXBreak` as OpenQ's 0-based [`ChannelDef::dmx_break`] ("Overwrite" = the first).
+/// A GDTF `DMXBreak` as OpnQ's 0-based [`ChannelDef::dmx_break`] ("Overwrite" = the first).
 fn dmx_break(s: &str) -> Option<u8> {
     match s.trim() {
         "Overwrite" => Some(0),
@@ -35,7 +35,7 @@ fn dmx_break(s: &str) -> Option<u8> {
     }
 }
 
-/// OpenQ attribute of a GDTF attribute name.
+/// OpnQ attribute of a GDTF attribute name.
 pub fn attribute(name: &str) -> Option<Attribute> {
     use Attribute::*;
     // Wheel/instance numbers at the end: "Gobo2Pos" → ("Gobo", 2, "Pos").
@@ -46,7 +46,7 @@ pub fn attribute(name: &str) -> Option<Attribute> {
     let tail = &rest[digits.len()..];
     // Settings of a feature, not the feature (DIN SPEC 15800 Annex B, "Control"): its modes, master speeds
     // and resets ("DimmerMode", "Frost1MSpeed", "PanReset"); a name guess would make them a second dimmer,
-    // gobo or pan. Media server attributes ("VideoKeyIntensity", "ModelFolder1") have no OpenQ attribute.
+    // gobo or pan. Media server attributes ("VideoKeyIntensity", "ModelFolder1") have no OpnQ attribute.
     match name {
         "PositionMSpeed" | "PositionMTime" => return Some(PanTiltSpeed),
         "ColorMixMSpeed" => return Some(ColorMacro),
@@ -593,7 +593,7 @@ pub fn import_xml(text: &str) -> anyhow::Result<Imported> {
     Ok(Imported { fixture: super::fixlib::sanitize(fixture)?, notes })
 }
 
-/// GDTF attribute name and feature (`Group.Feature`) of an OpenQ attribute.
+/// GDTF attribute name and feature (`Group.Feature`) of an OpnQ attribute.
 fn gdtf_attribute(a: Attribute) -> (&'static str, &'static str) {
     use Attribute::*;
     match a {
@@ -841,7 +841,7 @@ pub fn export(t: &FixtureType) -> anyhow::Result<Vec<u8>> {
     let e = xml_esc;
     let uuid = {
         use sha2::{Digest, Sha256};
-        let h = Sha256::digest(format!("openq-gdtf\0{}", t.id).as_bytes());
+        let h = Sha256::digest(format!("opnq-gdtf\0{}", t.id).as_bytes());
         let mut b: [u8; 16] = h[..16].try_into().expect("32-byte digest");
         b[6] = (b[6] & 0x0f) | 0x50;
         b[8] = (b[8] & 0x3f) | 0x80;
@@ -851,7 +851,7 @@ pub fn export(t: &FixtureType) -> anyhow::Result<Vec<u8>> {
     let mut x = String::from("<?xml version=\"1.0\" encoding=\"UTF-8\" standalone=\"no\" ?>\n<GDTF DataVersion=\"1.2\">\n");
     let type_name = spec_name(&t.name);
     x.push_str(&format!(
-        "  <FixtureType Name=\"{}\" ShortName=\"{}\" LongName=\"{}\" Manufacturer=\"{}\" Description=\"Exported by OpenQ (one geometry tree per mode)\" FixtureTypeID=\"{uuid}\" Thumbnail=\"\" RefFT=\"\">\n",
+        "  <FixtureType Name=\"{}\" ShortName=\"{}\" LongName=\"{}\" Manufacturer=\"{}\" Description=\"Exported by OpnQ (one geometry tree per mode)\" FixtureTypeID=\"{uuid}\" Thumbnail=\"\" RefFT=\"\">\n",
         e(if type_name.is_empty() { "Fixture" } else { &type_name }),
         e(&short),
         e(&t.name),

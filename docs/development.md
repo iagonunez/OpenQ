@@ -1,21 +1,21 @@
 # Development
 
-Notes for working on OpenQ itself. For users, see the [README](../README.md) and the user manual.
+Notes for working on OpnQ itself. For users, see the [README](../README.md) and the user manual.
 
 ```sh
 cargo run --release                     # empty workspace
-cargo run --release -- show.openq       # open a workspace
+cargo run --release -- show.opnq       # open a workspace
 cargo test                              # engine + model tests
 cargo run --release --example smoke     # headless end-to-end check of real audio/video (muted)
 tools/stress.sh                         # stress, soak, fuzz and crash-recovery suite (slow)
-tools/fuzz.sh                           # hostile input from every way in (slow; OPENQ_FUZZ_SECS per target)
-tools/ui_perf.sh show.openq [cue]       # frame times of the real window through a scripted session
+tools/fuzz.sh                           # hostile input from every way in (slow; OPNQ_FUZZ_SECS per target)
+tools/ui_perf.sh show.opnq [cue]       # frame times of the real window through a scripted session
 tools/demo_show.sh                      # big demo show for manual testing, opened in the app
 ```
 
 **Demo show:** `tools/demo_show.sh` downloads free media (music by Kevin MacLeod, Google sound
 library effects, Blender open film clips; ~550 MB, cached in `target/demo-show/media`), writes
-`target/demo-show/demo.openq` with `examples/demo_show.rs` and opens it. "The Lighthouse Keeper"
+`target/demo-show/demo.opnq` with `examples/demo_show.rs` and opens it. "The Lighthouse Keeper"
 has five cue lists (two acts, preshow/interval, a timecode list, a hotkey pad), 400 media cues and a
 68-fixture rig with 300 lighting cues, and uses every feature of the show model at least once.
 `--fresh` writes the show again (your edits to it are kept otherwise), `--no-run` doesn't open it,
@@ -24,8 +24,8 @@ has five cue lists (two acts, preshow/interval, a timecode list, a hotkey pad), 
 **UI performance:** `src/ui/perf_tests.rs` runs the whole window headless (part of `cargo test`):
 editing and playing an animated text cue must cost about what an idle frame does and must not
 re-render the text, and frame time must not grow badly with the number of cues. For the real
-window and GPU, `tools/ui_perf.sh` drives the app with `OPENQ_DEBUG_SCRIPT` (timed actions such as
-`go`, `stop`, `scrub`, `drag`, `close`, `quit`) and `OPENQ_DEBUG_FRAMES` (per-frame CSV).
+window and GPU, `tools/ui_perf.sh` drives the app with `OPNQ_DEBUG_SCRIPT` (timed actions such as
+`go`, `stop`, `scrub`, `drag`, `close`, `quit`) and `OPNQ_DEBUG_FRAMES` (per-frame CSV).
 
 **Stress tests** (`tests/stress.rs`) are `#[ignore]`d so everyday `cargo test` stays fast. Run
 `tools/stress.sh` before tagging a version and after big features; `.github/workflows/ci.yml` runs it
@@ -41,11 +41,11 @@ it plays) and covers:
   with the `fault-injection` feature, panics injected into the engine, the audio callback, a
   decoder and the prober are recovered from.
 
-`OPENQ_STRESS_SCALE=<n>` multiplies the work for longer runs.
+`OPNQ_STRESS_SCALE=<n>` multiplies the work for longer runs.
 
 **Fuzz tests** (`tests/fuzz.rs`, also `#[ignore]`d) throw damaged and deliberately malicious data at
-every way into OpenQ and require an error or a sane result, never a crash, a hang or runaway memory.
-Any panic counts, also one OpenQ catches on a worker thread; a call that doesn't answer in time
+every way into OpnQ and require an error or a sane result, never a crash, a hang or runaway memory.
+Any panic counts, also one OpnQ catches on a worker thread; a call that doesn't answer in time
 counts as a hang. One target per way in:
 
 - `fuzz_show_files`: show files with valid JSON but hostile values (huge, negative and non-finite
@@ -61,9 +61,9 @@ counts as a hang. One target per way in:
 - `fuzz_network_packets`, `fuzz_devices`: Art-Net, sACN, OSC, MIDI, MTC and LTC input; sound cards,
   inputs, MIDI and serial ports and network outputs that don't exist or aren't what they claim.
 
-`tools/fuzz.sh` runs them (`OPENQ_FUZZ_SECS` per target, default 20; the CI workflow gives each a
-minute). Each run prints its seed (`OPENQ_FUZZ_SEED` repeats it); a failing input is saved under
-`target/tmp/fuzz-failures/` and `OPENQ_FUZZ_REPLAY=<file>` runs just that one. With the demo show in
+`tools/fuzz.sh` runs them (`OPNQ_FUZZ_SECS` per target, default 20; the CI workflow gives each a
+minute). Each run prints its seed (`OPNQ_FUZZ_SEED` repeats it); a failing input is saved under
+`target/tmp/fuzz-failures/` and `OPNQ_FUZZ_REPLAY=<file>` runs just that one. With the demo show in
 `target/demo-show` the show fuzzer also draws on every cue feature and real media, and with the
 `ffmpeg` program installed the media fuzzer starts from many more formats.
 
@@ -76,11 +76,11 @@ Video uses the FFmpeg libraries (the system's on Linux; on Windows and macOS OQu
 LGPL-only build inside the app), plus clang at build time, so anything FFmpeg can play works, with no codec plugins to
 install. Build without video with `--no-default-features`.
 
-**Lighting** is the cargo feature `lighting` (on by default; it turns on `fixture-download`). Without it OpenQ is cues only: no Cues/Lighting switch, playback window or Light
+**Lighting** is the cargo feature `lighting` (on by default; it turns on `fixture-download`). Without it OpnQ is cues only: no Cues/Lighting switch, playback window or Light
 cue type; lighting designs in a show still load, are saved back and play (`oqup install --no-lighting`
 builds that way).
 
-**Lighting effect formulas** (`light::formula`) are a small arithmetic language OpenQ works out into
+**Lighting effect formulas** (`light::formula`) are a small arithmetic language OpnQ works out into
 effect tables itself: no interpreter or sandbox, no loops, and a cost cap checked before a formula runs.
 They are data, kept in shows and `.oqfx` files.
 
@@ -96,7 +96,7 @@ the distribution's FFmpeg on Linux. Its "End to end" workflow checks a full inst
 ## Architecture
 
 ```
-src/model.rs        cue tree, workspace file (.openq JSON, media paths stored relative)
+src/model.rs        cue tree, workspace file (.opnq JSON, media paths stored relative)
 src/dsp.rs          biquad EQ (design, response, processing)
 src/effects.rs      audio/video effect settings (parameter tables, fades, shader uniform)
 src/audio_fx.rs     real-time audio effect chains (delay, reverb, dynamics, ...)

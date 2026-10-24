@@ -64,7 +64,7 @@ impl App {
         let Some(tag) = self.primary().and_then(|id| show.ws.cue_list.find(id)).map(|c| c.kind.tag()) else { return };
         if show.ws.settings.clear_template(tag) {
             show.edited_outside_cues();
-            self.notify(crate::tr!("New {kind} cues start from OpenQ's defaults", kind = tag.label().to_string()));
+            self.notify(crate::tr!("New {kind} cues start from OpnQ's defaults", kind = tag.label().to_string()));
         }
     }
 

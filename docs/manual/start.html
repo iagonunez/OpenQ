@@ -4,7 +4,7 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
 <!-- Built by tools/build_manual.py around the content block below: edit only that, then run the script. -->
-<title>Getting started · OpenQ User Manual</title>
+<title>Getting started · OpnQ User Manual</title>
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Barlow+Condensed:wght@500;600;700&family=Inter:wght@400;500;600&family=JetBrains+Mono:wght@400;500&display=swap">
@@ -44,7 +44,7 @@
 
 <main>
 <header class="chapter-head">
-  <div class="eyebrow">Chapter 1 · OpenQ User Manual</div>
+  <div class="eyebrow">Chapter 1 · OpnQ User Manual</div>
   <h1>Getting started</h1>
 </header>
 
@@ -52,8 +52,8 @@
 <section id="start">
   <h2><span class="n">1.1</span>Installing and first show</h2>
   <h3 id="installing">Installing</h3>
-  <p>OpenQ is installed by its installer, <a href="https://github.com/iagonunez/OQup">OQup</a>. OQup downloads the newest
-  release of OpenQ for your system, checks it, adds the FFmpeg libraries it uses for video (an LGPL build) and installs it
+  <p>OpnQ is installed by its installer, <a href="https://github.com/iagonunez/OQup">OQup</a>. OQup downloads the newest
+  release of OpnQ for your system, checks it, adds the FFmpeg libraries it uses for video (an LGPL build) and installs it
   with a menu entry. With the lighting workspace (the default) it also installs <strong>OQVis</strong>, the 3D visualiser
   that <a href="lighting.html#lighting-oqvis">Open in OQVis</a> starts. Your shows are never touched.</p>
   <div class="note tip"><span class="label">Before you start</span><p>You need an internet connection. On Linux OQup may
@@ -65,12 +65,12 @@
 <pre><code>curl --proto '=https' --tlsv1.2 -fsSL https://github.com/iagonunez/OQup/releases/latest/download/install.sh | sh</code></pre></li>
     <li>The first step downloads OQup, checks it against the published checksum and puts it in
     <code>~/.local/bin</code>. Then it starts.</li>
-    <li>If system libraries OpenQ needs are missing (ALSA, PipeWire, udev), OQup lists them and asks before installing
+    <li>If system libraries OpnQ needs are missing (ALSA, PipeWire, udev), OQup lists them and asks before installing
     them with your distribution's package manager. Answer yes; the package manager asks for your password.</li>
-    <li>Leave the terminal open until it says that OpenQ is installed.</li>
-    <li>Open OpenQ from your applications menu (search for "OpenQ"), or type <code>openq</code> in a terminal.</li>
+    <li>Leave the terminal open until it says that OpnQ is installed.</li>
+    <li>Open OpnQ from your applications menu (search for "OpnQ"), or type <code>opnq</code> in a terminal.</li>
   </ol>
-  <p>If the terminal says <code>openq: command not found</code>, <code>~/.local/bin</code> is not in your PATH yet. Add it
+  <p>If the terminal says <code>opnq: command not found</code>, <code>~/.local/bin</code> is not in your PATH yet. Add it
   once, then open a new terminal:</p>
 <pre><code>fish_add_path ~/.local/bin                                 # fish
 echo 'export PATH="$HOME/.local/bin:$PATH"' &gt;&gt; ~/.bashrc   # bash (zsh: ~/.zshrc)</code></pre>
@@ -80,7 +80,7 @@ echo 'export PATH="$HOME/.local/bin:$PATH"' &gt;&gt; ~/.bashrc   # bash (zsh: ~/
     <li>Open Terminal (press ⌘ Space and type "Terminal").</li>
     <li>Paste the command below and press Enter:
 <pre><code>curl --proto '=https' --tlsv1.2 -fsSL https://github.com/iagonunez/OQup/releases/latest/download/install.sh | sh</code></pre></li>
-    <li>The app is placed at <code>~/Applications/OpenQ.app</code>, the Applications folder in your home folder, with
+    <li>The app is placed at <code>~/Applications/OpnQ.app</code>, the Applications folder in your home folder, with
     FFmpeg inside it. Open it from the Finder (Go → Home → Applications) or with Spotlight.</li>
   </ol>
 
@@ -89,11 +89,11 @@ echo 'export PATH="$HOME/.local/bin:$PATH"' &gt;&gt; ~/.bashrc   # bash (zsh: ~/
     <li>Open PowerShell: press the Start key, type <em>PowerShell</em> and press Enter.</li>
     <li>Paste the command below and press Enter:
 <pre><code>powershell -ExecutionPolicy Bypass -c "irm https://github.com/iagonunez/OQup/releases/latest/download/install.ps1 | iex"</code></pre></li>
-    <li>When it is done, OpenQ is in the Start menu and listed under <em>Settings → Apps → Installed apps</em>.</li>
+    <li>When it is done, OpnQ is in the Start menu and listed under <em>Settings → Apps → Installed apps</em>.</li>
   </ol>
 
   <h4>Building on your own computer</h4>
-  <p><code>oqup install --build-source</code> compiles OpenQ (and OQVis) from the source code on your computer instead of
+  <p><code>oqup install --build-source</code> compiles OpnQ (and OQVis) from the source code on your computer instead of
   downloading the release. OQup installs what the build needs first: a private copy of Rust if there is none, a C
   compiler and libclang, and FFmpeg (on Linux from your distribution's packages, after asking; on macOS Apple's Command
   Line Tools, then FFmpeg compiled from its source; on Windows Microsoft's C++ Build Tools, whose installer opens for you
@@ -107,20 +107,20 @@ echo 'export PATH="$HOME/.local/bin:$PATH"' &gt;&gt; ~/.bashrc   # bash (zsh: ~/
   </ul>
 
   <h4>Updating and removing</h4>
-  <p>To get a newer version, run <code>oqup update</code>: it installs OpenQ again when a new version is released, the same
+  <p>To get a newer version, run <code>oqup update</code>: it installs OpnQ again when a new version is released, the same
   way as last time. <code>oqup versions</code> lists the versions you can install, and <code>oqup install --ref v0.4.0</code>
-  installs one of them. To remove OpenQ, run <code>oqup uninstall</code>; it asks first. Add <code>--purge</code> to remove
-  OQup's downloads, Rust, dependencies and build cache as well. On Windows you can also remove OpenQ from
+  installs one of them. To remove OpnQ, run <code>oqup uninstall</code>; it asks first. Add <code>--purge</code> to remove
+  OQup's downloads, Rust, dependencies and build cache as well. On Windows you can also remove OpnQ from
   <em>Settings → Apps → Installed apps</em>. Your shows are never touched.</p>
-  <p>If you only need cues, <code>oqup install --no-lighting</code> installs OpenQ without the lighting workspace (no
+  <p>If you only need cues, <code>oqup install --no-lighting</code> installs OpnQ without the lighting workspace (no
   Lighting view, Light cues, fixture downloads or OQVis). Shows with a lighting design still open, keep it and play their
   Light cues. <code>oqup install --lighting</code> adds it back; <code>--no-oqvis</code> keeps the lighting but leaves
   OQVis out.</p>
   <p>To run a copy you are working on from source instead:</p>
 <pre><code>cargo run --release                  # start with an empty show
-cargo run --release -- show.openq    # open a saved show</code></pre>
-  <p>This manual is built into OpenQ: choose <span class="menu">Help → User manual</span> or press <kbd>F1</kbd>
-  to open it in your web browser, in the language of the interface. It works without an internet connection and always matches your version of OpenQ.</p>
+cargo run --release -- show.opnq    # open a saved show</code></pre>
+  <p>This manual is built into OpnQ: choose <span class="menu">Help → User manual</span> or press <kbd>F1</kbd>
+  to open it in your web browser, in the language of the interface. It works without an internet connection and always matches your version of OpnQ.</p>
   <h3 id="your-first-show">Your first show</h3>
   <ol>
     <li>Drag audio or video files from your file manager onto the window. Each file becomes a cue.
@@ -128,14 +128,14 @@ cargo run --release -- show.openq    # open a saved show</code></pre>
     <li>Add other cues from the toolbar above the cue list, or press <kbd>Ctrl</kbd>+<kbd>1</kbd>…<kbd>0</kbd>.</li>
     <li>Select a cue and set its options in the inspector at the bottom of the window.</li>
     <li>Click the first cue to put the <strong>playhead</strong> on it, then press <kbd>Space</kbd> (GO).</li>
-    <li>Save with <kbd>Ctrl</kbd>+<kbd>S</kbd>. Shows are saved as <code>.openq</code> files. Media paths are
+    <li>Save with <kbd>Ctrl</kbd>+<kbd>S</kbd>. Shows are saved as <code>.opnq</code> files. Media paths are
     stored relative to the show file, so you can move the show folder as a whole.</li>
   </ol>
   <div class="note tip"><span class="label">Tip</span><p>Keep the show file in the same folder as its media.
   Then the folder can be copied to another computer and opened there unchanged.</p></div>
   <h3 id="bundling-a-show">Bundling a show</h3>
   <p><span class="menu">File → Bundle show…</span> copies the show and every sound and movie it plays into one folder:
-  pick where, and OpenQ makes a folder named after the show with the show file in it and the media in
+  pick where, and OpnQ makes a folder named after the show with the show file in it and the media in
   <code>audio/</code> and <code>video/</code>. Copy that folder to another computer, or keep it as an archive. Files
   missing from the disk are listed and left out. The show you have open doesn't change.</p>
 </section>
@@ -143,7 +143,7 @@ cargo run --release -- show.openq    # open a saved show</code></pre>
 <section id="window">
   <h2><span class="n">1.2</span>The main window</h2>
   <figure>
-    <img src="img/edit-mode.webp" width="1400" height="1527" alt="OpenQ main window in edit mode: GO button, standby card, transport, meters, toolbar, cue list and inspector.">
+    <img src="img/edit-mode.webp" width="1400" height="1527" alt="OpnQ main window in edit mode: GO button, standby card, transport, meters, toolbar, cue list and inspector.">
     <figcaption>Edit mode with the first cue selected and the inspector showing its Time &amp; Loops tab.</figcaption>
   </figure>
   <ul>
@@ -250,7 +250,7 @@ cargo run --release -- show.openq    # open a saved show</code></pre>
   LFE output), or a ring for other channel counts. The presets set those up, and <em>Use default</em> goes back to
   following the device. Front, where the stage is, is at the top. Several speakers can share an output.</p>
   <p>Remote access settings and device keys belong to the computer, not the show. They live in
-  <code>~/.config/openq/remote.json</code>, readable only by your user account.</p>
+  <code>~/.config/opnq/remote.json</code>, readable only by your user account.</p>
 </section>
 
 <section id="keys">

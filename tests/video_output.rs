@@ -1,18 +1,18 @@
-//! The video output process end to end: layers shown by the real `openq --video-output`
+//! The video output process end to end: layers shown by the real `opnq --video-output`
 //! (snapshots read back from its GPU), YUV movies converted in the shader, and a crash of the
 //! process brought back with its layers. Skipped where no display or GPU is available.
 #![cfg(feature = "video")]
 
-use openq::model::{CameraCue, CueId, Stage, VideoCue};
-use openq::vout::link::{StageEvent, Status, VideoLink};
-use openq::vout::proto::Windows;
+use opnq::model::{CameraCue, CueId, Stage, VideoCue};
+use opnq::vout::link::{StageEvent, Status, VideoLink};
+use opnq::vout::proto::Windows;
 use std::path::{Path, PathBuf};
 use std::time::{Duration, Instant};
 
 fn link() -> Option<VideoLink> {
     // SAFETY: set before any thread of this test reads the environment.
-    unsafe { std::env::set_var("OPENQ_VIDEO_EXE", env!("CARGO_BIN_EXE_openq")) };
-    openq::media::video::init().ok()?;
+    unsafe { std::env::set_var("OPNQ_VIDEO_EXE", env!("CARGO_BIN_EXE_opnq")) };
+    opnq::media::video::init().ok()?;
     VideoLink::new().ok()
 }
 
@@ -55,7 +55,7 @@ fn centre(img: &image::RgbaImage) -> [u8; 3] {
 }
 
 fn dir() -> PathBuf {
-    let d = std::env::temp_dir().join(format!("openq-vout-test-{}", std::process::id()));
+    let d = std::env::temp_dir().join(format!("opnq-vout-test-{}", std::process::id()));
     std::fs::create_dir_all(&d).unwrap();
     d
 }
@@ -77,7 +77,7 @@ fn layers_show_survive_a_crash_and_go_black() {
     let px = centre(&img);
     assert!(px[0] > 200 && px[1] < 60 && px[2] < 60, "{px:?}");
 
-    // The process crashes: OpenQ starts a new one and the layer comes back.
+    // The process crashes: OpnQ starts a new one and the layer comes back.
     link.crash();
     let restarted = wait(&mut link, 20, |l| matches!(l.status(), Status::Restarting(_) | Status::Starting)).unwrap_or(false);
     assert!(restarted, "crash not noticed");
@@ -120,7 +120,7 @@ fn layers_show_survive_a_crash_and_go_black() {
 fn fades_and_loops_survive_a_crash_and_idle_outputs_close() {
     let Some(mut link) = link() else { return };
     // (Not under `dir()`: the other test removes that when it ends.)
-    let dir = std::env::temp_dir().join(format!("openq-vout-fades-{}", std::process::id()));
+    let dir = std::env::temp_dir().join(format!("opnq-vout-fades-{}", std::process::id()));
     std::fs::create_dir_all(&dir).unwrap();
     let mut stage = Stage { width: 320, height: 180, close_when_idle: true, ..Stage::new("Fades") };
     link.set_stages(std::slice::from_ref(&stage));
@@ -138,12 +138,12 @@ fn fades_and_loops_survive_a_crash_and_idle_outputs_close() {
     let thumb = wait(&mut link, 10, |l| l.thumbnail(cam).is_some()).unwrap_or(false);
     assert!(thumb, "no live picture");
     let (_, t) = link.thumbnail(cam).unwrap();
-    assert!(t.size[0] <= openq::vout::proto::THUMB_SIDE && t.rgba.len() == (t.size[0] * t.size[1] * 4) as usize);
+    assert!(t.size[0] <= opnq::vout::proto::THUMB_SIDE && t.rgba.len() == (t.size[0] * t.size[1] * 4) as usize);
     assert_eq!(t.stage_size, [64.0, 36.0]);
     assert!(t.rgba[0] > 200 && t.rgba[1] < 60, "{:?}", &t.rgba[..4]);
     link.watch(None);
     assert!(link.thumbnail(cam).is_none());
-    let fade = openq::engine::FadeRequest {
+    let fade = opnq::engine::FadeRequest {
         volume_db: None,
         opacity: Some(0.5),
         geometry: None,
@@ -225,7 +225,7 @@ fn fades_and_loops_survive_a_crash_and_idle_outputs_close() {
 #[test]
 fn small_outputs_dont_alias() {
     let Some(mut link) = link() else { return };
-    let dir = std::env::temp_dir().join(format!("openq-vout-mips-{}", std::process::id()));
+    let dir = std::env::temp_dir().join(format!("opnq-vout-mips-{}", std::process::id()));
     std::fs::create_dir_all(&dir).unwrap();
     let stage = Stage { width: 4096, height: 2304, ..Stage::new("Big") };
     link.set_stages(std::slice::from_ref(&stage));

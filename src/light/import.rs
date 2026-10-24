@@ -3,13 +3,13 @@
 //! * `.json`: Open Fixture Library ([`super::ofl`]).
 //! * `.gdtf`: General Device Type Format, a zip with `description.xml` ([`super::gdtf`]).
 //! * `.qxf`: QLC+ fixture definition ([`super::qxf`]).
-//! * `.oqfixture`: OpenQ's own fixture type file ([`super::fixlib`]).
+//! * `.oqfixture`: OpnQ's own fixture type file ([`super::fixlib`]).
 //!
 //! Readers map each channel to one [`Attribute`]. A mode can hold an attribute once per unit
 //! (the fixture or one cell), so a second channel with the same attribute takes its
 //! [`alternates`] (a second gobo wheel becomes `Gobo2`, a second control channel `Control2`), else an
 //! [`Attribute::Extra`] channel named after the file's channel; so does a channel whose function
-//! OpenQ doesn't know.
+//! OpnQ doesn't know.
 
 use super::model::{Attribute, ChannelDef, FixtureType};
 
@@ -31,8 +31,8 @@ pub enum Format {
     Gdtf,
     /// QLC+ `.qxf` (XML).
     Qxf,
-    /// OpenQ fixture type (`.oqfixture`).
-    OpenQ,
+    /// OpnQ fixture type (`.oqfixture`).
+    OpnQ,
 }
 
 impl Format {
@@ -43,7 +43,7 @@ impl Format {
             "json" => Format::Ofl,
             "gdtf" => Format::Gdtf,
             "qxf" => Format::Qxf,
-            e if e == super::fixlib::EXTENSION => Format::OpenQ,
+            e if e == super::fixlib::EXTENSION => Format::OpnQ,
             _ => return None,
         })
     }
@@ -63,7 +63,7 @@ pub fn import(bytes: &[u8], format: Format, folder: &str) -> anyhow::Result<Impo
         Format::Ofl => super::ofl::import(text()?, folder),
         Format::Gdtf => super::gdtf::import(bytes),
         Format::Qxf => super::qxf::import(text()?),
-        Format::OpenQ => Ok(Imported { fixture: super::fixlib::read(text()?)?, notes: Vec::new() }),
+        Format::OpnQ => Ok(Imported { fixture: super::fixlib::read(text()?)?, notes: Vec::new() }),
     }
 }
 

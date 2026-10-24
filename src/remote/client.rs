@@ -78,7 +78,7 @@ impl Link {
         let (tx, rx) = std::sync::mpsc::channel();
         let (sh, addr) = (shared.clone(), address.trim().to_string());
         std::thread::Builder::new()
-            .name("openq-remote-link".into())
+            .name("opnq-remote-link".into())
             .spawn(move || {
                 let (reason, needs_pairing) = match run(&sh, &addr, auth, &config, rx) {
                     Ok(()) => ("Disconnected".to_string(), false),
@@ -207,7 +207,7 @@ fn run(
 
     // Writer: queued messages, plus a ping every second so the main device knows we're here.
     let sh = shared.clone();
-    let writer = std::thread::Builder::new().name("openq-remote-out".into()).spawn(move || {
+    let writer = std::thread::Builder::new().name("opnq-remote-out".into()).spawn(move || {
         while !sh.stop.load(Ordering::Relaxed) {
             let msg = match outbox.recv_timeout(Duration::from_secs(1)) {
                 Ok(m) => m,

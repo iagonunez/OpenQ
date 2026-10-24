@@ -1,13 +1,13 @@
-//! Build the fixture library shipped with OpenQ:
+//! Build the fixture library shipped with OpnQ:
 //! `cargo run --release --example fixture_library -- <out dir> [--gdtf <dir>] [--ofl] [--makers a,b,c]`
 //!
 //! `--gdtf` converts every `.gdtf` in a folder, `--ofl` downloads the Open Fixture Library
 //! (all manufacturers, or only the listed keys with `--makers`). Writes one `.oqfixture` per type.
 //!
 //! `cargo run --release --example fixture_library -- --pack <file> <dir>…` packs the `.oqfixture`
-//! files of those folders into the archive OpenQ embeds (`assets/fixtures/library.gz`).
+//! files of those folders into the archive OpnQ embeds (`assets/fixtures/library.gz`).
 
-use openq::light::{fixlib, import, oflsite};
+use opnq::light::{fixlib, import, oflsite};
 
 fn main() {
     let args: Vec<String> = std::env::args().skip(1).collect();

@@ -1,6 +1,6 @@
-//! OpenQ's side of the video output process: [`VideoLink`] stands where the video player used to
-//! be. It starts `openq --video-output` the first time video is needed, sends it cue commands
-//! with start times on a shared clock, and plays movie soundtracks itself (into OpenQ's mixer,
+//! OpnQ's side of the video output process: [`VideoLink`] stands where the video player used to
+//! be. It starts `opnq --video-output` the first time video is needed, sends it cue commands
+//! with start times on a shared clock, and plays movie soundtracks itself (into OpnQ's mixer,
 //! like audio cues). If the process crashes, hangs or can't start, the show goes on: the link
 //! restarts it (with growing pauses) and brings back the layers that were showing.
 
@@ -103,7 +103,7 @@ enum FadeStep {
 /// restart).
 const KEEP_FADES: usize = 32;
 
-/// A layer as OpenQ last asked for it (to bring it back after a restart).
+/// A layer as OpnQ last asked for it (to bring it back after a restart).
 struct Live {
     layer: Layer,
     at: Instant,
@@ -133,7 +133,7 @@ impl Live {
 /// Movies and texts to open ahead of GO.
 type Preload = (Vec<(CueId, VideoCue)>, Vec<(CueId, TextCue)>);
 
-/// OpenQ's handle on the video output process (see the module docs).
+/// OpnQ's handle on the video output process (see the module docs).
 pub struct VideoLink {
     proc: Arc<Proc>,
     /// Movie soundtracks, decoded here into the mixer.
@@ -173,7 +173,7 @@ impl VideoLink {
             wake: Condvar::new(),
         });
         let p = proc.clone();
-        std::thread::Builder::new().name("openq-video-link".into()).spawn(move || supervise(&p))?;
+        std::thread::Builder::new().name("opnq-video-link".into()).spawn(move || supervise(&p))?;
         Ok(Self {
             proc,
             tracks: VideoOutput::soundtracks()?,
@@ -632,21 +632,21 @@ fn look(layer: &Layer) -> (f32, crate::model::Geometry, Vec<crate::effects::Vide
     (v.opacity, v.geometry, v.video_fx.clone())
 }
 
-/// The program to run as the video output: this executable, or `openq` next to it (tests and
-/// examples run from other executables); `OPENQ_VIDEO_EXE` overrides.
+/// The program to run as the video output: this executable, or `opnq` next to it (tests and
+/// examples run from other executables); `OPNQ_VIDEO_EXE` overrides.
 fn video_exe() -> anyhow::Result<PathBuf> {
-    if let Some(p) = std::env::var_os("OPENQ_VIDEO_EXE") {
+    if let Some(p) = std::env::var_os("OPNQ_VIDEO_EXE") {
         return Ok(p.into());
     }
-    // Unit tests never open windows (the `openq` next to them may be stale, too).
+    // Unit tests never open windows (the `opnq` next to them may be stale, too).
     if cfg!(test) {
         anyhow::bail!("no video output in unit tests");
     }
     let exe = std::env::current_exe()?;
-    if exe.file_stem().is_some_and(|s| s == "openq") {
+    if exe.file_stem().is_some_and(|s| s == "opnq") {
         return Ok(exe);
     }
-    let name = format!("openq{}", std::env::consts::EXE_SUFFIX);
+    let name = format!("opnq{}", std::env::consts::EXE_SUFFIX);
     let mut dir = exe.parent();
     for _ in 0..2 {
         let Some(d) = dir else { break };
@@ -656,7 +656,7 @@ fn video_exe() -> anyhow::Result<PathBuf> {
         }
         dir = d.parent();
     }
-    anyhow::bail!("the video output program (openq) was not found next to {}", exe.display())
+    anyhow::bail!("the video output program (opnq) was not found next to {}", exe.display())
 }
 
 /// The supervisor thread: start the process once wanted, keep it running, restart it when it
@@ -753,7 +753,7 @@ fn run_child(proc: &Proc) -> Ended {
     // Its stderr goes on to ours; the last lines explain a crash.
     let tail: Arc<Mutex<VecDeque<String>>> = Default::default();
     let t = tail.clone();
-    let _ = std::thread::Builder::new().name("openq-video-stderr".into()).spawn(move || {
+    let _ = std::thread::Builder::new().name("opnq-video-stderr".into()).spawn(move || {
         for line in BufReader::new(stderr).lines().map_while(Result::ok) {
             eprintln!("[video] {line}");
             let mut t = t.lock();
@@ -764,7 +764,7 @@ fn run_child(proc: &Proc) -> Ended {
         }
     });
     let (ev_tx, ev_rx) = mpsc::channel::<FromVideo>();
-    let _ = std::thread::Builder::new().name("openq-video-read".into()).spawn(move || {
+    let _ = std::thread::Builder::new().name("opnq-video-read".into()).spawn(move || {
         let mut r = BufReader::new(stdout);
         let mut buf = Vec::new();
         while let Ok(Some(m)) = proto::read::<FromVideo>(&mut r, &mut buf) {
@@ -774,7 +774,7 @@ fn run_child(proc: &Proc) -> Ended {
         }
     });
     let (tx, rx) = mpsc::channel::<ToVideo>();
-    let _ = std::thread::Builder::new().name("openq-video-write".into()).spawn(move || {
+    let _ = std::thread::Builder::new().name("opnq-video-write".into()).spawn(move || {
         for m in rx {
             if proto::write(&mut stdin, &m).is_err() {
                 break;

@@ -81,7 +81,7 @@ impl OscServer {
         sock.set_read_timeout(Some(POLL))?;
         let stop = Arc::new(AtomicBool::new(false));
         let stop2 = stop.clone();
-        let thread = std::thread::Builder::new().name("openq-osc".into()).spawn(move || {
+        let thread = std::thread::Builder::new().name("opnq-osc".into()).spawn(move || {
             let mut buf = [0u8; rosc::decoder::MTU];
             let mut rate = Rates::default();
             let mut warnings = Warnings::default();

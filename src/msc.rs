@@ -3,10 +3,10 @@
 //!
 //! MIDI cues send MSC too ([`encode`]).
 //!
-//! A message is `F0 7F <device> 02 <command format> <command> <data> F7`. OpenQ answers its own
+//! A message is `F0 7F <device> 02 <command format> <command> <data> F7`. OpnQ answers its own
 //! device ID, its group ID (if set) and the all-call ID 7F, for one command format or any
 //! ([`MscSettings`]). The data of the cue commands is a cue number, a cue list and a cue path, each
-//! optional, ASCII, separated by 00 (`TIMED_GO` puts a time before them, which OpenQ skips).
+//! optional, ASCII, separated by 00 (`TIMED_GO` puts a time before them, which OpnQ skips).
 //!
 //! What each command does ([`commands`]):
 //! * `GO` — with a cue number, puts the playhead on it and GOes when it is at the top of the current

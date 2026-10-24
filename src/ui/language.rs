@@ -22,7 +22,7 @@ impl App {
             .anchor(egui::Align2::CENTER_CENTER, [0.0, 0.0])
             .fixed_size([360.0, 0.0])
             .show(ctx, |ui| {
-                ui.label(t("Choose the language of OpenQ:"));
+                ui.label(t("Choose the language of OpnQ:"));
                 ui.add_space(8.0);
                 for l in Lang::ALL {
                     let on = i18n::lang() == l;

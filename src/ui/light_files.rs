@@ -39,7 +39,7 @@ impl App {
             done.lock().push(r);
             ctx.request_repaint();
         };
-        if let Err(e) = std::thread::Builder::new().name("openq-design-import".into()).spawn(job) {
+        if let Err(e) = std::thread::Builder::new().name("opnq-design-import".into()).spawn(job) {
             self.notify_error(tr!("Can't import the file: {e}", e = e.to_string()));
         }
     }
@@ -85,7 +85,7 @@ impl App {
     pub(super) fn export_usitt(&mut self) {
         let (design, scope) = {
             let show = self.show.lock();
-            let scope = show.path.as_ref().and_then(|p| p.file_stem()).map(|s| s.to_string_lossy().into_owned()).unwrap_or_else(|| "OpenQ".into());
+            let scope = show.path.as_ref().and_then(|p| p.file_stem()).map(|s| s.to_string_lossy().into_owned()).unwrap_or_else(|| "OpnQ".into());
             (show.ws.lighting.clone(), scope)
         };
         let Some(path) = rfd::FileDialog::new().add_filter(t("USITT ASCII"), &usitt::EXTENSIONS[..1]).set_file_name(format!("{scope}.asc")).save_file() else { return };

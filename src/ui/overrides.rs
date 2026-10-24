@@ -22,7 +22,7 @@ impl App {
             .resizable(false)
             .default_width(440.0)
             .show(ctx, |ui| {
-                ui.label(RichText::new(t("Switch a kind of input or output off for the whole show. OpenQ always starts with everything on.")).small().color(theme::TEXT_DIM));
+                ui.label(RichText::new(t("Switch a kind of input or output off for the whole show. OpnQ always starts with everything on.")).small().color(theme::TEXT_DIM));
                 ui.add_space(6.0);
                 for o in Override::ALL {
                     let mut on = !overrides::is_off(off, o);

@@ -1,10 +1,10 @@
-//! Finding OpenQ instances on the local network: a replica broadcasts a query on UDP and
+//! Finding OpnQ instances on the local network: a replica broadcasts a query on UDP and
 //! every main device with remote access on answers with its id, name and port. Nothing secret
 //! is exchanged; pairing and authentication happen over TCP afterwards.
 //!
 //! The query goes to 255.255.255.255 (which most systems send out of one interface only), to
 //! each interface's own broadcast address (a computer on a show network and on the venue's) and
-//! to loopback. Main devices also announce themselves over mDNS (DNS-SD service `_openq._tcp`,
+//! to loopback. Main devices also announce themselves over mDNS (DNS-SD service `_opnq._tcp`,
 //! [`Announcer`]) and a search browses for them: broadcasts never cross a router, but networks
 //! split into VLANs or subnets often pass mDNS on through a reflector (an "mDNS gateway" in the
 //! switches or routers). Without one, type the address.
@@ -17,9 +17,9 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::{Duration, Instant};
 use uuid::Uuid;
 
-const QUERY: &[u8] = b"OPENQ-DISCOVER/1";
+const QUERY: &[u8] = b"OPNQ-DISCOVER/1";
 /// mDNS (DNS-SD) service type main devices announce.
-pub const SERVICE: &str = "_openq._tcp.local.";
+pub const SERVICE: &str = "_opnq._tcp.local.";
 /// Answers sent per second at most: the answer is bigger than the query, so without a cap
 /// queries with a forged sender address would turn this into a traffic amplifier.
 const ANSWERS_PER_SECOND: u32 = 20;
@@ -59,7 +59,7 @@ impl Budget {
 
 #[derive(Serialize, Deserialize, Clone, Debug, PartialEq)]
 struct Announce {
-    openq: u32,
+    opnq: u32,
     id: Uuid,
     name: String,
     port: u16,
@@ -92,7 +92,7 @@ pub fn respond(
 ) -> std::io::Result<std::thread::JoinHandle<()>> {
     let sock = UdpSocket::bind((Ipv4Addr::UNSPECIFIED, DISCOVERY_PORT))?;
     sock.set_read_timeout(Some(STOP_CHECK))?;
-    std::thread::Builder::new().name("openq-discovery".into()).spawn(move || {
+    std::thread::Builder::new().name("opnq-discovery".into()).spawn(move || {
         let mut buf = [0u8; 64];
         let mut budget = Budget::new(ANSWERS_PER_SECOND);
         while !stop.load(Ordering::Relaxed) {
@@ -100,7 +100,7 @@ pub fn respond(
                 && &buf[..n] == QUERY
                 && budget.take()
             {
-                let a = Announce { openq: PROTOCOL, id, name: name(), port };
+                let a = Announce { opnq: PROTOCOL, id, name: name(), port };
                 if let Ok(bytes) = serde_json::to_vec(&a) {
                     let _ = sock.send_to(&bytes, from);
                 }
@@ -110,7 +110,7 @@ pub fn respond(
 }
 
 /// A main device announced over mDNS while this lives ([`SERVICE`]; instance name = its id, TXT
-/// `id`, `name`, `openq` = protocol). Dropping it says goodbye and stops the mDNS thread.
+/// `id`, `name`, `opnq` = protocol). Dropping it says goodbye and stops the mDNS thread.
 pub struct Announcer {
     daemon: mdns_sd::ServiceDaemon,
     fullname: String,
@@ -124,8 +124,8 @@ impl Announcer {
         let instance = id.simple().to_string();
         // A TXT entry holds 255 bytes, key included.
         let name = clean_name(name);
-        let props = [("id", instance.as_str()), ("name", name.as_str()), ("openq", &PROTOCOL.to_string())];
-        let host = format!("openq-{}.local.", &instance[..12]);
+        let props = [("id", instance.as_str()), ("name", name.as_str()), ("opnq", &PROTOCOL.to_string())];
+        let host = format!("opnq-{}.local.", &instance[..12]);
         let info = mdns_sd::ServiceInfo::new(SERVICE, &instance, &host, "", port, &props[..])?.enable_addr_auto();
         let fullname = info.get_fullname().to_string();
         if let Err(e) = daemon.register(info) {
@@ -186,7 +186,7 @@ pub fn search(wait: Duration) -> std::io::Result<Vec<Found>> {
             Err(_) => continue,
         };
         let Ok(a) = serde_json::from_slice::<Announce>(&buf[..n]) else { continue };
-        add(&mut found, Found { id: a.id, name: clean_name(&a.name), address: SocketAddr::new(from.ip(), a.port), protocol: a.openq });
+        add(&mut found, Found { id: a.id, name: clean_name(&a.name), address: SocketAddr::new(from.ip(), a.port), protocol: a.opnq });
     }
     if let Some((daemon, rx)) = mdns {
         while let Ok(event) = rx.try_recv() {
@@ -216,7 +216,7 @@ fn add(found: &mut Vec<Found>, f: Found) {
 fn from_mdns(s: &mdns_sd::ResolvedService) -> Option<Found> {
     let txt = &s.txt_properties;
     let id = Uuid::parse_str(txt.get_property_val_str("id")?).ok()?;
-    let protocol = txt.get_property_val_str("openq")?.parse().ok()?;
+    let protocol = txt.get_property_val_str("opnq")?.parse().ok()?;
     let name = clean_name(txt.get_property_val_str("name").unwrap_or_default());
     let ips: Vec<std::net::IpAddr> = s.get_addresses().iter().map(|a| a.to_ip_addr()).collect();
     let rank = |ip: &std::net::IpAddr| match ip {

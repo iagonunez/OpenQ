@@ -4,7 +4,7 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
 <!-- Built by tools/build_manual.py around the content block below: edit only that, then run the script. -->
-<title>Cues and timing · OpenQ User Manual</title>
+<title>Cues and timing · OpnQ User Manual</title>
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Barlow+Condensed:wght@500;600;700&family=Inter:wght@400;500;600&family=JetBrains+Mono:wght@400;500&display=swap">
@@ -45,7 +45,7 @@
 
 <main>
 <header class="chapter-head">
-  <div class="eyebrow">Chapter 2 · OpenQ User Manual</div>
+  <div class="eyebrow">Chapter 2 · OpnQ User Manual</div>
   <h1>Cues and timing</h1>
 </header>
 
@@ -53,7 +53,7 @@
 <section id="cues">
   <h2><span class="n">2.1</span>Cue types</h2>
   <div class="types">
-    <div class="type"><b><span class="ms" aria-hidden="true">&#xe050;</span>Audio</b><span class="d">Plays a sound file through the OpenQ mixer, with trims, loops, slices, EQ and routing.</span></div>
+    <div class="type"><b><span class="ms" aria-hidden="true">&#xe050;</span>Audio</b><span class="d">Plays a sound file through the OpnQ mixer, with trims, loops, slices, EQ and routing.</span></div>
     <div class="type"><b><span class="ms" aria-hidden="true">&#xe404;</span>Video</b><span class="d">Plays a movie or still image on a stage; its soundtrack goes through the mixer.</span></div>
     <div class="type"><b><span class="ms" aria-hidden="true">&#xe262;</span>Text</b><span class="d">Shows text on a stage, such as titles, surtitles or cue lights for performers.</span></div>
     <div class="type"><b><span class="ms" aria-hidden="true">&#xe2c7;</span>Group</b><span class="d">Holds other cues and fires them in one of four ways.</span></div>
@@ -116,7 +116,7 @@
   <p>A MIDI cue sends one message out of a MIDI output: pick the <strong>output</strong> (or <em>First MIDI output</em>)
   and the <strong>message</strong>. Notes and control changes take a channel, a number and a value; program change a
   program; pitch bend a value from 0 to 16383 (8192 is the centre). <strong>MIDI Show Control</strong> sends a command (GO,
-  STOP, RESUME, LOAD…) with a cue number and list to a device ID (127 = all devices) in a command format, so OpenQ can
+  STOP, RESUME, LOAD…) with a cue number and list to a device ID (127 = all devices) in a command format, so OpnQ can
   run a lighting desk or another show computer. <strong>SysEx</strong> sends any System Exclusive message typed in hex
   (<code>F0 … F7</code>). The bytes that will be sent are shown under the settings.</p>
   <h3 id="midi-file-cues">MIDI File cues</h3>
@@ -193,7 +193,7 @@
 
 <section id="timecode">
   <h2><span class="n">2.4</span>Timecode</h2>
-  <p>OpenQ can run a cue list from incoming SMPTE timecode, for a show locked to a video, a band's
+  <p>OpnQ can run a cue list from incoming SMPTE timecode, for a show locked to a video, a band's
   click track or a lighting desk. It reads <strong>LTC</strong> (timecode as an audio signal) on an audio input or
   <strong>MTC</strong> (MIDI Time Code) on a MIDI input, at 24, 25, 29.97 drop-frame or 30 fps.</p>
   <h3 id="setting-up-a-cue-list">Setting up a cue list</h3>

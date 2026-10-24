@@ -59,7 +59,7 @@ pub(crate) struct PlaybackUi {
 }
 
 impl PlaybackUi {
-    /// Opens the settings window of a playback button (`OPENQ_SCREENSHOT_LIGHTING=executor`).
+    /// Opens the settings window of a playback button (`OPNQ_SCREENSHOT_LIGHTING=executor`).
     pub(crate) fn open_editor(&mut self, id: Option<ButtonId>) {
         self.edit = id;
     }
@@ -195,7 +195,7 @@ fn delete_page(l: &mut Lighting, k: u16) {
 }
 
 fn viewport_id() -> ViewportId {
-    ViewportId::from_hash_of("openq-light-playback")
+    ViewportId::from_hash_of("opnq-light-playback")
 }
 
 /// Columns of a card grid and the card width that fills the row.
@@ -312,7 +312,7 @@ impl App {
             }
             i
         };
-        let mut builder = ViewportBuilder::default().with_title(t("OpenQ Playback")).with_icon(super::app_icon()).with_inner_size([960.0, 640.0]);
+        let mut builder = ViewportBuilder::default().with_title(t("OpnQ Playback")).with_icon(super::app_icon()).with_inner_size([960.0, 640.0]);
         if let Some(i) = monitor {
             builder = builder.with_monitor(i);
         }

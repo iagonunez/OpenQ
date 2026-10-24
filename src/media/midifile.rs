@@ -304,7 +304,7 @@ impl Player {
         let errors = Arc::new(Mutex::new(Vec::new()));
         let (s, c, e) = (stop.clone(), control.clone(), errors.clone());
         let thread = std::thread::Builder::new()
-            .name("openq-midi-file".into())
+            .name("opnq-midi-file".into())
             .spawn(move || {
                 if let Err(err) = crate::recovery::catch(|| {
                     play(p, at, &s, &c).map_err(anyhow::Error::msg)
@@ -384,7 +384,7 @@ impl Sounding {
 }
 
 fn play(p: PlayParams, at: Instant, stop: &AtomicBool, control: &Mutex<Control>) -> Result<(), String> {
-    let (mut conn, _) = super::midiout::connect(p.port.as_deref(), "openq-midi-file")?;
+    let (mut conn, _) = super::midiout::connect(p.port.as_deref(), "opnq-midi-file")?;
     let song = load(&p.path)?;
     let rate = p.rate.clamp(crate::limits::RATE.0 as f64, crate::limits::RATE.1 as f64);
     let mut sounding = Sounding::default();

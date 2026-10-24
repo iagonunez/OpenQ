@@ -2,7 +2,7 @@
 //! carries intensity only: a dimmer patch, cues with times and channel levels, groups and
 //! submasters.
 //!
-//! OpenQ ↔ USITT:
+//! OpnQ ↔ USITT:
 //! * a channel is a fixture number, its level the fixture's [`Attribute::Dimmer`] (cells and
 //!   other attributes are not in the format);
 //! * the patch gives each channel the DMX address of its fixture's dimmer channel, counted
@@ -48,7 +48,7 @@ pub struct CueRecord {
     pub down: Option<(f64, f64)>,
     /// Channel → level (0..=1).
     pub levels: BTreeMap<u32, f32>,
-    /// Follow, wait or link given (OpenQ sequences have no autofollow: left out).
+    /// Follow, wait or link given (OpnQ sequences have no autofollow: left out).
     pub follow: bool,
     /// Parts given (merged into the cue, their times left out).
     pub parts: bool,
@@ -405,8 +405,8 @@ fn intensity(l: &Lighting, look: &Look, f: FixtureId) -> Option<f32> {
 pub fn write(l: &Lighting, scope: &str) -> (String, Vec<String>) {
     let mut out = String::new();
     let mut notes = Vec::new();
-    out.push_str(&format!("! {} — OpenQ {}\n", scope.chars().filter(|c| c.is_ascii() && *c != '!').collect::<String>(), env!("CARGO_PKG_VERSION")));
-    out.push_str("Ident 3:0\nManufacturer OpenQ\nConsole OpenQ\nClear All\n");
+    out.push_str(&format!("! {} — OpnQ {}\n", scope.chars().filter(|c| c.is_ascii() && *c != '!').collect::<String>(), env!("CARGO_PKG_VERSION")));
+    out.push_str("Ident 3:0\nManufacturer OpnQ\nConsole OpnQ\nClear All\n");
     // Patch: the fixture's dimmer channel (fixtures without one have only a virtual dimmer).
     let mut patch = Vec::new();
     let mut no_dimmer = 0usize;

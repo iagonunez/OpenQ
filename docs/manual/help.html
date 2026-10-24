@@ -4,7 +4,7 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
 <!-- Built by tools/build_manual.py around the content block below: edit only that, then run the script. -->
-<title>Safety and help · OpenQ User Manual</title>
+<title>Safety and help · OpnQ User Manual</title>
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Barlow+Condensed:wght@500;600;700&family=Inter:wght@400;500;600&family=JetBrains+Mono:wght@400;500&display=swap">
@@ -37,18 +37,18 @@
 
 <main>
 <header class="chapter-head">
-  <div class="eyebrow">Chapter 7 · OpenQ User Manual</div>
+  <div class="eyebrow">Chapter 7 · OpnQ User Manual</div>
   <h1>Safety and help</h1>
 </header>
 
 <!--content-->
 <section id="safety">
   <h2><span class="n">7.1</span>Crash safety</h2>
-  <p>A show has to carry on when something goes wrong. OpenQ keeps problems as small as it can and
+  <p>A show has to carry on when something goes wrong. OpnQ keeps problems as small as it can and
   gets your work back if it does go down.</p>
   <h3 id="autosave-and-recovery">Autosave and recovery</h3>
-  <p>While a show has unsaved changes, OpenQ keeps a copy of it every few seconds. Saving the show,
-  or quitting normally, removes the copy. If OpenQ or the computer goes down, the next start
+  <p>While a show has unsaved changes, OpnQ keeps a copy of it every few seconds. Saving the show,
+  or quitting normally, removes the copy. If OpnQ or the computer goes down, the next start
   offers the copy back:</p>
   <figure class="narrow">
     <img src="img/recovery.webp" width="702" height="378" alt="Recover unsaved work window listing two autosaved shows, each with Recover and Discard buttons, and a Later button.">
@@ -64,10 +64,10 @@
   or power cut during a save leaves the previous version intact.</p>
   <h3 id="when-something-fails-during-a-show">When something fails during a show</h3>
   <div class="table-wrap"><table>
-    <thead><tr><th>What happens</th><th>What OpenQ does</th></tr></thead>
+    <thead><tr><th>What happens</th><th>What OpnQ does</th></tr></thead>
     <tbody>
       <tr><td>The audio device disappears (unplugged, audio server restarted)</td><td>Its sounds stop and the
-      status bar shows <em>audio lost · reconnecting…</em>. OpenQ tries to open the same device again every
+      status bar shows <em>audio lost · reconnecting…</em>. OpnQ tries to open the same device again every
       2 seconds and carries on as soon as it is back. Video and other cues keep running.</td></tr>
       <tr><td>A media file is damaged</td><td>That cue ends with an error in <span class="menu">View → Engine log</span>;
       every other cue plays on.</td></tr>
@@ -78,14 +78,14 @@
       <tr><td>More than 256 sounds at once</td><td>Further audio cues are refused with an error in the log.</td></tr>
     </tbody>
   </table></div>
-  <p>Autosaves and crash reports live in the OpenQ settings folder: <code>~/.config/openq</code> on Linux,
-  <code>~/Library/Application Support/OpenQ</code> on macOS, <code>%APPDATA%\OpenQ</code> on Windows, in
+  <p>Autosaves and crash reports live in the OpnQ settings folder: <code>~/.config/opnq</code> on Linux,
+  <code>~/Library/Application Support/OpnQ</code> on macOS, <code>%APPDATA%\OpnQ</code> on Windows, in
   <code>recovery</code> and <code>crash</code>. A crash report holds what went wrong and where; please
   attach it when you report a problem.</p>
   <p><strong>Error log.</strong> Every warning and error (engine log entries, device failures, failed saves or
-  opens, crashes) is also written, with the date and time in UTC, to <code>logs/openq.log</code> in the same
+  opens, crashes) is also written, with the date and time in UTC, to <code>logs/opnq.log</code> in the same
   folder, so you can look back after the show. <span class="menu">Help → Error log</span> opens it. When it grows
-  past 2 MB it is moved to <code>openq.old.log</code> the next time OpenQ starts.</p>
+  past 2 MB it is moved to <code>opnq.old.log</code> the next time OpnQ starts.</p>
 </section>
 
 <section id="trouble">
@@ -96,7 +96,7 @@
       <tr><td>No sound</td><td>Check the status bar. If it says <em>no audio</em>, pick another device in Settings → Audio.
       Check the master volume and the cue's level and routing.</td></tr>
       <tr><td>A Mic cue is silent</td><td>Check the input device and channels on its I/O tab; the level bar shows whether
-      anything arrives. On macOS and Windows, OpenQ needs permission to use the microphone.</td></tr>
+      anything arrives. On macOS and Windows, OpnQ needs permission to use the microphone.</td></tr>
       <tr><td>Timecode triggers don't fire</td><td>Open the list's <em>Timecode…</em> window and check that it receives
       timecode at the right rate. Cues only fire while timecode runs forward through their trigger time.</td></tr>
       <tr><td>A Camera cue shows nothing</td><td>Check the device on its Camera tab (use <span class="ms" aria-hidden="true">&#xe5d5;</span>
@@ -105,11 +105,11 @@
       Basics tab to find it again. After reconnecting a drive, give it about two seconds to clear.</td></tr>
       <tr><td>A video doesn't appear</td><td>Open the stage window from the Video menu. Check the cue's stage, opacity
       and layer, and look in <span class="menu">View → Engine log</span> for decoder errors. A graphics card can only
-      show pictures up to a certain size (often 8192 or 16384 pixels across). OpenQ shrinks still images, SVGs and text
+      show pictures up to a certain size (often 8192 or 16384 pixels across). OpnQ shrinks still images, SVGs and text
       to fit, but a larger movie is left out: convert it to a smaller size.</td></tr>
       <tr><td>The status bar says <em>audio lost · reconnecting…</em></td><td>The audio device went away. Plug it back in or
-      restart the audio service; OpenQ reconnects by itself. To use another device instead, pick it in Settings → Audio.</td></tr>
-      <tr><td>OpenQ asks to recover unsaved work</td><td>It didn't quit normally last time. See <a href="#safety">Crash safety</a>.</td></tr>
+      restart the audio service; OpnQ reconnects by itself. To use another device instead, pick it in Settings → Audio.</td></tr>
+      <tr><td>OpnQ asks to recover unsaved work</td><td>It didn't quit normally last time. See <a href="#safety">Crash safety</a>.</td></tr>
       <tr><td>GO seems to do nothing</td><td>The cue at the playhead may be disarmed, or the second press may have
       come within double-GO protection.</td></tr>
       <tr><td>A remote device can't find the main device</td><td>Make sure remote access is on and both are on the
@@ -124,25 +124,25 @@
 
 <section id="license">
   <h2><span class="n">7.3</span>License and credits</h2>
-  <p>OpenQ is licensed under the <a href="https://www.apache.org/licenses/LICENSE-2.0">Apache License 2.0</a>.</p>
+  <p>OpnQ is licensed under the <a href="https://www.apache.org/licenses/LICENSE-2.0">Apache License 2.0</a>.</p>
   <div class="table-wrap split"><table>
     <thead><tr><th>You may</th><th>You must</th></tr></thead>
     <tbody>
-      <tr><td>Use OpenQ for anything, commercial included: run paid shows, concerts, tours, events and installations, and be paid to program or operate them.</td><td>Keep the copyright notice, <code>LICENSE.md</code> and <code>NOTICE.md</code> with every copy.</td></tr>
+      <tr><td>Use OpnQ for anything, commercial included: run paid shows, concerts, tours, events and installations, and be paid to program or operate them.</td><td>Keep the copyright notice, <code>LICENSE.md</code> and <code>NOTICE.md</code> with every copy.</td></tr>
       <tr><td>Copy, change and share it.</td><td>Say in the files you change that they were changed.</td></tr>
-      <tr><td>Sell copies, changed versions or services built on it.</td><td>Not use the OpenQ name as a trademark: the license gives no right to it.</td></tr>
+      <tr><td>Sell copies, changed versions or services built on it.</td><td>Not use the OpnQ name as a trademark: the license gives no right to it.</td></tr>
     </tbody>
   </table></div>
-  <pre><code>Copyright 2026 Iago Núñez — OpenQ (https://github.com/iagonunez/OpenQ)</code></pre>
-  <p><span class="menu">Help → About OpenQ and licenses</span> shows the version, the license and every third-party
+  <pre><code>Copyright 2026 Iago Núñez — OpnQ (https://github.com/iagonunez/OpnQ)</code></pre>
+  <p><span class="menu">Help → About OpnQ and licenses</span> shows the version, the license and every third-party
   notice. These are the fonts (Inter, JetBrains Mono and Barlow Condensed under the SIL Open Font License; Material Symbols
-  under Apache 2.0; the fonts built into egui) and the open-source Rust libraries OpenQ is built from, each under its
+  under Apache 2.0; the fonts built into egui) and the open-source Rust libraries OpnQ is built from, each under its
   own license. The same texts are in <code>NOTICE.md</code> and <code>THIRD_PARTY_LICENSES.md</code> next to the program.</p>
-  <div class="note"><span class="label">Video and FFmpeg</span><p>OpenQ plays video with the FFmpeg libraries. On Windows and
-  macOS the installer puts a build without GPL parts inside OpenQ, with its license in the <code>Licenses</code> folder;
-  on Linux OpenQ uses the system's FFmpeg. FFmpeg has its own license. If you pass a built OpenQ on to others, use an
+  <div class="note"><span class="label">Video and FFmpeg</span><p>OpnQ plays video with the FFmpeg libraries. On Windows and
+  macOS the installer puts a build without GPL parts inside OpnQ, with its license in the <code>Licenses</code> folder;
+  on Linux OpnQ uses the system's FFmpeg. FFmpeg has its own license. If you pass a built OpnQ on to others, use an
   FFmpeg without GPL parts, or the GPL 3 covers the whole program. See <code>NOTICE.md</code>.</p></div>
-  <footer>OpenQ · Apache 2.0. Fonts: Inter, JetBrains Mono, Barlow Condensed (SIL OFL 1.1) and Material Symbols (Apache 2.0).</footer>
+  <footer>OpnQ · Apache 2.0. Fonts: Inter, JetBrains Mono, Barlow Condensed (SIL OFL 1.1) and Material Symbols (Apache 2.0).</footer>
 </section>
 <!--/content-->
 

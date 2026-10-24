@@ -1,15 +1,15 @@
-# OpenQ notices
+# OpnQ notices
 
-OpenQ
-Copyright 2026 Iago Núñez — OpenQ (https://github.com/iagonunez/OpenQ)
+OpnQ
+Copyright 2026 Iago Núñez — OpnQ (https://github.com/iagonunez/OpnQ)
 
 This product is licensed under the Apache License 2.0 (see `LICENSE.md`). You may use, copy,
 change, share and sell it for any purpose, including commercial productions such as paid live
 shows. Keep this notice, the copyright line and `LICENSE.md` with every copy, whether changed or
 not.
 
-The parts listed below belong to their authors and keep their own licenses. OpenQ's own license
-doesn't apply to them. When distributing OpenQ (source or binaries), include this file,
+The parts listed below belong to their authors and keep their own licenses. OpnQ's own license
+doesn't apply to them. When distributing OpnQ (source or binaries), include this file,
 `LICENSE.md`, `THIRD_PARTY_LICENSES.md` and the `assets/fonts/*.txt` license files.
 
 ## Fonts bundled in `assets/fonts` (compiled into the program)
@@ -23,7 +23,7 @@ doesn't apply to them. When distributing OpenQ (source or binaries), include thi
 
 **Modifications:** `tools/build_fonts.py` changes these fonts.
 - It fixes the variable fonts at one weight. Material Symbols is also fixed at one fill and optical size.
-- It keeps only the characters and icons OpenQ uses.
+- It keeps only the characters and icons OpnQ uses.
 
 The modified fonts keep their original names, since none of these fonts declares a Reserved Font
 Name. The fonts remain under their own licenses, and they are not sold on their own.
@@ -41,16 +41,16 @@ These come with the `epaint_default_fonts` crate. Their license texts are reprod
 
 ## Rust crates (compiled into the program)
 
-OpenQ is built from 647 open-source crates. Most are under MIT, Apache-2.0, BSD, Zlib, ISC or
+OpnQ is built from 647 open-source crates. Most are under MIT, Apache-2.0, BSD, Zlib, ISC or
 Unicode-3.0 terms. `THIRD_PARTY_LICENSES.md` lists every crate with its version, license and source
 link, followed by the full license texts. Regenerate it with `python3 -I tools/third_party_licenses.py`.
 
 Notable cases:
 - **Symphonia** (audio decoding, 17 crates) and **serialport** are under the Mozilla Public
-  License 2.0. OpenQ uses them unmodified. Their source is available from crates.io and from
+  License 2.0. OpnQ uses them unmodified. Their source is available from crates.io and from
   <https://github.com/pdeljanov/Symphonia> and <https://github.com/serialport/serialport-rs>.
 - Some crates offer several licenses (for example "Apache-2.0 OR GPL-2.0" for `self_cell`, and
-  "MIT OR GPL-3.0" for `unescaper`). OpenQ uses them under their permissive option.
+  "MIT OR GPL-3.0" for `unescaper`). OpnQ uses them under their permissive option.
 
 ## System libraries (not included, used from the computer)
 
@@ -59,14 +59,14 @@ Notable cases:
   later. Builds made with `--enable-gpl` (common in Linux distributions, often with x264/x265)
   are under GPL 2 or 3 instead.
 
-  > **Distributing OpenQ binaries:** link and ship them against an **LGPL-only** FFmpeg build
+  > **Distributing OpnQ binaries:** link and ship them against an **LGPL-only** FFmpeg build
   > (configured without `--enable-gpl` and `--enable-nonfree`), or build with
   > `--no-default-features` (no video). Apache 2.0 is compatible with GPL 3 (not with
   > GPL 2 only), so a binary combined with a GPL FFmpeg can be distributed, but only under GPL 3
   > as a whole, with its complete source.
   > Distributing the source code is not affected.
 
-  OpenQ isn't distributed as binaries: the installer, OQup
+  OpnQ isn't distributed as binaries: the installer, OQup
   (<https://github.com/iagonunez/OQup>), builds it on the user's own computer, which is not
   distribution. On Windows and macOS it still uses FFmpeg 9.0 shared libraries configured without
   GPL, version-3 or nonfree parts (BtbN's `lgpl-shared` build on Windows; compiled from the
@@ -82,22 +82,22 @@ Notable cases:
 
 ## Media formats and patents
 
-OpenQ decodes audio with Symphonia: WAV, FLAC, MP3, Vorbis, ALAC, AAC and others. Patents on MP3
+OpnQ decodes audio with Symphonia: WAV, FLAC, MP3, Vorbis, ALAC, AAC and others. Patents on MP3
 have expired. Some countries may still have patents on AAC. If you distribute binaries
 commercially where those apply, think about patent licensing, or build Symphonia without the
-`aac` feature. Video codecs come from the system FFmpeg (see above) and aren't part of OpenQ.
+`aac` feature. Video codecs come from the system FFmpeg (see above) and aren't part of OpnQ.
 
 ## Fixture profiles
 
-`assets/fixtures/library.gz` is the manufacturer library shipped with OpenQ (Patch → Fixture types →
+`assets/fixtures/library.gz` is the manufacturer library shipped with OpnQ (Patch → Fixture types →
 Manufacturer profiles). It holds fixture definitions from the Open Fixture Library
 (<https://open-fixture-library.org>, MIT License, copyright Florian Edelmann and contributors) and a
-few manufacturer GDTF profiles, converted to OpenQ's format by `examples/fixture_library.rs`. The
+few manufacturer GDTF profiles, converted to OpnQ's format by `examples/fixture_library.rs`. The
 fixtures' names and manufacturers' names belong to their owners and are used only to identify
 equipment.
 
 ## User manual
 
-`docs/manual` is part of OpenQ and is under the same license. Its screenshots show OpenQ itself. The web
+`docs/manual` is part of OpnQ and is under the same license. Its screenshots show OpnQ itself. The web
 page loads Inter, JetBrains Mono, Barlow Condensed and Material Symbols from Google Fonts, under
 the licenses above.

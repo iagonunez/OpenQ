@@ -124,14 +124,14 @@ pre code { background: none; border: 0; padding: 0; font-size: inherit; }
    (the copy opened from Help → User manual has the font in fonts/; the repo copy uses assets/;
    the website copy on GitHub Pages loads it from the repository through jsDelivr). */
 @font-face {
-  font-family: "OpenQ Symbols";
+  font-family: "OpnQ Symbols";
   src: url("fonts/MaterialSymbolsRounded.ttf") format("truetype"),
        url("../../assets/fonts/MaterialSymbolsRounded.ttf") format("truetype"),
-       url("https://cdn.jsdelivr.net/gh/iagonunez/OpenQ@master/assets/fonts/MaterialSymbolsRounded.ttf") format("truetype");
+       url("https://cdn.jsdelivr.net/gh/iagonunez/OpnQ@master/assets/fonts/MaterialSymbolsRounded.ttf") format("truetype");
   font-display: block;
 }
 .ms {
-  font-family: "OpenQ Symbols"; font-weight: normal; font-style: normal; font-size: 20px;
+  font-family: "OpnQ Symbols"; font-weight: normal; font-style: normal; font-size: 20px;
   line-height: 1; letter-spacing: normal; text-transform: none; white-space: nowrap;
   vertical-align: -4px; color: var(--dim);
 }

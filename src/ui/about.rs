@@ -15,7 +15,7 @@ const FONT_LICENSES: [(&str, &str); 4] = [
     ("Material Symbols — Apache License 2.0", include_str!("../../assets/fonts/LICENSE-MaterialSymbols.txt")),
 ];
 
-/// OpenQ's copyright line.
+/// OpnQ's copyright line.
 fn copyright() -> &'static str {
     LICENSE.lines().find(|l| l.starts_with("Copyright")).unwrap_or("")
 }
@@ -37,7 +37,7 @@ impl App {
             return;
         }
         let mut open = true;
-        egui::Window::new(theme::with_icon(icons::INFO, t("About OpenQ")))
+        egui::Window::new(theme::with_icon(icons::INFO, t("About OpnQ")))
             .id(egui::Id::new("about"))
             .open(&mut open)
             .default_size([620.0, 560.0])

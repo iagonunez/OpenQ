@@ -312,7 +312,7 @@ mod tests {
         assert_eq!(m.heads[1].channels.iter().map(|c| c.offset).collect::<Vec<_>>(), [7, 8, 9]);
         assert_eq!(m.heads[0].channels[0].attribute, Attribute::Red);
         assert_eq!(f.physical.beam_max, 20.0);
-        // The Hue channel (no OpenQ attribute) becomes an extra channel under its own name.
+        // The Hue channel (no OpnQ attribute) becomes an extra channel under its own name.
         let hue = m.channel(Attribute::Extra(1)).unwrap();
         assert_eq!((hue.offset, hue.name.as_str()), (10, "Hue"));
         assert!(r.notes.is_empty(), "{:?}", r.notes);

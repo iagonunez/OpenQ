@@ -1,4 +1,4 @@
-//! OpenQ — an open-source show control / cue playback system.
+//! OpnQ — an open-source show control / cue playback system.
 //!
 //! A show is a [`model::Workspace`]: one or more cue lists ([`model::CueList`]), each a tree of
 //! [`model::Cue`]s, plus workspace [`model::Settings`] and video [`model::Stage`]s. Pressing GO fires the cue at the
@@ -9,12 +9,12 @@
 //!
 //! ```text
 //!  UI (egui)  ─┐                         ┌─ media::audio   cpal mixer (EQ, routing, fades)
-//!  OSC        ─┼─ control::Command ──▶ Show ── engine ──▶ Backend ─┼─ vout::link     ══▶ openq --video-output
+//!  OSC        ─┼─ control::Command ──▶ Show ── engine ──▶ Backend ─┼─ vout::link     ══▶ opnq --video-output
 //!  remote     ─┘   (Arc<Mutex<Show>>)  ▲ 1 kHz tick      └─ network       OSC out      (stage windows, wgpu,
 //!                                      └─ show::spawn_engine_thread                    FFmpeg layers)
 //! ```
 //!
-//! * [`model`] — the data: cues, settings, stages; load/save as `.openq` JSON.
+//! * [`model`] — the data: cues, settings, stages; load/save as `.opnq` JSON.
 //! * [`engine`] — the cue state machine. Pure logic over a [`engine::Backend`] trait, so it is
 //!   unit-tested with a mock backend. It works on logical timestamps and hands starts to the
 //!   backend [`engine::LOOKAHEAD`] early, so chained cues start sample-accurately.
@@ -56,7 +56,7 @@
 //!   broadcast and mDNS; cues added, moved or deleted travel as operations
 //!   ([`changes::Reshape`]) merged into the show as it is on the other side.
 //! * [`displays`] — system monitors for stage outputs. [`ui`] — the egui application.
-//! * `vout` (feature `video`) — video output in its own process (`openq --video-output`): stage
+//! * `vout` (feature `video`) — video output in its own process (`opnq --video-output`): stage
 //!   windows with their own wgpu renderer (YUV converted in the shader, corner pins, spanned
 //!   surfaces, edge blending, layer [`model::BlendMode`]s), driven by cue commands on a shared
 //!   clock; movies decode on the graphics card where it can, stills, text and canvases have mip
@@ -93,11 +93,11 @@
 //! # Example: drive a show without a UI
 //!
 //! ```no_run
-//! use openq::{control::{apply, Command}, media::Prober, model::Workspace, show::Show};
+//! use opnq::{control::{apply, Command}, media::Prober, model::Workspace, show::Show};
 //! use std::time::Instant;
 //!
 //! let mut show = Show::new(Prober::new());
-//! show.replace_workspace(Workspace::load("show.openq".as_ref())?, None);
+//! show.replace_workspace(Workspace::load("show.opnq".as_ref())?, None);
 //! apply(&mut show, Command::Go, Instant::now()).map_err(anyhow::Error::msg)?;
 //! loop {
 //!     show.tick(Instant::now());

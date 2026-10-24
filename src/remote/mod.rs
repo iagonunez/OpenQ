@@ -1,4 +1,4 @@
-//! Remote replicas: another OpenQ on the network connects to this one (the *main device*),
+//! Remote replicas: another OpnQ on the network connects to this one (the *main device*),
 //! mirrors its workspace and live state, and controls it within the role it was given.
 //!
 //! Security model (the handshake itself is in [`secure`]):
@@ -118,7 +118,7 @@ pub struct KnownServer {
 #[derive(Serialize, Deserialize, Clone, Debug, PartialEq)]
 #[serde(default)]
 pub struct RemoteConfig {
-    /// Stable id of this OpenQ installation.
+    /// Stable id of this OpnQ installation.
     pub instance_id: Uuid,
     /// Name shown to other devices.
     pub instance_name: String,
@@ -155,27 +155,27 @@ fn hostname() -> String {
         .or_else(|| std::env::var("HOSTNAME").ok())
         .map(|s| s.trim().to_string())
         .filter(|s| !s.is_empty())
-        .unwrap_or_else(|| "OpenQ".into())
+        .unwrap_or_else(|| "OpnQ".into())
 }
 
-/// Directory for per-user settings (`OPENQ_CONFIG_DIR` overrides it).
+/// Directory for per-user settings (`OPNQ_CONFIG_DIR` overrides it).
 pub fn config_dir() -> Option<PathBuf> {
-    if let Some(d) = std::env::var_os("OPENQ_CONFIG_DIR") {
+    if let Some(d) = std::env::var_os("OPNQ_CONFIG_DIR") {
         return Some(PathBuf::from(d));
     }
     if cfg!(windows) {
-        return std::env::var_os("APPDATA").map(|d| PathBuf::from(d).join("OpenQ"));
+        return std::env::var_os("APPDATA").map(|d| PathBuf::from(d).join("OpnQ"));
     }
     if cfg!(target_os = "macos") {
-        return std::env::var_os("HOME").map(|h| PathBuf::from(h).join("Library/Application Support/OpenQ"));
+        return std::env::var_os("HOME").map(|h| PathBuf::from(h).join("Library/Application Support/OpnQ"));
     }
     std::env::var_os("XDG_CONFIG_HOME")
         .map(PathBuf::from)
         .or_else(|| std::env::var_os("HOME").map(|h| PathBuf::from(h).join(".config")))
-        .map(|d| d.join("openq"))
+        .map(|d| d.join("opnq"))
 }
 
-/// Create the settings folder if it isn't there. A folder OpenQ makes (device tokens, show
+/// Create the settings folder if it isn't there. A folder OpnQ makes (device tokens, show
 /// autosaves, logs, crash reports) is readable by this user only (Unix).
 pub fn create_config_dir(dir: &std::path::Path) -> std::io::Result<()> {
     if dir.is_dir() {

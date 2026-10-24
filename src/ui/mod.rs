@@ -75,7 +75,7 @@ enum Deferred {
     AddMediaCues,
     /// Open a show autosaved before a crash (may ask to discard the current one first).
     Recover(crate::recovery::Orphan),
-    /// Import fixture types (OFL, GDTF, QLC+, OpenQ files) into the design and the library.
+    /// Import fixture types (OFL, GDTF, QLC+, OpnQ files) into the design and the library.
     ImportFixture,
     /// Save a fixture type as an `.oqfixture` file.
     ExportFixture(Box<crate::light::FixtureType>),
@@ -295,10 +295,10 @@ pub struct App {
     /// Where a control being learned goes.
     learn_into: Option<surfaces::LearnInto>,
     debug_t0: Option<Instant>,
-    /// `OPENQ_DEBUG_SCRIPT` run and frame timings.
+    /// `OPNQ_DEBUG_SCRIPT` run and frame timings.
     debug_run: debug::DebugRun,
     debug_gos: u64,
-    /// `OPENQ_SCREENSHOT_STAGE`: the stage snapshot was asked for (false) / has arrived (true).
+    /// `OPNQ_SCREENSHOT_STAGE`: the stage snapshot was asked for (false) / has arrived (true).
     #[cfg(feature = "video")]
     debug_stage_shot: Option<bool>,
     /// Autosave session and shows to recover after a crash.
@@ -425,7 +425,7 @@ impl App {
     /// Like [`Self::notify`], for failures: also written to the error log.
     fn notify_error(&mut self, msg: impl Into<String>) {
         let msg = msg.into();
-        log::warn!(target: "openq::ui", "{msg}");
+        log::warn!(target: "opnq::ui", "{msg}");
         self.notify(msg);
     }
 
@@ -1229,11 +1229,11 @@ impl App {
                 }
             });
             ui.menu_button(t("Remote"), |ui| {
-                if ui.button(wi(I::LAN, t("Share this OpenQ…"))).clicked() {
+                if ui.button(wi(I::LAN, t("Share this OpnQ…"))).clicked() {
                     self.remote.window = true;
                     self.remote.tab = remote::RemoteTab::Share;
                 }
-                if ui.button(wi(I::CABLE, t("Connect to another OpenQ…"))).clicked() {
+                if ui.button(wi(I::CABLE, t("Connect to another OpnQ…"))).clicked() {
                     self.remote.window = true;
                     self.remote.tab = remote::RemoteTab::Connect;
                 }
@@ -1261,7 +1261,7 @@ impl App {
                     self.open_error_log();
                 }
                 ui.separator();
-                if ui.button(wi(I::INFO, t("About OpenQ and licenses…"))).clicked() {
+                if ui.button(wi(I::INFO, t("About OpnQ and licenses…"))).clicked() {
                     self.show_about = true;
                 }
             });
@@ -2606,8 +2606,8 @@ impl App {
         let path = match path.or_else(|| self.show.lock().path.clone()) {
             Some(p) => p,
             None => match rfd::FileDialog::new()
-                .add_filter(t("OpenQ workspace"), &[Workspace::EXTENSION])
-                .set_file_name("show.openq")
+                .add_filter(t("OpnQ workspace"), &[Workspace::EXTENSION])
+                .set_file_name("show.opnq")
                 .save_file()
             {
                 Some(p) => p,
@@ -2686,7 +2686,7 @@ impl App {
                 Deferred::Open => {
                     if self.may_discard(Discarding::Open)
                         && let Some(p) = rfd::FileDialog::new()
-                            .add_filter(t("OpenQ workspace"), &[Workspace::EXTENSION])
+                            .add_filter(t("OpnQ workspace"), &[Workspace::EXTENSION])
                             .pick_file()
                     {
                         self.open_path(p);
@@ -2702,8 +2702,8 @@ impl App {
                 Deferred::Save => self.save_to(None),
                 Deferred::SaveAs => {
                     if let Some(p) = rfd::FileDialog::new()
-                        .add_filter(t("OpenQ workspace"), &[Workspace::EXTENSION])
-                        .set_file_name("show.openq")
+                        .add_filter(t("OpnQ workspace"), &[Workspace::EXTENSION])
+                        .set_file_name("show.opnq")
                         .save_file()
                     {
                         self.save_to(Some(p));
@@ -2803,40 +2803,40 @@ impl App {
 }
 
 impl App {
-    /// Dev hook for automated visual checks: with `OPENQ_SCREENSHOT=out.ppm` the app presses GO
-    /// `OPENQ_SCREENSHOT_GOS` times (default 0), captures its window a couple of frames later and exits.
-    /// `OPENQ_SCREENSHOT_CUE` (`<number>` or `<list tab>:<number>`) / `OPENQ_SCREENSHOT_TAB` pick the cue and inspector tab shown
-    /// (`OPENQ_SCREENSHOT_ANIM_TIME` sets the Animation tab playhead);
-    /// `OPENQ_SCREENSHOT_LIGHTING=<page>` opens the Lighting workspace on a page (`playback`: the
+    /// Dev hook for automated visual checks: with `OPNQ_SCREENSHOT=out.ppm` the app presses GO
+    /// `OPNQ_SCREENSHOT_GOS` times (default 0), captures its window a couple of frames later and exits.
+    /// `OPNQ_SCREENSHOT_CUE` (`<number>` or `<list tab>:<number>`) / `OPNQ_SCREENSHOT_TAB` pick the cue and inspector tab shown
+    /// (`OPNQ_SCREENSHOT_ANIM_TIME` sets the Animation tab playhead);
+    /// `OPNQ_SCREENSHOT_LIGHTING=<page>` opens the Lighting workspace on a page (`playback`: the
     /// Playback page with its sequence and button cards; `colour`: the
     /// programmer's Colour encoders; `executor`: the Playback page with the first executor's settings window; `plan`: the patch's top view with four fixtures selected; `plot`: the plot editor with three fixtures selected;
     /// `types`: the fixture type editor on a type with ranges; `beam`: the Beam encoders with
     /// range drop-downs for every unit with a gobo; `slots`: the same with the gobo drop-down open; `points`: the
     /// Position encoders with fixtures aimed at the second focus point, one nudged by hand (rig correction); `ofl`: the Open Fixture Library window searching
-    /// `OPENQ_SCREENSHOT_OFL`);
-    /// `OPENQ_SCREENSHOT_MODE=show` starts in show mode; `OPENQ_SCREENSHOT_INLINE=1` opens an
-    /// in-place pre-wait editor on the selected cue. `OPENQ_SCREENSHOT_ZOOM=<factor>` zooms the UI (narrow layouts).
-    /// `OPENQ_SCREENSHOT_STAGE=<n>` also saves stage n's output (1 = the first), as the video
+    /// `OPNQ_SCREENSHOT_OFL`);
+    /// `OPNQ_SCREENSHOT_MODE=show` starts in show mode; `OPNQ_SCREENSHOT_INLINE=1` opens an
+    /// in-place pre-wait editor on the selected cue. `OPNQ_SCREENSHOT_ZOOM=<factor>` zooms the UI (narrow layouts).
+    /// `OPNQ_SCREENSHOT_STAGE=<n>` also saves stage n's output (1 = the first), as the video
     /// output process draws it, next to the capture (`<path>.stage.png`;
-    /// `OPENQ_SCREENSHOT_MAPPING=1` turns on the first stage's mapping test pattern).
-    /// `OPENQ_SCREENSHOT_SELECT=<n>,<n>…` adds cues to the selection (the inspector then edits them all);
-    /// `OPENQ_SCREENSHOT_WINDOW=overrides|warnings|paste` opens that window (`overrides` turns MIDI input
+    /// `OPNQ_SCREENSHOT_MAPPING=1` turns on the first stage's mapping test pattern).
+    /// `OPNQ_SCREENSHOT_SELECT=<n>,<n>…` adds cues to the selection (the inspector then edits them all);
+    /// `OPNQ_SCREENSHOT_WINDOW=overrides|warnings|paste` opens that window (`overrides` turns MIDI input
     /// and DMX output off; `paste` copies the selected cue's properties first).
     fn debug_screenshot(&mut self, ctx: &egui::Context, show: &mut Show) {
-        let Some(path) = std::env::var_os("OPENQ_SCREENSHOT") else {
+        let Some(path) = std::env::var_os("OPNQ_SCREENSHOT") else {
             return;
         };
         self.frame_count += 1;
         // Optional: UI zoom, for narrow layouts under a tiling compositor (it sets the window size). Set on every
         // frame: the window's scale factor can arrive after the first ones and reset it.
-        if let Some(z) = std::env::var("OPENQ_SCREENSHOT_ZOOM").ok().and_then(|z| z.parse::<f32>().ok()).filter(|z| (0.5..=4.0).contains(z))
+        if let Some(z) = std::env::var("OPNQ_SCREENSHOT_ZOOM").ok().and_then(|z| z.parse::<f32>().ok()).filter(|z| (0.5..=4.0).contains(z))
             && ctx.zoom_factor() != z
         {
             ctx.set_zoom_factor(z);
         }
         if self.frame_count == 1 {
             // Optional: select cue N and an inspector tab (time|levels|eq|geometry|animation|settings).
-            if let Ok(n) = std::env::var("OPENQ_SCREENSHOT_CUE") {
+            if let Ok(n) = std::env::var("OPNQ_SCREENSHOT_CUE") {
                 // "<tab>:<number>" brings that list forward first.
                 let n = match n.split_once(':') {
                     Some((tab, n)) => {
@@ -2857,7 +2857,7 @@ impl App {
                 self.select(show, id);
             }
             // Optional: the Animation tab playhead, in seconds.
-            if let Some(t) = std::env::var("OPENQ_SCREENSHOT_ANIM_TIME").ok().and_then(|v| v.parse().ok()) {
+            if let Some(t) = std::env::var("OPNQ_SCREENSHOT_ANIM_TIME").ok().and_then(|v| v.parse().ok()) {
                 // Select the first track's second key, so the Keyframe card has something to show.
                 let sel = self.primary().and_then(|id| show.ws.cue_list.find(id)).and_then(|c| match &c.kind {
                     CueKind::Video(v) => v.animation.tracks.first().map(|t| t.prop),
@@ -2867,7 +2867,7 @@ impl App {
                 });
                 self.anim_edit = animation::AnimEdit { cue: self.primary(), time: t, sel: sel.map(|p| (p, 1)) };
             }
-            self.inspector_tab = match std::env::var("OPENQ_SCREENSHOT_TAB").as_deref() {
+            self.inspector_tab = match std::env::var("OPNQ_SCREENSHOT_TAB").as_deref() {
                 Ok("time") => inspector::Tab::Time,
                 Ok("io") => inspector::Tab::Io,
                 Ok("levels") => inspector::Tab::Levels,
@@ -2880,10 +2880,10 @@ impl App {
                 Ok("videofx") => inspector::Tab::VideoFx,
                 _ => inspector::Tab::Basics,
             };
-            if std::env::var("OPENQ_SCREENSHOT_MODE").as_deref() == Ok("show") {
+            if std::env::var("OPNQ_SCREENSHOT_MODE").as_deref() == Ok("show") {
                 self.mode = Mode::Show;
             }
-            if let Ok(page) = std::env::var("OPENQ_SCREENSHOT_LIGHTING") {
+            if let Ok(page) = std::env::var("OPNQ_SCREENSHOT_LIGHTING") {
                 self.view = lighting::View::Lighting;
                 self.light.tab = lighting::LightTab::from_name(&page);
                 if page == "executor" {
@@ -2894,8 +2894,8 @@ impl App {
                 }
                 self.light.keypad = page == "keypad";
                 if page == "effects" {
-                    // `OPENQ_SCREENSHOT_EFFECT=<number>` picks the effect (e.g. a formula effect).
-                    let pick = std::env::var("OPENQ_SCREENSHOT_EFFECT").ok().and_then(|n| n.parse::<u32>().ok());
+                    // `OPNQ_SCREENSHOT_EFFECT=<number>` picks the effect (e.g. a formula effect).
+                    let pick = std::env::var("OPNQ_SCREENSHOT_EFFECT").ok().and_then(|n| n.parse::<u32>().ok());
                     let l = &show.ws.lighting;
                     self.light.effect = pick.filter(|id| l.effect(*id).is_some()).or_else(|| l.effects.first().map(|e| e.id));
                 }
@@ -2917,7 +2917,7 @@ impl App {
                 }
                 if page == "ofl" {
                     self.light.patch_view = lighting::PatchView::Types;
-                    self.light.types.open_ofl(std::env::var("OPENQ_SCREENSHOT_OFL").unwrap_or_default());
+                    self.light.types.open_ofl(std::env::var("OPNQ_SCREENSHOT_OFL").unwrap_or_default());
                 }
                 // A selection and some programmer values to look at.
                 if page == "points" {
@@ -2976,7 +2976,7 @@ impl App {
                     }
                 }
             }
-            if std::env::var_os("OPENQ_SCREENSHOT_INLINE").is_some()
+            if std::env::var_os("OPNQ_SCREENSHOT_INLINE").is_some()
                 && let Some(id) = self.primary()
             {
                 self.inline = Some(cue_list::InlineEdit::new(
@@ -2985,23 +2985,23 @@ impl App {
                     "1:30.5".into(),
                 ));
             }
-            if std::env::var_os("OPENQ_SCREENSHOT_MAPPING").is_some()
+            if std::env::var_os("OPNQ_SCREENSHOT_MAPPING").is_some()
                 && let Some(st) = show.ws.stages.first()
             {
                 self.mapping_edit.insert(st.id);
                 self.stage_open.insert(st.id);
             }
-            if let Ok(addr) = std::env::var("OPENQ_SCREENSHOT_CONNECT") {
+            if let Ok(addr) = std::env::var("OPNQ_SCREENSHOT_CONNECT") {
                 self.connect(ctx, show, addr, crate::remote::client::Auth::Token);
             }
-            if std::env::var_os("OPENQ_SCREENSHOT_PAIR").is_some() {
+            if std::env::var_os("OPNQ_SCREENSHOT_PAIR").is_some() {
                 self.remote_debug_pair();
             }
-            if let Ok(t) = std::env::var("OPENQ_SCREENSHOT_REMOTE") {
+            if let Ok(t) = std::env::var("OPNQ_SCREENSHOT_REMOTE") {
                 self.remote.window = true;
                 self.remote.tab = if t == "connect" { remote::RemoteTab::Connect } else { remote::RemoteTab::Share };
             }
-            if std::env::var_os("OPENQ_SCREENSHOT_NETREQ").is_some() {
+            if std::env::var_os("OPNQ_SCREENSHOT_NETREQ").is_some() {
                 // A replica's held network change, as the operator sees it.
                 use crate::remote::netguard::{HeldCue, HeldStage, NetworkChange};
                 let change = NetworkChange {
@@ -3018,10 +3018,10 @@ impl App {
                 show.request_network_change("Tablet", change.clone());
                 show.request_network_change("Tablet", change);
             }
-            if std::env::var_os("OPENQ_SCREENSHOT_ABOUT").is_some() {
+            if std::env::var_os("OPNQ_SCREENSHOT_ABOUT").is_some() {
                 self.show_about = true;
             }
-            if let Ok(list) = std::env::var("OPENQ_SCREENSHOT_SELECT") {
+            if let Ok(list) = std::env::var("OPNQ_SCREENSHOT_SELECT") {
                 let primary = self.primary();
                 for n in list.split(',') {
                     if let Some(c) = show.ws.cue_list.iter_all().iter().find(|c| c.number == n.trim()) {
@@ -3031,7 +3031,7 @@ impl App {
                 self.selection.retain(|id| Some(*id) != primary);
                 self.selection.extend(primary);
             }
-            match std::env::var("OPENQ_SCREENSHOT_WINDOW").as_deref() {
+            match std::env::var("OPNQ_SCREENSHOT_WINDOW").as_deref() {
                 Ok("overrides") => {
                     crate::overrides::set(crate::overrides::Override::MidiIn, false);
                     crate::overrides::set(crate::overrides::Override::LightOut, false);
@@ -3044,13 +3044,13 @@ impl App {
                 }
                 _ => {}
             }
-            if std::env::var_os("OPENQ_SCREENSHOT_PREVIEW").is_some() {
+            if std::env::var_os("OPNQ_SCREENSHOT_PREVIEW").is_some() {
                 self.show_preview = true;
             }
-            if std::env::var_os("OPENQ_SCREENSHOT_LANGUAGE").is_some() {
+            if std::env::var_os("OPNQ_SCREENSHOT_LANGUAGE").is_some() {
                 self.ask_language = true;
             }
-            if let Ok(t) = std::env::var("OPENQ_SCREENSHOT_SETTINGS") {
+            if let Ok(t) = std::env::var("OPNQ_SCREENSHOT_SETTINGS") {
                 self.show_settings = true;
                 self.settings_tab = match t.as_str() {
                     "audio" => SettingsTab::Audio,
@@ -3061,7 +3061,7 @@ impl App {
             }
         }
         ctx.request_repaint();
-        let gos: u64 = std::env::var("OPENQ_SCREENSHOT_GOS")
+        let gos: u64 = std::env::var("OPNQ_SCREENSHOT_GOS")
             .ok()
             .and_then(|v| v.parse().ok())
             .unwrap_or(0);
@@ -3078,11 +3078,11 @@ impl App {
         #[cfg(feature = "video")]
         let mut stage_ready = true;
         #[cfg(feature = "video")]
-        if std::env::var_os("OPENQ_SCREENSHOT_STAGE").is_some() && self.frame_count > 2 && elapsed > gos as f64 * 0.4 + 2.0 {
+        if std::env::var_os("OPNQ_SCREENSHOT_STAGE").is_some() && self.frame_count > 2 && elapsed > gos as f64 * 0.4 + 2.0 {
             // The output is drawn by the video process: it saves its own picture.
             if self.debug_stage_shot.is_none()
                 && let Some(v) = show.media.video.as_mut()
-                && let n = std::env::var("OPENQ_SCREENSHOT_STAGE").ok().and_then(|n| n.parse::<usize>().ok()).unwrap_or(1)
+                && let n = std::env::var("OPNQ_SCREENSHOT_STAGE").ok().and_then(|n| n.parse::<usize>().ok()).unwrap_or(1)
                 && let Some(st) = show.ws.stages.get(n.saturating_sub(1))
             {
                 let mut p = std::path::PathBuf::from(&path).into_os_string();
@@ -3154,20 +3154,20 @@ pub(crate) fn translated_names() -> Vec<&'static str> {
     v
 }
 
-/// True when OpenQ draws its own window frame: the system title bar is hidden and the OpenQ title
-/// bar carries minimise, maximise and close (always on Windows; `OPENQ_CUSTOM_FRAME=1` elsewhere,
+/// True when OpnQ draws its own window frame: the system title bar is hidden and the OpnQ title
+/// bar carries minimise, maximise and close (always on Windows; `OPNQ_CUSTOM_FRAME=1` elsewhere,
 /// for testing).
 pub fn custom_window_frame() -> bool {
-    cfg!(target_os = "windows") || std::env::var_os("OPENQ_CUSTOM_FRAME").is_some()
+    cfg!(target_os = "windows") || std::env::var_os("OPNQ_CUSTOM_FRAME").is_some()
 }
 
-/// The app icon (`assets/icon/openq-256.png`) for the main and stage windows: taskbar, Alt-Tab and,
-/// while OpenQ runs, the macOS Dock. Installed apps also carry it in the `.exe` (`build.rs`), the
+/// The app icon (`assets/icon/opnq-256.png`) for the main and stage windows: taskbar, Alt-Tab and,
+/// while OpnQ runs, the macOS Dock. Installed apps also carry it in the `.exe` (`build.rs`), the
 /// macOS bundle and the Linux icon theme (OQup).
 pub fn app_icon() -> std::sync::Arc<egui::IconData> {
     static ICON: std::sync::OnceLock<std::sync::Arc<egui::IconData>> = std::sync::OnceLock::new();
     ICON.get_or_init(|| {
-        std::sync::Arc::new(eframe::icon_data::from_png_bytes(include_bytes!("../../assets/icon/openq-256.png")).expect("bad app icon"))
+        std::sync::Arc::new(eframe::icon_data::from_png_bytes(include_bytes!("../../assets/icon/opnq-256.png")).expect("bad app icon"))
     })
     .clone()
 }
@@ -3175,14 +3175,14 @@ pub fn app_icon() -> std::sync::Arc<egui::IconData> {
 /// Height of the title bar in a custom window frame (the caption buttons fill it).
 const CAPTION_H: f32 = 34.0;
 
-/// True on macOS, where the system title bar is transparent and OpenQ's title bar takes its place:
+/// True on macOS, where the system title bar is transparent and OpnQ's title bar takes its place:
 /// the window content starts at the top edge and macOS draws its close / minimise / zoom buttons
-/// over the left end of OpenQ's bar (`OPENQ_MAC_TITLEBAR=1` shows the layout elsewhere, for testing).
+/// over the left end of OpnQ's bar (`OPNQ_MAC_TITLEBAR=1` shows the layout elsewhere, for testing).
 pub fn mac_title_bar() -> bool {
-    cfg!(target_os = "macos") || std::env::var_os("OPENQ_MAC_TITLEBAR").is_some()
+    cfg!(target_os = "macos") || std::env::var_os("OPNQ_MAC_TITLEBAR").is_some()
 }
 
-/// Height of OpenQ's title bar on macOS: taller than the system's 28 pt so the title has room;
+/// Height of OpnQ's title bar on macOS: taller than the system's 28 pt so the title has room;
 /// `native_menu::place_window_buttons` keeps the window buttons centred in it.
 const MAC_TITLE_H: f32 = 40.0;
 
@@ -3282,7 +3282,7 @@ impl eframe::App for App {
         // The window is gone: if a device or worker thread hangs while everything is dropped after this, the process
         // still ends instead of lingering until it is killed.
         std::thread::Builder::new()
-            .name("openq-exit".into())
+            .name("opnq-exit".into())
             .spawn(|| {
                 std::thread::sleep(EXIT_GRACE);
                 log::error!("quitting took longer than {EXIT_GRACE:?}: exiting anyway");
@@ -3509,7 +3509,7 @@ impl App {
                 .and_then(|p| p.file_stem())
                 .map(|s| s.to_string_lossy().into_owned())
                 .unwrap_or_else(|| t("Untitled").into());
-            let title = format!("{name}{} — OpenQ", if show.dirty { " •" } else { "" });
+            let title = format!("{name}{} — OpnQ", if show.dirty { " •" } else { "" });
             if title != self.title {
                 ctx.send_viewport_cmd(egui::ViewportCommand::Title(title.clone()));
                 self.title = title;

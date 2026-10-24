@@ -1,6 +1,6 @@
 //! macOS: the menus live in the system menu bar (muda) instead of inside the window.
 //!
-//! Menu items carry no key equivalents except Quit and Settings: OpenQ's own key handling
+//! Menu items carry no key equivalents except Quit and Settings: OpnQ's own key handling
 //! (`handle_keys`) already reacts to the shortcuts, and a menu accelerator would swallow the key
 //! before egui sees it (or fire the action twice).
 
@@ -170,14 +170,14 @@ impl NativeMenu {
             true,
             Some(Accelerator::new(Modifiers::META, Code::Comma)),
         );
-        let quit = MenuItem::with_id(Action::Quit.id(), t("Quit OpenQ"), true, Some(Accelerator::new(Modifiers::META, Code::KeyQ)));
+        let quit = MenuItem::with_id(Action::Quit.id(), t("Quit OpnQ"), true, Some(Accelerator::new(Modifiers::META, Code::KeyQ)));
         let hide = PredefinedMenuItem::hide(None);
         let hide_others = PredefinedMenuItem::hide_others(None);
         let show_all = PredefinedMenuItem::show_all(None);
         let (s1, s2, s3) = (sep(), sep(), sep());
         let app = submenu(
-            "OpenQ",
-            &[&item(Action::About, t("About OpenQ and licenses…")), &s1, &settings, &s2, &hide, &hide_others, &show_all, &s3, &quit],
+            "OpnQ",
+            &[&item(Action::About, t("About OpnQ and licenses…")), &s1, &settings, &s2, &hide, &hide_others, &show_all, &s3, &quit],
         );
 
         let a = sep();
@@ -258,7 +258,7 @@ impl NativeMenu {
         let disconnect = item(Action::Disconnect, t("Disconnect"));
         let remote = submenu(
             t("Remote"),
-            &[&item(Action::Share, t("Share this OpenQ…")), &item(Action::Connect, t("Connect to another OpenQ…")), &disconnect],
+            &[&item(Action::Share, t("Share this OpnQ…")), &item(Action::Connect, t("Connect to another OpnQ…")), &disconnect],
         );
 
         let preview = check(Action::Preview, t("Geometry preview"));
@@ -331,7 +331,7 @@ impl App {
 
     /// Installs the native menu bar on the first frame, keeps it current and handles its clicks.
     pub(super) fn native_menu_frame(&mut self, ctx: &egui::Context, show: &mut Show) {
-        if cfg!(test) || std::env::var_os("OPENQ_SCREENSHOT").is_some() {
+        if cfg!(test) || std::env::var_os("OPNQ_SCREENSHOT").is_some() {
             return;
         }
         let state = MenuState {

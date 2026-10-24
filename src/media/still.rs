@@ -42,7 +42,7 @@ fn svg_fonts() -> Arc<resvg::usvg::fontdb::Database> {
     .clone()
 }
 
-/// Rasterise SVG markup made by OpenQ itself (the mapping test pattern and pins) at `w`×`h`
+/// Rasterise SVG markup made by OpnQ itself (the mapping test pattern and pins) at `w`×`h`
 /// pixels. Returns premultiplied RGBA. The markup reaches no files: no linked pictures.
 pub fn render_svg_markup(svg: &str, w: u32, h: u32) -> anyhow::Result<Vec<u8>> {
     use resvg::usvg;
@@ -160,7 +160,7 @@ fn svg_text(data: &[u8]) -> anyhow::Result<std::borrow::Cow<'_, str>> {
 }
 
 /// Parse SVG markup, refusing markup nested deeper than [`crate::light::import::MAX_XML_DEPTH`]
-/// first: the parser recurses, so a hostile file would overflow the stack and abort OpenQ.
+/// first: the parser recurses, so a hostile file would overflow the stack and abort OpnQ.
 fn parse_svg_text(text: &str, opt: &resvg::usvg::Options) -> anyhow::Result<resvg::usvg::Tree> {
     crate::light::import::check_depth(text)?;
     Ok(resvg::usvg::Tree::from_str(text, opt)?)
@@ -283,7 +283,7 @@ mod tests {
 
     #[test]
     fn svg_rasterises_at_scale() {
-        let dir = std::env::temp_dir().join(format!("openq-svg-{}", std::process::id()));
+        let dir = std::env::temp_dir().join(format!("opnq-svg-{}", std::process::id()));
         std::fs::create_dir_all(&dir).unwrap();
         let p = dir.join("box.svg");
         std::fs::write(

@@ -1,9 +1,9 @@
 //! Headless end-to-end check of the real media backends (runs with master muted).
 //! `cargo run --release --example smoke`
 
-use openq::media::{Media, Prober};
-use openq::model::{AudioCue, ContinueMode, Cue, CueKind, VideoCue, Workspace};
-use openq::show::Show;
+use opnq::media::{Media, Prober};
+use opnq::model::{AudioCue, ContinueMode, Cue, CueKind, VideoCue, Workspace};
+use opnq::show::Show;
 use std::time::{Duration, Instant};
 
 fn write_wav(path: &std::path::Path, secs: f64, rate: u32) {
@@ -32,7 +32,7 @@ fn write_wav(path: &std::path::Path, secs: f64, rate: u32) {
 
 fn main() {
     env_logger::init();
-    let dir = std::env::temp_dir().join("openq-smoke");
+    let dir = std::env::temp_dir().join("opnq-smoke");
     std::fs::create_dir_all(&dir).unwrap();
     // 44.1k file: exercises the resampler if the device runs at 48k.
     let wav_a = dir.join("a.wav");
@@ -44,13 +44,13 @@ fn main() {
     let mut show = Show::new(prober.clone());
     let audio = show.media.audio.as_mut().expect("audio output");
     println!("device: {} {} Hz {} ch", audio.device_name, audio.rate, audio.channels);
-    audio.set_master(openq::model::MIN_DB); // silent
+    audio.set_master(opnq::model::MIN_DB); // silent
 
     let mut a = Cue::new(CueKind::Audio(AudioCue { path: wav_a.clone(), ..Default::default() }));
     a.number = "1".into();
     a.continue_mode = ContinueMode::AutoFollow;
     // Varispeed 2x + EQ + custom routing (L/R swapped): 0.5 s file trimmed to 0.4 s → 0.2 s.
-    let mut eq = openq::model::Eq { enabled: true, ..Default::default() };
+    let mut eq = opnq::model::Eq { enabled: true, ..Default::default() };
     eq.bands[2].gain_db = 6.0;
     let mut b = Cue::new(CueKind::Audio(AudioCue {
         path: wav_b.clone(),
@@ -68,7 +68,7 @@ fn main() {
     let mut ws = Workspace::default();
     ws.cue_list.cues = vec![a, b, c];
 
-    let video_path = dir.join(std::env::var("OPENQ_SMOKE_VIDEO").unwrap_or("v.mp4".into()));
+    let video_path = dir.join(std::env::var("OPNQ_SMOKE_VIDEO").unwrap_or("v.mp4".into()));
     let have_video = std::process::Command::new("ffmpeg")
         .args(["-y", "-loglevel", "error", "-f", "lavfi", "-i", "testsrc=duration=1:size=320x240:rate=25", "-an"])
         .args(if video_path.extension().is_some_and(|e| e == "ivf") { vec!["-c:v", "libvpx", "-f", "ivf"] } else { vec![] })
@@ -85,8 +85,8 @@ fn main() {
     }
 
     show.replace_workspace(ws, None);
-    show.ws.settings.master_volume_db = openq::model::MIN_DB;
-    show.media.audio.as_mut().unwrap().set_master(openq::model::MIN_DB);
+    show.ws.settings.master_volume_db = opnq::model::MIN_DB;
+    show.media.audio.as_mut().unwrap().set_master(opnq::model::MIN_DB);
     // Let preloading settle.
     let t = Instant::now();
     while t.elapsed() < Duration::from_millis(300) {
@@ -170,7 +170,7 @@ fn main() {
     // --- Slices: [0, 0.2) loops until devamped, then the rest plays once.
     let mut sl = Cue::new(CueKind::Audio(AudioCue {
         path: wav_a.clone(),
-        slices: vec![openq::model::SliceMarker { time: 0.2, plays: 0 }],
+        slices: vec![opnq::model::SliceMarker { time: 0.2, plays: 0 }],
         ..Default::default()
     }));
     sl.number = "10".into();
@@ -189,7 +189,7 @@ fn main() {
     run(&mut show, 1.5);
     assert!(show.engine.instances.contains_key(&sli), "vamping cue ended on its own");
     {
-        use openq::engine::Backend;
+        use opnq::engine::Backend;
         assert!(show.media.devamp(sli));
     }
     let t3 = Instant::now();
@@ -246,8 +246,8 @@ fn main() {
     }
 
     // --- Mic cue: the default input feeds a mixer voice (skipped without an input device).
-    if !openq::media::input::list_input_devices().is_empty() {
-        let mic = Cue::new(CueKind::Mic(openq::model::MicCue { channels: 2, ..Default::default() }));
+    if !opnq::media::input::list_input_devices().is_empty() {
+        let mic = Cue::new(CueKind::Mic(opnq::model::MicCue { channels: 2, ..Default::default() }));
         let mi = mic.id;
         show.ws.cue_list.cues.push(mic);
         show.edited();
@@ -270,9 +270,9 @@ fn main() {
         let m = midir::MidiOutput::new("smoke").unwrap();
         m.ports().iter().filter_map(|p| m.port_name(p).ok()).collect::<Vec<_>>()
     };
-    if let (Some(out), Some(inp)) = (through(out_ports), through(openq::media::tcio::list_midi_inputs())) {
-        use openq::model::{TimecodeRate, TimecodeSource};
-        use openq::timecode::{Timecode, mtc_full_frame, mtc_quarter_frame};
+    if let (Some(out), Some(inp)) = (through(out_ports), through(opnq::media::tcio::list_midi_inputs())) {
+        use opnq::model::{TimecodeRate, TimecodeSource};
+        use opnq::timecode::{Timecode, mtc_full_frame, mtc_quarter_frame};
         show.ws.cue_list.add_list("Follows MTC", None);
         show.ws.cue_list.info.timecode.source = TimecodeSource::Mtc;
         show.ws.cue_list.info.timecode.mtc_port = Some(inp);
@@ -325,7 +325,7 @@ fn main() {
         m.ports().iter().filter_map(|p| m.port_name(p).ok()).collect::<Vec<_>>()
     };
     if let Some(out) = through(out_ports) {
-        use openq::media::midifile::{PlayParams, Player};
+        use opnq::media::midifile::{PlayParams, Player};
         // 96 ticks a quarter at 120 bpm: a tick = 1/192 s. Program 7, then a note at 0, 0.25 s, 0.5 s
         // (held 0.4 s).
         let track: Vec<u8> = [
@@ -382,7 +382,7 @@ fn main() {
     show.ws.cue_list.cues.push(w);
     show.edited();
     let shared = std::sync::Arc::new(parking_lot::Mutex::new(show));
-    let server = openq::osc::OscServer::start(53999, shared.clone(), || {}).expect("bind OSC");
+    let server = opnq::osc::OscServer::start(53999, shared.clone(), || {}).expect("bind OSC");
     let sock = std::net::UdpSocket::bind("127.0.0.1:0").unwrap();
     let msg = rosc::OscPacket::Message(rosc::OscMessage { addr: "/cue/osc/start".into(), args: vec![] });
     sock.send_to(&rosc::encoder::encode(&msg).unwrap(), "127.0.0.1:53999").unwrap();

@@ -1,11 +1,11 @@
-//! Read fixture files with OpenQ's importers and print what came across:
+//! Read fixture files with OpnQ's importers and print what came across:
 //! `cargo run --example fixture_import -- <file.json|.gdtf|.qxf|.oqfixture>…`
 
 fn main() {
     let mut failed = false;
     for arg in std::env::args().skip(1) {
         let path = std::path::Path::new(&arg);
-        match openq::light::import::import_path(path) {
+        match opnq::light::import::import_path(path) {
             Ok(imp) => {
                 let t = &imp.fixture;
                 println!("{arg}\n  {} · {} {} · {} modes", t.id, t.manufacturer, t.name, t.modes.len());

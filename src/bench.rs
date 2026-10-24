@@ -48,7 +48,7 @@ pub struct Metric {
 #[derive(Clone, Debug, Default, Serialize, Deserialize)]
 #[serde(default)]
 pub struct Report {
-    /// OpenQ version (`Cargo.toml`) the run measured.
+    /// OpnQ version (`Cargo.toml`) the run measured.
     pub version: String,
     /// Git revision (with `-dirty` for uncommitted changes), from the caller.
     pub revision: String,
@@ -341,7 +341,7 @@ fn per_call(reps: usize, mut f: impl FnMut() -> usize) -> Duration {
 }
 
 fn tmpdir(name: &str) -> PathBuf {
-    let d = std::env::temp_dir().join(format!("openq-bench-{name}-{}", std::process::id()));
+    let d = std::env::temp_dir().join(format!("opnq-bench-{name}-{}", std::process::id()));
     let _ = std::fs::remove_dir_all(&d);
     let _ = std::fs::create_dir_all(&d);
     d
@@ -869,7 +869,7 @@ fn workspace(m: &mut Vec<Metric>, quick: bool) {
     let n = if quick { 1_000 } else { 5_000 };
     let ws = mixed_workspace(n);
     let dir = tmpdir("workspace");
-    let path = dir.join("bench.openq");
+    let path = dir.join("bench.opnq");
     let t = per_call(3, || {
         let _ = ws.save(&path);
         1
@@ -1130,7 +1130,7 @@ impl History {
         self.comparable(r).pop()
     }
 
-    /// The latest comparable run of an earlier OpenQ version than `r`'s.
+    /// The latest comparable run of an earlier OpnQ version than `r`'s.
     pub fn previous_version(&self, r: &Report) -> Option<&Report> {
         self.comparable(r).into_iter().rfind(|o| !o.version.is_empty() && version_key(&o.version) < version_key(&r.version))
     }
@@ -1381,7 +1381,7 @@ mod tests {
         assert_eq!(page, "<p><!--bench:latest-->old<!--/bench:latest--></p>x<!--bench:results-->NEW<!--/bench:results-->");
         assert!(replace_marked("nothing", "results", "x").is_err());
 
-        let path = std::env::temp_dir().join(format!("openq-bench-history-{}.json", std::process::id()));
+        let path = std::env::temp_dir().join(format!("opnq-bench-history-{}.json", std::process::id()));
         h.save(&path).unwrap();
         assert_eq!(History::load(&path).unwrap().runs.len(), 3);
         let _ = std::fs::remove_file(&path);

@@ -31,7 +31,7 @@ fn show_with(cues: usize) -> (SharedShow, Arc<Prober>) {
     for i in 0..cues {
         let kind = match i % 3 {
             0 => CueKind::Memo,
-            1 => CueKind::Audio(AudioCue { path: format!("/nonexistent/openq-bench/{i}.wav").into(), ..Default::default() }),
+            1 => CueKind::Audio(AudioCue { path: format!("/nonexistent/opnq-bench/{i}.wav").into(), ..Default::default() }),
             _ => CueKind::Fade(FadeCue { target: Some(last.id), ..Default::default() }),
         };
         let mut c = Cue::new(kind);

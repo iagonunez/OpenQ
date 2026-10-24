@@ -36,7 +36,7 @@ impl MidiOut {
         let (tx, rx) = std::sync::mpsc::sync_channel(QUEUE);
         let errors = Arc::new(Mutex::new(Vec::new()));
         let e = errors.clone();
-        let thread = std::thread::Builder::new().name("openq-midi-out".into()).spawn(move || run(rx, e))?;
+        let thread = std::thread::Builder::new().name("opnq-midi-out".into()).spawn(move || run(rx, e))?;
         Ok(Self { tx, errors, thread: Some(thread) })
     }
 
@@ -66,7 +66,7 @@ impl Drop for MidiOut {
 
 /// Open output `port` (None = the first one): its connection and its name.
 pub fn connect(port: Option<&str>, client: &str) -> Result<(midir::MidiOutputConnection, String), String> {
-    let m = midir::MidiOutput::new("OpenQ").map_err(|e| e.to_string())?;
+    let m = midir::MidiOutput::new("OpnQ").map_err(|e| e.to_string())?;
     let ports = m.ports();
     let p = match port {
         Some(name) => ports.iter().find(|p| m.port_name(p).ok().as_deref() == Some(name)).ok_or_else(|| format!("MIDI output not found: {name}"))?,
@@ -95,7 +95,7 @@ fn run(rx: Receiver<Msg>, errors: Arc<Mutex<Vec<String>>>) {
                 {
                     return Err(anyhow::anyhow!("{e}"));
                 }
-                match connect(port.as_deref(), "openq-midi-cue") {
+                match connect(port.as_deref(), "opnq-midi-cue") {
                     Ok((c, _)) => {
                         failed.remove(&port);
                         conns.insert(port.clone(), c);

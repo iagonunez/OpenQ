@@ -51,7 +51,7 @@ pub(crate) enum LightTab {
 }
 
 impl LightTab {
-    /// A page by name (`OPENQ_SCREENSHOT_LIGHTING`).
+    /// A page by name (`OPNQ_SCREENSHOT_LIGHTING`).
     pub(crate) fn from_name(name: &str) -> Self {
         match name {
             "programmer" | "colour" | "keypad" | "beam" | "slots" | "points" => LightTab::Programmer,
@@ -159,7 +159,7 @@ pub(crate) struct LightUi {
     step: Option<usize>,
     /// Spread tool settings.
     fan: FanTool,
-    /// Open this attribute's range drop-down on the next frame (`OPENQ_SCREENSHOT_LIGHTING=slots`).
+    /// Open this attribute's range drop-down on the next frame (`OPNQ_SCREENSHOT_LIGHTING=slots`).
     pub(crate) open_slots: Option<Attribute>,
     /// Encoder page.
     pub(crate) feature: Option<Feature>,
@@ -285,7 +285,7 @@ impl App {
         if !self.can_design() {
             return;
         }
-        let Some(paths) = rfd::FileDialog::new().add_filter(t("OpenQ effect"), &[crate::light::fxfile::EXTENSION]).pick_files() else { return };
+        let Some(paths) = rfd::FileDialog::new().add_filter(t("OpnQ effect"), &[crate::light::fxfile::EXTENSION]).pick_files() else { return };
         let mut added = Vec::new();
         for path in paths {
             let read = || -> anyhow::Result<Effect> {
@@ -322,7 +322,7 @@ impl App {
     pub(super) fn export_patch(&mut self, plot: bool) {
         let (design, scope) = {
             let show = self.show.lock();
-            let scope = show.path.as_ref().and_then(|p| p.file_stem()).map(|s| s.to_string_lossy().into_owned()).unwrap_or_else(|| "OpenQ".into());
+            let scope = show.path.as_ref().and_then(|p| p.file_stem()).map(|s| s.to_string_lossy().into_owned()).unwrap_or_else(|| "OpnQ".into());
             (show.ws.lighting.clone(), scope)
         };
         use crate::light::plot;
@@ -350,7 +350,7 @@ impl App {
         let Some(e) = self.show.lock().ws.lighting.effect(id).cloned() else { return };
         let name = if e.name.trim().is_empty() { format!("effect-{id}") } else { e.name.trim().to_string() };
         let Some(path) = rfd::FileDialog::new()
-            .add_filter(t("OpenQ effect"), &[crate::light::fxfile::EXTENSION])
+            .add_filter(t("OpnQ effect"), &[crate::light::fxfile::EXTENSION])
             .set_file_name(format!("{name}.{}", crate::light::fxfile::EXTENSION))
             .save_file()
         else {
@@ -428,7 +428,7 @@ impl App {
             LightTab::Monitor => self.monitor_page(ui, show),
         }
         if self.light.plot.open {
-            let title = show.path.as_ref().and_then(|p| p.file_stem()).map(|s| s.to_string_lossy().into_owned()).unwrap_or_else(|| "OpenQ".into());
+            let title = show.path.as_ref().and_then(|p| p.file_stem()).map(|s| s.to_string_lossy().into_owned()).unwrap_or_else(|| "OpnQ".into());
             self.plot_editor(ui.ctx(), &mut show.ws.lighting, &title);
         }
         if show.ws.lighting != before {
@@ -529,7 +529,7 @@ impl App {
             if view != PatchView::Types
                 && ui
                 .button(theme::with_icon(icons::UPLOAD_FILE, t("Import fixture…")))
-                .on_hover_text(t("Open Fixture Library (.json), GDTF (.gdtf), QLC+ (.qxf) or OpenQ (.oqfixture) files"))
+                .on_hover_text(t("Open Fixture Library (.json), GDTF (.gdtf), QLC+ (.qxf) or OpnQ (.oqfixture) files"))
                 .clicked()
             {
                 self.deferred.push(super::Deferred::ImportFixture);
@@ -1172,7 +1172,7 @@ fn effect_editor(ui: &mut Ui, e: &mut Effect, audio_level: f32) {
         ui.label(t("Audio"));
         ui.horizontal(|ui| {
             let mut on = e.audio.is_some();
-            if ui.checkbox(&mut on, t("Size follows the sound")).on_hover_text(t("The louder OpenQ plays, the bigger the effect")).changed() {
+            if ui.checkbox(&mut on, t("Size follows the sound")).on_hover_text(t("The louder OpnQ plays, the bigger the effect")).changed() {
                 e.audio = on.then(Default::default);
             }
             if let Some(a) = &mut e.audio {
@@ -1899,7 +1899,7 @@ fn formula_card(ui: &mut Ui, light: &mut LightUi, e: &mut Effect) {
             None => ui.label(RichText::new(theme::with_icon(icons::CHECK_CIRCLE, t("Effect generated."))).color(theme::GREEN)),
         };
     }
-    // A Python script from OpenQ 0.3: shown so it can be rewritten as a formula, never run.
+    // A Python script from OpnQ 0.3: shown so it can be rewritten as a formula, never run.
     if !e.script.is_empty() {
         ui.add_space(6.0);
         let mut remove = false;
@@ -3813,7 +3813,7 @@ impl App {
             if ui.add_enabled(!searching, egui::Button::new(theme::with_icon(icons::REFRESH, t("Find devices")))).clicked() {
                 found.lock().searching = true;
                 let f = found.clone();
-                let spawned = std::thread::Builder::new().name("openq-dmx-find".into()).spawn(move || {
+                let spawned = std::thread::Builder::new().name("opnq-dmx-find".into()).spawn(move || {
                     let nodes = crate::light::artnet::discover(std::time::Duration::from_millis(1500));
                     let ports = crate::light::enttec::ports();
                     let mut f = f.lock();

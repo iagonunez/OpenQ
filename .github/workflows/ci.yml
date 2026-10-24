@@ -1,4 +1,4 @@
-# Unit, stress, soak, fuzz and crash-recovery tests (tests/stress.rs, tests/fuzz.rs). Users install OpenQ with OQup
+# Unit, stress, soak, fuzz and crash-recovery tests (tests/stress.rs, tests/fuzz.rs). Users install OpnQ with OQup
 # (https://github.com/iagonunez/OQup), which downloads the binaries release.yml publishes for a `v*` tag or builds
 # that tag from source (`--build-source`). A `v*` tag marks a version OQup offers, so tags run this; it can also be
 # run by hand.
@@ -52,4 +52,4 @@ jobs:
       - name: Stress tests
         run: CARGO_FLAGS="--locked --no-default-features" tools/stress.sh
       - name: Fuzz tests
-        run: OPENQ_FUZZ_SECS=60 CARGO_FLAGS="--locked --no-default-features" tools/fuzz.sh
+        run: OPNQ_FUZZ_SECS=60 CARGO_FLAGS="--locked --no-default-features" tools/fuzz.sh

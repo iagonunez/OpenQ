@@ -309,7 +309,7 @@ fn save_port(output: bool, port: Option<&str>) -> anyhow::Result<()> {
 
 /// MIDI output ports by name.
 pub fn list_midi_outputs() -> Vec<String> {
-    let Ok(m) = midir::MidiOutput::new("OpenQ") else { return Vec::new() };
+    let Ok(m) = midir::MidiOutput::new("OpnQ") else { return Vec::new() };
     m.ports().iter().filter_map(|p| m.port_name(p).ok()).collect()
 }
 
@@ -596,7 +596,7 @@ pub fn feedback(settings: &SurfaceSettings, view: &View, page: u16) -> Vec<(Surf
 }
 
 /// The commands for one input event: every mapping on `input`, plus `builtin` (an OSC address
-/// OpenQ knows without a mapping). `value` None = a press with no value (an OSC message
+/// OpnQ knows without a mapping). `value` None = a press with no value (an OSC message
 /// without arguments).
 pub fn resolve(
     settings: &SurfaceSettings,
@@ -942,7 +942,7 @@ impl SurfaceFeedback {
         let status = Arc::new(Mutex::new(MidiStatus::default()));
         let (stop2, status2, name) = (stop.clone(), status.clone(), port.clone());
         let thread = std::thread::Builder::new()
-            .name("openq-surface-feedback".into())
+            .name("opnq-surface-feedback".into())
             .spawn(move || {
                 let mut sent = FeedbackSent::default();
                 let mut conn: Option<midir::MidiOutputConnection> = None;
@@ -964,10 +964,10 @@ impl SurfaceFeedback {
                         if conn.is_none() && tried.is_none_or(|t| t.elapsed() >= crate::media::AUDIO_RETRY) {
                             tried = Some(Instant::now());
                             let r = (|| {
-                                let m = midir::MidiOutput::new("OpenQ").map_err(|e| e.to_string())?;
+                                let m = midir::MidiOutput::new("OpnQ").map_err(|e| e.to_string())?;
                                 let ports = m.ports();
                                 let p = ports.iter().find(|p| m.port_name(p).ok().as_deref() == Some(name.as_str())).ok_or_else(|| format!("MIDI output not found: {name}"))?.clone();
-                                m.connect(&p, "openq-feedback").map_err(|e| e.to_string())
+                                m.connect(&p, "opnq-feedback").map_err(|e| e.to_string())
                             })();
                             match r {
                                 Ok(c) => {
@@ -1085,12 +1085,12 @@ impl MidiSurface {
         let (stop2, status2, name) = (stop.clone(), status.clone(), port.clone());
         let repaint = Arc::new(repaint);
         let thread = std::thread::Builder::new()
-            .name("openq-midi-surface".into())
+            .name("opnq-midi-surface".into())
             .spawn(move || {
                 while !stop2.load(Ordering::Acquire) {
                     let (show, hub, repaint) = (show.clone(), hub.clone(), repaint.clone());
                     let conn = (|| {
-                        let mut m = midir::MidiInput::new("OpenQ").map_err(|e| e.to_string())?;
+                        let mut m = midir::MidiInput::new("OpnQ").map_err(|e| e.to_string())?;
                         // Timing messages too: MIDI clock (cheap, 24 per beat); SysEx for MSC.
                         m.ignore(midir::Ignore::ActiveSense);
                         let ports = m.ports();
@@ -1098,7 +1098,7 @@ impl MidiSurface {
                         let (epoch, mut clock) = (Instant::now(), MidiClock::default());
                         m.connect(
                             &p,
-                            "openq-surface",
+                            "opnq-surface",
                             move |_, msg, _| {
                                 if msg.first().is_some_and(|b| *b >= 0xf8) {
                                     if let Some(bpm) = clock.message(msg, epoch.elapsed().as_micros() as u64) {

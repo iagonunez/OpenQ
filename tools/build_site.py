@@ -7,7 +7,7 @@ import re
 from pathlib import Path
 
 DOCS = Path(__file__).resolve().parent.parent / "docs"
-REPO = "https://github.com/iagonunez/OpenQ"
+REPO = "https://github.com/iagonunez/OpnQ"
 SH = "curl --proto '=https' --tlsv1.2 -fsSL https://github.com/iagonunez/OQup/releases/latest/download/install.sh | sh"
 PS = 'powershell -ExecutionPolicy Bypass -c "irm https://github.com/iagonunez/OQup/releases/latest/download/install.ps1 | iex"'
 
@@ -15,20 +15,20 @@ TEXT = {
     "en": {
         "shot": "screenshot.webp",
         "dir": "", "readme": "README.md", "manual": "manual/index.html", "manual_start": "manual/start.html",
-        "title": "OpenQ — live show control for sound, video and the stage",
-        "desc": "OpenQ runs a show from a list of cues: music, sound effects, video, text, fades and OSC, fired with one GO button. Free for any production.",
+        "title": "OpnQ — live show control for sound, video and the stage",
+        "desc": "OpnQ runs a show from a list of cues: music, sound effects, video, text, fades and OSC, fired with one GO button. Free for any production.",
         "tagline": "Live show control for sound, video and the stage",
         "lede": "Build a list of cues — music, effects, movies, titles, fades, messages to the lighting desk — and run the whole show with one GO button. Free for any production, commercial ones included.",
         "get": "Install", "source": "Source code", "manual_l": "User manual", "license": "License",
-        "install": "Install OpenQ",
+        "install": "Install OpnQ",
         "guide_title": "Step by step",
         "where_unix": "In a terminal:", "where_win": "In PowerShell:",
-        "after_linux": "Downloads the newest release (x86_64 or ARM64; a distribution from 2022 or later), installs missing sound and device libraries from your distribution's packages (it asks first) and adds OpenQ to your applications menu.",
-        "after_macos": "macOS 11 or later, Apple silicon or Intel. OpenQ ends up in Applications in your home folder.",
-        "after_windows": "Windows 10/11, 64-bit. OpenQ is then in the Start menu.",
-        "more": "The installer, <a href=\"https://github.com/iagonunez/OQup\">OQup</a>, downloads OpenQ with the LGPL FFmpeg libraries it uses and, with lighting, the OQVis 3D visualiser. Later: <code>oqup update</code> · <code>oqup versions</code> · <code>oqup uninstall</code>; <code>oqup install --build-source</code> compiles it on your computer instead, <code>--no-lighting</code> installs the cues only.",
+        "after_linux": "Downloads the newest release (x86_64 or ARM64; a distribution from 2022 or later), installs missing sound and device libraries from your distribution's packages (it asks first) and adds OpnQ to your applications menu.",
+        "after_macos": "macOS 11 or later, Apple silicon or Intel. OpnQ ends up in Applications in your home folder.",
+        "after_windows": "Windows 10/11, 64-bit. OpnQ is then in the Start menu.",
+        "more": "The installer, <a href=\"https://github.com/iagonunez/OQup\">OQup</a>, downloads OpnQ with the LGPL FFmpeg libraries it uses and, with lighting, the OQVis 3D visualiser. Later: <code>oqup update</code> · <code>oqup versions</code> · <code>oqup uninstall</code>; <code>oqup install --build-source</code> compiles it on your computer instead, <code>--no-lighting</code> installs the cues only.",
         "copy": "Copy", "copied": "Copied",
-        "shot_alt": "OpenQ running a show: the GO button, the standby cue, a cue list with audio, video, text, group, fade and network cues, and the cues that are playing",
+        "shot_alt": "OpnQ running a show: the GO button, the standby cue, a cue list with audio, video, text, group, fade and network cues, and the cues that are playing",
         "what": "What it does",
         "features": [
             ("24 cue types", "Audio, video, text, camera, live mic, groups, waits, fades, OSC, MIDI, timecode and more."),
@@ -47,20 +47,20 @@ TEXT = {
     "es": {
         "shot": "screenshot.es.webp",
         "dir": "es/", "readme": "README.es.md", "manual": "manual/index.es.html", "manual_start": "manual/start.es.html",
-        "title": "OpenQ — control de espectáculos en directo para sonido, vídeo y escena",
-        "desc": "OpenQ lleva un espectáculo desde una lista de cues: música, efectos, vídeo, texto, fundidos y OSC, con un solo botón GO. Gratis para cualquier producción.",
+        "title": "OpnQ — control de espectáculos en directo para sonido, vídeo y escena",
+        "desc": "OpnQ lleva un espectáculo desde una lista de cues: música, efectos, vídeo, texto, fundidos y OSC, con un solo botón GO. Gratis para cualquier producción.",
         "tagline": "Control de espectáculos en directo para sonido, vídeo y escena",
         "lede": "Monta una lista de cues — música, efectos, películas, rótulos, fundidos, mensajes a la mesa de luces — y lleva todo el espectáculo con un solo botón GO. Gratis para cualquier producción, también comercial.",
         "get": "Instalar", "source": "Código fuente", "manual_l": "Manual de usuario", "license": "Licencia",
-        "install": "Instala OpenQ",
+        "install": "Instala OpnQ",
         "guide_title": "Paso a paso",
         "where_unix": "En un terminal:", "where_win": "En PowerShell:",
-        "after_linux": "Descarga la versión más reciente (x86_64 o ARM64; una distribución de 2022 o posterior), instala las bibliotecas de sonido y dispositivos que falten con los paquetes de tu distribución (pregunta antes) y añade OpenQ al menú de aplicaciones.",
-        "after_macos": "macOS 11 o posterior, Apple silicon o Intel. OpenQ queda en Aplicaciones dentro de tu carpeta personal.",
-        "after_windows": "Windows 10/11 de 64 bits. Después OpenQ está en el menú Inicio.",
-        "more": "El instalador, <a href=\"https://github.com/iagonunez/OQup\">OQup</a>, descarga OpenQ con las bibliotecas FFmpeg LGPL que usa y, con iluminación, el visualizador 3D OQVis. Más adelante: <code>oqup update</code> · <code>oqup versions</code> · <code>oqup uninstall</code>; <code>oqup install --build-source</code> lo compila en tu ordenador, <code>--no-lighting</code> instala solo las cues.",
+        "after_linux": "Descarga la versión más reciente (x86_64 o ARM64; una distribución de 2022 o posterior), instala las bibliotecas de sonido y dispositivos que falten con los paquetes de tu distribución (pregunta antes) y añade OpnQ al menú de aplicaciones.",
+        "after_macos": "macOS 11 o posterior, Apple silicon o Intel. OpnQ queda en Aplicaciones dentro de tu carpeta personal.",
+        "after_windows": "Windows 10/11 de 64 bits. Después OpnQ está en el menú Inicio.",
+        "more": "El instalador, <a href=\"https://github.com/iagonunez/OQup\">OQup</a>, descarga OpnQ con las bibliotecas FFmpeg LGPL que usa y, con iluminación, el visualizador 3D OQVis. Más adelante: <code>oqup update</code> · <code>oqup versions</code> · <code>oqup uninstall</code>; <code>oqup install --build-source</code> lo compila en tu ordenador, <code>--no-lighting</code> instala solo las cues.",
         "copy": "Copiar", "copied": "Copiado",
-        "shot_alt": "OpenQ llevando un espectáculo: el botón GO, la cue en espera, una lista con cues de audio, vídeo, texto, grupo, fundido y red, y las cues que están sonando",
+        "shot_alt": "OpnQ llevando un espectáculo: el botón GO, la cue en espera, una lista con cues de audio, vídeo, texto, grupo, fundido y red, y las cues que están sonando",
         "what": "Qué hace",
         "features": [
             ("24 tipos de cue", "Audio, vídeo, texto, cámara, micro en directo, grupos, esperas, fundidos, OSC, MIDI, timecode y más."),
@@ -79,20 +79,20 @@ TEXT = {
     "gl": {
         "shot": "screenshot.gl.webp",
         "dir": "gl/", "readme": "README.gl.md", "manual": "manual/index.gl.html", "manual_start": "manual/start.gl.html",
-        "title": "OpenQ — control de espectáculos en directo para son, vídeo e escena",
-        "desc": "OpenQ leva un espectáculo desde unha lista de cues: música, efectos, vídeo, texto, fundidos e OSC, cun só botón GO. De balde para calquera produción.",
+        "title": "OpnQ — control de espectáculos en directo para son, vídeo e escena",
+        "desc": "OpnQ leva un espectáculo desde unha lista de cues: música, efectos, vídeo, texto, fundidos e OSC, cun só botón GO. De balde para calquera produción.",
         "tagline": "Control de espectáculos en directo para son, vídeo e escena",
         "lede": "Monta unha lista de cues — música, efectos, películas, rótulos, fundidos, mensaxes á mesa de luces — e leva todo o espectáculo cun só botón GO. De balde para calquera produción, tamén comercial.",
         "get": "Instalar", "source": "Código fonte", "manual_l": "Manual de usuario", "license": "Licenza",
-        "install": "Instala OpenQ",
+        "install": "Instala OpnQ",
         "guide_title": "Paso a paso",
         "where_unix": "Nun terminal:", "where_win": "En PowerShell:",
-        "after_linux": "Descarga a versión máis recente (x86_64 ou ARM64; unha distribución de 2022 ou posterior), instala as bibliotecas de son e dispositivos que falten cos paquetes da túa distribución (pregunta antes) e engade OpenQ ao menú de aplicacións.",
-        "after_macos": "macOS 11 ou posterior, Apple silicon ou Intel. OpenQ queda en Aplicacións dentro do teu cartafol persoal.",
-        "after_windows": "Windows 10/11 de 64 bits. Despois OpenQ está no menú Inicio.",
-        "more": "O instalador, <a href=\"https://github.com/iagonunez/OQup\">OQup</a>, descarga OpenQ coas bibliotecas FFmpeg LGPL que usa e, con iluminación, o visualizador 3D OQVis. Máis adiante: <code>oqup update</code> · <code>oqup versions</code> · <code>oqup uninstall</code>; <code>oqup install --build-source</code> compílao no teu ordenador, <code>--no-lighting</code> instala só as cues.",
+        "after_linux": "Descarga a versión máis recente (x86_64 ou ARM64; unha distribución de 2022 ou posterior), instala as bibliotecas de son e dispositivos que falten cos paquetes da túa distribución (pregunta antes) e engade OpnQ ao menú de aplicacións.",
+        "after_macos": "macOS 11 ou posterior, Apple silicon ou Intel. OpnQ queda en Aplicacións dentro do teu cartafol persoal.",
+        "after_windows": "Windows 10/11 de 64 bits. Despois OpnQ está no menú Inicio.",
+        "more": "O instalador, <a href=\"https://github.com/iagonunez/OQup\">OQup</a>, descarga OpnQ coas bibliotecas FFmpeg LGPL que usa e, con iluminación, o visualizador 3D OQVis. Máis adiante: <code>oqup update</code> · <code>oqup versions</code> · <code>oqup uninstall</code>; <code>oqup install --build-source</code> compílao no teu ordenador, <code>--no-lighting</code> instala só as cues.",
         "copy": "Copiar", "copied": "Copiado",
-        "shot_alt": "OpenQ levando un espectáculo: o botón GO, a cue en espera, unha lista con cues de audio, vídeo, texto, grupo, fundido e rede, e as cues que están a soar",
+        "shot_alt": "OpnQ levando un espectáculo: o botón GO, a cue en espera, unha lista con cues de audio, vídeo, texto, grupo, fundido e rede, e as cues que están a soar",
         "what": "Que fai",
         "features": [
             ("24 tipos de cue", "Audio, vídeo, texto, cámara, micro en directo, grupos, esperas, fundidos, OSC, MIDI, timecode e máis."),
@@ -142,7 +142,7 @@ def page(lang):
         for c, short, n in LANG_NAMES
     )
     alternates = "\n".join(
-        f'<link rel="alternate" hreflang="{c}" href="https://iagonunez.github.io/OpenQ/{TEXT[c]["dir"]}">' for c, _, _ in LANG_NAMES
+        f'<link rel="alternate" hreflang="{c}" href="https://iagonunez.github.io/OpnQ/{TEXT[c]["dir"]}">' for c, _, _ in LANG_NAMES
     )
 
     def panel(os, emoji, name, where, cmd, after, ps=False):
@@ -174,9 +174,9 @@ def page(lang):
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>{esc(t["title"])}</title>
 <meta name="description" content="{esc(t["desc"])}">
-<meta property="og:title" content="OpenQ">
+<meta property="og:title" content="OpnQ">
 <meta property="og:description" content="{esc(t["desc"])}">
-<meta property="og:image" content="https://iagonunez.github.io/OpenQ/img/screenshot.webp">
+<meta property="og:image" content="https://iagonunez.github.io/OpnQ/img/screenshot.webp">
 <meta name="theme-color" content="#141518">
 {alternates}
 <link rel="icon" href="{up}site/icon.svg" type="image/svg+xml">
@@ -188,7 +188,7 @@ def page(lang):
 </head>
 <body>
 <header class="top">
-  <a href="{up}{t["dir"]}" aria-label="OpenQ"><img class="mini" src="{up}site/logo.svg" alt="OpenQ"></a>
+  <a href="{up}{t["dir"]}" aria-label="OpnQ"><img class="mini" src="{up}site/logo.svg" alt="OpnQ"></a>
   <nav>
     <a class="hide-sm" href="#install">{t["get"]}</a>
     <a class="hide-sm" href="{manual}">{t["manual_l"]}</a>
@@ -199,7 +199,7 @@ def page(lang):
 
 <main>
 <section class="hero">
-  <img class="logo" src="{up}site/logo.svg" alt="OpenQ" width="340" height="140">
+  <img class="logo" src="{up}site/logo.svg" alt="OpnQ" width="340" height="140">
   <h1>{esc(t["tagline"])}</h1>
   <p>{esc(t["lede"])}</p>
   <div class="badges">

@@ -1,30 +1,32 @@
 <p align="center">
   <picture>
     <source media="(prefers-color-scheme: dark)" srcset="docs/img/logo-dark.svg">
-    <img src="docs/img/logo-light.svg" alt="OpenQ" width="300">
+    <img src="docs/img/logo-light.svg" alt="OpnQ" width="300">
   </picture>
 </p>
 
 <h3 align="center">Live show control for sound, video and the stage</h3>
 
+<p align="center"><sub>Pronounced "open cue": OpnQ is read as <i>open cue</i>, /ˈoʊpən kjuː/.</sub></p>
+
 <p align="center">
   <b>English</b> · <a href="README.es.md">Español</a> · <a href="README.gl.md">Galego</a>
-  &nbsp;|&nbsp; 🌐 <a href="https://iagonunez.github.io/OpenQ/">Website</a>
-  &nbsp;|&nbsp; 📖 <a href="https://iagonunez.github.io/OpenQ/manual/">User manual</a>
+  &nbsp;|&nbsp; 🌐 <a href="https://iagonunez.github.io/OpnQ/">Website</a>
+  &nbsp;|&nbsp; 📖 <a href="https://iagonunez.github.io/OpnQ/manual/">User manual</a>
 </p>
 
 ---
 
 ## 🎭 About
 
-OpenQ runs a theatre, concert or event from a list of cues: every press of **GO** fires the next
+OpnQ runs a theatre, concert or event from a list of cues: every press of **GO** fires the next
 one, whether it's music, a sound effect, a movie on a projector, a title on a screen, a fade, or a
 message to the lighting desk. It is an open-source application written in Rust with
 [egui](https://github.com/emilk/egui), and it's free to use, including for commercial productions.
 
 NOTE: Seeing the hype around REA and cloned apps, I have to say here that this is a project started from scratch, not a clone of QLab. I have my own ideas and roadmap for it, so there are things that are similar and things that will be very different.
 
-### 📖 The story behind OpenQ
+### 📖 The story behind OpnQ
 I first started working on live shows as a teenager and always admired the work of the people at Figure 53 with QLab as the industry standard for any live production. Later I studied Electrical Engineering and began working as a Software Engineer. I have always had this project on the back of my mind as the perfect hobby project, so I finally decided to start working on it.
 
 My goal is to democratize live production control software, so people can afford it without having to buy expensive Apple hardware or a costly license if they don't have the means.
@@ -36,7 +38,7 @@ That said, I welcome any advice on missing features and bug reports. The softwar
 For now, I'm keeping contributions closed since I don't have the time to review and manage pull requests, but you're more than welcome to fork the repo and build your own features on top of it if you'd like.
 
 <p align="center">
-  <img src="docs/img/screenshot.webp" alt="OpenQ running a show: the GO button, the standby cue, a cue list with audio, video, text, group, fade and network cues, and the cues that are playing" width="900">
+  <img src="docs/img/screenshot.webp" alt="OpnQ running a show: the GO button, the standby cue, a cue list with audio, video, text, group, fade and network cues, and the cues that are playing" width="900">
 </p>
 
 <p align="center">
@@ -45,12 +47,12 @@ For now, I'm keeping contributions closed since I don't have the time to review 
 
 ## 📦 Install
 
-OpenQ is installed by **[OQup](https://github.com/iagonunez/OQup)**, an installer in the style of
-rustup. It downloads the newest OpenQ release for your system with the LGPL-only FFmpeg libraries it
+OpnQ is installed by **[OQup](https://github.com/iagonunez/OQup)**, an installer in the style of
+rustup. It downloads the newest OpnQ release for your system with the LGPL-only FFmpeg libraries it
 uses (on Linux it also installs missing sound and device libraries from your distribution's
 packages, asking first), adds the OQVis 3D visualiser for the lighting workspace and installs the
 app with a menu entry. `oqup update` installs a new version when one is released, `oqup versions`
-lists them and `oqup uninstall` removes it. `oqup install --build-source` compiles OpenQ on your
+lists them and `oqup uninstall` removes it. `oqup install --build-source` compiles OpnQ on your
 computer instead (installing Rust and the build dependencies if they're missing).
 `oqup install --no-lighting` installs the cues only, without the lighting workspace or OQVis
 (`--lighting` adds it back).
@@ -63,7 +65,7 @@ curl --proto '=https' --tlsv1.2 -fsSL https://github.com/iagonunez/OQup/releases
 
 The Linux binaries need Debian 12, Ubuntu 23.04, Fedora 37 or newer (glibc 2.36). On older systems use
 `oqup install --build-source --no-default-features --features video,lighting` (sound through ALSA: their
-PipeWire is too old for OpenQ's PipeWire support).
+PipeWire is too old for OpnQ's PipeWire support).
 
 ### 🪟 Windows 10/11 (64-bit), in PowerShell
 
@@ -71,9 +73,9 @@ PipeWire is too old for OpenQ's PipeWire support).
 powershell -ExecutionPolicy Bypass -c "irm https://github.com/iagonunez/OQup/releases/latest/download/install.ps1 | iex"
 ```
 
-The app is installed to `~/Applications/OpenQ.app` (macOS, code-signed ad hoc or with your
-Developer ID: `--sign`), `%LOCALAPPDATA%\Programs\OpenQ` (Windows) or `~/.local/share/oqup/app`
-with a link in `~/.local/bin/openq` (Linux). OQup's README lists every download, its source and its
+The app is installed to `~/Applications/OpnQ.app` (macOS, code-signed ad hoc or with your
+Developer ID: `--sign`), `%LOCALAPPDATA%\Programs\OpnQ` (Windows) or `~/.local/share/oqup/app`
+with a link in `~/.local/bin/opnq` (Linux). OQup's README lists every download, its source and its
 license.
 
 ### 🛠️ From source by hand (Linux; what `oqup install --build-source` does there)
@@ -86,8 +88,8 @@ sudo apt install build-essential clang pkg-config libasound2-dev libpipewire-0.3
 # Fedora:  sudo dnf install clang pkgconf alsa-lib-devel pipewire-devel systemd-devel ffmpeg-free-devel
 # Arch:    sudo pacman -S --needed base-devel clang pkgconf alsa-lib libpipewire ffmpeg
 curl https://sh.rustup.rs -sSf | sh          # Rust, if you don't have it
-git clone https://github.com/iagonunez/OpenQ && cd OpenQ
-cargo build --release && ./target/release/openq
+git clone https://github.com/iagonunez/OpnQ && cd OpnQ
+cargo build --release && ./target/release/opnq
 ```
 
 > [!NOTE]
@@ -124,7 +126,7 @@ cargo build --release && ./target/release/openq
 | ⌨️ | **Triggers** | Fire any cue from its own key, a MIDI message or a time of day, or from a cart: a grid of buttons. |
 | 🎹 | **MIDI out** | MIDI cues send notes, control and program changes, MIDI Show Control and SysEx. |
 | 📦 | **Bundle show** | Copy a show and all its media into one folder to move or archive it. |
-| 📡 | **OSC** | Control OpenQ from other gear over OSC, and send OSC to lighting desks with Network cues. |
+| 📡 | **OSC** | Control OpnQ from other gear over OSC, and send OSC to lighting desks with Network cues. |
 | 📱 | **Remote devices** | Pair a laptop or a tablet to follow the show, run it or edit it, over an encrypted link. |
 | 🛟 | **Crash safety** | Autosave and recovery, atomic saves, audio devices that reconnect by themselves, and an error log. |
 | ↩️ | **Undo and redo** | Up to 200 steps. |
@@ -134,8 +136,8 @@ cargo build --release && ./target/release/openq
 
 Everything above is explained step by step, with pictures, in the **user manual**, which comes with
 the app: choose **Help → User manual** or press **F1** and it opens in your web browser. It works
-offline and always matches your version of OpenQ. Like the app itself (pick the language on the first run or in
-**Settings → General**), it is available in English, Spanish and Galician, and you can also read it [online](https://iagonunez.github.io/OpenQ/manual/).
+offline and always matches your version of OpnQ. Like the app itself (pick the language on the first run or in
+**Settings → General**), it is available in English, Spanish and Galician, and you can also read it [online](https://iagonunez.github.io/OpnQ/manual/).
 
 ## 🎨 Look and credits
 
@@ -144,7 +146,7 @@ The UI uses a dark theme (`src/ui/theme.rs`) with bundled fonts in `assets/fonts
 - [Material Symbols Rounded](https://fonts.google.com/icons) icons (Apache-2.0)
 - [Inter](https://fonts.google.com/specimen/Inter) for text and
   [JetBrains Mono](https://fonts.google.com/specimen/JetBrains+Mono) for times, and
-  [Barlow Condensed](https://fonts.google.com/specimen/Barlow+Condensed) for the OpenQ title
+  [Barlow Condensed](https://fonts.google.com/specimen/Barlow+Condensed) for the OpnQ title
   (SIL OFL 1.1)
 
 They are subset to the glyphs in use. To add an icon, put its name in `tools/icons.txt` and
@@ -153,17 +155,17 @@ regenerates `src/ui/icons.rs`.
 
 ## ⚖️ License
 
-Copyright 2026 Iago Núñez. OpenQ is licensed under the **Apache License 2.0** ([LICENSE.md](LICENSE.md)):
+Copyright 2026 Iago Núñez. OpnQ is licensed under the **Apache License 2.0** ([LICENSE.md](LICENSE.md)):
 
 - ✅ **Allowed:** any use, including commercial productions. You may run paid shows, concerts,
   events and installations, and be paid to program or operate them. You may copy, change and share
-  OpenQ, keeping the copyright notice, `LICENSE.md` and `NOTICE.md` with every copy.
-- ✅ **Also allowed:** selling copies or changed versions of OpenQ, and hosting, support or
+  OpnQ, keeping the copyright notice, `LICENSE.md` and `NOTICE.md` with every copy.
+- ✅ **Also allowed:** selling copies or changed versions of OpnQ, and hosting, support or
   consulting services built on it. Changed files must say that they were changed.
 
 Third-party fonts, crates and system libraries keep their own licenses. They are listed in
 [NOTICE.md](NOTICE.md) and [THIRD_PARTY_LICENSES.md](THIRD_PARTY_LICENSES.md), and are also shown
-in the app under **Help → About OpenQ and licenses**. Two points to note when distributing binaries:
+in the app under **Help → About OpnQ and licenses**. Two points to note when distributing binaries:
 
 - Ship `LICENSE.md`, `NOTICE.md`, `THIRD_PARTY_LICENSES.md` and `assets/fonts/*.txt` with them.
   The app also contains these texts.
@@ -173,4 +175,4 @@ in the app under **Help → About OpenQ and licenses**. Two points to note when 
 
 After changing dependencies, run `python3 -I tools/third_party_licenses.py`.
 
-OpenQ is open source: the Apache License 2.0 is approved by the Open Source Initiative.
+OpnQ is open source: the Apache License 2.0 is approved by the Open Source Initiative.

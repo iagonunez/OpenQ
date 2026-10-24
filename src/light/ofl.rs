@@ -1,7 +1,7 @@
 //! Import fixture definitions in the Open Fixture Library JSON format
 //! (<https://open-fixture-library.org>, fixture data under the MIT licence).
 //!
-//! * A channel's attribute comes from its first capability that OpenQ models; every
+//! * A channel's attribute comes from its first capability that OpnQ models; every
 //!   capability of a channel with more than one becomes a named range (wheel slots take their
 //!   name and colour from the fixture's `wheels`).
 //! * Fine channels come from `fineChannelAliases`; ranges are scaled to the coarse byte.

@@ -1,6 +1,6 @@
 //! Fixture type files (`.oqfixture`) and the user's fixture library.
 //!
-//! * A file holds one [`FixtureType`] as JSON: `{"format": "openq-fixture", "version": 1,
+//! * A file holds one [`FixtureType`] as JSON: `{"format": "opnq-fixture", "version": 1,
 //!   "fixture": {…}}`. Shows carry copies of the types they use, so a file is only needed to
 //!   reuse or share a type.
 //! * The library is the folder `<config>/fixtures`: every `.oqfixture` there is offered when
@@ -16,7 +16,7 @@ use std::path::{Path, PathBuf};
 
 /// File extension of fixture type files.
 pub const EXTENSION: &str = "oqfixture";
-const FORMAT: &str = "openq-fixture";
+const FORMAT: &str = "opnq-fixture";
 const VERSION: u32 = 1;
 /// Most modes a type can have (Astera's GDTF tubes ship 165).
 pub const MAX_MODES: usize = 256;
@@ -68,12 +68,12 @@ pub fn write(t: &FixtureType) -> String {
 
 /// Read a fixture type file (checked by [`sanitize`]).
 pub fn read(text: &str) -> anyhow::Result<FixtureType> {
-    let f: File = serde_json::from_str(text).map_err(|e| anyhow::anyhow!("not an OpenQ fixture file: {e}"))?;
+    let f: File = serde_json::from_str(text).map_err(|e| anyhow::anyhow!("not an OpnQ fixture file: {e}"))?;
     if f.format != FORMAT {
-        anyhow::bail!("not an OpenQ fixture file");
+        anyhow::bail!("not an OpnQ fixture file");
     }
     if f.version > VERSION {
-        anyhow::bail!("made by a newer OpenQ (fixture file version {})", f.version);
+        anyhow::bail!("made by a newer OpnQ (fixture file version {})", f.version);
     }
     sanitize(f.fixture)
 }
@@ -203,7 +203,7 @@ pub fn remove(dir: &Path, t: &FixtureType) -> anyhow::Result<()> {
 }
 
 impl super::folder::Stored for FixtureType {
-    const THREAD: &'static str = "openq-fixtures";
+    const THREAD: &'static str = "opnq-fixtures";
     fn load_dir(dir: &Path) -> (Vec<Self>, Vec<(String, String)>) {
         load_dir(dir)
     }
@@ -297,7 +297,7 @@ mod tests {
 
     #[test]
     fn library_saves_and_loads_in_the_background() {
-        let dir = std::env::temp_dir().join(format!("openq-fixlib-{}", std::process::id()));
+        let dir = std::env::temp_dir().join(format!("opnq-fixlib-{}", std::process::id()));
         let _ = std::fs::remove_dir_all(&dir);
         let lib = Library::new(Some(dir.clone()));
         lib.wait();

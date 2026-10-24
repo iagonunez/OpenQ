@@ -1,18 +1,18 @@
 #!/usr/bin/env bash
-# Builds the big demo show for manual testing and opens it in OpenQ.
+# Builds the big demo show for manual testing and opens it in OpnQ.
 #
 #   tools/demo_show.sh            download media (once), generate the show, open it
 #   tools/demo_show.sh --no-run   only download + generate
 #   tools/demo_show.sh --fresh    generate again even if the show file exists (keeps the media)
 #   tools/demo_show.sh --media    only download the media
 #
-# Everything lives in $OPENQ_DEMO_DIR (default target/demo-show): media/, demo.openq, CREDITS.txt.
+# Everything lives in $OPNQ_DEMO_DIR (default target/demo-show): media/, demo.opnq, CREDITS.txt.
 # The media are real recordings under free licences (see CREDITS.txt), downloaded on the first run
 # (~130 MB). The show is written by examples/demo_show.rs, so it always matches the current model.
 set -euo pipefail
 
 cd "$(dirname "$0")/.."
-DIR="${OPENQ_DEMO_DIR:-target/demo-show}"
+DIR="${OPNQ_DEMO_DIR:-target/demo-show}"
 MEDIA="$DIR/media"
 RUN=1
 FRESH=0
@@ -50,7 +50,7 @@ for t in "Gymnopedie No 1" "Carefree" "Local Forecast - Elevator" "Wallpaper" "E
 done
 
 # Sound effects: Google sound library (actions.google.com), CC BY 4.0. They come as Ogg Opus, which
-# OpenQ's decoder doesn't read: short ones become WAV, long ones FLAC (as a sound designer's library).
+# OpnQ's decoder doesn't read: short ones become WAV, long ones FLAC (as a sound designer's library).
 SFX=https://actions.google.com/sounds/v1
 for s in water/waves_crashing_on_rock_beach water/water_lapping_wind water/large_bubbles_surfacing water/air_woosh_underwater \
     water/small_stream_flowing weather/strong_wind weather/wind weather/desert_howling_wind weather/house_windy_day \
@@ -110,7 +110,7 @@ cat > "$MEDIA/images/lighthouse_logo.svg" <<'EOF'
 EOF
 
 cat > "$DIR/CREDITS.txt" <<'EOF'
-Demo show media (downloaded by tools/demo_show.sh; not part of OpenQ):
+Demo show media (downloaded by tools/demo_show.sh; not part of OpnQ):
 - Music: Kevin MacLeod (incompetech.com), Creative Commons Attribution 4.0.
 - Sound effects: Google sound library (developers.google.com/assistant/tools/sound-library), CC BY 4.0.
 - Video and stills: Blender Foundation (Sintel, Big Buck Bunny; www.blender.org), CC BY 3.0;
@@ -129,10 +129,10 @@ mv "$DUR.part" "$DUR"
 echo "$(wc -l < "$DUR") media files ready."
 [[ $MEDIA_ONLY == 1 ]] && exit 0
 
-cargo build --release --bin openq --example demo_show
-if [[ $FRESH == 1 || ! -f "$DIR/demo.openq" ]]; then
+cargo build --release --bin opnq --example demo_show
+if [[ $FRESH == 1 || ! -f "$DIR/demo.opnq" ]]; then
     ./target/release/examples/demo_show "$DIR"
 fi
 if [[ $RUN == 1 ]]; then
-    exec ./target/release/openq "$DIR/demo.openq"
+    exec ./target/release/opnq "$DIR/demo.opnq"
 fi

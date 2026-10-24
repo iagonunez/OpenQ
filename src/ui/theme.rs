@@ -97,7 +97,7 @@ pub fn icon_button(ui: &mut Ui, glyph: &str, tooltip: &str) -> Response {
 }
 
 pub fn install(ctx: &egui::Context) {
-    // OpenQ handles Ctrl + / Ctrl − itself (saved interface scale); egui's Ctrl+0 would take a cue shortcut.
+    // OpnQ handles Ctrl + / Ctrl − itself (saved interface scale); egui's Ctrl+0 would take a cue shortcut.
     ctx.options_mut(|o| o.zoom_with_keyboard = false);
     let mut fonts = FontDefinitions::default();
     let add = |fonts: &mut FontDefinitions, name: &str, bytes: &'static [u8], tweak: FontTweak| {

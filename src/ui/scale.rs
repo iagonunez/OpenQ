@@ -39,10 +39,10 @@ fn label(scale: f32) -> String {
 }
 
 impl App {
-    /// Applies the saved scale on the first frame. Screenshots (`OPENQ_SCREENSHOT`) keep 100 % (or
-    /// their own `OPENQ_SCREENSHOT_ZOOM`) and never save.
+    /// Applies the saved scale on the first frame. Screenshots (`OPNQ_SCREENSHOT`) keep 100 % (or
+    /// their own `OPNQ_SCREENSHOT_ZOOM`) and never save.
     pub(super) fn sync_ui_scale(&mut self, ctx: &egui::Context) {
-        if self.scale_applied || std::env::var_os("OPENQ_SCREENSHOT").is_some() {
+        if self.scale_applied || std::env::var_os("OPNQ_SCREENSHOT").is_some() {
             return;
         }
         self.scale_applied = true;
@@ -57,7 +57,7 @@ impl App {
         }
         self.ui_scale = scale;
         ctx.set_zoom_factor(scale);
-        if std::env::var_os("OPENQ_SCREENSHOT").is_none()
+        if std::env::var_os("OPNQ_SCREENSHOT").is_none()
             && let Err(e) = save(scale)
         {
             self.notify_error(tr!("Cannot save the interface scale: {e}", e));

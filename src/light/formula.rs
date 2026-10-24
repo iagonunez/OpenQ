@@ -1,5 +1,5 @@
 //! Effect formulas: the small language custom effects ([`Shape::Custom`](super::effects::Shape))
-//! are written in. OpenQ works a formula out into an [`EffectTable`] itself: it is arithmetic
+//! are written in. OpnQ works a formula out into an [`EffectTable`] itself: it is arithmetic
 //! only (no loops, no recursion, no files or anything else), so every formula ends, and its cost
 //! is known and capped before it runs ([`MAX_WORK`]).
 //!
@@ -956,7 +956,7 @@ impl Run {
     /// Start working `src` out.
     pub fn start(src: String, values: Vec<EffectParam>) -> Self {
         let (tx, rx) = mpsc::channel();
-        let spawned = std::thread::Builder::new().name("openq-formula".into()).spawn({
+        let spawned = std::thread::Builder::new().name("opnq-formula".into()).spawn({
             let tx = tx.clone();
             move || {
                 let r = crate::recovery::catch(|| Ok(evaluate(&src, &values))).unwrap_or_else(|e| Err(err(1, 0, e.to_string())));

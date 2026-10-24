@@ -1,6 +1,6 @@
 //! Overrides: global switches that cut a kind of input or output for the whole show at once (a
 //! technical rehearsal with the lighting desk in charge, MIDI gear not ready, a wall-clock trigger
-//! that must not fire today...). They belong to this computer's running show, not to the file: OpenQ
+//! that must not fire today...). They belong to this computer's running show, not to the file: OpnQ
 //! starts with everything on, and the status bar says when something is off.
 //!
 //! Kept in atomics so the threads that need them (OSC, MIDI input, the light thread, timecode
@@ -26,7 +26,7 @@ pub enum Override {
     TimecodeOut,
     /// Wall-clock triggers.
     WallClock,
-    /// DMX output: no packets are sent while off (the lighting keeps playing inside OpenQ).
+    /// DMX output: no packets are sent while off (the lighting keeps playing inside OpnQ).
     LightOut,
 }
 
@@ -71,7 +71,7 @@ impl Override {
             Override::TimecodeIn => crate::i18n::t("Incoming timecode fires no cues."),
             Override::TimecodeOut => crate::i18n::t("Timecode cues run but LTC is silent and no MTC is sent."),
             Override::WallClock => crate::i18n::t("Cues with a time of day don't fire."),
-            Override::LightOut => crate::i18n::t("No DMX is sent (the lighting keeps running inside OpenQ)."),
+            Override::LightOut => crate::i18n::t("No DMX is sent (the lighting keeps running inside OpnQ)."),
         }
     }
 }

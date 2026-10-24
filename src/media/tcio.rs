@@ -14,7 +14,7 @@ use std::time::{Duration, Instant};
 
 /// MIDI input ports by name.
 pub fn list_midi_inputs() -> Vec<String> {
-    let Ok(m) = midir::MidiInput::new("OpenQ") else { return Vec::new() };
+    let Ok(m) = midir::MidiInput::new("OpnQ") else { return Vec::new() };
     m.ports().iter().filter_map(|p| m.port_name(p).ok()).collect()
 }
 
@@ -94,10 +94,10 @@ impl Reader {
                 let lost = r.midi_lost.clone();
                 let (tx, rx) = std::sync::mpsc::channel::<Result<(), String>>();
                 std::thread::Builder::new()
-                    .name("openq-mtc-in".into())
+                    .name("opnq-mtc-in".into())
                     .spawn(move || {
                         let res = (|| {
-                            let mut m = midir::MidiInput::new("OpenQ").map_err(|e| e.to_string())?;
+                            let mut m = midir::MidiInput::new("OpnQ").map_err(|e| e.to_string())?;
                             m.ignore(midir::Ignore::None);
                             let ports = m.ports();
                             let port = match &port_name {
@@ -110,7 +110,7 @@ impl Reader {
                             let mut dec = MtcDecoder::default();
                             m.connect(
                                 &port,
-                                "openq-mtc-in",
+                                "opnq-mtc-in",
                                 move |_, msg, _| {
                                     if let Some((tc, rate)) = dec.push(msg) {
                                         *latest.lock() = Some(Reading { secs: tc.secs(rate), rate, at: Instant::now() });
@@ -194,7 +194,7 @@ impl Follower {
         let readers: Readers = Arc::default();
         let (w, r) = (Arc::downgrade(&wanted), readers.clone());
         std::thread::Builder::new()
-            .name("openq-tc-follow".into())
+            .name("opnq-tc-follow".into())
             .spawn(move || {
                 // Errors already logged, so retries don't repeat them.
                 let mut logged: Vec<(TimecodeSync, String)> = Vec::new();

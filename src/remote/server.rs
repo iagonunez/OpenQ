@@ -204,7 +204,7 @@ impl Server {
             Err(e) => log::warn!("remote discovery unavailable: {e}"),
         }
         let sh = shared.clone();
-        match std::thread::Builder::new().name("openq-remote-accept".into()).spawn(move || accept_loop(sh, listener)) {
+        match std::thread::Builder::new().name("opnq-remote-accept".into()).spawn(move || accept_loop(sh, listener)) {
             Ok(t) => threads.push(t),
             Err(e) => {
                 stop.store(true, Ordering::Relaxed);
@@ -306,7 +306,7 @@ fn accept_loop(shared: Arc<Shared>, listener: TcpListener) {
                 }
                 let (sh, act) = (shared.clone(), active.clone());
                 act.fetch_add(1, Ordering::Relaxed);
-                let spawned = std::thread::Builder::new().name("openq-remote-conn".into()).spawn(move || {
+                let spawned = std::thread::Builder::new().name("opnq-remote-conn".into()).spawn(move || {
                     // Even a connection that fails in an unexpected way gives its slot back,
                     // or the server would end up refusing everyone.
                     if let Err(e) = crate::recovery::catch(|| serve(&sh, stream, addr, slot)) {
@@ -507,7 +507,7 @@ fn serve(shared: &Arc<Shared>, stream: TcpStream, addr: SocketAddr, mut slot: Ha
     let writer = {
         let (sh, closed, flags) = (shared.clone(), closed.clone(), flags.clone());
         std::thread::Builder::new()
-            .name("openq-remote-send".into())
+            .name("opnq-remote-send".into())
             .spawn(move || {
                 if let Err(e) = send_loop(&sh, &mut tx, hello.client_id, role, &closed, &flags, notice_rx) {
                     log::debug!("remote send: {e:#}");
@@ -762,7 +762,7 @@ impl Waveforms {
             let (tx, rx) = std::sync::mpsc::sync_channel::<PathBuf>(WAVEFORM_QUEUE);
             let notices = self.notices.clone();
             // The worker ends when the connection drops its queue.
-            let spawned = std::thread::Builder::new().name("openq-remote-waveform".into()).spawn(move || {
+            let spawned = std::thread::Builder::new().name("opnq-remote-waveform".into()).spawn(move || {
                 for path in rx {
                     let r = crate::recovery::catch(|| crate::media::decoder::waveform(&path)).map_err(|e| format!("{e:#}"));
                     if notices.send(ServerMsg::Waveform(path, r)).is_err() {

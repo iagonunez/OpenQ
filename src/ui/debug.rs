@@ -1,13 +1,13 @@
 //! Scripted runs and frame timing, for finding UI slowdowns in the real application.
 //!
-//! `OPENQ_DEBUG_SCRIPT="1:go,4:stop,5:close,9:quit"` performs actions at those seconds after
+//! `OPNQ_DEBUG_SCRIPT="1:go,4:stop,5:close,9:quit"` performs actions at those seconds after
 //! start-up: `go`, `stop`, `panic`, `close` (close every stage window), `select:<cue number>`,
 //! `tab:<inspector tab>`, `preview` (toggle the geometry preview), `scrub` / `noscrub` (move the
 //! Animation tab playhead every frame), `drag` / `nodrag` (edit the selected cue's first keyframe
 //! every frame, like dragging it on the timeline), `cmd:<lighting command line>` (`cmd:go 1`),
 //! `gm:<0..1>`, `blackout` / `noblackout`, `mode:show|edit`, `view:cues|lighting`, `page:<lighting page>`,
 //! `oqvis` (open the rig in OQVis), `quit`.
-//! `OPENQ_DEBUG_FRAMES=<file>` writes one CSV line per frame (seconds since start, time spent in
+//! `OPNQ_DEBUG_FRAMES=<file>` writes one CSV line per frame (seconds since start, time spent in
 //! `App::ui` in ms, time since the previous frame in ms, the previous frame's whole CPU time in ms
 //! including tessellation and painting) when the script quits.
 
@@ -36,7 +36,7 @@ impl App {
         let run = &mut self.debug_run;
         if !run.parsed {
             run.parsed = true;
-            if let Ok(s) = std::env::var("OPENQ_DEBUG_SCRIPT") {
+            if let Ok(s) = std::env::var("OPNQ_DEBUG_SCRIPT") {
                 run.steps = s
                     .split(',')
                     .filter_map(|st| {
@@ -146,7 +146,7 @@ impl App {
     }
 
     fn write_frames(&self) {
-        let Ok(path) = std::env::var("OPENQ_DEBUG_FRAMES") else { return };
+        let Ok(path) = std::env::var("OPNQ_DEBUG_FRAMES") else { return };
         let csv: String =
             self.debug_run.frames.iter().map(|(t, ui, gap, cpu)| format!("{t:.4},{ui:.3},{gap:.3},{cpu:.3}\n")).collect();
         if let Err(e) = std::fs::write(&path, csv) {

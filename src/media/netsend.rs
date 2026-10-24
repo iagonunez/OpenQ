@@ -80,7 +80,7 @@ impl NetSender {
         let e = errors.clone();
         let done_tx = tx.clone();
         let thread = std::thread::Builder::new()
-            .name("openq-net-send".into())
+            .name("opnq-net-send".into())
             .spawn(move || {
                 Worker { socket, socket6: None, resolve, errors: e, done: done_tx, cache: HashMap::new(), waiting: HashMap::new(), tcp: HashMap::new() }
                     .run(rx)
@@ -200,7 +200,7 @@ impl Worker {
         let (tx, rx) = std::sync::mpsc::sync_channel(TCP_QUEUE);
         let _ = tx.try_send(bytes);
         let link = TcpLink { key: key.clone(), resolve: self.resolve.clone(), errors: self.errors.clone(), stream: None, failed: None };
-        match std::thread::Builder::new().name(crate::recovery::thread_name("openq-tcp-", &key.0)).spawn(move || link.run(rx)) {
+        match std::thread::Builder::new().name(crate::recovery::thread_name("opnq-tcp-", &key.0)).spawn(move || link.run(rx)) {
             Ok(_) => {
                 self.tcp.insert(key, tx);
             }
@@ -236,7 +236,7 @@ impl Worker {
         self.waiting.insert(key.clone(), VecDeque::from([bytes]));
         let (resolve, done) = (self.resolve.clone(), self.done.clone());
         let lookup_key = key.clone();
-        let spawned = std::thread::Builder::new().name(crate::recovery::thread_name("openq-dns-", &key.0)).spawn(move || {
+        let spawned = std::thread::Builder::new().name(crate::recovery::thread_name("opnq-dns-", &key.0)).spawn(move || {
             let key = lookup_key;
             let r = crate::recovery::catch(|| resolve(&key.0, key.1).map_err(anyhow::Error::msg)).map_err(|e| format!("{e:#}"));
             let _ = done.send(Msg::Resolved(key, r));

@@ -20,4 +20,4 @@ curl -sSf https://sh.rustup.rs | sh -s -- -y -q --profile minimal --default-tool
 export FFMPEG_DIR=/ffmpeg PKG_CONFIG_PATH=/ffmpeg/lib/pkgconfig
 # DT_RPATH (not RUNPATH) so FFmpeg's own libraries find each other in lib/ too.
 export RUSTFLAGS='-C link-arg=-Wl,-rpath,$ORIGIN/lib -C link-arg=-Wl,--disable-new-dtags'
-cargo build --release --locked --target "$target" --bin openq "$@"
+cargo build --release --locked --target "$target" --bin opnq "$@"

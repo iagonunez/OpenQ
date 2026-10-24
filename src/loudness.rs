@@ -115,7 +115,7 @@ impl Meter {
     }
 }
 
-/// The level change (dB) that brings `measured` LUFS to `target` LUFS, kept within OpenQ's level range.
+/// The level change (dB) that brings `measured` LUFS to `target` LUFS, kept within OpnQ's level range.
 pub fn gain_to(measured: f64, target: f64) -> f32 {
     ((target - measured) as f32).clamp(crate::limits::MIN_DB, crate::limits::MAX_DB)
 }

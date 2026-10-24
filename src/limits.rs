@@ -45,19 +45,19 @@ pub fn light_cue_count(l: &Lighting) -> usize {
     l.sequences.iter().map(|s| s.cues.len()).sum()
 }
 
-/// Refuse a show with more cues, lighting cues or stages than OpenQ takes ([`MAX_CUES`],
+/// Refuse a show with more cues, lighting cues or stages than OpnQ takes ([`MAX_CUES`],
 /// [`MAX_LIGHT_CUES`], [`MAX_STAGES`]).
 pub fn check_counts(ws: &Workspace) -> Result<(), String> {
     let n = cue_count(ws);
     if n > MAX_CUES {
-        return Err(format!("The show has {n} cues; OpenQ works with at most {MAX_CUES}"));
+        return Err(format!("The show has {n} cues; OpnQ works with at most {MAX_CUES}"));
     }
     let n = light_cue_count(&ws.lighting);
     if n > MAX_LIGHT_CUES {
-        return Err(format!("The lighting design has {n} cues; OpenQ works with at most {MAX_LIGHT_CUES}"));
+        return Err(format!("The lighting design has {n} cues; OpnQ works with at most {MAX_LIGHT_CUES}"));
     }
     if ws.stages.len() > MAX_STAGES {
-        return Err(format!("The show has {} stages; OpenQ works with at most {MAX_STAGES}", ws.stages.len()));
+        return Err(format!("The show has {} stages; OpnQ works with at most {MAX_STAGES}", ws.stages.len()));
     }
     Ok(())
 }

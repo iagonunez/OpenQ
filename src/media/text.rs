@@ -54,7 +54,7 @@ fn fonts() -> &'static Mutex<Fonts> {
 /// Start loading the system font list in the background (it can take a moment), so the first
 /// Text cue or font menu doesn't wait for it.
 pub fn preload() {
-    let _ = std::thread::Builder::new().name("openq-fonts".into()).spawn(|| {
+    let _ = std::thread::Builder::new().name("opnq-fonts".into()).spawn(|| {
         families();
     });
 }
@@ -220,7 +220,7 @@ fn worker() -> &'static Mutex<std::sync::mpsc::Sender<Job>> {
     static TX: OnceLock<Mutex<std::sync::mpsc::Sender<Job>>> = OnceLock::new();
     TX.get_or_init(|| {
         let (tx, rx) = std::sync::mpsc::channel::<Job>();
-        let spawned = std::thread::Builder::new().name("openq-text".into()).spawn(move || {
+        let spawned = std::thread::Builder::new().name("opnq-text".into()).spawn(move || {
             while let Ok((look, slot)) = rx.recv() {
                 if slot.strong_count() == 0 {
                     continue;
@@ -605,7 +605,7 @@ mod tests {
 
     #[test]
     fn outline_and_shadow_add_coverage() {
-        let base = TextCue { text: "OpenQ".into(), size: 48.0, ..Default::default() };
+        let base = TextCue { text: "OpnQ".into(), size: 48.0, ..Default::default() };
         let plain = lit(&render_at(&base, 1.0));
         let outlined = render_at(&TextCue { outline_width: 3.0, ..base.clone() }, 1.0);
         assert!(lit(&outlined) > plain * 3 / 2, "{} vs {plain}", lit(&outlined));

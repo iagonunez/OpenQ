@@ -1,8 +1,8 @@
 //! Open in OQVis (View menu, patch header): saves the patch as an MVR file in `<config>/oqvis/rig.mvr` and
 //! starts OQVis (the 3D visualiser, a separate program) with it. Asked again while OQVis runs, only the file is
-//! rewritten: OQVis reloads it. OQVis gets the show's DMX over Art-Net, sACN or its own link to OpenQ.
+//! rewritten: OQVis reloads it. OQVis gets the show's DMX over Art-Net, sACN or its own link to OpnQ.
 //!
-//! The program is `OPENQ_OQVIS_EXE`, else the one picked here before, else `oqvis` next to this executable
+//! The program is `OPNQ_OQVIS_EXE`, else the one picked here before, else `oqvis` next to this executable
 //! (where OQup installs it with the lighting feature), else `oqvis` on the PATH; when none starts, a file dialog
 //! asks for it. The pick is kept per computer in `<config>/oqvis.json`.
 
@@ -60,7 +60,7 @@ impl OQVis {
 
 /// Programs to try, in order.
 fn candidates(saved: &Saved) -> Vec<PathBuf> {
-    if let Some(p) = std::env::var_os("OPENQ_OQVIS_EXE") {
+    if let Some(p) = std::env::var_os("OPNQ_OQVIS_EXE") {
         return vec![p.into()];
     }
     let mut list: Vec<PathBuf> = saved.program.iter().cloned().collect();
@@ -89,7 +89,7 @@ impl App {
 
     /// The design and the name OQVis shows it under.
     pub(super) fn oqvis_input(show: &crate::show::Show) -> (crate::light::model::Lighting, String) {
-        let scope = show.path.as_ref().and_then(|p| p.file_stem()).map(|s| s.to_string_lossy().into_owned()).unwrap_or_else(|| "OpenQ".into());
+        let scope = show.path.as_ref().and_then(|p| p.file_stem()).map(|s| s.to_string_lossy().into_owned()).unwrap_or_else(|| "OpnQ".into());
         (show.ws.lighting.clone(), scope)
     }
 

@@ -1,5 +1,5 @@
 //! Crash recovery in the UI: the "Recover unsaved work" window shown at start when an earlier
-//! OpenQ didn't quit normally, and the autosave session of this one.
+//! OpnQ didn't quit normally, and the autosave session of this one.
 
 use super::{App, icons, theme};
 use crate::recovery::{Autosave, Orphan};
@@ -54,7 +54,7 @@ impl App {
             .anchor(egui::Align2::CENTER_CENTER, [0.0, 0.0])
             .fixed_size([540.0, 0.0])
             .show(ctx, |ui| {
-                ui.label(t("OpenQ didn't quit normally last time. These shows had changes that weren't saved:"));
+                ui.label(t("OpnQ didn't quit normally last time. These shows had changes that weren't saved:"));
                 ui.add_space(6.0);
                 for (i, o) in self.recovery.orphans.iter().enumerate() {
                     theme::card_frame().show(ui, |ui| {
@@ -86,7 +86,7 @@ impl App {
                 ui.horizontal(|ui| {
                     ui.label(RichText::new(t("Recovered shows open with unsaved changes: save to keep them.")).small().color(theme::TEXT_DIM));
                     ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                        if ui.button(t("Later")).on_hover_text(t("Ask again next time OpenQ starts")).clicked() {
+                        if ui.button(t("Later")).on_hover_text(t("Ask again next time OpnQ starts")).clicked() {
                             later = true;
                         }
                     });
@@ -181,7 +181,7 @@ mod tests {
             }
         });
 
-        let dir = std::env::temp_dir().join(format!("openq-recover-test-{}", std::process::id()));
+        let dir = std::env::temp_dir().join(format!("opnq-recover-test-{}", std::process::id()));
         let _ = std::fs::remove_dir_all(&dir);
         std::fs::create_dir_all(&dir).unwrap();
         let mut ws = Workspace::default();
