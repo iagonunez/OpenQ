@@ -74,7 +74,7 @@ fn tabs_for(kind: &CueKind) -> &'static [(Tab, &'static str)] {
             (Tab::Animation, "Animation"),
             (Tab::VideoFx, "Video FX"),
         ],
-        CueKind::Memo => &[(Tab::Basics, "Basics"), (Tab::Triggers, "Triggers")],
+        CueKind::Memo | CueKind::Light(_) => &[(Tab::Basics, "Basics"), (Tab::Triggers, "Triggers")],
         CueKind::Text(_) => &[
             (Tab::Basics, "Basics"),
             (Tab::Triggers, "Triggers"),
@@ -509,6 +509,9 @@ fn basics(ui: &mut Ui, cue: &mut Cue, ctx: &Ctx, pick: &mut bool) {
     if media {
         specs.push(Card::new(ic::UPLOAD_FILE, t("Media"), 320.0));
     }
+    if matches!(cue.kind, CueKind::Light(_)) {
+        specs.push(Card::new(ic::LIGHTBULB, t("Lighting"), 480.0));
+    }
     specs.push(Card::new(ic::NOTES, t("Notes"), 280.0));
     let notes = specs.len() - 1;
     super::theme::cards(ui, "basics", &specs, |ui, i| match i {
@@ -568,6 +571,8 @@ fn basics(ui: &mut Ui, cue: &mut Cue, ctx: &Ctx, pick: &mut bool) {
                 egui::Grid::new("basics-media").num_columns(2).spacing([10.0, 6.0]).show(ui, |ui| {
                     file_row(ui, path, ctx.prober, pick);
                 });
+            } else if let CueKind::Light(l) = &mut cue.kind {
+                light_settings(ui, l, ctx.lighting);
             }
         }
     });
@@ -1719,7 +1724,6 @@ fn settings_tab(ui: &mut Ui, cue: &mut Cue, ctx: &Ctx, refresh: &mut bool) {
         CueKind::Timecode(tc) => timecode_settings(ui, tc, ctx, refresh),
         CueKind::Text(t) => text_settings(ui, t),
         CueKind::Camera(c) => camera_settings(ui, c, ctx, refresh),
-        CueKind::Light(l) => light_settings(ui, l, ctx.lighting),
         CueKind::Network(n) => {
             use crate::model::{NetFormat, NetTransport};
             let specs = [Card::new(ic::SETTINGS_REMOTE, t("Network message"), 480.0)];
@@ -2002,13 +2006,11 @@ fn midi_settings(ui: &mut Ui, m: &mut crate::model::MidiCue, ctx: &Ctx, refresh:
     });
 }
 
-/// A Light cue: what it does and which designed lighting cue / sequence it acts on.
+/// A Light cue's card on the Basics tab: what it does and which designed lighting cue / sequence
+/// it acts on.
 fn light_settings(ui: &mut Ui, l: &mut crate::model::LightingCue, design: &crate::light::Lighting) {
-    use super::icons as ic;
-    use super::theme::{Card, cards};
     use crate::model::LightAction;
-    let specs = [Card::new(ic::LIGHTBULB, t("Lighting"), 480.0)];
-    cards(ui, "light", &specs, |ui, _| {
+    {
         egui::Grid::new("light").num_columns(2).spacing([10.0, 6.0]).show(ui, |ui| {
             ui.label(t("Action"));
             egui::ComboBox::from_id_salt("light_action").selected_text(l.action.label()).show_ui(ui, |ui| {
@@ -2068,7 +2070,7 @@ fn light_settings(ui: &mut Ui, l: &mut crate::model::LightingCue, design: &crate
             t("Lighting cues are designed in the Lighting workspace; this cue only plays them.")
         };
         ui.label(RichText::new(help).weak().small());
-    });
+    }
 }
 
 /// A Fade cue's target video effect settings: the target's stack (taken when the option was
