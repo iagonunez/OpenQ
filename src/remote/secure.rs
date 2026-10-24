@@ -235,6 +235,21 @@ pub struct Hello {
     pub client_name: String,
     /// Authenticate with a pairing code rather than a device token.
     pub pairing: bool,
+    /// Only asking whether the other side is there and what it is doing (coupling): the server
+    /// answers [`crate::remote::ServerMsg::Welcome`] and hangs up, leaving no trace in its
+    /// connection list or log.
+    #[serde(default)]
+    pub probe: bool,
+    /// A member of a coupling group: with `pairing` it is joining the group (the code is the
+    /// secret); without, it proves it knows the group's key.
+    #[serde(default)]
+    pub coupling: bool,
+    /// The group it says it belongs to (not when joining).
+    #[serde(default)]
+    pub group: Option<Uuid>,
+    /// The port its server listens on (a joining computer tells where to reach it).
+    #[serde(default)]
+    pub port: u16,
 }
 
 #[derive(Serialize, Deserialize, Debug)]
@@ -469,7 +484,7 @@ mod tests {
                 Err(e) => Err(e.to_string()),
             }
         });
-        let hello = Hello { protocol: PROTOCOL, client_id: Uuid::new_v4(), client_name: "tablet".into(), pairing: true };
+        let hello = Hello { protocol: PROTOCOL, client_id: Uuid::new_v4(), client_name: "tablet".into(), pairing: true, probe: false, coupling: false, group: None, port: 0 };
         let client = match client_handshake(TcpStream::connect(addr).unwrap(), &hello, |s| {
             assert_eq!(s.name, "main");
             Ok(client_secret.to_vec())
@@ -502,7 +517,7 @@ mod tests {
             let back: Vec<u32> = rx.recv().unwrap();
             back.len()
         });
-        let hello = Hello { protocol: PROTOCOL, client_id: Uuid::new_v4(), client_name: "tablet".into(), pairing: true };
+        let hello = Hello { protocol: PROTOCOL, client_id: Uuid::new_v4(), client_name: "tablet".into(), pairing: true, probe: false, coupling: false, group: None, port: 0 };
         let (mut tx, mut rx, _) = client_handshake(TcpStream::connect(addr).unwrap(), &hello, |_| Ok(b"K".to_vec())).unwrap();
         assert!(rx.recv::<String>().unwrap() == expect);
         assert_eq!(rx.recv::<String>().unwrap(), "small");
@@ -552,7 +567,7 @@ mod tests {
             let big = rx.recv::<String>().is_err();
             (small, big)
         });
-        let hello = Hello { protocol: PROTOCOL, client_id: Uuid::new_v4(), client_name: "tablet".into(), pairing: true };
+        let hello = Hello { protocol: PROTOCOL, client_id: Uuid::new_v4(), client_name: "tablet".into(), pairing: true, probe: false, coupling: false, group: None, port: 0 };
         let (mut tx, _rx, _) = client_handshake(TcpStream::connect(addr).unwrap(), &hello, |_| Ok(b"K".to_vec())).unwrap();
         tx.send(&"x".repeat(10)).unwrap();
         let _ = tx.send(&"y".repeat(1 << 20));

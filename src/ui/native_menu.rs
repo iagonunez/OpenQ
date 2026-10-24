@@ -21,6 +21,8 @@ enum Action {
     Save,
     SaveAs,
     Bundle,
+    ExportPackage,
+    Coupling,
     Import,
     Quit,
     Undo,
@@ -80,7 +82,7 @@ impl Action {
         }
         use Action::*;
         [
-            New, Open, Save, SaveAs, Bundle, Import, Quit, Undo, Redo, Duplicate, Delete, Group, Renumber, LevelLoudness, Settings, Go, Stop, Pause,
+            New, Open, Save, SaveAs, Bundle, ExportPackage, Coupling, Import, Quit, Undo, Redo, Duplicate, Delete, Group, Renumber, LevelLoudness, Settings, Go, Stop, Pause,
             Resume, ToggleMode, Stages, Share, Connect, Disconnect, Preview, Log, OQVis, Manual, ErrorLog, About, Overrides, Warnings, CopyProps, PasteProps, SetTemplate, ClearTemplate, Audition,
         ]
         .into_iter()
@@ -189,6 +191,7 @@ impl NativeMenu {
                 &item(Action::Save, t("Save")),
                 &item(Action::SaveAs, t("Save As…")),
                 &item(Action::Bundle, t("Bundle show…")),
+                &item(Action::ExportPackage, t("Export show package…")),
                 &a,
                 &item(Action::Import, t("Import media files…")),
             ],
@@ -258,7 +261,7 @@ impl NativeMenu {
         let disconnect = item(Action::Disconnect, t("Disconnect"));
         let remote = submenu(
             t("Remote"),
-            &[&item(Action::Share, t("Share this OpnQ…")), &item(Action::Connect, t("Connect to another OpnQ…")), &disconnect],
+            &[&item(Action::Share, t("Share this OpnQ…")), &item(Action::Connect, t("Connect to another OpnQ…")), &disconnect, &sep(), &item(Action::Coupling, t("Coupling mode…"))],
         );
 
         let preview = check(Action::Preview, t("Geometry preview"));
@@ -363,6 +366,8 @@ impl App {
             Action::Save => self.deferred.push(Deferred::Save),
             Action::SaveAs => self.deferred.push(Deferred::SaveAs),
             Action::Bundle => self.deferred.push(Deferred::Bundle),
+            Action::ExportPackage => self.deferred.push(Deferred::ExportPackage),
+            Action::Coupling => self.remote.coupling_window = true,
             Action::Import => self.deferred.push(Deferred::AddMediaCues),
             Action::Quit => ctx.send_viewport_cmd(egui::ViewportCommand::Close),
             Action::Undo => self.undo(show),

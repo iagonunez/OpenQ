@@ -31,7 +31,8 @@
 //!   otherwise; the pickers list one entry per real output/input.
 //! * [`timecode`] — SMPTE labels, the LTC encoder/decoder and MIDI Time Code. Cue lists can
 //!   follow LTC or MTC and fire cues at their timecode trigger.
-//! * [`bundle`] — copy a show and every media file it plays into one folder.
+//! * [`bundle`] — copy a show and every media file it plays into one folder. [`package`] — the same
+//!   in one checked file (`.opnqs`), unpacked on opening.
 //! * [`wallclock`] — wall-clock triggers: cues that fire at a time of day (and chosen weekdays).
 //! * [`geometry`] — layer placement, crop, corner-pin homography, edge-blend curve.
 //! * [`animation`] — keyframe animation of video, image and text layers, evaluated live as the
@@ -54,7 +55,9 @@
 //!   that can't be sent, shared hotkeys).
 //! * [`osc`] — OSC input. [`remote`] — paired remote devices (encrypted, authenticated), found by
 //!   broadcast and mDNS; cues added, moved or deleted travel as operations
-//!   ([`changes::Reshape`]) merged into the show as it is on the other side.
+//!   ([`changes::Reshape`]) merged into the show as it is on the other side. Computers can form a
+//!   coupling group ([`remote::coupling`]): standby members mirror the one playing and the next in
+//!   a priority list takes over, restarting what was running ([`engine::Engine::adopt`]).
 //! * [`displays`] — system monitors for stage outputs. [`ui`] — the egui application.
 //! * `vout` (feature `video`) — video output in its own process (`opnq --video-output`): stage
 //!   windows with their own wgpu renderer (YUV converted in the shader, corner pins, spanned
@@ -117,6 +120,7 @@ pub mod animation;
 pub mod audio_fx;
 pub mod bench;
 pub mod bundle;
+pub mod package;
 pub mod changes;
 pub mod control;
 pub mod displays;

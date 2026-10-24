@@ -24,9 +24,13 @@
 //!   device's choice. Waveform requests are worked through one at a time per connection.
 //! * Network settings in an edit (Network cue destinations, DMX outputs and inputs) are held
 //!   back until the main device's operator allows them ([`netguard`]).
+//! * Computers in a coupling group ([`coupling`]) are paired with each other both ways; a
+//!   standby member answers a probe (a handshake that only reads its [`coupling::Presence`])
+//!   but refuses to serve the show, so devices always end up at the one that plays it.
 
 pub mod client;
 pub mod discovery;
+pub mod coupling;
 pub mod netguard;
 pub mod secure;
 pub mod server;
@@ -46,7 +50,7 @@ pub const DEFAULT_PORT: u16 = 53200;
 /// UDP port for discovery queries.
 pub const DISCOVERY_PORT: u16 = 53201;
 /// Wire protocol version; both ends must match.
-pub const PROTOCOL: u32 = 6;
+pub const PROTOCOL: u32 = 7;
 
 /// What a paired device may do.
 #[derive(Serialize, Deserialize, Clone, Copy, PartialEq, Eq, Debug, Default)]
@@ -132,6 +136,8 @@ pub struct RemoteConfig {
     pub devices: Vec<TrustedDevice>,
     /// Main devices this one has paired with.
     pub servers: Vec<KnownServer>,
+    /// Taking over when the main device stops ([`coupling`]).
+    pub coupling: coupling::Coupling,
 }
 
 impl Default for RemoteConfig {
@@ -144,6 +150,7 @@ impl Default for RemoteConfig {
             default_role: Role::Control,
             devices: Vec::new(),
             servers: Vec::new(),
+            coupling: Default::default(),
         }
     }
 }
@@ -163,6 +170,20 @@ pub fn config_dir() -> Option<PathBuf> {
     if let Some(d) = std::env::var_os("OPNQ_CONFIG_DIR") {
         return Some(PathBuf::from(d));
     }
+    let dir = default_config_dir()?;
+    // The program was called OpenQ before: carry its settings (paired devices, recovery, ...) over once.
+    if !dir.exists()
+        && let (Some(parent), Some(name)) = (dir.parent(), dir.file_name().and_then(|n| n.to_str()))
+    {
+        let old = parent.join(name.replace("opnq", "openq").replace("OpnQ", "OpenQ"));
+        if old.is_dir() {
+            let _ = std::fs::rename(old, &dir);
+        }
+    }
+    Some(dir)
+}
+
+fn default_config_dir() -> Option<PathBuf> {
     if cfg!(windows) {
         return std::env::var_os("APPDATA").map(|d| PathBuf::from(d).join("OpnQ"));
     }
@@ -202,7 +223,10 @@ impl RemoteConfig {
     /// Load the config, creating (and saving) a fresh identity on first run.
     pub fn load() -> Self {
         let loaded = Self::path().and_then(|p| crate::recovery::read_file(&p, 16 << 20).ok()).and_then(|s| match serde_json::from_slice(&s) {
-            Ok(c) => Some(c),
+            Ok(mut c @ RemoteConfig { .. }) => {
+                c.coupling.clean();
+                Some(c)
+            }
             Err(e) => {
                 log::warn!("remote config unreadable, starting fresh: {e}");
                 None
@@ -335,6 +359,9 @@ pub enum ServerMsg {
         role: Role,
         /// Login key to keep, after a pairing.
         token: Option<String>,
+        /// What the device is doing, when it takes part in a coupling group.
+        #[serde(default)]
+        presence: Option<coupling::Presence>,
     },
     /// The workspace changed (sent whole).
     Workspace {
@@ -376,6 +403,9 @@ pub enum ServerMsg {
     /// connecting and when the list changes). A replica picks from these; its choices wait for
     /// the operator ([`netguard`]).
     Displays(Vec<crate::displays::Display>),
+    /// A computer joined a coupling group with the pairing code: the group's key and list
+    /// ([`coupling::Grant`]). Sent right after [`ServerMsg::Welcome`], on a connection that then ends.
+    Grant(Box<coupling::Grant>),
 }
 
 /// Replica → main device.

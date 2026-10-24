@@ -69,6 +69,8 @@ enum Deferred {
     SaveAs,
     /// Copy the show and its media into a folder.
     Bundle,
+    /// Write the show and its media as one package file.
+    ExportPackage,
     PickMedia(CueId),
     /// Choose the mask picture of a cue's layer, or of a stage.
     PickMask(Option<CueId>, Option<crate::model::StageId>),
@@ -270,6 +272,8 @@ pub struct App {
     running_prompt: Option<Risky>,
     /// A bundle being written (File → Bundle show…).
     bundle: Option<crate::bundle::Job>,
+    /// A show package being written (File → Export show package…) or unpacked (opening one).
+    package: Option<crate::package::Job>,
     /// The user went ahead although cues play: the next [`App::may_discard`] doesn't ask about them.
     running_ok: bool,
     frame_count: u64,
@@ -365,6 +369,7 @@ impl App {
             discard_ok: false,
             running_prompt: None,
             bundle: None,
+            package: None,
             running_ok: false,
             frame_count: 0,
             mode: Mode::Edit,
@@ -1035,6 +1040,13 @@ impl App {
                 {
                     self.deferred.push(Deferred::Bundle);
                 }
+                if ui
+                    .add_enabled(self.package.is_none() && !show.replica, egui::Button::new(wi(I::CREATE_NEW_FOLDER, t("Export show package…"))))
+                    .on_hover_text(t("Write the show and every media file it plays as one .opnqs file"))
+                    .clicked()
+                {
+                    self.deferred.push(Deferred::ExportPackage);
+                }
                 ui.separator();
                 if ui.button(wi(I::ADD, t("Import media files…"))).clicked() {
                     self.deferred.push(Deferred::AddMediaCues);
@@ -1239,6 +1251,10 @@ impl App {
                 }
                 if self.remote.is_replica() && ui.button(wi(I::CLOSE, t("Disconnect"))).clicked() {
                     self.disconnect(show);
+                }
+                ui.separator();
+                if ui.button(wi(I::REFRESH, t("Coupling mode…"))).on_hover_text(t("Computers that back each other up: if the one playing stops, the next takes over")).clicked() {
+                    self.remote.coupling_window = true;
                 }
             });
             ui.menu_button(t("View"), |ui| {
@@ -1556,7 +1572,7 @@ impl App {
         let fullscreen = ui.ctx().input(|i| i.viewport().fullscreen.unwrap_or(false));
         let logo_x = rect.left() + if mac && !fullscreen { MAC_BUTTONS_W } else { 0.0 };
         let mut job = LayoutJob::default();
-        job.append("Open", 0.0, TextFormat::simple(theme::title(26.0), theme::TEXT));
+        job.append("Opn", 0.0, TextFormat::simple(theme::title(26.0), theme::TEXT));
         job.append("Q", 0.0, TextFormat::simple(theme::title(26.0), theme::GREEN));
         let logo = ui.painter().layout_job(job);
         ui.painter().galley(egui::pos2(logo_x, rect.center().y - logo.size().y / 2.0), logo, theme::TEXT);
@@ -2524,6 +2540,80 @@ impl App {
         ctx.request_repaint_after(Duration::from_millis(100));
     }
 
+    /// Ask where to write the package and start writing it ([`crate::package`]).
+    fn start_package_export(&mut self) {
+        if self.package.is_some() {
+            return;
+        }
+        let (ws, name) = {
+            let s = self.show.lock();
+            let name = s.path.as_ref().and_then(|p| p.file_stem()).map_or_else(|| "show".to_string(), |n| n.to_string_lossy().into_owned());
+            (s.ws.clone(), name)
+        };
+        let Some(out) = rfd::FileDialog::new()
+            .set_title(t("Export show package"))
+            .add_filter(t("OpnQ show package"), &[crate::package::EXTENSION])
+            .set_file_name(format!("{name}.{}", crate::package::EXTENSION))
+            .save_file()
+        else {
+            return;
+        };
+        let out = if out.extension().is_none() { out.with_extension(crate::package::EXTENSION) } else { out };
+        // Outside the show lock: this looks at every media file. (The folder is only a name to
+        // work out paths inside the package from; nothing is created there.)
+        let plan = crate::bundle::plan(&ws, &name, std::path::Path::new("package"), &|p| crate::media::check_local(p).is_ok() && p.is_file());
+        self.package = Some(crate::package::Job::export(plan, out));
+    }
+
+    /// Progress of a package being written or unpacked; opens the show once unpacked.
+    fn package_window(&mut self, ctx: &egui::Context) {
+        use crate::package::Kind;
+        let Some(job) = &self.package else { return };
+        let p = job.progress.lock().clone();
+        if let Some(done) = p.done {
+            let (kind, missing, unpacked) = (job.kind, job.missing.len(), job.unpacked.lock().clone());
+            self.package = None;
+            match (kind, done) {
+                (Kind::Export, Ok(path)) if missing > 0 => self.notify_error(tr!(
+                    "Package written to {path}; {n} media files were missing and are left out",
+                    path = path.display().to_string(),
+                    n = missing.to_string()
+                )),
+                (Kind::Export, Ok(path)) => self.notify(tr!("Package written to {path}", path = path.display().to_string())),
+                (Kind::Export, Err(e)) => self.notify_error(tr!("Writing the package failed: {error}", error = e)),
+                (Kind::Open, Ok(show)) => {
+                    self.open_path(show);
+                    if let Some(u) = unpacked {
+                        self.remote_use_package(&u);
+                    }
+                }
+                (Kind::Open, Err(e)) => self.notify_error(tr!("Opening the package failed: {error}", error = e)),
+            }
+            return;
+        }
+        let title = if job.kind == Kind::Export { t("Writing the package") } else { t("Opening the package") };
+        let mut cancel = false;
+        egui::Window::new(theme::with_icon(icons::CREATE_NEW_FOLDER, title)).collapsible(false).resizable(false).show(ctx, |ui| {
+            ui.set_width(340.0);
+            let frac = if p.total_bytes > 0 { p.bytes as f32 / p.total_bytes as f32 } else { 0.0 };
+            ui.add(egui::ProgressBar::new(frac).show_percentage());
+            ui.label(tr!(
+                "{files} of {total} files · {mb} of {total_mb} MB",
+                files = p.files.to_string(),
+                total = p.total_files.to_string(),
+                mb = (p.bytes / 1_000_000).to_string(),
+                total_mb = (p.total_bytes / 1_000_000).to_string()
+            ));
+            if ui.button(t("Cancel")).clicked() {
+                cancel = true;
+            }
+        });
+        if cancel {
+            job.cancel();
+        }
+        ctx.request_repaint_after(Duration::from_millis(100));
+    }
+
     /// The "Cues are playing" window (Stop and go on / Cancel), before something that stops them all.
     fn running_window(&mut self, ctx: &egui::Context, show: &mut Show) {
         let Some(risky) = &self.running_prompt else { return };
@@ -2634,6 +2724,13 @@ impl App {
 
     /// Load a workspace file, replacing the current show.
     pub fn open_path(&mut self, path: PathBuf) {
+        if path.extension().is_some_and(|e| e.eq_ignore_ascii_case(crate::package::EXTENSION)) {
+            // A package is unpacked first (on a thread); the show inside opens when that is done.
+            if self.package.is_none() {
+                self.package = Some(crate::package::Job::open(path));
+            }
+            return;
+        }
         match Workspace::load(&path) {
             Ok(ws) => {
                 self.show.lock().replace_workspace(ws, Some(path.clone()));
@@ -2686,7 +2783,9 @@ impl App {
                 Deferred::Open => {
                     if self.may_discard(Discarding::Open)
                         && let Some(p) = rfd::FileDialog::new()
+                            .add_filter(t("OpnQ show or package"), &[Workspace::EXTENSION, crate::package::EXTENSION])
                             .add_filter(t("OpnQ workspace"), &[Workspace::EXTENSION])
+                            .add_filter(t("OpnQ show package"), &[crate::package::EXTENSION])
                             .pick_file()
                     {
                         self.open_path(p);
@@ -2710,6 +2809,7 @@ impl App {
                     }
                 }
                 Deferred::Bundle => self.start_bundle(),
+                Deferred::ExportPackage => self.start_package_export(),
                 Deferred::PickMedia(id) => {
                     let tag = self.show.lock().ws.cue_list.find(id).map(|c| c.kind.tag());
                     let mut dlg = rfd::FileDialog::new();
@@ -2820,7 +2920,7 @@ impl App {
     /// output process draws it, next to the capture (`<path>.stage.png`;
     /// `OPNQ_SCREENSHOT_MAPPING=1` turns on the first stage's mapping test pattern).
     /// `OPNQ_SCREENSHOT_SELECT=<n>,<n>…` adds cues to the selection (the inspector then edits them all);
-    /// `OPNQ_SCREENSHOT_WINDOW=overrides|warnings|paste` opens that window (`overrides` turns MIDI input
+    /// `OPNQ_SCREENSHOT_WINDOW=overrides|warnings|paste|coupling` opens that window (`overrides` turns MIDI input
     /// and DMX output off; `paste` copies the selected cue's properties first).
     fn debug_screenshot(&mut self, ctx: &egui::Context, show: &mut Show) {
         let Some(path) = std::env::var_os("OPNQ_SCREENSHOT") else {
@@ -3038,6 +3138,7 @@ impl App {
                     self.show_overrides = true;
                 }
                 Ok("warnings") => self.warnings.open = true,
+                Ok("coupling") => self.remote.coupling_window = true,
                 Ok("paste") => {
                     self.copy_props(show);
                     self.paste_props.open = true;
@@ -3458,6 +3559,7 @@ impl App {
             #[cfg(feature = "video")]
             self.geometry_preview(&ctx, show);
             self.remote_window(&ctx, show);
+            self.coupling_window(&ctx, show);
             self.network_requests_window(&ctx, show);
             self.overrides_window(&ctx, show);
             self.warnings_window(&ctx, show);
@@ -3475,6 +3577,7 @@ impl App {
             self.discard_window(&ctx);
             self.running_window(&ctx, show);
             self.bundle_window(&ctx);
+            self.package_window(&ctx);
             self.track_undo(&ctx, show);
             self.sync_osc(&ctx, show);
             self.sync_surfaces(&ctx, show);

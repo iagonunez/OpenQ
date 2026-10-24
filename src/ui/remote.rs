@@ -6,6 +6,10 @@ use crate::control::Command;
 use crate::model::{CueId, Workspace};
 use crate::remote::client::{Auth, Link, LinkState};
 use crate::remote::discovery::{self, Found};
+mod coupling_ui;
+
+use crate::remote::coupling::{self, Coupling, Duty, Local, Member, Peer, Supervisor, Verdict};
+
 use crate::remote::server::Server;
 use crate::remote::{ClientMsg, RemoteConfig, Role, ServerMsg};
 use crate::show::Show;
@@ -71,6 +75,30 @@ pub(super) struct RemoteUi {
     notice: Option<String>,
     search: Arc<Mutex<Search>>,
     local_ips: Vec<std::net::IpAddr>,
+    /// Coupling: asks the other members what they are doing while this computer is in a group.
+    supervisor: Option<Supervisor>,
+    /// This device plays the show as a coupling group's main device, with this term.
+    acting: Option<u64>,
+    /// Since when this device has had no main device (coupling).
+    orphan: Option<Instant>,
+    /// How long to wait before taking over at all ([`Duty::Orphan`]).
+    orphan_grace: Duration,
+    /// The highest term seen.
+    last_term: u64,
+    /// The operator asked to take the show over now.
+    wants_takeover: bool,
+    /// The member the link was opened to by the coupling logic.
+    following: Option<uuid::Uuid>,
+    /// The Coupling mode window is open.
+    pub(super) coupling_window: bool,
+    join: coupling_ui::JoinUi,
+    ready: coupling_ui::Ready,
+    /// "Start a new group" was pressed once and waits for a second press.
+    confirm_new_group: bool,
+    /// A show package being unpacked to play this computer's media from.
+    pending_media_package: Option<crate::package::Job>,
+    /// The round of the supervisor whose verdict was acted on last.
+    acted_round: u64,
 }
 
 impl Default for RemoteUi {
@@ -89,6 +117,19 @@ impl Default for RemoteUi {
             notice: None,
             search: Default::default(),
             local_ips: Vec::new(),
+            supervisor: None,
+            acting: None,
+            orphan: None,
+            orphan_grace: Duration::ZERO,
+            last_term: 0,
+            wants_takeover: false,
+            following: None,
+            coupling_window: false,
+            join: Default::default(),
+            ready: Default::default(),
+            confirm_new_group: false,
+            pending_media_package: None,
+            acted_round: 0,
         }
     }
 }
@@ -119,6 +160,19 @@ impl RemoteUi {
 
     /// Short status for the status bar: (text, is_replica).
     pub(super) fn status(&self) -> Option<(String, bool)> {
+        if self.supervisor.is_some() {
+            let rank = {
+                let c = self.config.lock();
+                c.coupling.rank(c.instance_id).map_or(0, |r| r + 1)
+            };
+            if self.acting.is_some() {
+                return Some((tr!("Main device · priority {rank}", rank), false));
+            }
+            return Some(match &self.replica {
+                Some(r) if self.link.is_some() => (tr!("Standby · following {server} · priority {rank}", server = r.server, rank), true),
+                _ => (tr!("Standby · no main device · priority {rank}", rank), true),
+            });
+        }
         if let Some(r) = &self.replica {
             return Some((tr!("Remote: {server} · {role}", server = r.server, role = r.role.label()), true));
         }
@@ -163,6 +217,8 @@ impl App {
                 self.notify(t("This device is view-only"));
             } else if let Some(l) = &self.remote.link {
                 l.send(ClientMsg::Command(cmd));
+            } else {
+                self.notify(t("Waiting for a main device"));
             }
             return;
         }
@@ -203,17 +259,39 @@ impl App {
                 server.set_displays(&d.list);
             }
         }
+        self.coupling_tick(ctx, show);
         let Some(link) = &self.remote.link else { return };
         match link.state() {
             LinkState::Connecting => {}
             LinkState::Connected { server, role } => {
-                if self.remote.replica.is_none() {
-                    self.enter_replica(show, server, role);
+                match &mut self.remote.replica {
+                    None => self.enter_replica(show, server, role),
+                    // Another main device after a coupling: the old copy is only the baseline.
+                    Some(r) => {
+                        if r.server != server {
+                            r.server = server;
+                            r.synced = None;
+                            r.checked_gen = None;
+                            r.pending_playhead = None;
+                        }
+                        r.role = role;
+                    }
                 }
                 self.replica_sync(show);
             }
             LinkState::Closed { reason, needs_pairing } => {
                 self.remote.link = None;
+                if self.remote.supervisor.is_some() {
+                    // In a coupling group the mirrored show stays: this device may have to take
+                    // over, or to follow the next main device.
+                    if self.remote.replica.is_some() && self.remote.orphan.is_none() {
+                        self.remote.orphan = Some(Instant::now());
+                        self.remote.orphan_grace = Duration::ZERO;
+                        log::warn!("coupling: lost the main device: {reason}");
+                        self.notify(tr!("Lost the main device: {reason}", reason));
+                    }
+                    return;
+                }
                 self.leave_replica(show);
                 if needs_pairing {
                     self.remote.window = true;
@@ -226,6 +304,152 @@ impl App {
         if self.remote.link.is_some() {
             ctx.request_repaint_after(Duration::from_millis(50));
         }
+    }
+
+    /// Coupling: tell the server and the supervisor what this device is doing, and carry out
+    /// what the supervisor decided ([`coupling::decide`]).
+    fn coupling_tick(&mut self, ctx: &egui::Context, show: &mut Show) {
+        let (fo, me) = {
+            let c = self.remote.config.lock();
+            (c.coupling.clone(), c.instance_id)
+        };
+        if !fo.active_for(me) {
+            if self.remote.supervisor.take().is_some() {
+                self.remote.acting = None;
+                self.remote.orphan = None;
+                self.remote.wants_takeover = false;
+                if let Some(s) = &self.remote.server {
+                    s.set_presence(None);
+                }
+            }
+            return;
+        }
+        let now = Instant::now();
+        if self.remote.server.is_none() && self.remote.server_error.is_none() {
+            self.remote.start_server(ctx, self.show.clone());
+        }
+        if self.remote.supervisor.is_none() {
+            let c = ctx.clone();
+            self.remote.supervisor = Some(Supervisor::start(self.remote.config.clone(), move || c.request_repaint()));
+            self.remote.acted_round = 0;
+            if self.remote.link.is_none() {
+                // Just started: give the others a moment to show up before deciding who plays.
+                self.remote.orphan = Some(now);
+                self.remote.orphan_grace = fo.silence_limit() + Duration::from_secs(1);
+            }
+        }
+        let linked = self.remote.replica.is_some() && matches!(self.remote.link.as_ref().map(Link::state), Some(LinkState::Connected { .. }));
+        let main = self.remote.link.as_ref().and_then(|l| self.remote.following.or_else(|| crate::remote::client::known_at(&self.remote.config.lock(), &l.address)));
+        let duty = match (self.remote.acting, main) {
+            (Some(term), _) => Duty::Main { term },
+            (None, Some(main)) if linked => Duty::Following { main },
+            _ => Duty::Orphan { since: *self.remote.orphan.get_or_insert(now), grace: self.remote.orphan_grace, term: self.remote.last_term },
+        };
+        if !matches!(duty, Duty::Orphan { .. }) {
+            self.remote.orphan = None;
+        }
+        let Some(sup) = &self.remote.supervisor else { return };
+        // A newer priority list from another member (it was edited there, or a computer joined).
+        if let Some(roster) = sup.roster() {
+            let outcome = self.remote.config.lock().coupling.adopt(me, roster);
+            match outcome {
+                coupling::Adopted::Same => {}
+                coupling::Adopted::Changed => self.remote.save_config(),
+                coupling::Adopted::Removed => {
+                    self.remote.config.lock().coupling.leave();
+                    self.remote.save_config();
+                    self.notify(t("This computer was taken out of the coupling group"));
+                    return;
+                }
+            }
+        }
+        sup.set(&fo, duty);
+        let peers = sup.peers();
+        for p in peers.values() {
+            if let Peer::Main { term } | Peer::Standby { term, .. } = p {
+                self.remote.last_term = self.remote.last_term.max(*term);
+            }
+        }
+        if let Some(term) = self.remote.acting {
+            self.remote.last_term = self.remote.last_term.max(term);
+        }
+        let verdict = sup.verdict();
+        let round = sup.rounds();
+        if let Some(server) = &self.remote.server {
+            let acting = self.remote.acting.is_some();
+            server.set_presence(Some(Local { acting, term: self.remote.last_term, orphan_since: if acting { None } else { self.remote.orphan } }));
+        }
+        ctx.request_repaint_after(Duration::from_millis(250));
+
+        let mut verdict = if round != self.remote.acted_round { verdict } else { Verdict::Wait };
+        if std::mem::take(&mut self.remote.wants_takeover) && self.remote.acting.is_none() {
+            verdict = Verdict::TakeOver(self.remote.last_term + 1);
+        }
+        match verdict {
+            Verdict::Wait => {}
+            Verdict::Follow(id) => {
+                self.remote.acted_round = round;
+                let Some(m) = fo.members.iter().find(|m| m.id == id).cloned() else { return };
+                self.follow_member(ctx, &m, fo.silence_limit());
+            }
+            Verdict::TakeOver(term) => {
+                self.remote.acted_round = round;
+                self.become_main(show, term);
+            }
+        }
+    }
+
+    /// Coupling: connect to `m`, the device playing the show, stepping down if this one was.
+    fn follow_member(&mut self, ctx: &egui::Context, m: &Member, silence: Duration) {
+        match self.remote.link.as_ref().map(Link::state) {
+            Some(LinkState::Connecting) => return,
+            Some(LinkState::Connected { .. }) if self.remote.following == Some(m.id) => return,
+            _ => {}
+        }
+        if self.remote.acting.take().is_some() {
+            log::warn!("coupling: {} plays the show; this device steps down", m.name);
+            self.notify(tr!("{name} plays the show now; this device is on standby", name = m.name.clone()));
+            self.remote.orphan = Some(Instant::now());
+            self.remote.orphan_grace = Duration::ZERO;
+        }
+        self.remote.notice = None;
+        self.remote.following = Some(m.id);
+        let c = ctx.clone();
+        self.remote.link = Some(Link::connect_within(&m.address, Auth::Group, self.remote.config.clone(), Some(silence), move || c.request_repaint()));
+    }
+
+    /// Coupling: this device plays the show from now on, with the copy it mirrored.
+    fn become_main(&mut self, show: &mut Show, term: u64) {
+        let mut replica = self.remote.replica.take();
+        self.remote.link = None;
+        self.remote.following = None;
+        if replica.is_some() {
+            *self.displays.lock() = Default::default();
+            self.prober.set_remote(false);
+            self.waveforms.set_remote(None);
+            let mine = replica.as_mut().and_then(|r| r.stash.take()).map(|s| s.0).unwrap_or_default();
+            // Media from this computer's own package: the mirrored show names the other's paths.
+            let root = self.remote.config.lock().coupling.media_root.clone();
+            if let Some(u) = root.as_deref().and_then(crate::package::unpacked) {
+                let n = crate::package::remap(&mut show.ws, &u.dir, &u.manifest);
+                log::info!("coupling: {n} media paths point into the package now");
+            }
+            show.take_over(&mine);
+            self.selection.clear();
+            self.inline = None;
+            self.reset_undo();
+        }
+        self.remote.acting = Some(term);
+        self.remote.last_term = self.remote.last_term.max(term);
+        self.remote.orphan = None;
+        log::warn!("coupling: this device plays the show now (term {term})");
+        show.engine.report(format!("Coupling: this device took over the show (term {term})"));
+        self.notify(t("This device plays the show now"));
+    }
+
+    /// Coupling: take the show over from the main device now (it steps down when it sees this).
+    pub(super) fn take_over_now(&mut self) {
+        self.remote.wants_takeover = true;
     }
 
     fn enter_replica(&mut self, show: &mut Show, server: String, role: Role) {
@@ -430,6 +654,7 @@ impl App {
                     notices.push(tr!("Your role is now: {role}", role = role.label()));
                 }
                 ServerMsg::Refused(why) => notices.push(why),
+                ServerMsg::Grant(_) => {}
                 ServerMsg::Displays(list) => {
                     let mut d = self.displays.lock();
                     d.list = list.into_iter().take(crate::displays::MAX_REMOTE).map(crate::displays::Display::cleaned).collect();
@@ -590,6 +815,12 @@ impl App {
                 ui.horizontal(|ui| {
                     theme::tab(ui, &mut self.remote.tab, RemoteTab::Share, icons::LAN, t("Share this OpnQ"));
                     theme::tab(ui, &mut self.remote.tab, RemoteTab::Connect, icons::CABLE, t("Connect to another"));
+                });
+                ui.horizontal(|ui| {
+                    ui.label(RichText::new(t("Pairing is for tablets and other operators. Computers that back each other up use coupling mode.")).small().color(theme::TEXT_FAINT));
+                    if ui.small_button(t("Coupling mode…")).clicked() {
+                        self.remote.coupling_window = true;
+                    }
                 });
                 ui.separator();
                 egui::ScrollArea::vertical().auto_shrink([false, false]).show(ui, |ui| match self.remote.tab {

@@ -47,7 +47,7 @@ impl App {
                     ui.horizontal(|ui| {
                         use egui::text::{LayoutJob, TextFormat};
                         let mut job = LayoutJob::default();
-                        job.append("Open", 0.0, TextFormat::simple(theme::title(34.0), theme::TEXT));
+                        job.append("Opn", 0.0, TextFormat::simple(theme::title(34.0), theme::TEXT));
                         job.append("Q", 0.0, TextFormat::simple(theme::title(34.0), theme::GREEN));
                         ui.label(job);
                         ui.label(RichText::new(tr!("version {v}", v = env!("CARGO_PKG_VERSION"))).color(theme::TEXT_DIM));

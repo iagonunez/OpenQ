@@ -3173,21 +3173,26 @@ impl Workspace {
         fixed
     }
 
-    /// Write a workspace, storing media paths relative to the file's folder.
-    pub fn save(&self, path: &Path) -> anyhow::Result<()> {
+    /// The file's text, storing media paths below `dir` relative to it.
+    pub fn to_json(&self, dir: Option<&Path>) -> anyhow::Result<String> {
         let mut ws = self.clone();
         ws.format_version = Self::FORMAT_VERSION;
         // Store media next to (or below) the workspace as relative paths so shows are portable.
-        if let Some(dir) = path.parent() {
+        if let Some(dir) = dir {
             ws.for_each_file_mut(&mut |p| {
                 if let Ok(rel) = p.strip_prefix(dir) {
                     *p = rel.to_path_buf();
                 }
             });
         }
+        Ok(serde_json::to_string_pretty(&ws)?)
+    }
+
+    /// Write a workspace, storing media paths relative to the file's folder.
+    pub fn save(&self, path: &Path) -> anyhow::Result<()> {
         // Written to a temporary file, flushed to disk, then renamed over the old one: a crash
         // or power cut mid-save leaves the previous version intact.
-        crate::recovery::write_atomic(path, serde_json::to_string_pretty(&ws)?.as_bytes())
+        crate::recovery::write_atomic(path, self.to_json(path.parent())?.as_bytes())
     }
 }
 

@@ -199,7 +199,7 @@ def page(lang):
 
 <main>
 <section class="hero">
-  <img class="logo" src="{up}site/logo.svg" alt="OpnQ" width="340" height="140">
+  <img class="logo" src="{up}site/logo.svg" alt="OpnQ" width="340" height="173">
   <h1>{esc(t["tagline"])}</h1>
   <p>{esc(t["lede"])}</p>
   <div class="badges">

@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # Fuzz tests (tests/fuzz.rs): damaged and hostile show files, media, fixture/effect files, config
-# files, remote messages, network packets and devices. Slow, so plain `cargo test` skips them.
+# files, show packages, remote messages, network packets and devices. Slow, so plain `cargo test` skips them.
 #
 #   tools/fuzz.sh                       # every target, OPNQ_FUZZ_SECS (default 20) each
 #   tools/fuzz.sh show                  # only targets whose name contains "show"

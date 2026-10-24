@@ -453,6 +453,71 @@ impl Engine {
         true
     }
 
+    /// Take over from a main device that stopped (coupling): `snapshot` is what this engine's
+    /// mirror showed was running ([`Engine::snapshot`]). Every running cue is started again
+    /// where it had got to, as a timecode chase does ([`Engine::chase_cue`]), keeping the
+    /// groups that launched it, its place in a continue chain (what already continued doesn't
+    /// continue again) and pauses. Groups and cues whose action was over only come back as
+    /// bookkeeping, so a post-wait goes on and nothing is sent twice. What the main device was
+    /// fading is not restored; the faded cue restarts from its own settings.
+    pub fn adopt(&mut self, ws: &Workspace, be: &mut dyn Backend, snapshot: &[InstanceSnapshot], playhead: Option<CueId>, now: Instant) {
+        self.playhead = playhead.filter(|p| ws.cue_list.find(*p).is_some());
+        self.preload_dirty = true;
+        let known: Vec<&InstanceSnapshot> = snapshot.iter().filter(|s| ws.cue_list.find(s.id).is_some()).collect();
+        let secs = |x: f64| if x.is_finite() { x.clamp(0.0, crate::limits::MAX_TIME) } else { 0.0 };
+        // Chased cues: (id, seconds into the action already played).
+        let mut chased = Vec::new();
+        for s in &known {
+            let (pre, elapsed, pre_elapsed) = (secs(s.pre_wait), secs(s.action_elapsed), secs(s.pre_wait_elapsed));
+            if s.kind != KindTag::Group && !s.action_done {
+                let offset = if s.started { pre + elapsed } else { pre_elapsed };
+                if offset > 0.0 {
+                    self.loaded.insert(s.id, offset);
+                }
+                self.fire(ws, be, s.id, now, s.parent);
+                chased.push((s.id, if s.started { elapsed } else { 0.0 }));
+                continue;
+            }
+            let action_at = if s.started { before(now, elapsed) } else { after(now, (pre - pre_elapsed).max(0.0)) };
+            self.instances.insert(
+                s.id,
+                Instance {
+                    kind: s.kind,
+                    fired_at: before(action_at, pre),
+                    action_at,
+                    pre_wait: pre,
+                    paused_at: None,
+                    started: s.started,
+                    action_done: s.action_done,
+                    action_duration: s.action_duration,
+                    continue_done: s.continue_done,
+                    parent: s.parent,
+                    fade: None,
+                },
+            );
+        }
+        for s in &known {
+            if let Some(i) = self.instances.get_mut(&s.id) {
+                i.continue_done |= s.continue_done;
+            }
+        }
+        self.tick(ws, be, now);
+        for (id, shift) in chased {
+            // Count the part already played, so a post-wait or follow ends when it would have.
+            if shift > 0.0
+                && let Some(i) = self.instances.get_mut(&id)
+                && i.started
+            {
+                i.action_at = before(i.action_at, shift);
+                i.fired_at = before(i.fired_at, shift);
+                i.action_duration = i.action_duration.map(|d| d + shift);
+            }
+        }
+        for s in known.iter().filter(|s| s.paused) {
+            self.pause_cue(ws, be, s.id, now);
+        }
+    }
+
     /// True while `id` has a running instance.
     pub fn is_running(&self, id: CueId) -> bool {
         self.instances.contains_key(&id)
@@ -1495,6 +1560,94 @@ mod tests {
         }
         assert!(t.elapsed() < Duration::from_millis(50), "{:?}", t.elapsed());
         assert_eq!(e.log.iter().filter(|l| l.contains("restarts itself")).count(), 1, "{:?}", e.log);
+    }
+
+    /// Coupling: a new main device restarts what the mirror showed, where it had got to, with
+    /// its continue chain intact (what already continued doesn't continue again).
+    #[test]
+    fn adopt_restarts_running_cues_where_they_were() {
+        let mut a = cue("1", KindTag::Audio);
+        a.continue_mode = ContinueMode::AutoContinue;
+        a.post_wait = 20.0;
+        let b = cue("2", KindTag::Audio);
+        let c = cue("3", KindTag::Audio);
+        let (ai, bi, ci) = (a.id, b.id, c.id);
+        let w = ws(vec![a, b, c]);
+        let t0 = Instant::now();
+
+        // The old main device: cue 1 started, 12.5 s in.
+        let mut old = Engine::new();
+        let mut m = Mock::default();
+        m.durations.extend([(ai, 60.0), (bi, 60.0), (ci, 60.0)]);
+        old.set_playhead(Some(ai));
+        old.go(&w, &mut m, t0);
+        old.tick(&w, &mut m, t0 + ms(12_500));
+        let snap = old.snapshot(t0 + ms(12_500), |_| None);
+
+        let mut e = Engine::new();
+        let mut m = Mock::default();
+        m.durations.extend([(ai, 60.0), (bi, 60.0), (ci, 60.0)]);
+        let t1 = Instant::now();
+        e.adopt(&w, &mut m, &snap, old.playhead, t1);
+        assert_eq!(m.events, vec!["start 1 from 12.5"]);
+        assert_eq!(e.playhead, old.playhead);
+        // The follow-on comes 20 s into the cue, not 20 s from now.
+        e.tick(&w, &mut m, t1 + ms(7_400));
+        assert_eq!(m.events.len(), 1, "{:?}", m.events);
+        e.tick(&w, &mut m, t1 + ms(7_600));
+        assert_eq!(m.events, vec!["start 1 from 12.5", "start 2"]);
+        // The cue ends when it would have: 60 s into it.
+        m.finished.insert(ai);
+        e.tick(&w, &mut m, t1 + ms(47_600));
+        assert!(!e.instances.contains_key(&ai));
+
+        // Cue 2 was already running, so cue 1 had continued: it must not continue again.
+        let mut old = Engine::new();
+        let mut m = Mock::default();
+        m.durations.extend([(ai, 60.0), (bi, 60.0), (ci, 60.0)]);
+        old.set_playhead(Some(ai));
+        old.go(&w, &mut m, t0);
+        old.tick(&w, &mut m, t0 + ms(25_000));
+        let snap = old.snapshot(t0 + ms(25_000), |_| None);
+        assert!(snap.iter().any(|s| s.id == bi) && snap.iter().any(|s| s.id == ai && s.continue_done));
+        let mut e = Engine::new();
+        let mut m = Mock::default();
+        m.durations.extend([(ai, 60.0), (bi, 60.0), (ci, 60.0)]);
+        e.adopt(&w, &mut m, &snap, old.playhead, t1);
+        assert_eq!(m.events.len(), 2, "{:?}", m.events);
+        assert!(m.events.contains(&"start 1 from 25".to_string()) && m.events.contains(&"start 2 from 5".to_string()), "{:?}", m.events);
+        for i in 1..50 {
+            e.tick(&w, &mut m, t1 + ms(i * 100));
+        }
+        assert_eq!(m.events.len(), 2, "{:?}", m.events);
+    }
+
+    /// A cue that isn't in the show, or whose action was over, is not started.
+    #[test]
+    fn adopt_skips_what_is_gone_or_over() {
+        let a = cue("1", KindTag::Audio);
+        let ai = a.id;
+        let w = ws(vec![a]);
+        let mut e = Engine::new();
+        let mut m = Mock::default();
+        let now = Instant::now();
+        let base = InstanceSnapshot {
+            id: ai,
+            kind: KindTag::Audio,
+            pre_wait: 0.0,
+            pre_wait_elapsed: 0.0,
+            action_elapsed: 3.0,
+            paused: false,
+            started: true,
+            action_done: true,
+            action_duration: Some(3.0),
+            continue_done: false,
+            parent: None,
+        };
+        let gone = InstanceSnapshot { id: uuid::Uuid::new_v4(), action_done: false, ..base.clone() };
+        e.adopt(&w, &mut m, &[base, gone], Some(uuid::Uuid::new_v4()), now);
+        assert!(!m.events.iter().any(|e| e.starts_with("start")), "{:?}", m.events);
+        assert!(e.playhead.is_none());
     }
 
     #[test]

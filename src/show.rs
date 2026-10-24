@@ -499,6 +499,54 @@ impl Show {
         self.media.set_patches(&self.ws.settings.patches);
         self.media.set_audition_device(self.ws.settings.audition_device.as_deref());
     }
+
+    /// Coupling: this device, a replica until now, becomes the main device. It keeps the show it
+    /// mirrored and restarts what was running ([`Engine::adopt`]) and the lighting masters and
+    /// sequence positions. `mine` is the workspace this computer had before it mirrored: its
+    /// audio devices, OSC and video decoding choices (and stage displays) stay, as they stay when
+    /// edits arrive from a replica ([`Show::apply_remote_edit`]); anything it doesn't set comes
+    /// from the mirrored show (computers of one group usually have alike hardware).
+    pub fn take_over(&mut self, mine: &Workspace) {
+        let now = Instant::now();
+        let snapshot = self.engine.snapshot(now, |_| None);
+        let playhead = self.engine.playhead;
+        let masters = self.media.light.masters().clone();
+        let sequences = self.media.light.status();
+        let mut ws = std::mem::take(&mut self.ws);
+        let (m, s) = (&mine.settings, &mut ws.settings);
+        s.audio_device = m.audio_device.clone().or(s.audio_device.take());
+        for (i, p) in s.patches.iter_mut().enumerate() {
+            p.device = m.patches.get(i).and_then(|x| x.device.clone()).or(p.device.take());
+        }
+        s.audition_device = m.audition_device.clone().or(s.audition_device.take());
+        s.osc_enabled = m.osc_enabled;
+        s.osc_port = m.osc_port;
+        s.hardware_video_decoding = m.hardware_video_decoding;
+        for st in &mut ws.stages {
+            st.output = match mine.stages.iter().find(|x| x.id == st.id) {
+                Some(x) => x.output.clone(),
+                None => st.output.take(),
+            };
+        }
+        self.replica = false;
+        self.engine.mirror(None, false, &[], Vec::new(), now);
+        self.media.light.clear_mirror();
+        self.replace_workspace(ws, None);
+        // A show that exists only here: saving or autosaving matters now.
+        self.dirty = true;
+        let Show { ws, engine, media, .. } = self;
+        engine.adopt(ws, media, &snapshot, playhead, now);
+        let light = &mut media.light;
+        light.set_grand_master(masters.grand_master);
+        light.set_blackout(masters.blackout);
+        light.set_tempo(masters.bpm);
+        for (seq, level) in &masters.levels {
+            light.set_level(*seq, *level);
+        }
+        for st in sequences.iter().filter(|s| s.active && s.cue.is_some()) {
+            light.go(st.id, st.cue, now);
+        }
+    }
 }
 
 /// Run the engine at ~1 kHz on its own thread so timing doesn't depend on UI frame rate.

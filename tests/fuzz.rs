@@ -14,6 +14,9 @@
 //! * `fuzz_lighting_files`: effect files, fixture files, zips, command lines, MVR and USITT ASCII files.
 //! * `fuzz_config_files`: garbage in every file of the config folder (remote devices, language,
 //!   MIDI port, OFL catalogue, autosaves, libraries) and file system errors when saving.
+//! * `fuzz_package_files`: damaged show packages (`.opnqs`: random bytes, flipped bytes, manifests
+//!   with hostile paths, sizes and hashes) unpacked into a folder of their own, which nothing may
+//!   leave; and hostile priority lists for coupling mode.
 //! * `fuzz_remote_messages`: hostile handshakes, every message an Edit-role replica can send to the
 //!   main device (over the real encrypted link), and every message a main device can send to a
 //!   replica.
@@ -1152,6 +1155,139 @@ fn fuzz_lighting_files() {
     let _ = std::fs::remove_dir_all(&dir);
 }
 
+// ------------------------------------------------------------------ show packages
+
+/// A package whose manifest holds `paths` (the first is the show) with matching data.
+fn make_package(paths: &[&str], data: &[u8]) -> Vec<u8> {
+    use sha2::{Digest, Sha256};
+    let hash = |d: &[u8]| Sha256::digest(d).iter().map(|b| format!("{b:02x}")).collect::<String>();
+    let entries: Vec<Value> =
+        paths.iter().map(|p| serde_json::json!({"path": p, "size": data.len(), "sha256": hash(data)})).collect();
+    let manifest = serde_json::json!({"id": uuid::Uuid::new_v4(), "name": "fuzz", "app": "0", "entries": entries});
+    let json = serde_json::to_vec(&manifest).unwrap();
+    let mut v = b"OPNQPKG\0".to_vec();
+    v.push(1);
+    v.extend((json.len() as u32).to_le_bytes());
+    v.extend(json);
+    for _ in paths {
+        v.extend(data);
+    }
+    v
+}
+
+/// Damaged and hostile packages: nothing is written outside the folder they unpack into, nothing
+/// panics or hangs, and a package that does unpack holds exactly what its manifest says.
+#[test]
+#[ignore = "fuzz"]
+fn fuzz_package_files() {
+    use opnq::package;
+    let mut f = Fuzz::new("fuzz_package_files");
+    let dir = tmpdir("package");
+    let root = dir.join("root");
+    let seeds = [
+        make_package(&["s.opnq", "audio/a.wav", "video/b.mp4"], b"some bytes"),
+        make_package(&["s.opnq"], b"{}"),
+    ];
+    let nasty = [
+        "../x", "/etc/x", "a/../../x", "a/./b", "a//b", "..", ".", "", "a\\b", "C:\\x", "C:x", "NUL", "aux.txt", "a/", ".hidden",
+        "dir", "dir/file", "DIR/FILE", "x\0y", "tab\t", "trailing.", "trailing ", "\u{202e}gnp.exe", "very/".repeat(300).leak() as &str,
+    ];
+    let mut unpacked = 0u64;
+    while f.next() {
+        let bytes = match f.rng.u8(..5) {
+            0 => (0..f.rng.usize(..2048)).map(|_| f.rng.u8(..)).collect(),
+            1 => {
+                // Hostile names with consistent sizes and hashes: only the name checks stand in the way.
+                let n = f.rng.usize(1..4);
+                let mut paths = vec!["s.opnq"];
+                for _ in 0..n {
+                    paths.push(nasty[f.rng.usize(..nasty.len())]);
+                }
+                make_package(&paths, b"data")
+            }
+            _ => {
+                let seed = f.rng.usize(..seeds.len());
+                mutate_bytes(&mut f.rng, &seeds[seed])
+            }
+        };
+        let file = dir.join("p.opnqs");
+        std::fs::write(&file, &bytes).unwrap();
+        let before: Vec<_> = std::fs::read_dir(&dir).unwrap().filter_map(|e| e.ok()).map(|e| e.file_name()).collect();
+        let (r, file2) = (root.clone(), file.clone());
+        let result = f.guard("unpacking", Duration::from_secs(10), &bytes, "opnqs", move || {
+            let progress = parking_lot::Mutex::new(opnq::bundle::Progress::default());
+            package::extract(&file2, &r, &progress, &std::sync::atomic::AtomicBool::new(false)).map(|u| (u.dir, u.manifest)).map_err(|e| format!("{e:#}"))
+        });
+        // Only `p.opnqs` and `root` may exist beside each other.
+        let mut after: Vec<_> = std::fs::read_dir(&dir).unwrap().filter_map(|e| e.ok()).map(|e| e.file_name()).collect();
+        after.retain(|n| n != "root" && !before.contains(n));
+        if !after.is_empty() {
+            f.fail(&bytes, "opnqs", &format!("wrote outside its folder: {after:?}"));
+        }
+        if let Ok((d, m)) = result {
+            unpacked += 1;
+            if !d.starts_with(&root) {
+                f.fail(&bytes, "opnqs", &format!("unpacked to {}", d.display()));
+            }
+            for e in &m.entries {
+                let ok = std::fs::metadata(d.join(&e.path)).is_ok_and(|md| md.is_file() && md.len() == e.size);
+                if !ok {
+                    f.fail(&bytes, "opnqs", &format!("{} is not as the manifest says", e.path));
+                }
+            }
+        }
+        // Folders left by a refused package would pile up: nothing but whole ones remain.
+        if let Ok(rd) = std::fs::read_dir(&root) {
+            for e in rd.flatten() {
+                if e.file_name().to_string_lossy().ends_with(".part") {
+                    f.fail(&bytes, "opnqs", "a partial folder was left behind");
+                }
+            }
+        }
+        let _ = std::fs::remove_dir_all(&root);
+    }
+    // Priority lists from other computers: any list, any version.
+    use opnq::remote::coupling::{Coupling, Member, Roster};
+    let me = uuid::Uuid::new_v4();
+    let mut c = Coupling { members: vec![Member { id: me, name: "me".into(), address: "h:1".into() }], ..Default::default() };
+    let mut lists = 0u64;
+    let started = Instant::now();
+    while started.elapsed() < budget() / 4 {
+        let n = f.rng.usize(..30);
+        let members = (0..n)
+            .map(|_| Member {
+                id: if f.rng.u8(..4) == 0 { me } else { uuid::Uuid::from_u128(f.rng.u64(..4) as u128) },
+                name: (0..f.rng.usize(..100)).map(|_| char::from_u32(f.rng.u32(..0x3000)).unwrap_or('x')).collect(),
+                address: "z".repeat(f.rng.usize(..2000)),
+            })
+            .collect();
+        let rev = match f.rng.u8(..4) {
+            0 => u64::MAX,
+            1 => 0,
+            _ => f.rng.u64(..100),
+        };
+        let r = Roster { rev, members };
+        let before = c.clone();
+        let out = c.adopt(me, r);
+        if c.members.len() > opnq::remote::coupling::MAX_MEMBERS || c.silence.is_nan() {
+            f.fail(&[], "bin", "a list out of range was adopted");
+        }
+        if out == opnq::remote::coupling::Adopted::Same && c.members != before.members {
+            f.fail(&[], "bin", "a list changed but was reported as the same");
+        }
+        c.edited();
+        if c.rev == 0 {
+            f.fail(&[], "bin", "the version went back to 0");
+        }
+        if c.rank(me).is_none() {
+            c.members.push(Member { id: me, name: "me".into(), address: "h:1".into() });
+        }
+        lists += 1;
+    }
+    f.done(format!("{unpacked} packages unpacked, {lists} lists"));
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
 // ------------------------------------------------------------------ config files
 
 /// Garbage in every file of the config folder, and file system errors when saving: OpnQ starts
@@ -1320,7 +1456,7 @@ fn apply_as_replica(show: &mut Show, synced: &mut Option<Workspace>, waveforms: 
             let list: Vec<_> = list.into_iter().take(opnq::displays::MAX_REMOTE).map(opnq::displays::Display::cleaned).collect();
             assert!(list.iter().all(|d| d.name.chars().count() <= 64));
         }
-        ServerMsg::Welcome { .. } | ServerMsg::Role(_) | ServerMsg::Refused(_) => {}
+        ServerMsg::Welcome { .. } | ServerMsg::Role(_) | ServerMsg::Refused(_) | ServerMsg::Grant(_) => {}
     }
     show.tick(now);
     let _ = show.engine.snapshot(now, |_| None);
@@ -1362,7 +1498,7 @@ fn fuzz_remote_messages() {
     wait_for("edit role", 10.0, || link.drain().iter().any(|m| matches!(m, ServerMsg::Role(Role::Edit))));
 
     // 1. Handshakes: valid hellos with hostile fields, damaged hellos, junk after the hello.
-    let hello = serde_json::to_value(Hello { protocol: opnq::remote::PROTOCOL, client_id: uuid::Uuid::new_v4(), client_name: "x".into(), pairing: true }).unwrap();
+    let hello = serde_json::to_value(Hello { protocol: opnq::remote::PROTOCOL, client_id: uuid::Uuid::new_v4(), client_name: "x".into(), pairing: true, probe: false, coupling: false, group: None, port: 0 }).unwrap();
     let handshakes = (budget() / 6).max(Duration::from_secs(2));
     let t = Instant::now();
     let mut shakes = 0;

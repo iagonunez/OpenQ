@@ -93,6 +93,11 @@ struct Shared {
     handshaking: Mutex<HashMap<IpAddr, usize>>,
     /// The main device is in show mode: nobody edits, Edit-role devices act as Control.
     show_mode: AtomicBool,
+    /// Coupling state of this computer (None: not in a coupling group).
+    presence: Mutex<Option<super::coupling::Local>>,
+    /// Coupling-group members connected (device id → connections): they act as Control and are
+    /// not in the paired devices list.
+    coupled: Mutex<HashMap<Uuid, usize>>,
     /// The main device's displays, with a generation that changes with the list.
     displays: Mutex<(u64, Vec<crate::displays::Display>)>,
     events: Mutex<VecDeque<String>>,
@@ -115,6 +120,21 @@ impl Shared {
         }
         drop(e);
         (self.repaint)();
+    }
+
+    /// What to tell a peer about this device's place in a coupling group.
+    fn presence(&self, with_roster: bool) -> Option<super::coupling::Presence> {
+        let mut p = self.presence.lock().as_ref().map(super::coupling::Local::presence)?;
+        if with_roster {
+            let c = self.config.lock();
+            p.roster = c.coupling.group.is_some().then(|| c.coupling.roster());
+        }
+        Some(p)
+    }
+
+    /// A standby member of a coupling group: it mirrors another device and serves nobody.
+    fn standby(&self) -> bool {
+        self.presence.lock().as_ref().is_some_and(|p| !p.acting)
     }
 
     fn blocked(&self, ip: IpAddr) -> bool {
@@ -189,6 +209,8 @@ impl Server {
             per_address: Mutex::new(HashMap::new()),
             handshaking: Mutex::new(HashMap::new()),
             show_mode: AtomicBool::new(false),
+            presence: Mutex::new(None),
+            coupled: Mutex::new(HashMap::new()),
             displays: Mutex::new((0, Vec::new())),
             events: Mutex::new(VecDeque::new()),
             stop: stop.clone(),
@@ -262,6 +284,13 @@ impl Server {
         if d.1 != list {
             *d = (d.0 + 1, list.to_vec());
         }
+    }
+
+    /// Tell the server where this device stands in a coupling group (None: it isn't in one).
+    /// While it is not the main device it answers probes but serves nobody, and devices already
+    /// connected are dropped (they look for the main device).
+    pub fn set_presence(&self, local: Option<super::coupling::Local>) {
+        *self.shared.presence.lock() = local;
     }
 
     /// Devices connected right now.
@@ -392,10 +421,24 @@ fn serve(shared: &Arc<Shared>, stream: TcpStream, addr: SocketAddr, mut slot: Ha
         let c = shared.config.lock();
         ServerInfo { id: c.instance_id, name: c.instance_name.clone() }
     };
+    let local_ip = stream.local_addr().ok().map(|a| a.ip());
 
     const NOT_OPEN: &str = "Pairing isn't open on the main device. Open it there (Remote → Pair a device) and try again.";
     let open = |p: &Pairing| p.expires > Instant::now() && p.attempts_left > 0;
     let secret_for = |hello: &Hello| -> Result<Vec<u8>, String> {
+        if hello.coupling {
+            // A computer of a coupling group: the group's key, or (to join) the pairing code.
+            let c = shared.config.lock();
+            let Some(g) = c.coupling.group.as_ref().filter(|_| hello.pairing || c.coupling.enabled) else {
+                return Err("This computer isn't in a coupling group".into());
+            };
+            if !hello.pairing {
+                if hello.group != Some(g.id) {
+                    return Err("This computer belongs to another coupling group".into());
+                }
+                return Ok(g.secret());
+            }
+        }
         if hello.pairing {
             match shared.pairing.lock().as_ref() {
                 Some(pr) if open(pr) => Ok(normalize_code(&pr.code).into_bytes()),
@@ -460,9 +503,23 @@ fn serve(shared: &Arc<Shared>, stream: TcpStream, addr: SocketAddr, mut slot: Ha
         }
     };
 
+    // A computer joining the coupling group with the pairing code.
+    if hello.coupling && hello.pairing {
+        return admit_member(shared, &mut tx, &hello, addr, local_ip);
+    }
+
+    // A coupling member asking what this device is doing: answer and hang up, no trace.
+    if hello.probe && !hello.pairing {
+        tx.send(&ServerMsg::Welcome { role: Role::View, token: None, presence: shared.presence(hello.coupling) })?;
+        return Ok(());
+    }
+
     // Authenticated. A pairing connection becomes a trusted device with its own token.
     let device_name: String = hello.client_name.chars().filter(|c| !c.is_control()).take(64).collect();
-    let (role, token) = {
+    let (role, token) = if hello.coupling {
+        // Proved the group's key: a member, not a paired device (nothing is stored about it).
+        (shared.effective(Role::Control), None)
+    } else {
         let mut c = shared.config.lock();
         let now = unix_now();
         let token = if hello.pairing {
@@ -495,7 +552,14 @@ fn serve(shared: &Arc<Shared>, stream: TcpStream, addr: SocketAddr, mut slot: Ha
         shared.event(format!("Paired {device_name} ({addr}) as {}", role.label()));
     }
     shared.failures.lock().remove(&addr.ip());
-    tx.send(&ServerMsg::Welcome { role, token })?;
+    tx.send(&ServerMsg::Welcome { role, token, presence: shared.presence(hello.coupling) })?;
+    if shared.standby() {
+        // Nothing to serve here; the device finds the main one.
+        return Ok(());
+    }
+    if hello.coupling {
+        *shared.coupled.lock().entry(hello.client_id).or_default() += 1;
+    }
 
     let conn = shared.next_conn.fetch_add(1, Ordering::Relaxed);
     shared.clients.lock().push(Connected { conn, device: hello.client_id, name: device_name.clone(), addr, since: Instant::now() });
@@ -522,8 +586,68 @@ fn serve(shared: &Arc<Shared>, stream: TcpStream, addr: SocketAddr, mut slot: Ha
     closed.store(true, Ordering::Relaxed);
     let _ = writer.join();
     shared.clients.lock().retain(|c| c.conn != conn);
+    if hello.coupling {
+        let mut m = shared.coupled.lock();
+        if let Some(n) = m.get_mut(&hello.client_id) {
+            *n -= 1;
+            if *n == 0 {
+                m.remove(&hello.client_id);
+            }
+        }
+    }
     shared.event(format!("{device_name} disconnected"));
     result
+}
+
+/// A computer that proved the pairing code joins the coupling group: it goes last in the list
+/// and is handed the group's key. The code works once.
+fn admit_member(shared: &Arc<Shared>, tx: &mut secure::Sender, hello: &Hello, addr: SocketAddr, local_ip: Option<IpAddr>) -> anyhow::Result<()> {
+    use super::coupling::{Grant, MAX_MEMBERS, Member};
+    let name: String = hello.client_name.chars().filter(|c| !c.is_control()).take(64).collect();
+    let grant = {
+        let mut c = shared.config.lock();
+        let Some(group) = c.coupling.group.clone() else {
+            drop(c);
+            tx.send(&ServerMsg::Refused("This computer isn't in a coupling group".into()))?;
+            return Ok(());
+        };
+        let known = c.coupling.rank(hello.client_id).is_some();
+        if !known && c.coupling.members.len() >= MAX_MEMBERS {
+            drop(c);
+            tx.send(&ServerMsg::Refused("The coupling group is full".into()))?;
+            return Ok(());
+        }
+        let port = if hello.port == 0 { super::DEFAULT_PORT } else { hello.port };
+        let address = match addr.ip() {
+            IpAddr::V6(ip) => format!("[{ip}]:{port}"),
+            ip => format!("{ip}:{port}"),
+        };
+        let member = Member { id: hello.client_id, name: name.clone(), address };
+        match c.coupling.members.iter_mut().find(|m| m.id == member.id) {
+            Some(m) => *m = member,
+            None => c.coupling.members.push(member),
+        }
+        // The first computer of a group doesn't know its own address; the one it was reached at will do.
+        let (me, port_here) = (c.instance_id, c.port);
+        if let (Some(ip), Some(m)) = (local_ip, c.coupling.members.iter_mut().find(|m| m.id == me && m.address.is_empty())) {
+            m.address = match ip {
+                IpAddr::V6(ip) => format!("[{ip}]:{port_here}"),
+                ip => format!("{ip}:{port_here}"),
+            };
+        }
+        c.coupling.edited();
+        c.coupling.clean();
+        if let Err(e) = c.save() {
+            log::warn!("cannot save remote config: {e:#}");
+        }
+        Grant { id: group.id, key: group.key, roster: c.coupling.roster(), silence: c.coupling.silence }
+    };
+    *shared.pairing.lock() = None;
+    shared.failures.lock().remove(&addr.ip());
+    shared.event(format!("{name} ({addr}) joined the coupling group"));
+    tx.send(&ServerMsg::Welcome { role: Role::View, token: None, presence: None })?;
+    tx.send(&ServerMsg::Grant(Box::new(grant)))?;
+    Ok(())
 }
 
 /// Requests a replica makes of its connection's sender.
@@ -537,6 +661,9 @@ struct Flags {
 
 /// The role `device` acts with now (its own role, but no editing in show mode); None if removed.
 fn role_of(shared: &Shared, device: Uuid) -> Option<Role> {
+    if shared.coupled.lock().contains_key(&device) {
+        return Some(shared.effective(Role::Control));
+    }
     let role = shared.config.lock().devices.iter().find(|d| d.id == device).map(|d| d.role)?;
     Some(shared.effective(role))
 }
@@ -809,7 +936,7 @@ fn send_loop(
     // DMX output as last sent to a replica that asked for it (None: send everything next).
     let mut dmx_sent: Option<crate::light::dmx::DmxFrame> = None;
     let mut displays_sent = None;
-    while !closed.load(Ordering::Relaxed) && !shared.stop.load(Ordering::Relaxed) {
+    while !closed.load(Ordering::Relaxed) && !shared.stop.load(Ordering::Relaxed) && !shared.standby() {
         match role_of(shared, device) {
             None => {
                 tx.send(&ServerMsg::Refused("This device was removed on the main device".into()))?;
