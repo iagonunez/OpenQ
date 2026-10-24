@@ -537,6 +537,16 @@ pub fn apply_cue_patch(ws: &mut Workspace, patch: &[Cue]) -> bool {
 mod tests {
     use super::*;
 
+    /// A fresh install listens for nothing: remote access, and the group coupling that needs it,
+    /// stay off until the user sets them up.
+    #[test]
+    fn remote_access_is_off_by_default() {
+        let c = RemoteConfig::default();
+        assert!(!c.server_enabled);
+        assert!(!c.coupling.enabled);
+        assert!(c.devices.is_empty() && c.servers.is_empty());
+    }
+
     /// Edits that keep the tree's shape go as the changed cues only, and applying them gives the
     /// same workspace; anything else needs the whole workspace.
     #[test]
