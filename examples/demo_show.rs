@@ -25,7 +25,7 @@ use opnq::light::model::{
 use opnq::model::{
     AudioCue, BlendMode, CameraCue, ContinueMode, Cue, CueColor, CueId, CueKind, CueList, EqBand, EqKind, FadeCue, FadeCurve, Geometry, GroupMode,
     LightAction, LightingCue, ListInfo, MicCue, NetFormat, NetTransport, NetworkCue, OtherList, SliceMarker, Stage, StageId, TextAlign, TextCue, TimecodeRate,
-    TimecodeSource, TimecodeSync, VideoCue, VideoFit, Workspace, MIN_DB,
+    TimecodeJump, TimecodeSource, TimecodeSync, VideoCue, VideoFit, Workspace, MIN_DB,
 };
 use opnq::spatial::{AudioObject, ObjectAudio, Speaker};
 use opnq::surface::{Mapping, SurfaceAction, SurfaceInput, SurfaceSettings};
@@ -665,10 +665,29 @@ impl Gen {
             OtherList {
                 info: ListInfo {
                     name: "Storm (MTC)".into(),
-                    timecode: TimecodeSync { source: TimecodeSource::Mtc, rate: TimecodeRate::Fps25, ..Default::default() },
+                    timecode: TimecodeSync {
+                        source: TimecodeSource::Mtc,
+                        rate: TimecodeRate::Fps25,
+                        on_jump: TimecodeJump::Chase,
+                        ..Default::default()
+                    },
                     ..Default::default()
                 },
                 cues: storm,
+            },
+            OtherList {
+                info: ListInfo {
+                    name: "Venue clock (LTC)".into(),
+                    timecode: TimecodeSync {
+                        source: TimecodeSource::Ltc,
+                        rate: TimecodeRate::Fps25,
+                        offset: -3600.0,
+                        on_jump: TimecodeJump::FireSkipped,
+                        ..Default::default()
+                    },
+                    ..Default::default()
+                },
+                cues: self.clock_list(),
             },
             OtherList {
                 info: ListInfo { name: "SFX pad".into(), cart: Some(opnq::model::Cart { columns: 8, rows: 5, ..Default::default() }), ..Default::default() },
@@ -1520,6 +1539,20 @@ impl Gen {
         out
     }
 
+    /// A list on a venue clock that starts at 01:00:00:00 (the offset brings it back to 0).
+    fn clock_list(&mut self) -> Vec<Cue> {
+        let mut out = Vec::new();
+        let mut m = self.memo("Venue clock", "Follows LTC that starts at 01:00:00:00; the list's offset of -3600 s makes it start at 0. A jump forward fires what it skipped.");
+        m.color = CueColor::Green;
+        out.push(m);
+        for (name, t) in [("Doors", 0.0), ("Half hour", 1800.0), ("Beginners", 3300.0)] {
+            let mut c = self.memo(name, "Fired by the venue clock.");
+            c.timecode_trigger = Some(t);
+            out.push(c);
+        }
+        out
+    }
+
     fn storm_list(&mut self) -> Vec<Cue> {
         let mut out = Vec::new();
         let mut m = self.memo("Storm sequence on timecode", "Follows MTC from the band's playback rig at 10:00:00:00. Nothing here needs a GO.");
@@ -1693,8 +1726,19 @@ fn settings() -> opnq::model::Settings {
         },
         patches: vec![opnq::model::AudioPatch { name: "Lobby speakers".into(), device: None }],
         loudness_target: -20.0,
+        cue_templates: cue_templates(),
         ..Default::default()
     }
+}
+
+/// Defaults for new cues: audio cues start with a short fade and a colour, text cues too.
+fn cue_templates() -> Vec<Cue> {
+    let mut audio = Cue::new(CueKind::Audio(AudioCue::default()));
+    audio.color = CueColor::Blue;
+    audio.pre_wait = 0.5;
+    let mut memo = Cue::new(CueKind::Memo);
+    memo.color = CueColor::Yellow;
+    vec![audio, memo]
 }
 
 // ---------------------------------------------------------------------------------------------

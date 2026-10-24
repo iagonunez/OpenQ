@@ -26,6 +26,7 @@
       <li class="s3"><a href="#cues-that-change-cues">Cues que cambian otras cues</a></li>
       <li class="s3"><a href="#midi-cues">Cues MIDI</a></li>
       <li class="s3"><a href="#midi-file-cues">Cues de archivo MIDI</a></li>
+      <li class="s3"><a href="#default-cues">Valores predeterminados de las cues nuevas</a></li>
       <li class="s2"><a href="#timing">Tiempos y continuaciones</a></li>
       <li class="s3"><a href="#groups">Grupos</a></li>
       <li class="s2"><a href="#fades">Fundidos</a></li>
@@ -128,6 +129,14 @@
   archivo) y <em>Bucle</em> para reproducirlo hasta que se pare. La duración de la cue es la del archivo a esa velocidad.
   Al pausar o parar la cue se sueltan las notas que siguen sonando. Si empieza a medias (con una cue Load), envía antes el
   último programa, controladores y pitch bend de cada canal, para que los instrumentos suenen como en ese punto.</p>
+  <h3 id="default-cues">Valores predeterminados de las cues nuevas</h3>
+  <p>Prepara una cue como quieres que empiecen las nuevas de su tipo (color, pre-espera, fundidos, ruteo) y elige
+  <strong>Editar → Usar como predeterminada para nuevas cues de este tipo</strong>. Cada cue nueva de ese tipo empieza como copia suya,
+  sin número, nombre, notas, disparadores, objetivo ni archivo de medios. Hay una predeterminada por tipo; <strong>Olvidar la
+  predeterminada</strong> vuelve a la incorporada. Las predeterminadas se guardan en el show.</p>
+  <p><strong>Cue → Preescuchar la cue de audio seleccionada</strong> reproduce la cue de audio seleccionada en modo Edición por una salida aparte (unos auriculares, por ejemplo),
+  distinta de las salidas del show. Esa salida se elige en <strong>Ajustes → Audio → Salida de preescucha</strong>; es una elección de este
+  ordenador y no viaja con ningún show.</p>
 </section>
 
 <section id="timing">
@@ -211,8 +220,13 @@
   <p>En la pestaña <strong>Disparadores</strong> de una cue, marca <em>Disparar en</em> y escribe el tiempo (hh:mm:ss:ff). Cuando el código de
   tiempo de la lista pasa por ese momento, la cue se dispara, esté donde esté el cabezal, y sus continuaciones funcionan como siempre.
   La pestaña muestra qué sigue la lista y qué está recibiendo; <em>Configurar…</em> abre los ajustes de código de tiempo de la lista.</p>
-  <p>Solo el código de tiempo que avanza dispara cues. Cuando la fuente salta (un locate o un rebobinado) o se para, no se dispara nada,
-  y los disparos se retoman desde la nueva posición, así que ensayar una sección haciendo retroceder la fuente es seguro.</p>
+  <p>Solo el código de tiempo que avanza con continuidad dispara las cues una a una. Cuando la fuente salta (un locate o un rebobinado),
+  se para o vuelve tras un corte, lo que ocurre lo decide la lista en <strong>Ante un salto</strong>: <em>No hacer nada</em>
+  (por defecto: la lista toma el nuevo tiempo y los disparos se retoman desde ahí, así que ensayar una sección haciendo retroceder
+  la fuente es seguro), <em>Disparar las cues saltadas</em> (un salto hacia delante dispara las cues que pasó por alto) o <em>Persecución</em>
+  (las cues que arrancó este código de tiempo se paran y arrancan las que estarían en marcha en el nuevo momento, a mitad).</p>
+  <p>El <strong>Desfase</strong> se suma al tiempo entrante antes de compararlo con los disparadores: usa <code>-3600</code> s para un
+  reloj que empieza en 01:00:00:00 y una lista que empieza en 0.</p>
   <h3 id="sending-timecode">Enviar timecode</h3>
   <p>Una cue <strong>Timecode</strong> envía timecode mientras está en marcha, para que lo siga una mesa de iluminación,
   un servidor de vídeo u otro ordenador de espectáculo. Elige <strong>LTC</strong> (una señal de audio por un canal de salida

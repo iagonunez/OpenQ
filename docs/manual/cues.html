@@ -26,6 +26,7 @@
       <li class="s3"><a href="#cues-that-change-cues">Cues that change other cues</a></li>
       <li class="s3"><a href="#midi-cues">MIDI cues</a></li>
       <li class="s3"><a href="#midi-file-cues">MIDI File cues</a></li>
+      <li class="s3"><a href="#default-cues">Defaults for new cues</a></li>
       <li class="s2"><a href="#timing">Timing and continues</a></li>
       <li class="s3"><a href="#groups">Groups</a></li>
       <li class="s2"><a href="#fades">Fades</a></li>
@@ -126,6 +127,14 @@
   stopped. The cue's length is the file's, at that speed. Pausing or stopping the cue releases the notes still sounding.
   Started part way through (a Load cue), it first sends each channel's latest program, controllers and pitch bend, so the
   instruments sound as they would at that point.</p>
+  <h3 id="default-cues">Defaults for new cues</h3>
+  <p>Set up a cue the way you want new ones of its type to start (colour, pre-wait, fades, routing), then choose
+  <strong>Edit → Use as default for new cues of this type</strong>. Every new cue of that type starts as a copy of it,
+  without its number, name, notes, triggers, target or media file. There is one default per type; <strong>Forget the
+  default</strong> goes back to the built-in one. The defaults are saved in the show.</p>
+  <p><strong>Cue → Audition selected audio cue</strong> plays the selected audio cue in Edit mode on a separate output (headphones, say), apart
+  from the show's outputs. Choose that output under <strong>Settings → Audio → Audition output</strong>; it is this
+  computer's choice and travels with no show.</p>
 </section>
 
 <section id="timing">
@@ -209,8 +218,13 @@
   <p>On a cue's <strong>Triggers</strong> tab, tick <em>Fire at</em> and type the time (hh:mm:ss:ff). When the list's
   timecode runs past that time the cue fires, whatever the playhead is on, and its continues run as usual. The tab
   shows what the list follows and what it is receiving; <em>Set up…</em> opens the list's timecode settings.</p>
-  <p>Only timecode running forward fires cues. When the source jumps (a locate or a rewind) or stops, nothing fires,
-  and triggering picks up again from the new position, so rehearsing a section by rolling back the source is safe.</p>
+  <p>Only timecode running steadily forward fires cues one by one. When the source jumps (a locate or a rewind), stops
+  or comes back after a gap, what happens is the list's choice under <strong>On a jump</strong>: <em>Do nothing</em>
+  (the default: the list takes the new time and triggering picks up from there, so rehearsing a section by rolling back
+  the source is safe), <em>Fire the cues skipped</em> (a jump forward fires the cues it passed over), or <em>Chase</em>
+  (the cues this timecode started stop, and those that would be running at the new time start part way through).</p>
+  <p>The <strong>Offset</strong> is added to the incoming time before it meets the triggers: use <code>-3600</code> s for a
+  clock that starts at 01:00:00:00 and a list that starts at 0.</p>
   <h3 id="sending-timecode">Sending timecode</h3>
   <p>A <strong>Timecode</strong> cue sends timecode while it runs, for a lighting desk, a video server or another show
   computer to follow. Choose <strong>LTC</strong> (an audio signal on one output channel of the audio device, at the level
